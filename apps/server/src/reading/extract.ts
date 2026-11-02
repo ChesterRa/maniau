@@ -37,7 +37,11 @@ export class ReadingError extends Error {
   }
 }
 
-/** モデルに渡す入力。住所や家族の名前は渡さない（§10）。 */
+/**
+ * モデルに渡す入力。出典の文と、関係する出典の今の事項（書かれた表現と解釈）を、そのまま送る。
+ * 家族の情報（家庭の設定）からは何も足さない。ただし原文に名前や住所が書かれていれば、それも送られる。
+ * 実在の家族の物は、作り手が許した範囲だけを送る（02-foundation §11）。
+ */
 export function buildExtractInput(request: ExtractRequest): string {
   return JSON.stringify({
     receivedAt: request.source.receivedAt,
