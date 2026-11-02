@@ -1,7 +1,7 @@
 // 画面の外枠：どちらの家庭か（デモ・家族）、知らせ、画面の切り替え、下のタブ。デモでは段・使う人・
 // 言葉・やり直すを選べる。家族の家庭では、使う人はログインの身元で決まり、言葉だけを選ぶ。
 // 計画と「きょう」の札はサーバーが作る。ここは受け取った見せる物を画面に渡し、命令を送るだけ。
-import type { Member } from '@maniau/core';
+import { formatDateTime, type Member, toEpochMinutes } from '@maniau/core';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -208,6 +208,15 @@ function DemoApp() {
         lang={lang}
         onLang={chooseLanguage}
         clock={view ? formatDayTime(view.now, lang, view.household.timeZone) : undefined}
+        onAdvance={
+          view
+            ? (minutes) =>
+                void demo.send({
+                  type: 'advanceClock',
+                  to: formatDateTime(toEpochMinutes(view.now) + minutes, view.household.timeZone),
+                })
+            : undefined
+        }
         onRestart={restart}
       />
       <Body
@@ -368,7 +377,7 @@ function NoticeBanner(props: {
 }
 
 /** デモの操作。実在の家族の画面には出さない。 */
-function DemoBar(props: {
+export function DemoBar(props: {
   stages: string[];
   stage: string;
   onStage: (stage: string) => void;
@@ -378,6 +387,8 @@ function DemoBar(props: {
   lang: UiLanguage;
   onLang: (lang: UiLanguage) => void;
   clock: string | undefined;
+  /** デモの時計を進める（分）。戻せない。決め時の前後で札と知らせがどう変わるかを見るため。 */
+  onAdvance: ((minutes: number) => void) | undefined;
   onRestart: () => void;
 }) {
   const { t } = useTranslation();
@@ -391,6 +402,26 @@ function DemoBar(props: {
           {t('demo.restart')}
         </button>
       </div>
+      {props.onAdvance && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sub">{t('demo.advance')}</span>
+          {(
+            [
+              [60, 'demo.plusHour'],
+              [24 * 60, 'demo.plusDay'],
+            ] as const
+          ).map(([minutes, label]) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => props.onAdvance?.(minutes)}
+              className="min-h-9 rounded-lg border border-line bg-card px-3 font-bold"
+            >
+              {t(label)}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         {/* 狭い画面でも、場面の長い名前で枠の外へはみ出さない（選ぶ物は端末のまま）。 */}
         <label className="flex min-w-0 max-w-full items-center gap-1">

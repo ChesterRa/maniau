@@ -23,6 +23,9 @@
     "label": "Demo",
     "clock": "Demo clock {{time}}",
     "restart": "Restart",
+    "advance": "Move the clock",
+    "plusHour": "+1 hour",
+    "plusDay": "+1 day",
     "stage": "Scene",
     "stages": {
       "arrived": "11/25 Notice arrives",

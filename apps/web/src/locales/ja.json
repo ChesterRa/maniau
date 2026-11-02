@@ -23,6 +23,9 @@
     "label": "デモ",
     "clock": "デモの時計 {{time}}",
     "restart": "やり直す",
+    "advance": "時計を進める",
+    "plusHour": "+1時間",
+    "plusDay": "+1日",
     "stage": "場面",
     "stages": {
       "arrived": "11/25 お知らせが届いた",
