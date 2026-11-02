@@ -6,6 +6,11 @@ import { checkProposals } from './proposal';
 import { Collector, type VerificationReport } from './report';
 import { checkSchedule } from './schedule';
 
+export type {
+  NotificationMessageVerificationInput,
+  NotificationVerificationInput,
+} from './notifications';
+export { verifyNotificationMessage, verifyNotifications } from './notifications';
 export type { VerificationIssue, VerificationReport, VerificationStatus } from './report';
 
 /** JSON を読み直した入力にも使うため、公開の入口では実行時に型を確かめる。 */

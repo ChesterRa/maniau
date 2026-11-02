@@ -18,6 +18,26 @@ const result = verifyPlan({ household, plan, events });
 
 違反があれば未確認の点も `issues` に残し、全体の状態は `violation` とする。`undetermined` を `pass` と同じ意味にはしない。全体の状態だけでなく個々の理由を呼び出し側で扱う。
 
+## 知らせを送る前の検証
+
+```ts
+import { verifyNotificationMessage, verifyNotifications } from '@maniau/verify';
+
+const intentions = verifyNotifications({ household, plan, events, intents });
+const message = verifyNotificationMessage({ message: payload, language, intents });
+```
+
+計画自体は先に `verifyPlan` で確かめる。知らせの意図は基本キーと構造化された根拠を受け取り、
+有効な大人、本人に見える作業・依頼・手配・問い、時機と期限、名前の直接混入を照らす。
+実際に送る文は、受け手ごとにまとめた後に別の許可表と照合し、固定文と件数以外を送らない。
+意図ごとの問題は `subject` に基本キー、特定できない問題は `$all` を付ける。家庭の内容を
+`detail` に出さない。呼び出し側は意図の違反を送らず、`$all` の違反は全て送らない。
+
+知らせの回数は、現時点の計画だけでは独立に再現できないため `notification_round_unverified` とする。
+この検証は送信先の認証・端末への到着・本人の既読を証明しない。名前の直接一致の検出だけで、
+全ての個人情報がキーに含まれないことは保証できない。家庭が入力する ID を内容のない ID に
+置き換えることと、外部送信直前の権限確認は別に必要である。
+
 ## 確かめること
 
 - 家庭・計画・事象の型と家庭 ID、事象の順序、本命と予備の選択、本人だけの引き受け操作。受けた時の提案の控えと今の作業を照らし、変わった提案に再確認の印があるか。

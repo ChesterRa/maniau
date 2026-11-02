@@ -1,0 +1,285 @@
+// 知らせの決まり（01-model §7「追いかける時機」、02-foundation §5.7・§9）。今の計画から、有効な大人
+// ごとに、もう待てない物だけを知らせの意図にする。送るか・いつ送ったかはサーバーの仕事が持ち、送る
+// 直前に、もう一度この関数で確かめる。
+//
+// キーは「何についての知らせか」だけを表し、中身（時刻・品物）を入れない。何回目かは、サーバーが
+// 事象を書き込みのまとまりごとに再生して、無かったキーが出た時を数える（同じキーが出ている間は一回。
+// 消えてまた出れば次の回）。キーは事象（notified）に残るので、計画の ID と決まった符号だけで作る。
+// 文はロック画面に出るので、子・学校・人の名前を入れない。
+import type { DomainEvent } from '../schema/events';
+import type { Household } from '../schema/household';
+import type { PlanResult } from '../schema/plan';
+import {
+  addDays,
+  type DateTime,
+  type EpochMinutes,
+  localDateOf,
+  localTimeOf,
+  toEpochMinutes,
+  zonedToEpochMinutes,
+} from '../time';
+import { BACKUP_LEAD_MIN, type TodayCard, todayCards } from './today';
+
+/** 決める事・問いを知らせ始める時：期限のこの時間前から（予備の勧めと同じ、前の晩）。 */
+export const URGENT_LEAD_MIN = BACKUP_LEAD_MIN;
+/** 夜（家庭の時区で）は、朝まで待てる知らせを送らない。 */
+export const NIGHT_START = '22:00';
+export const MORNING = '07:00';
+/** 朝に送ると、期限までこれだけの余裕が無い物は、夜でも送る（待てない）。 */
+export const MORNING_SLACK_MIN = 120;
+
+export type NotificationKind = 'decisionApproaching' | 'question' | 'cancellation' | 'assignment';
+
+/** 一つの知らせの文。 */
+export type NotificationTitle =
+  | 'notify.cancel'
+  | 'notify.check'
+  | 'notify.backup'
+  | 'notify.decide'
+  | 'notify.proposal'
+  | 'notify.changed'
+  | 'notify.question';
+
+/** 知らせの元（検証器が、キーを読まずに計画の物と照らすため）。 */
+export type NotificationSubject =
+  | { type: 'request'; id: string }
+  | { type: 'arrangement'; id: string; optionId: string; requestId?: string }
+  | { type: 'task'; id: string }
+  | { type: 'question'; id: string };
+
+export interface NotificationIntent {
+  /** 何についての知らせか（大人ごと）。中身は入れない。 */
+  key: string;
+  subject: NotificationSubject;
+  toMemberId: string;
+  kind: NotificationKind;
+  titleKey: NotificationTitle;
+  /** これを過ぎたら送らない（役に立たない）。無ければ、札が消えるまで。 */
+  until?: DateTime;
+  /** 本人がこれまでに動けば間に合う時（夜に朝まで待つかを決める）。無ければ until。 */
+  actBy?: DateTime;
+}
+
+export type NotificationLanguage = 'ja' | 'en';
+
+/** ロック画面の文（名前を含まない）。いくつも同時に送る時は many を使う。 */
+export const NOTIFICATION_TEXT: Record<
+  NotificationLanguage,
+  Record<NotificationTitle | 'notify.app' | 'notify.many', string>
+> = {
+  ja: {
+    'notify.app': 'まにあう',
+    'notify.cancel': 'もう要らない頼み事があります。相手に取り消しを伝えてください。',
+    'notify.check': '頼み事が、まだ要るか確かめてください。',
+    'notify.backup': '返事を待つ間に、予備の案を押さえるか決める時が近づいています。',
+    'notify.decide': '決めることがあります。決め時が近づいています。',
+    'notify.proposal': 'おねがいが届いています。引き受けられるか確かめてください。',
+    'notify.changed': '引き受けたことの中身が変わりました。確かめてください。',
+    'notify.question': '段取りについて、聞きたいことがあります。',
+    'notify.many': '確かめてほしいことが {{count}} 件あります。',
+  },
+  en: {
+    'notify.app': 'Maniau',
+    'notify.cancel': 'A request is no longer needed. Please let them know.',
+    'notify.check': 'Please check whether a request is still needed.',
+    'notify.backup': "While you wait for a reply, it's nearly time to decide on a backup.",
+    'notify.decide': 'Something needs deciding. The decision deadline is coming up.',
+    'notify.proposal': "There's a request for you. Can you take it on?",
+    'notify.changed': 'Something you took on has changed. Please check it.',
+    'notify.question': "There's a question about your plans.",
+    'notify.many': '{{count}} things need your attention.',
+  },
+};
+
+/** 送る文。同じ大人に同時にいくつも送る時は、件数の文一つにまとめる。 */
+export function notificationMessage(
+  language: NotificationLanguage,
+  intents: readonly Pick<NotificationIntent, 'titleKey'>[],
+): { title: string; body: string; titleKey: NotificationTitle | 'notify.many'; count: number } {
+  const text = NOTIFICATION_TEXT[language];
+  const [only] = intents;
+  if (intents.length === 1 && only) {
+    return {
+      title: text['notify.app'],
+      body: text[only.titleKey],
+      titleKey: only.titleKey,
+      count: 1,
+    };
+  }
+  const count = new Intl.NumberFormat(language).format(intents.length);
+  return {
+    title: text['notify.app'],
+    body: text['notify.many'].replace('{{count}}', count),
+    titleKey: 'notify.many',
+    count: intents.length,
+  };
+}
+
+/** 期限まで、今からの残り（分）が、知らせ始める幅に入っているか。 */
+function urgent(deadline: DateTime | undefined, now: EpochMinutes): boolean {
+  if (deadline === undefined) return false;
+  const left = toEpochMinutes(deadline) - now;
+  return left > 0 && left <= URGENT_LEAD_MIN;
+}
+
+/** 事象から読む、作業を頼んだ人。 */
+export interface NotificationHistory {
+  /** その作業を最後に提案した人（仕組みの提案なら無い）。 */
+  proposedBy(taskKey: string): string | undefined;
+}
+
+export function notificationHistory(events: readonly DomainEvent[]): NotificationHistory {
+  const proposer = new Map<string, { seq: number; actorId: string }>();
+  for (const event of events) {
+    if (event.type !== 'assignmentProposed') continue;
+    const before = proposer.get(event.taskKey);
+    if (!before || before.seq < event.seq) {
+      proposer.set(event.taskKey, { seq: event.seq, actorId: event.actorId });
+    }
+  }
+  return { proposedBy: (taskKey) => proposer.get(taskKey)?.actorId };
+}
+
+const NO_HISTORY = notificationHistory([]);
+
+type Draft = Omit<NotificationIntent, 'toMemberId'>;
+
+function intentOf(
+  card: TodayCard,
+  memberId: string,
+  now: EpochMinutes,
+  history: NotificationHistory,
+): Draft | undefined {
+  switch (card.kind) {
+    case 'cancel':
+    case 'check': {
+      // 頼んだ時間が終わるまでは伝える意味がある（始まった後でも、残りの時間がある）。相手が動き始め
+      // る前（頼んだ時間の始まり）に伝えたいので、夜に待つかはそれで決める。時間の無い依頼は、
+      // 札が消えるまで。
+      const window = card.request.window;
+      return {
+        key: `${card.kind}:${card.request.requestId}`,
+        subject: { type: 'request', id: card.request.requestId },
+        kind: card.kind === 'cancel' ? 'cancellation' : 'question',
+        titleKey: card.kind === 'cancel' ? 'notify.cancel' : 'notify.check',
+        ...(window ? { until: window.end, actBy: window.start } : {}),
+      };
+    }
+    case 'backup': {
+      // 予備の札は、次の案の決め時の前の晩から出る（今日の札の決まり）。出たら知らせる。
+      const { arrangement, option } = card;
+      return {
+        key: `backup:${arrangement.key}:${option.key}`,
+        subject: {
+          type: 'arrangement',
+          id: arrangement.key,
+          optionId: option.key,
+          requestId: card.waitingFor.requestId,
+        },
+        kind: 'decisionApproaching',
+        titleKey: 'notify.backup',
+        ...(option.decisionDeadline ? { until: option.decisionDeadline } : {}),
+      };
+    }
+    case 'decide': {
+      // 決める事は、最初に選べなくなる案の決め時が近づいた時だけ（届いた時は、画面で足りる）。
+      // 選んだ案が使えなくなった時は、その案を除いて数える。
+      const { arrangement } = card;
+      const first = arrangement.options
+        .filter(
+          (o) =>
+            !o.expired && o.decisionDeadline !== undefined && o.key !== arrangement.chosenOptionKey,
+        )
+        .map((o) => ({ key: o.key, deadline: o.decisionDeadline as DateTime }))
+        .sort((a, b) => toEpochMinutes(a.deadline) - toEpochMinutes(b.deadline))[0];
+      if (!first || !urgent(first.deadline, now)) return undefined;
+      return {
+        key: `decide:${arrangement.key}:${first.key}`,
+        subject: { type: 'arrangement', id: arrangement.key, optionId: first.key },
+        kind: 'decisionApproaching',
+        titleKey: 'notify.decide',
+        until: first.deadline,
+      };
+    }
+    case 'proposal': {
+      const { task } = card;
+      const changed = task.reconfirm === true;
+      const by = history.proposedBy(task.key);
+      // 自分で自分に頼んだ物（案を選んで自分を担当にした）は知らせない。引き受けた後に中身が
+      // 変わった物は、誰が頼んだ物でも知らせる。
+      if (!changed && by === memberId) return undefined;
+      // 仕組みの提案（勧めた買い物を、通る人に。提案の事象が無いか、仕組みが書いた物）は、日ごとに
+      // 置き直すので、決め時が近い時だけ。大人が頼んだ物は、頼まれた時に知らせる（引き受けるまで追う）。
+      if (!changed && (by === undefined || by === 'system')) {
+        const option = card.arrangement?.options.find((o) => o.key === task.basis.optionKey);
+        if (!urgent(option?.decisionDeadline ?? task.deadline ?? task.start, now)) return undefined;
+      }
+      // 出ている間に時刻などが替わっても、知らせ直さない（開けば今の中身を見せる）。引き受け直して
+      // 消えた後に、また替われば、次の回として知らせる。
+      const until = task.start ?? task.deadline;
+      return {
+        key: `${changed ? 'changed' : 'proposal'}:${task.key}`,
+        subject: { type: 'task', id: task.key },
+        kind: 'assignment',
+        titleKey: changed ? 'notify.changed' : 'notify.proposal',
+        ...(until ? { until } : {}),
+      };
+    }
+    case 'question':
+      if (!urgent(card.question.askBy, now)) return undefined;
+      return {
+        key: `question:${card.question.unknownId}`,
+        subject: { type: 'question', id: card.question.unknownId },
+        kind: 'question',
+        titleKey: 'notify.question',
+        until: card.question.askBy,
+      };
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * 今の計画から、有効な大人ごとに、知らせの意図を作る（その大人の「きょう」の上の札から）。
+ * history は、事象から読んだ、作業を頼んだ人（notificationHistory）。
+ */
+export function notificationIntents(
+  plan: PlanResult,
+  household: Household,
+  history: NotificationHistory = NO_HISTORY,
+): NotificationIntent[] {
+  const now = toEpochMinutes(plan.now);
+  const intents: NotificationIntent[] = [];
+  for (const member of household.members) {
+    if (member.kind !== 'adult' || !member.active) continue;
+    for (const card of todayCards(plan, member.id).main) {
+      const intent = intentOf(card, member.id, now, history);
+      if (!intent) continue;
+      if (intent.until !== undefined && toEpochMinutes(intent.until) <= now) continue;
+      intents.push({ ...intent, key: `${intent.key}:${member.id}`, toMemberId: member.id });
+    }
+  }
+  return intents;
+}
+
+/**
+ * 夜なら、朝まで待つか。待つなら、送ってよい朝の時刻を返す。朝に送ると、本人が動く時（actBy、無けれ
+ * ば until）まで MORNING_SLACK_MIN の余裕が無い物は、待たない（夜でも送る）。
+ */
+export function holdUntilMorning(
+  intent: Pick<NotificationIntent, 'until' | 'actBy'>,
+  now: EpochMinutes,
+  timeZone: string,
+): EpochMinutes | undefined {
+  const time = localTimeOf(now, timeZone);
+  if (time >= MORNING && time < NIGHT_START) return undefined;
+  const today = localDateOf(now, timeZone);
+  const morning = zonedToEpochMinutes(
+    time >= NIGHT_START ? addDays(today, 1) : today,
+    MORNING,
+    timeZone,
+  );
+  const by = intent.actBy ?? intent.until;
+  if (by !== undefined && toEpochMinutes(by) - morning < MORNING_SLACK_MIN) return undefined;
+  return morning;
+}

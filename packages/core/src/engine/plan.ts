@@ -175,7 +175,6 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
     tasks,
     requests,
     questions,
-    notifications: [],
   };
 }
 

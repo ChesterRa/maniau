@@ -265,16 +265,6 @@ export const Question = z.object({
 });
 export type Question = z.infer<typeof Question>;
 
-/** 知らせ（§7）：担当の本人だけに。key は冪等のキー。 */
-export const Notification = z.object({
-  key: z.string().min(1),
-  toMemberId: Id,
-  at: DateTime,
-  kind: z.enum(['decisionApproaching', 'question', 'cancellation', 'assignment']),
-  refs: z.array(z.string()),
-});
-export type Notification = z.infer<typeof Notification>;
-
 /** 前の計画との差分（§4）。安定したキーで比べる。 */
 export const Diff = z.object({
   added: z.array(z.string()),
@@ -294,7 +284,6 @@ export const PlanResult = z.object({
   tasks: z.array(Task),
   requests: z.array(ExternalRequest),
   questions: z.array(Question),
-  notifications: z.array(Notification),
   diff: Diff.optional(),
 });
 export type PlanResult = z.infer<typeof PlanResult>;

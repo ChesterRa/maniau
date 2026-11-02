@@ -76,7 +76,6 @@ export const plan = (overrides: Record<string, unknown> = {}) =>
     tasks: [],
     requests: [],
     questions: [],
-    notifications: [],
     ...overrides,
   });
 
