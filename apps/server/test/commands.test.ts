@@ -162,6 +162,30 @@ describe('命令', () => {
     expect(await task(ASK)).toMatchObject({ assigneeId: 'b', commitment: 'proposed' });
   });
 
+  it('本人しかできない手順（自分の有休の申請）は、別の大人に頼めない。選んだ人ではなく本人に提案する', async () => {
+    const { run, events } = setup();
+    const leaveA = `opt:${CARE}:opt-leave-a`;
+    const apply = `task:${leaveA}:apply`;
+    const proposed = await run('b', { type: 'proposeAssignment', taskKey: apply, assigneeId: 'b' });
+    expect(proposed).toMatchObject({ status: 'invalid', reason: 'fixedAssignee' });
+    expect(
+      (await run('b', { type: 'proposeAssignment', taskKey: apply, assigneeId: 'a' })).status,
+    ).toBe('ok');
+    // 彩が自分を担当にして健太の有休を選んでも、申請は健太に提案する。
+    const chosen = await run('b', {
+      type: 'chooseOption',
+      arrangementKey: CARE,
+      optionKey: leaveA,
+      role: 'primary',
+      assigneeId: 'b',
+    });
+    expect(chosen.status).toBe('ok');
+    const last = (await events())
+      .filter((e) => e.type === 'assignmentProposed' && e.taskKey === apply)
+      .at(-1);
+    expect(last?.type === 'assignmentProposed' && last.assigneeId).toBe('a');
+  });
+
   it('決め時を過ぎて始めていない案は選べず、選んでいない案は取り下げられない', async () => {
     const late = setup('2026-12-06T09:00+09:00');
     const gakudo = (await late.plan()).arrangements

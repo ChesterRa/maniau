@@ -1,5 +1,5 @@
 // 事象の置き場所（02-foundation §6・§7.3）。家庭ごとに書き込みを一列に並べ、操作 ID で二重の書き込みを防ぐ。
-// 今はメモリの置き場所だけ（デモと試験）。Postgres の置き場所は、同じ形で後に足す。
+// メモリの置き場所（デモと試験）と、Postgres の置き場所（db/store.ts）は、同じ形（Store）を持つ。
 import { type DateTime, DomainEvent } from '@maniau/core';
 
 type Envelope = 'id' | 'householdId' | 'seq' | 'version' | 'occurredAt' | 'recordedAt' | 'actorId';
@@ -25,12 +25,21 @@ export interface HouseholdLog {
   append(bodies: readonly EventBody[], actorId: string, at: DateTime): DomainEvent[];
   operation(id: string): Operation | undefined;
   recordOperation(operation: Operation): void;
+  /**
+   * 成員の表（権限の正本）で、今も有効な大人か。押さえた中で読んだ物（§7.3 の 3）。成員の表の無い
+   * 置き場所（デモのメモリ）には無く、事象の家族の情報だけで確かめる。
+   */
+  isActiveAdult?(memberId: string): boolean;
+  /**
+   * 確かめた身元が、今もその大人に結ばれているか（有効な大人で、身元を外していない）。押さえた中で
+   * 読んだ物。身元で入る家族の家庭は、家庭の物を読む・書く前に、必ずこれで確かめ直す。
+   */
+  isBound?(memberId: string, identityId: string): boolean;
 }
 
 export interface Store {
   /** 家庭の行を押さえて fn を走らせる。同じ家庭の書き込みは一列に並ぶ（§7.3 の 2）。 */
   withHousehold<T>(householdId: string, fn: (log: HouseholdLog) => T | Promise<T>): Promise<T>;
-  has(householdId: string): boolean;
 }
 
 interface MemoryHousehold {
@@ -46,6 +55,7 @@ export function memoryStore(
 ): Store & {
   create(householdId: string, events: readonly DomainEvent[]): void;
   drop(householdId: string): void;
+  has(householdId: string): boolean;
 } {
   const households = new Map<string, MemoryHousehold>();
   const create = (householdId: string, events: readonly DomainEvent[]) => {

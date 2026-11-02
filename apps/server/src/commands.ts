@@ -18,6 +18,7 @@ import {
   requestSnapshot,
   retiredUnknowns,
 } from '@maniau/core/engine';
+import { sha256Of } from './digest';
 import type { EventBody, HouseholdLog, Store } from './store';
 
 export interface CommandContext {
@@ -28,6 +29,8 @@ export interface CommandContext {
   now: DateTime;
   /** デモの家庭か（時計を進めてよい）。 */
   demo: boolean;
+  /** 身元で入った命令なら、その身元（押さえた中で、今も結ばれているかを確かめる）。 */
+  identityId?: string;
 }
 
 export type CommandResult =
@@ -52,12 +55,19 @@ function handle(log: HouseholdLog, context: CommandContext, command: Command): C
   const state = foldEvents(events);
   const household = state.household;
   // 押さえた後に、その成員が今も有効な大人かを確かめ直す（§7.3 の 3）。
+  // 成員の表のある置き場所では、その表でも確かめる（権限の正本。§6.1）。身元で入った命令は、その
+  // 身元が今も、この大人に結ばれているかも確かめる（確かめられない置き場所では断る）。
   const member = household?.members.find((m) => m.id === context.memberId);
-  if (!household || !member || member.kind !== 'adult' || !member.active) {
+  const allowed =
+    (log.isActiveAdult ? log.isActiveAdult(context.memberId) : true) &&
+    (context.identityId === undefined ||
+      (log.isBound?.(context.memberId, context.identityId) ?? false));
+  if (!household || !member || member.kind !== 'adult' || !member.active || !allowed) {
     return { status: 'forbidden', reason: 'notAnActiveAdult', throughSeq: throughSeq() };
   }
-  // 同じ操作 ID：同じ人・同じ中身なら何も足さない。違えば衝突（§7.3 の 4）。
-  const digest = JSON.stringify(command);
+  // 同じ操作 ID：同じ人・同じ中身なら何も足さない。違えば衝突（§7.3 の 4）。操作の記録には命令の
+  // 本文を置かず、要約（ハッシュ）だけを置く（直した文や答えの値を、中身の分け方の外に残さない）。
+  const digest = sha256Of(command);
   const previous = log.operation(context.operationId);
   if (previous) {
     return previous.actorId === context.memberId && previous.digest === digest
@@ -158,6 +168,11 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       const steps = option.taskKeys
         .map((key) => taskOf(key))
         .filter((t): t is NonNullable<typeof t> => t !== undefined && !t.extra);
+      // 本人しかできない手順（自分の有休の申請など）は、その本人に頼む（選んだ人に付け替えない）。
+      const assigneeOf = new Map(steps.map((t) => [t.key, fixedAssigneeOf(state, t) ?? assignee]));
+      for (const who of assigneeOf.values()) {
+        if (!adultOf(state, who)) return { status: 'invalid', reason: 'assigneeNotAnAdult' };
+      }
       // 同じ人が担当で、提案中・引き受け済み・済みの作業は、提案し直さない（引き受けを提案に戻さない）。
       // 断った・できなくなった作業は、もう一度頼む意味があるので提案する。
       const active = new Set(['proposed', 'accepted', 'done']);
@@ -166,24 +181,23 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         ...steps
           .filter(
             (t) =>
-              state.assignees.get(t.key) !== assignee ||
+              state.assignees.get(t.key) !== assigneeOf.get(t.key) ||
               !active.has(state.commitments.get(t.key) ?? ''),
           )
           .map((t) => ({
             type: 'assignmentProposed' as const,
             taskKey: t.key,
-            assigneeId: assignee,
+            assigneeId: assigneeOf.get(t.key) ?? assignee,
           })),
       ];
       // 自分が担当なら、本人が画面で見た提案の控え（作業ごと）が今の提案と同じ作業だけを引き受ける。
       // 控えを付けない作業は提案のまま残す。控えが今の提案と違えば、何も足さずに見せ直す（§5.5）。
       const shown = command.shown ?? [];
-      if (shown.length > 0 && assignee !== me) {
-        return { status: 'invalid', reason: 'shownForAnother' };
-      }
       for (const entry of shown) {
         const step = steps.find((t) => t.key === entry.taskKey);
         if (!step) return { status: 'invalid', reason: 'shownForUnknownTask' };
+        if (assigneeOf.get(step.key) !== me)
+          return { status: 'invalid', reason: 'shownForAnother' };
         const current = proposalSnapshot(step);
         if (!current || !sameProposal(current, entry.snapshot)) {
           return { status: 'conflict', reason: 'proposalChanged' };
@@ -209,16 +223,23 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         bodies: [{ type: 'optionDropped', ...pick(command, ['arrangementKey', 'optionKey']) }],
       };
     }
-    case 'proposeAssignment':
-      if (!taskOf(command.taskKey)?.live) return { status: 'conflict', reason: 'taskGone' };
+    case 'proposeAssignment': {
+      const task = taskOf(command.taskKey);
+      if (!task?.live) return { status: 'conflict', reason: 'taskGone' };
       if (!adultOf(state, command.assigneeId)) {
         return { status: 'invalid', reason: 'assigneeNotAnAdult' };
+      }
+      // 本人しかできない手順は、別の大人に頼めない（決まりを替えるなら、家族の情報を替える）。
+      const fixed = fixedAssigneeOf(state, task);
+      if (fixed !== undefined && fixed !== command.assigneeId) {
+        return { status: 'invalid', reason: 'fixedAssignee' };
       }
       return {
         bodies: [
           { type: 'assignmentProposed', taskKey: command.taskKey, assigneeId: command.assigneeId },
         ],
       };
+    }
     case 'accept': {
       // 引き受けは担当の本人だけ。本人が見た提案が今の提案と同じ時だけ（§5.5・§7.3 の 6）。
       const task = taskOf(command.taskKey);
@@ -334,6 +355,18 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
 }
 
 /** 担当にできるのは、今有効な大人だけ。 */
+/** 家庭の決まりで、その手順をする本人が決まっていれば、その人（自分の有休の申請など）。 */
+function fixedAssigneeOf(
+  state: EngineState,
+  task: { step?: { templateId: string; stepId: string } | undefined },
+): string | undefined {
+  if (!task.step) return undefined;
+  const { templateId, stepId } = task.step;
+  return state.household?.careOptions
+    .find((o) => o.id === templateId)
+    ?.steps.find((s) => s.id === stepId)?.assigneeId;
+}
+
 function adultOf(state: EngineState, memberId: string): string | undefined {
   return state.household?.members.find((m) => m.id === memberId && m.kind === 'adult' && m.active)
     ?.id;
