@@ -1,0 +1,81 @@
+{
+  "synthetic": true,
+  "task": "spoken_update",
+  "timeZone": "Asia/Tokyo",
+  "id": "update-dev-07",
+  "title": "本人が外への依頼を送ったと伝える",
+  "input": {
+    "now": "2026-11-28T19:00:00+09:00",
+    "actor": {
+      "id": "b",
+      "name": "彩"
+    },
+    "utterance": "12月7日のこと、おばあちゃんにLINEで頼んだよ。",
+    "state": {
+      "throughSeq": 40,
+      "tasks": [
+        {
+          "key": "task:grandma-1207",
+          "what": "12月7日の子どもの世話をおばあちゃんに頼む",
+          "date": "2026-12-07",
+          "assigneeId": "b",
+          "commitment": "accepted",
+          "live": true,
+          "external": {
+            "to": "おばあちゃん",
+            "kind": "reply"
+          }
+        }
+      ],
+      "requests": [],
+      "routines": []
+    },
+    "members": [
+      {
+        "id": "a",
+        "name": "健太",
+        "kind": "adult"
+      },
+      {
+        "id": "b",
+        "name": "彩",
+        "kind": "adult"
+      }
+    ]
+  },
+  "expected": {
+    "classification": "change",
+    "referenceCommands": [
+      {
+        "type": "recordSent",
+        "taskKey": "task:grandma-1207"
+      }
+    ],
+    "checks": [
+      {
+        "id": "T1",
+        "critical": true,
+        "check": "本人が担当する12月7日の依頼を「送った」と記録する提案にする。"
+      },
+      {
+        "id": "T2",
+        "critical": true,
+        "check": "相手・日付・送ったという内容を見せ、家族の確認前には書き込まない。"
+      },
+      {
+        "id": "T3",
+        "critical": true,
+        "check": "LINEを送信したと代行して言わず、返事をもらった・引き受けてもらったとも決めつけない。"
+      },
+      {
+        "id": "T4",
+        "critical": false,
+        "check": "対象が一つに決まるため、内容を見せる前に不要な対象確認を重ねない。"
+      }
+    ],
+    "afterPreview": {
+      "change": "確認前に、同じ作業の送信がすでに記録された。",
+      "expected": "重複する依頼を作らず、現在の記録を見せて確認する。"
+    }
+  }
+}

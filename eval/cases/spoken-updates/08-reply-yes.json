@@ -1,0 +1,86 @@
+{
+  "synthetic": true,
+  "task": "spoken_update",
+  "timeZone": "Asia/Tokyo",
+  "id": "update-dev-08",
+  "title": "相手から引き受ける返事が来た",
+  "input": {
+    "now": "2026-11-29T20:00:00+09:00",
+    "actor": {
+      "id": "b",
+      "name": "彩"
+    },
+    "utterance": "おばあちゃん、12月7日は大丈夫だって。",
+    "state": {
+      "throughSeq": 43,
+      "tasks": [],
+      "requests": [
+        {
+          "id": "r-grandma-1207",
+          "to": "おばあちゃん",
+          "forDate": "2026-12-07",
+          "state": "awaitingReply",
+          "sentBy": "b",
+          "live": true
+        },
+        {
+          "id": "r-grandma-1214",
+          "to": "おばあちゃん",
+          "forDate": "2026-12-14",
+          "state": "awaitingReply",
+          "sentBy": "b",
+          "live": true
+        }
+      ],
+      "routines": []
+    },
+    "members": [
+      {
+        "id": "a",
+        "name": "健太",
+        "kind": "adult"
+      },
+      {
+        "id": "b",
+        "name": "彩",
+        "kind": "adult"
+      }
+    ]
+  },
+  "expected": {
+    "classification": "change",
+    "referenceCommands": [
+      {
+        "type": "recordReply",
+        "requestId": "r-grandma-1207",
+        "reply": "yes"
+      }
+    ],
+    "checks": [
+      {
+        "id": "Y1",
+        "critical": true,
+        "check": "12月7日の返事待ちの依頼に、引き受ける返事を記録する提案にする。"
+      },
+      {
+        "id": "Y2",
+        "critical": true,
+        "check": "依頼・日付・返事を見せ、家族の確認前には書き込まない。"
+      },
+      {
+        "id": "Y3",
+        "critical": true,
+        "check": "12月14日の依頼を変えず、相手への送信を代行したとも言わない。"
+      },
+      {
+        "id": "Y4",
+        "critical": false,
+        "check": "対象が一つに決まるため、内容を見せる前に不要な対象確認を重ねない。"
+      }
+    ],
+    "afterPreview": {
+      "change": "確認前に、同じ依頼に後から届いた no の返事が記録された。",
+      "expected": "古い yes を黙って上書きせず、現在の返事を見せ直す。"
+    }
+  }
+}

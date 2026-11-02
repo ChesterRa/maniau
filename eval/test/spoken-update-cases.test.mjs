@@ -15,7 +15,7 @@ const validDate = (value) => {
 };
 
 test('家族の一言の開発用場面は架空で、入力と採点が分かれている', () => {
-  assert.equal(cases.length, 6);
+  assert.ok(cases.length >= 6);
   const ids = new Set();
   const checks = new Set();
   for (const { name, value } of cases) {
@@ -70,11 +70,20 @@ test('参照する操作は入力にある対象と本人の権限に沿う', ()
         assert.equal(task.assigneeId, value.input.actor.id, name);
         assert.equal(task.commitment, 'accepted', name);
         assert.equal(command.action, 'withdraw', name);
+      } else if (command.type === 'recordSent') {
+        const task = state.tasks.find((entry) => entry.key === command.taskKey);
+        assert.ok(task, name);
+        assert.equal(task.assigneeId, value.input.actor.id, name);
+        assert.equal(task.live, true, name);
+        assert.ok(task.external, name);
+        assert.ok(!state.requests.some((request) => request.taskKey === task.key), name);
+        // 送信の新しい requestId は、確認時にアプリ側が発行する。
+        assert.ok(!Object.hasOwn(command, 'requestId'), name);
       } else if (command.type === 'recordReply') {
         const request = state.requests.find((entry) => entry.id === command.requestId);
         assert.ok(request, name);
         assert.equal(request.state, 'awaitingReply', name);
-        assert.equal(command.reply, 'no', name);
+        assert.ok(['yes', 'no'].includes(command.reply), name);
       } else {
         assert.fail(`${name}: unknown reference command`);
       }
