@@ -23,7 +23,16 @@ export const RequestSeen = z.object({ requestId: Id, state: ExternalRequestState
 export type RequestSeen = z.infer<typeof RequestSeen>;
 
 export const Command = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('answer'), unknownId: Id, value: z.string().min(1) }),
+  z.object({
+    type: z.literal('answer'),
+    unknownId: Id,
+    value: z.string().min(1),
+    /**
+     * 札で見せた品物（家にあるかの値に答える時は必ず付ける）。今の品物と違えば断って見せ直す（直された
+     * 後の古い札で、別の品物を「ある」にしない）。
+     */
+    seen: z.object({ what: z.string().min(1) }).optional(),
+  }),
   /**
    * 案を選ぶ（本命・予備）。担当を付ければ、その案の作業（当日の準備を除く）を提案する。自分が担当なら、
    * 画面で見せた提案の控えを作業ごとに付けた物だけを引き受ける（今の提案と違えば断る。§5.5・§7.2）。

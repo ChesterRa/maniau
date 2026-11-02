@@ -183,6 +183,16 @@ export function taskTitle(ctx: Ctx, task: Task): string {
 const day = (ctx: Ctx, value: string) => formatDay(value, ctx.lang, ctx.tz);
 const dayTime = (ctx: Ctx, value: string) => formatDayTime(value, ctx.lang, ctx.tz);
 const time = (ctx: Ctx, value: string) => formatTime(value, ctx.lang, ctx.tz);
+/**
+ * 締切の表示：お知らせや家族が時刻まで書いた締切なら日と時刻、日だけの物（仕組みがその日の朝に置く）は
+ * 日だけ（書かれていない時刻を見せない）。
+ */
+const due = (ctx: Ctx, value: string, itemIds: readonly string[]) =>
+  itemIds.some(
+    (id) => ctx.items.find((l) => l.item.id === id)?.item.interpretation.deadline !== undefined,
+  )
+    ? dayTime(ctx, value)
+    : day(ctx, value);
 
 // ── 外に出す文（頼む・取り消す） ──────────────────────────────
 
@@ -411,6 +421,7 @@ function cardKey(card: TodayCard): string {
       return `${card.kind}:${card.task.key}`;
     case 'backup':
     case 'decide':
+    case 'stuck':
       return `${card.kind}:${card.arrangement.key}`;
     case 'question':
       return `${card.kind}:${card.question.key}`;
@@ -436,6 +447,8 @@ function CardView({ ctx, card }: { ctx: Ctx; card: TodayCard }) {
       return <QuestionCard ctx={ctx} card={card} />;
     case 'check':
       return <CheckCard ctx={ctx} request={card.request} />;
+    case 'stuck':
+      return <StuckCard ctx={ctx} card={card} />;
     default:
       return null;
   }
@@ -495,14 +508,22 @@ function DecideCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 
 
 function QuestionCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 'question' }> }) {
   const { question, requirement } = card;
+  // 見せた品物を付ける（直された後の古い札で、別の品物に答えない）。
   const answer = (value: string) =>
-    void ctx.send({ type: 'answer', unknownId: question.unknownId, value });
+    void ctx.send({
+      type: 'answer',
+      unknownId: question.unknownId,
+      value,
+      ...(requirement ? { seen: { what: requirement.what } } : {}),
+    });
   return (
     <Card>
       <Label tone="accent">{ctx.t('card.question.label')}</Label>
       <Title>{ctx.t('card.question.atHome', { what: requirement?.what ?? '' })}</Title>
       <Text quiet>
-        {ctx.t('card.question.body', { by: requirement?.by ? day(ctx, requirement.by) : '' })}
+        {ctx.t('card.question.body', {
+          by: requirement?.by ? due(ctx, requirement.by, requirement.basis.itemIds) : '',
+        })}
       </Text>
       <Row>
         <Button kind="secondary" onClick={() => answer('yes')}>
@@ -512,6 +533,68 @@ function QuestionCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind
           {ctx.t('answer.no')}
         </Button>
       </Row>
+    </Card>
+  );
+}
+
+/**
+ * 登録した手立てでは間に合う方法が見つからなかった（01-model §8「このままでは無理」）。探した範囲で
+ * 見つからなかっただけと書き、ほかの手を家族で考えてもらう。買い物は、ほかの手で用意できたら閉じられる。
+ */
+export function StuckCard({
+  ctx,
+  card,
+}: {
+  ctx: Ctx;
+  card: Extract<TodayCard, { kind: 'stuck' }>;
+}) {
+  const { arrangement, requirement } = card;
+  const date = requirement?.by ?? requirement?.date ?? arrangement.end;
+  const purchase = arrangement.kind === 'purchase';
+  const unknownId = arrangement.atHomeUnknownId;
+  return (
+    <Card>
+      <Label tone="warn">{ctx.t('card.stuck.label')}</Label>
+      <Title>
+        {purchase
+          ? ctx.t('card.stuck.purchaseTitle', { what: requirement?.what ?? '' })
+          : ctx.t('card.decide.title', {
+              date: day(ctx, requirement?.date ?? arrangement.start),
+              what: requirement?.what ?? '',
+            })}
+      </Title>
+      <ConditionLine
+        ctx={ctx}
+        basis={{
+          itemIds: requirement?.basis.itemIds ?? [],
+          requirementKey: arrangement.requirementKey,
+          arrangementKey: arrangement.key,
+        }}
+      />
+      <Text>
+        {purchase
+          ? ctx.t('card.stuck.purchase', {
+              date: due(ctx, date, requirement?.basis.itemIds ?? []),
+            })
+          : ctx.t('card.stuck.childCare', { child: childName(ctx.household) })}
+      </Text>
+      {purchase && unknownId && requirement && (
+        <Row>
+          <Button
+            kind="secondary"
+            onClick={() =>
+              void ctx.send({
+                type: 'answer',
+                unknownId,
+                value: 'yes',
+                seen: { what: requirement.what },
+              })
+            }
+          >
+            {ctx.t('card.stuck.ready')}
+          </Button>
+        </Row>
+      )}
     </Card>
   );
 }
@@ -680,7 +763,9 @@ function UnownedCard({
       )}
       {/* 案の無い作業（提出物）は、外の締切の日を出す（朝の時刻は目安なので、日だけ）。 */}
       {!option && task.deadline && (
-        <Text>{ctx.t('card.unowned.by', { date: day(ctx, task.deadline) })}</Text>
+        <Text>
+          {ctx.t('card.unowned.by', { date: due(ctx, task.deadline, task.basis.itemIds) })}
+        </Text>
       )}
       <Row>
         {mine ? ask : self}
@@ -1334,14 +1419,20 @@ const WEEK_KINDS = new Set(['event', 'dayChange', 'test']);
  * とは限らないので、「何もしない」と「まだできない」を家族が見分けられるようにする。
  */
 function sentenceStatus(ctx: Ctx, sourceId: string) {
-  // 計画に入れた：家族の目に入る次の一歩がある（今の案の作業、選べる・返事しだい・先に聞く手配、問い）。
-  // まだ判断できない・このままでは無理の手配だけなら、次の一歩は無いので「読んだだけ」。
+  // 計画に入れた：家族の目に入る次の一歩がある（今の案の作業、選べる・返事しだい・先に聞く手配、問い、
+  // 「このままでは間に合いません」の札）。札の出ない判断できない手配だけなら、次の一歩は無いので「読んだだけ」。
+  const stuck = new Set(
+    ctx.today.main.flatMap((c) => (c.kind === 'stuck' ? [c.arrangement.key] : [])),
+  );
   const stepped = new Set(
     ctx.plan.arrangements
       .filter(
         (a) =>
           a.live &&
-          (a.status === 'decidable' || a.status === 'dependsOnReply' || a.status === 'askFirst'),
+          (a.status === 'decidable' ||
+            a.status === 'dependsOnReply' ||
+            a.status === 'askFirst' ||
+            stuck.has(a.key)),
       )
       .map((a) => a.key),
   );

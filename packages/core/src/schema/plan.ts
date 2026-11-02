@@ -188,6 +188,11 @@ export const Arrangement = z.object({
   live: z.boolean(),
   /** 条件しだい（Requirement と同じ）。決めてよくても、条件付きで決めることを画面に出す。 */
   conditional: z.boolean().optional(),
+  /**
+   * 買い物の手配だけ：家にあるかの未定の値。問いが消えた後（家に無いと答えた後）も、ほかの手で用意
+   * できたら、この値に「ある」と答えて手配を閉じる。
+   */
+  atHomeUnknownId: Id.optional(),
 });
 export type Arrangement = z.infer<typeof Arrangement>;
 

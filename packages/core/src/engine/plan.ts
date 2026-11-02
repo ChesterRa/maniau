@@ -136,7 +136,6 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
   const nowMin = state.clock ?? (now === undefined ? undefined : toEpochMinutes(now));
   if (nowMin === undefined) throw new Error('今の時刻が無い');
   const tz = household.timeZone;
-  const assignment = new Map([...state.resolved].map(([id, r]) => [id, r.value]));
   const items = liveItems(state);
   const ctx: Context = {
     state,
@@ -168,7 +167,6 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
         live,
         conditional,
         by,
-        assignment,
         requirements,
         arrangements,
         tasks,
@@ -624,7 +622,6 @@ function purchase(
   live: boolean,
   conditional: boolean,
   by: EpochMinutes | undefined,
-  assignment: ReadonlyMap<string, string>,
   requirements: Requirement[],
   arrangements: Arrangement[],
   tasks: Task[],
@@ -644,7 +641,13 @@ function purchase(
     ...(conditional ? { conditional } : {}),
   });
   const unknownId = keys.atHomeUnknown(rootId);
-  const atHome = assignment.get(unknownId);
+  // 答えた時に見せた品物が、今の品物と違えば（直されて別の物になった）、その答えは使わない（家に
+  // あるかは、まだ分からないものとして扱う）。
+  const answer = ctx.state.resolved.get(unknownId);
+  const atHome =
+    answer === undefined || (answer.about !== undefined && answer.about !== what)
+      ? undefined
+      : answer.value;
   // 持って行く時（by）を過ぎたら、もう買う手配も問いも出さない（要件は記録に残す）。
   if (atHome === 'yes' || by === undefined || by <= ctx.now) return;
 
@@ -782,6 +785,7 @@ function purchase(
     key: arrangementKey,
     requirementKey,
     kind: 'purchase',
+    atHomeUnknownId: unknownId,
     start: ctx.fmt(ctx.now),
     end: ctx.fmt(by),
     status: live ? status : 'decidable',

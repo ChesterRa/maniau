@@ -190,8 +190,12 @@ describe('Postgres の置き場所', () => {
     const db = await database();
     const source = demoEvents('arrived');
     const store = await seeded(db, H, source);
-    const question = computePlan(source, NOW).questions[0];
+    const plan = computePlan(source, NOW);
+    const question = plan.questions[0];
     if (!question) throw new Error('問いが無い');
+    // 家にあるかの問いなら、画面が見せた品物の名前を控えに付ける（答えの中身として payloads に置く）。
+    const purchase = plan.arrangements.find((a) => a.atHomeUnknownId === question.unknownId);
+    const what = plan.requirements.find((r) => r.key === purchase?.requirementKey)?.what;
     const marker = '架空の秘密の印';
     const run = (operationId: string, command: Command) =>
       runCommand(store, H, { memberId: 'b', operationId, now: NOW, demo: false }, command);
@@ -202,7 +206,14 @@ describe('Postgres の置き場所', () => {
     };
     // 答えを先に（事項を直すと、その事項の問いは要らなくなる）。
     expect(
-      (await run('op-2', { type: 'answer', unknownId: question.unknownId, value: 'no' })).status,
+      (
+        await run('op-2', {
+          type: 'answer',
+          unknownId: question.unknownId,
+          value: 'no',
+          ...(what ? { seen: { what } } : {}),
+        })
+      ).status,
     ).toBe('ok');
     expect((await run('op-1', correct)).status).toBe('ok');
     // 要約で、同じ中身の送り直しと、違う中身の使い回しを見分ける。
@@ -221,6 +232,7 @@ describe('Postgres の置き場所', () => {
       unknownId: question.unknownId,
       payloadId: `${answered?.id}:payload`,
     });
+    if (what) expect(JSON.stringify(rows)).not.toContain(what);
     // 中身は payloads にだけある（戻せば元の値）。
     const contents = await db.select().from(payloads).where(eq(payloads.householdId, H));
     expect(JSON.stringify(contents)).toContain(marker);

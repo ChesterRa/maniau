@@ -142,7 +142,17 @@ export const DomainEvent = z.discriminatedUnion('type', [
     output: z.unknown(),
   }),
   /** 問いに答えた（未定の値が決まった）。 */
-  z.object({ ...envelope, type: z.literal('answered'), unknownId: Id, value: z.string().min(1) }),
+  z.object({
+    ...envelope,
+    type: z.literal('answered'),
+    unknownId: Id,
+    value: z.string().min(1),
+    /**
+     * 家にあるかの値に答えた時、札で見せた品物。品物が直されて別の物になれば、この答えは使わない
+     * （まだ分からないものとして扱う）。無いのは古い事象か、品物を見せずに答えた物。
+     */
+    about: z.string().min(1).optional(),
+  }),
   /** 家族が手配の案を選んだ。本命か、本命の返事を待つ間の予備か。 */
   z.object({
     ...envelope,

@@ -14,6 +14,7 @@ function baseCtx(): Ctx {
     sources: new Map(),
     readings: [],
     plan: { requirements: [], tasks: [], arrangements: [], questions: [] },
+    today: { main: [], quiet: [] },
     items: [],
     lang: 'ja',
     tz: 'Asia/Tokyo',

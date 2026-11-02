@@ -131,14 +131,41 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         .flatMap((e) => e.unknowns)
         .find((u) => u.id === command.unknownId);
       const asked = plan.questions.some((q) => q.unknownId === command.unknownId);
-      if (!declared && !asked) return { status: 'conflict', reason: 'unknownGone' };
+      // 家にあるかの値（買い物の手配。仕組みが作る値）は、家に無いと答えた後も、手配が生きている間は、
+      // ほかの手で用意できたと答えられる。
+      const purchase = plan.arrangements.find(
+        (a) => a.kind === 'purchase' && a.atHomeUnknownId === command.unknownId,
+      );
+      if (!declared && !asked && !purchase?.live) {
+        return { status: 'conflict', reason: 'unknownGone' };
+      }
       if (retiredUnknowns(state).has(command.unknownId)) {
         return { status: 'conflict', reason: 'unknownRetired' };
       }
       if (declared && !declared.values.includes(command.value)) {
         return { status: 'invalid', reason: 'undeclaredValue' };
       }
-      return { bodies: [{ type: 'answered', unknownId: command.unknownId, value: command.value }] };
+      // 仕組みが作る値（家にあるか）は「ある・ない」だけ。
+      if (!declared && command.value !== 'yes' && command.value !== 'no') {
+        return { status: 'invalid', reason: 'undeclaredValue' };
+      }
+      if (purchase) {
+        // 家にあるかの新しい答えには、札で見せた品物を必ず付け、今の品物と同じ時だけ受ける（問いの札でも。
+        // 品物を付けない古い画面からの答えは、直された後の別の品物に答えてしまうので受けない）。
+        const what = plan.requirements.find((r) => r.key === purchase.requirementKey)?.what;
+        if (command.seen === undefined) return { status: 'invalid', reason: 'seenRequired' };
+        if (command.seen.what !== what) return { status: 'conflict', reason: 'proposalChanged' };
+      }
+      return {
+        bodies: [
+          {
+            type: 'answered',
+            unknownId: command.unknownId,
+            value: command.value,
+            ...(purchase && command.seen ? { about: command.seen.what } : {}),
+          },
+        ],
+      };
     }
     case 'chooseOption': {
       const arrangement = plan.arrangements.find((a) => a.key === command.arrangementKey);

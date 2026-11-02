@@ -137,6 +137,13 @@
       "dropBackup": "Drop this backup",
       "dropPrimary": "Drop this option",
       "fixed": "Only {{name}} can do this step."
+    },
+    "stuck": {
+      "label": "No way found in time",
+      "purchaseTitle": "{{what}}",
+      "purchase": "It's needed by {{date}}, but no time to buy it was found on your registered routes and stores. If you get it another way, tap \"Got it\".",
+      "childCare": "No way was found to arrange {{child}} with your registered options and deadlines. Please think of another way together.",
+      "ready": "Got it"
     }
   },
   "answer": {

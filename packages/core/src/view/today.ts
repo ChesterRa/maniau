@@ -36,6 +36,12 @@ export type TodayCard =
    * できなくなった。大人の全員に出し、誰かが自分で持つか、頼むか、その案をやめるまで残す。
    */
   | { kind: 'unowned'; task: Task; arrangement?: Arrangement }
+  /**
+   * 登録した手立て（ふだんの週・店・取れる手と決め時）では、間に合う方法が見つからなかった
+   * （01-model §8「このままでは無理」）。必要な日までは大人の全員に出し、ほかの手を考えてもらう。
+   * 探した範囲で見つからなかっただけで、実際にできないとは言わない。
+   */
+  | { kind: 'stuck'; arrangement: Arrangement; requirement?: Requirement }
   /** 答えで段取りが変わる問い。 */
   | { kind: 'question'; question: Question; requirement?: Requirement }
   /** 自分が頼んで、返事を待っている。 */
@@ -158,6 +164,15 @@ export function todayCards(
     }
   }
 
+  const stuck: TodayCard[] = [];
+  for (const arrangement of plan.arrangements) {
+    if (!arrangement.live || arrangement.status === 'askFirst') continue;
+    if (!arrangement.reasons.some((r) => r.code === 'noOptionLeft')) continue;
+    if (toEpochMinutes(arrangement.end) <= now) continue;
+    const requirement = requirementOf(arrangement);
+    stuck.push({ kind: 'stuck', arrangement, ...(requirement ? { requirement } : {}) });
+  }
+
   const unowned: TodayCard[] = [];
   for (const task of plan.tasks) {
     if (!task.live || task.cancels !== undefined || !isActiveTask(plan, task)) continue;
@@ -204,7 +219,16 @@ export function todayCards(
     .map((request) => ({ kind: 'waiting', request }));
 
   return {
-    main: [...cancel, ...check, ...backup, ...decide, ...unowned, ...proposal, ...question],
+    main: [
+      ...cancel,
+      ...check,
+      ...backup,
+      ...decide,
+      ...stuck,
+      ...unowned,
+      ...proposal,
+      ...question,
+    ],
     quiet: [...waiting, ...todo],
   };
 }

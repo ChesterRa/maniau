@@ -36,7 +36,7 @@ export interface EngineState {
   /** 出典ごとの、検査を通った読み取り（後の物が前の物を置き換える）。 */
   extractions: Map<string, Extraction>;
   /** 未定の値の答え（家族の答えと、効いている出典の作用）。後の物が勝つ。たたみ終えた時に answers から作る。 */
-  resolved: Map<string, { value: string; seq: number; by: 'family' | 'source' }>;
+  resolved: Map<string, { value: string; seq: number; by: 'family' | 'source'; about?: string }>;
   /**
    * 答えの記録。出典の作用の順は、その出典が届いた時（noticeReceived の seq）とする。読み直しは
    * お知らせを新しくしないので、読み直しの前に来た家族の答えに勝たない。同じ出典を読み直したら、
@@ -50,6 +50,8 @@ export interface EngineState {
     sourceId?: string;
     /** 出典の作用なら、その作用を持つ事項。 */
     itemId?: string;
+    /** 家にあるかの答えなら、答えた時に見せた品物。 */
+    about?: string;
   }[];
   /** 事項ごとの、作用が効くか。たたみ終えた時に決める（settle）。 */
   effects: Map<string, EffectActivity>;
@@ -247,6 +249,7 @@ function apply(state: EngineState, event: DomainEvent): void {
         value: event.value,
         seq: event.seq,
         by: 'family',
+        ...(event.about === undefined ? {} : { about: event.about }),
       });
       return;
     case 'optionChosen':
@@ -442,7 +445,12 @@ function latestAnswers(answers: EngineState['answers']): EngineState['resolved']
   for (const answer of answers) {
     const current = resolved.get(answer.unknownId);
     if (current === undefined || answer.seq >= current.seq) {
-      resolved.set(answer.unknownId, { value: answer.value, seq: answer.seq, by: answer.by });
+      resolved.set(answer.unknownId, {
+        value: answer.value,
+        seq: answer.seq,
+        by: answer.by,
+        ...(answer.about === undefined ? {} : { about: answer.about }),
+      });
     }
   }
   return resolved;

@@ -58,13 +58,25 @@ it('買える時を過ぎても、家にあるかが分からなければ問い�
   expect(gate.all).toBe(false);
   expect(intents.filter((i) => gate.blocked.has(i.key))).toEqual([]);
 
-  // 正式の命令で「家にある」と答えられ、買い物の手配は無くなる。
+  // 問いが出ている間も、見せた品物の控えの無い答え（前の版の画面から）は断り、何も書かない。
   const store = memoryStore(new Map([['demo', events]]));
+  const count = events.length;
+  expect(
+    await runCommand(
+      store,
+      'demo',
+      { memberId: 'b', operationId: 'old-page', now: at, demo: true },
+      { type: 'answer', unknownId, value: 'yes' },
+    ),
+  ).toMatchObject({ status: 'invalid', reason: 'seenRequired' });
+  expect(await store.withHousehold('demo', (log) => log.events().length)).toBe(count);
+
+  // 正式の命令で「家にある」と答えられ、買い物の手配は無くなる。
   const answered = await runCommand(
     store,
     'demo',
     { memberId: 'b', operationId: 'at-home', now: at, demo: true },
-    { type: 'answer', unknownId, value: 'yes' },
+    { type: 'answer', unknownId, value: 'yes', seen: { what: '白い長袖シャツ' } },
   );
   expect(answered).toMatchObject({ status: 'ok' });
   const after = await store.withHousehold('demo', (log) => viewFor(log.events(), 'b', at));
@@ -78,7 +90,7 @@ it('家に無いと答えた後は、買える時が無いと示し、検証器�
     store,
     'demo',
     { memberId: 'b', operationId: 'not-at-home', now: at, demo: true },
-    { type: 'answer', unknownId, value: 'no' },
+    { type: 'answer', unknownId, value: 'no', seen: { what: '白い長袖シャツ' } },
   );
   expect(answered).toMatchObject({ status: 'ok' });
   const all = await store.withHousehold('demo', (log) => [...log.events()]);
@@ -174,7 +186,7 @@ it('ふだんの週に一度も買える時が無く、家に無いと答えて�
     store,
     'demo',
     { memberId: 'b', operationId: 'none-at-home', now: at, demo: true },
-    { type: 'answer', unknownId, value: 'no' },
+    { type: 'answer', unknownId, value: 'no', seen: { what: '白い長袖シャツ' } },
   );
   expect(answered).toMatchObject({ status: 'ok' });
   const all = await store.withHousehold('demo', (log) => [...log.events()]);
@@ -187,4 +199,109 @@ it('ふだんの週に一度も買える時が無く、家に無いと答えて�
       (i) => i.kind === 'violation',
     ),
   ).toEqual([]);
+});
+
+it('家に無いと答えた後も、ほかの手で用意できたら答えられ、手配が閉じる', async () => {
+  const { events } = late();
+  const store = memoryStore(new Map([['demo', events]]));
+  const ctx = (operationId: string) => ({ memberId: 'b', operationId, now: at, demo: true });
+  expect(
+    await runCommand(store, 'demo', ctx('no'), {
+      type: 'answer',
+      unknownId,
+      value: 'no',
+      seen: { what: '白い長袖シャツ' },
+    }),
+  ).toMatchObject({ status: 'ok' });
+  const stuck = await store.withHousehold('demo', (log) => viewFor(log.events(), 'b', at));
+  expect(stuck.plan.questions.some((q) => q.unknownId === unknownId)).toBe(false);
+  expect(stuck.today.main.some((c) => c.kind === 'stuck' && c.arrangement.key === shirt)).toBe(
+    true,
+  );
+  // 見せた品物を付けない「用意できた」と、「ある・ない」以外の値は断る（何も足さない）。
+  expect(
+    await runCommand(store, 'demo', ctx('bare'), { type: 'answer', unknownId, value: 'yes' }),
+  ).toMatchObject({ status: 'invalid', reason: 'seenRequired' });
+  expect(
+    await runCommand(store, 'demo', ctx('maybe'), {
+      type: 'answer',
+      unknownId,
+      value: 'maybe',
+      seen: { what: '白い長袖シャツ' },
+    }),
+  ).toMatchObject({ status: 'invalid', reason: 'undeclaredValue' });
+  expect(
+    await runCommand(store, 'demo', ctx('ready'), {
+      type: 'answer',
+      unknownId,
+      value: 'yes',
+      seen: { what: '白い長袖シャツ' },
+    }),
+  ).toMatchObject({ status: 'ok' });
+  const after = await store.withHousehold('demo', (log) => viewFor(log.events(), 'b', at));
+  expect(after.plan.arrangements.some((a) => a.key === shirt)).toBe(false);
+  expect(after.today.main.some((c) => c.kind === 'stuck' && c.arrangement.key === shirt)).toBe(
+    false,
+  );
+  // 手配の無い未定の値には、これまでどおり答えられない。
+  expect(
+    await runCommand(store, 'demo', ctx('gone'), {
+      type: 'answer',
+      unknownId: 'u-atHome:n1:none',
+      value: 'yes',
+    }),
+  ).toMatchObject({ status: 'conflict', reason: 'unknownGone' });
+});
+
+it('直されて別の品物になった後の古い札の「用意できた」は断り、前に「ある」と答えた品物が直されたら聞き直す', async () => {
+  const { events } = late();
+  const store = memoryStore(new Map([['demo', events]]));
+  const as = (memberId: string, operationId: string) => ({
+    memberId,
+    operationId,
+    now: at,
+    demo: true,
+  });
+  await runCommand(store, 'demo', as('b', 'no'), {
+    type: 'answer',
+    unknownId,
+    value: 'no',
+    seen: { what: '白い長袖シャツ' },
+  });
+  // b が品物を直す。a の画面は、まだ白い長袖シャツの札。
+  expect(
+    await runCommand(store, 'demo', as('b', 'fix'), {
+      type: 'correctItem',
+      itemId: 'n1:i5',
+      interpretation: { what: '赤い帽子' },
+    }),
+  ).toMatchObject({ status: 'ok' });
+  expect(
+    await runCommand(store, 'demo', as('a', 'old-card'), {
+      type: 'answer',
+      unknownId,
+      value: 'yes',
+      seen: { what: '白い長袖シャツ' },
+    }),
+  ).toMatchObject({ status: 'conflict', reason: 'proposalChanged' });
+  const view = await store.withHousehold('demo', (log) => viewFor(log.events(), 'a', at));
+  expect(view.plan.arrangements.some((a) => a.key === shirt)).toBe(true);
+
+  // 今の札（赤い帽子）で「用意できた」と答え、その後また白い長袖シャツに直されたら、聞き直す。
+  expect(
+    await runCommand(store, 'demo', as('a', 'hat-ready'), {
+      type: 'answer',
+      unknownId,
+      value: 'yes',
+      seen: { what: '赤い帽子' },
+    }),
+  ).toMatchObject({ status: 'ok' });
+  await runCommand(store, 'demo', as('b', 'fix-back'), {
+    type: 'correctItem',
+    itemId: 'n1:i5',
+    interpretation: { what: '白い長袖シャツ' },
+  });
+  const again = await store.withHousehold('demo', (log) => viewFor(log.events(), 'a', at));
+  expect(again.plan.arrangements.find((a) => a.key === shirt)?.status).toBe('askFirst');
+  expect(again.plan.questions.some((q) => q.unknownId === unknownId)).toBe(true);
 });
