@@ -1,0 +1,3 @@
+# フックは、Windows で clone しても LF のまま動くように
+scripts/git-hooks/* text eol=lf
+.claude/hooks/* text eol=lf

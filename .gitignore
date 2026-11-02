@@ -1,0 +1,78 @@
+# 決まりは docs/dev/repository.md。ここに無い物でも、決まりで「入れない」物は入れない。
+
+# ---- 鍵・認証（見本の .env.example だけは入れる） ----
+.env
+.env.*
+!.env.example
+.envrc
+*.pem
+*.key
+
+# ---- 手元だけに置く物（エージェントへの指示、キックオフの記録、作業の控え） ----
+AGENTS.md
+CLAUDE.md
+.local/
+# 実在の家族の材料はリポジトリの外に置く。誤って中に置いた時の備え
+private/
+
+# ---- Claude Code の個人の設定と作業場所（共有の .claude/settings.json は入れる） ----
+.claude/settings.local.json
+.claude/worktrees/
+CLAUDE.local.md
+
+# ---- 評価の生の出力（引用する結果だけ eval/results/ に移して入れる） ----
+eval/runs/
+
+# ---- データベース（実在の家族の事象が入り得る） ----
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*-journal
+*-wal
+*-shm
+
+# ---- 試験の作業場所 ----
+tests/hooks/.work/
+
+# ---- 依存・ビルド・キャッシュ ----
+node_modules/
+dist/
+build/
+.next/
+coverage/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# ---- 記録・一時ファイル ----
+*.log
+*.tmp
+
+# ---- 動画・音声・端末の写真（完成した動画は YouTube 等に置き、リンクだけ書く） ----
+*.mp4
+*.mov
+*.m4a
+*.wav
+*.mp3
+*.heic
+*.MP4
+*.MOV
+*.M4A
+*.WAV
+*.MP3
+*.HEIC
+
+# ---- OS・エディター ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp

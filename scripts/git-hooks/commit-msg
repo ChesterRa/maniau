@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Claude Code の中で作ったコミットに、Claude の共同作者の行を付ける（docs/dev/repository.md）。
+# Claude Code の設定（.claude/settings.json の attribution）と同じ行で、付け忘れを防ぐ。
+# 手で作ったコミット、空の説明、すでに Anthropic の共同作者の行がある時は、足さない。
+set -euo pipefail
+
+[ -n "${CLAUDECODE:-}" ] || exit 0
+grep -qv -e '^[[:space:]]*$' -e '^#' "$1" || exit 0
+if ! grep -qiE '^Co-Authored-By: .*<noreply@anthropic\.com>' "$1"; then
+  git interpret-trailers --in-place --no-divider --trailer 'Co-Authored-By: Claude <noreply@anthropic.com>' "$1"
+fi

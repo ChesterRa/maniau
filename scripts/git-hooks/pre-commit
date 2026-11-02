@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# コミットの前の検査。次を止める：
+#   作者のメールが GitHub の noreply でない、鍵の形をした文字列、手元だけに置く物、
+#   動画・音声・端末の写真、データベース、実在の家族の材料と中身が同じ物、大きすぎる物。
+# 決まりは docs/dev/repository.md。有効にする：git config core.hooksPath scripts/git-hooks
+set -euo pipefail
+shopt -s nocasematch
+
+max_mb=5
+private_dir="${MANIAU_PRIVATE_DIR:-$HOME/dev/maniau-private}"
+fail=0
+stop() { printf '止めました：%s\n' "$1" >&2; fail=1; }
+
+# 作者のメール：個人のメールを、公開の履歴に残さない
+email=$(git config user.email || true)
+if [[ "$email" != *@users.noreply.github.com ]]; then
+  stop "作者のメールが GitHub の noreply ではありません（${email:-未設定}）。git config user.email で直す"
+fi
+
+# 実在の家族の材料の、中身の指紋（写しを入れない）
+private_hashes=""
+if [ -d "$private_dir" ]; then
+  private_hashes=$(find "$private_dir" -type f -exec git hash-object {} + 2>/dev/null || true)
+fi
+
+while IFS= read -r -d '' f; do
+  info=$(git ls-files -s -- "$f" | head -n 1)
+  mode=${info%% *}
+  rest=${info#* }
+  sha=${rest%% *}
+  if [ "$mode" = 160000 ]; then
+    continue # サブモジュール
+  fi
+  case "$f" in
+    .local/* | */.local/* | private/* | */private/*) stop "$f（手元だけに置く物）" ;;
+    AGENTS.md | */AGENTS.md | CLAUDE.md | */CLAUDE.md | CLAUDE.local.md | */CLAUDE.local.md) stop "$f（手元だけに置く物）" ;;
+    .claude/settings.local.json | */.claude/settings.local.json) stop "$f（Claude Code の個人の設定）" ;;
+  esac
+  case "${f##*/}" in
+    .env.example) ;;
+    .env | .env.* | .envrc) stop "$f（鍵の入る物）" ;;
+  esac
+  case "$f" in
+    *.mp4 | *.mov | *.m4a | *.wav | *.mp3 | *.heic) stop "$f（動画・音声・端末の写真）" ;;
+    *.db | *.sqlite | *.sqlite3 | *-journal | *-wal | *-shm) stop "$f（データベース。実在の家族の事象が入り得る）" ;;
+  esac
+  if [ -n "$private_hashes" ] && grep -qxF -- "$sha" <<<"$private_hashes"; then
+    stop "$f（実在の家族の材料の置き場所にある物と、中身が同じ）"
+  fi
+  size=$(git cat-file -s "$sha")
+  if [ "$size" -gt $((max_mb * 1024 * 1024)) ]; then
+    stop "$f（$((size / 1024 / 1024))MB。${max_mb}MBまで）"
+  fi
+done < <(git diff --cached --name-only -z --diff-filter=ACMRT)
+
+# 足した行だけを見る。Anthropic・GitHub・AWS・Google・Slack の鍵と、秘密鍵の形。
+# 一度、変数に受けてから探す（パイプの途中で grep -q が先に終わると、検査が抜けるため）
+keys='sk-ant-[A-Za-z0-9_-]{20,}|(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|xox[abprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+added=$(git diff --cached -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ --diff-filter=ACMRT |
+  sed -n -e '/^+++ b\//d' -e '/^+++ \/dev\/null/d' -e 's/^+//p')
+shopt -u nocasematch
+if [ -n "$added" ] && grep -Eq -- "$keys" <<<"$added"; then
+  stop "鍵の形をした文字列（git diff --cached で場所を確かめる）"
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "決まりは docs/dev/repository.md。--no-verify で検査を飛ばさない。" >&2
+  exit 1
+fi
