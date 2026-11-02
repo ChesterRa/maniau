@@ -39,17 +39,29 @@ export type CommandResult =
   | { status: 'conflict'; reason: string; throughSeq: number }
   | { status: 'forbidden' | 'invalid'; reason: string; throughSeq: number };
 
+/**
+ * 命令の前に、押さえた中で見る物（見せた時の状態と今が同じか等）。違えば、断る理由を返す。
+ * 操作 ID の送り直しは、この前に答える（済んだ操作の送り直しを、状態が変わったとして断らない）。
+ */
+export type CommandGuard = (events: readonly DomainEvent[]) => string | undefined;
+
 /** 命令を処理する（§7.3）。家庭を押さえ、身元を確かめ直し、操作 ID を引き、前提を確かめて事象を足す。 */
 export function runCommand(
   store: Store,
   householdId: string,
   context: CommandContext,
   command: Command,
+  guard?: CommandGuard,
 ): Promise<CommandResult> {
-  return store.withHousehold(householdId, (log) => handle(log, context, command));
+  return store.withHousehold(householdId, (log) => handle(log, context, command, guard));
 }
 
-function handle(log: HouseholdLog, context: CommandContext, command: Command): CommandResult {
+function handle(
+  log: HouseholdLog,
+  context: CommandContext,
+  command: Command,
+  guard?: CommandGuard,
+): CommandResult {
   const events = log.events();
   const throughSeq = () => log.events().at(-1)?.seq ?? 0;
   const state = foldEvents(events);
@@ -74,6 +86,9 @@ function handle(log: HouseholdLog, context: CommandContext, command: Command): C
       ? { status: 'noop', throughSeq: throughSeq() }
       : { status: 'conflict', reason: 'operationIdReused', throughSeq: throughSeq() };
   }
+  const refused = guard?.(events);
+  if (refused !== undefined)
+    return { status: 'conflict', reason: refused, throughSeq: throughSeq() };
   // デモの家庭で時計を進めていれば、その時刻で処理する。押さえた中で事象から決めるので、並んで
   // 届いた命令でも、時計を進めた後の事象に前の時刻が付くことはない。
   const now =

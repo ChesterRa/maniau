@@ -1,0 +1,292 @@
+// 家族の一言（話した・打った短い文）を、確かめてから記録する変更の候補に直す（01-model §10）。
+// モデルは、一言を今の作業・頼み事・未定の値に結び付けるだけ。対象があるか、話した人がしてよいか、
+// 今の状態で効くかはここで確かめる。家族に見せる文（候補の説明・答えの一覧）は、画面が計画から作る。
+// 確かめる前には何も書かない。候補には、見せた時の状態の控え（seen）を付け、確かめる時に比べる。
+import { z } from 'zod';
+import type { Command } from '../schema/commands';
+import type { CommitmentState, ExternalRequestState } from '../schema/plan';
+
+export const UTTERANCE_ACTION_TYPES = [
+  'withdraw',
+  'decline',
+  'done',
+  'recordSent',
+  'recordReply',
+  'recordCancellationSent',
+  'answer',
+] as const;
+
+/** モデルの出す候補の一つ。使わない欄は null。 */
+export const UtteranceAction = z.object({
+  type: z.enum(UTTERANCE_ACTION_TYPES),
+  taskKey: z.string().nullable(),
+  requestId: z.string().nullable(),
+  reply: z.enum(['yes', 'no']).nullable(),
+  unknownId: z.string().nullable(),
+  value: z.string().nullable(),
+});
+export type UtteranceAction = z.infer<typeof UtteranceAction>;
+
+export const UNSUPPORTED_REASONS = [
+  'routineChange',
+  'otherAdultsTask',
+  'notInPlan',
+  'other',
+] as const;
+export type UnsupportedReason = (typeof UNSUPPORTED_REASONS)[number];
+
+/** モデルの出力（構造化出力の形）。 */
+export const UtteranceOutput = z.object({
+  kind: z.enum(['change', 'clarify', 'question', 'unsupported']),
+  actions: z.array(UtteranceAction),
+  refs: z.object({
+    taskKeys: z.array(z.string()),
+    requestIds: z.array(z.string()),
+    itemIds: z.array(z.string()),
+  }),
+  unsupported: z.enum(UNSUPPORTED_REASONS).nullable(),
+});
+export type UtteranceOutput = z.infer<typeof UtteranceOutput>;
+
+export interface UtteranceTask {
+  key: string;
+  /** 何をする作業か（日本語の短い説明）。 */
+  what: string;
+  /** その作業が要る日（子の居場所の日、物の要る日）。 */
+  date: string | null;
+  /** 作業の締切（時差付き）。 */
+  deadline: string | null;
+  assigneeId: string | null;
+  commitment: CommitmentState;
+  /** 外の相手に頼む・出す作業なら、その相手（名前）と種類。 */
+  external: { to: string; kind: string } | null;
+  /** その作業の頼み事を、もう送ったと記録したか。 */
+  sent: boolean;
+  /** 取り消しを伝える作業なら、取り消す頼み事の ID。 */
+  cancels: string | null;
+}
+
+export interface UtteranceRequest {
+  id: string;
+  to: string;
+  what: string;
+  /** 頼んだ日（送ったと記録した時の計画の控えの日。今の手配の日ではない）。控えが無ければ null。 */
+  forDate: string | null;
+  state: ExternalRequestState;
+  sentBy: string;
+  /** まだ要るか。要らなくなり、取り消しを伝える作業が出ている物は false。 */
+  needed: boolean;
+}
+
+/** モデルに渡す前提。今の計画の、生きている物だけ。 */
+export interface UtteranceContext {
+  now: string;
+  timeZone: string;
+  speaker: { id: string; name: string };
+  members: { id: string; name: string; kind: string }[];
+  utterance: string;
+  tasks: UtteranceTask[];
+  requests: UtteranceRequest[];
+  unknowns: { id: string; label: string; values: string[]; answer: string | null }[];
+  items: {
+    id: string;
+    kind: string;
+    what: string;
+    date: string | null;
+    deadline: string | null;
+    /** 条件しだいの事項の条件（文）。いつも当てはまる物は null。 */
+    condition: string | null;
+  }[];
+}
+
+/**
+ * 見せた時の対象（前提に載っていた形のまま：何か・日・相手・状態）。確かめる時に今の前提と比べ、
+ * 一つでも違えば（状態だけでなく、日や用件が替わっても）古い候補を記録しない。
+ */
+export type ProposalSeen =
+  | { task: UtteranceTask | null }
+  | { request: UtteranceRequest | null }
+  | { unknown: UtteranceContext['unknowns'][number] | null };
+
+export interface UtteranceProposal {
+  command: Command;
+  seen: ProposalSeen;
+}
+
+export type UtteranceRefs = { taskKeys: string[]; requestIds: string[]; itemIds: string[] };
+
+export type UtteranceReply =
+  | { kind: 'change'; proposals: [UtteranceProposal] }
+  /** どれのことか決められない（候補から選ぶ）か、別の大人の作業で、話した人には変えられない。 */
+  | { kind: 'clarify'; proposals: UtteranceProposal[]; reason: 'ambiguous' | 'otherAdultsTask' }
+  | { kind: 'question'; refs: UtteranceRefs }
+  | { kind: 'unsupported'; reason: UnsupportedReason };
+
+type Checked =
+  | { ok: true; proposal: UtteranceProposal }
+  | { ok: false; why: 'otherAdultsTask' | 'notApplicable' };
+
+/** 候補の対象の、今の形（見せた時と確かめる時で、同じ形で比べる）。 */
+export function seenOf(command: Command, context: UtteranceContext): ProposalSeen {
+  switch (command.type) {
+    case 'commitment':
+    case 'recordSent':
+      return { task: context.tasks.find((t) => t.key === command.taskKey) ?? null };
+    case 'recordReply':
+    case 'recordCancellationSent':
+      return { request: context.requests.find((r) => r.id === command.requestId) ?? null };
+    case 'answer':
+      return { unknown: context.unknowns.find((u) => u.id === command.unknownId) ?? null };
+    default:
+      return { task: null };
+  }
+}
+
+/** モデルの候補の一つを、今の前提で確かめ、命令にする。 */
+function check(
+  action: UtteranceAction,
+  context: UtteranceContext,
+  newRequestId: () => string,
+): Checked {
+  const me = context.speaker.id;
+  const proposal = (command: Command): Checked => ({
+    ok: true,
+    proposal: { command, seen: seenOf(command, context) },
+  });
+  const no = { ok: false, why: 'notApplicable' } as const;
+  if (
+    action.type === 'withdraw' ||
+    action.type === 'decline' ||
+    action.type === 'done' ||
+    action.type === 'recordSent'
+  ) {
+    const task = context.tasks.find((t) => t.key === action.taskKey);
+    if (!task) return no;
+    // 別の大人が持つ作業は、話した人の言葉では変えない（本人の操作だけ。02-foundation §7.2）。
+    if (task.assigneeId !== me) {
+      return task.assigneeId !== null ? { ok: false, why: 'otherAdultsTask' } : no;
+    }
+    switch (action.type) {
+      case 'withdraw':
+        return task.commitment === 'accepted'
+          ? proposal({ type: 'commitment', taskKey: task.key, action: 'withdraw' })
+          : no;
+      case 'decline':
+        return task.commitment === 'proposed'
+          ? proposal({ type: 'commitment', taskKey: task.key, action: 'decline' })
+          : no;
+      case 'done':
+        // 取り消しを伝える作業は、その頼み事に取り消しを伝えたとして記録する（画面の札と同じ）。
+        if (task.cancels !== null) {
+          const request = context.requests.find((r) => r.id === task.cancels);
+          return request && request.state !== 'cancelled'
+            ? proposal({ type: 'recordCancellationSent', requestId: request.id })
+            : no;
+        }
+        // 外に頼む・出す作業は「送った」として記録する（返事待ちを持つため）。引き受けを押さずに
+        // 済ませた本人の作業も、済みにできる（命令と同じ）。
+        return (task.commitment === 'accepted' || task.commitment === 'proposed') &&
+          task.external === null
+          ? proposal({ type: 'commitment', taskKey: task.key, action: 'done' })
+          : no;
+      case 'recordSent':
+        // 引き受けを押さずに送った時も、本人の担当で未送信なら記録できる（送ると済みになる。命令と同じ）。
+        return (task.commitment === 'accepted' || task.commitment === 'proposed') &&
+          task.external !== null &&
+          !task.sent
+          ? proposal({ type: 'recordSent', taskKey: task.key, requestId: newRequestId() })
+          : no;
+    }
+  }
+  if (action.type === 'recordReply' || action.type === 'recordCancellationSent') {
+    const request = context.requests.find((r) => r.id === action.requestId);
+    if (!request) return no;
+    if (action.type === 'recordReply') {
+      // 初めての返事と、返事の変わった時（「大丈夫」の後に「無理」）。同じ返事の繰り返しは記録しない。
+      const changes =
+        request.state === 'awaitingReply' ||
+        (request.state === 'confirmed' && action.reply === 'no') ||
+        (request.state === 'turnedDown' && action.reply === 'yes');
+      return changes && action.reply !== null
+        ? proposal({ type: 'recordReply', requestId: request.id, reply: action.reply })
+        : no;
+    }
+    // 取り消しを伝えたと記録できるのは、計画が取り消しを伝える作業を出している依頼だけ（要らなくなった
+    // 物。まだ要る頼み事を、一言の読み違いで取り消したことにしない）。
+    const cancelling = context.tasks.some((t) => t.cancels === request.id);
+    return cancelling && request.state !== 'cancelled'
+      ? proposal({ type: 'recordCancellationSent', requestId: request.id })
+      : no;
+  }
+  // answer
+  const unknown = context.unknowns.find((u) => u.id === action.unknownId);
+  if (!unknown || action.value === null || !unknown.values.includes(action.value)) return no;
+  if (unknown.answer === action.value) return no;
+  return proposal({ type: 'answer', unknownId: unknown.id, value: action.value });
+}
+
+const sameCommand = (a: Command, b: Command) => {
+  // 新しい依頼の ID は作るたびに違うので、比べない。
+  const strip = (c: Command) => (c.type === 'recordSent' ? { ...c, requestId: '' } : c);
+  return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
+};
+
+/**
+ * モデルの出力を、家族に見せる答えにする。種類はモデルの言う物を元に、確かめた候補の数で決め直す。
+ * - 変更：確かめて残った候補が一つなら、それを見せる。二つ以上なら選んでもらう。
+ * - 残らず、別の大人の作業だった時は、話した人には変えられないと示す（候補を出さない）。
+ * - 問い：今の計画にある物だけを指す。
+ */
+export function toUtteranceReply(
+  output: UtteranceOutput,
+  context: UtteranceContext,
+  newRequestId: () => string,
+): UtteranceReply {
+  if (output.kind === 'question') {
+    const tasks = new Set(context.tasks.map((t) => t.key));
+    const requests = new Set(context.requests.map((r) => r.id));
+    const items = new Set(context.items.map((i) => i.id));
+    const unique = (ids: string[], known: Set<string>) =>
+      [...new Set(ids)].filter((id) => known.has(id));
+    return {
+      kind: 'question',
+      refs: {
+        taskKeys: unique(output.refs.taskKeys, tasks),
+        requestIds: unique(output.refs.requestIds, requests),
+        itemIds: unique(output.refs.itemIds, items),
+      },
+    };
+  }
+  if (output.kind === 'unsupported') {
+    // 別の大人の作業のことなら、変えられないと示す（本人が記録する）。
+    if (output.unsupported === 'otherAdultsTask') {
+      return { kind: 'clarify', proposals: [], reason: 'otherAdultsTask' };
+    }
+    return { kind: 'unsupported', reason: output.unsupported ?? 'other' };
+  }
+  const proposals: UtteranceProposal[] = [];
+  let otherAdults = false;
+  for (const action of output.actions) {
+    const checked = check(action, context, newRequestId);
+    if (checked.ok) {
+      if (!proposals.some((p) => sameCommand(p.command, checked.proposal.command))) {
+        proposals.push(checked.proposal);
+      }
+    } else if (checked.why === 'otherAdultsTask') {
+      otherAdults = true;
+    }
+  }
+  // 一言の一部が別の大人の作業なら、話した人の分だけを黙って一つの変更にしない（残りを本人が記録する
+  // と示す）。話した人の分は、選べる候補として残す。
+  if (otherAdults || output.unsupported === 'otherAdultsTask') {
+    return { kind: 'clarify', proposals, reason: 'otherAdultsTask' };
+  }
+  const [only] = proposals;
+  if (output.kind === 'change' && only && proposals.length === 1) {
+    return { kind: 'change', proposals: [only] };
+  }
+  if (proposals.length > 0) return { kind: 'clarify', proposals, reason: 'ambiguous' };
+  // どれのことか決められない時は、候補が無くても聞き返す（「その日」がどの日か等）。
+  if (output.kind === 'clarify') return { kind: 'clarify', proposals: [], reason: 'ambiguous' };
+  return { kind: 'unsupported', reason: output.unsupported ?? 'notInPlan' };
+}

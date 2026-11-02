@@ -8,7 +8,7 @@ import { nowIn } from './clock';
 import { type CommandResult, runCommand } from './commands';
 import type { Db } from './db/store';
 import { DEMO_STAGES, isDemoStage, loadDemoData } from './demo';
-import { demoSessions, type NoticeReader } from './demo-sessions';
+import { demoSessions, type NoticeReader, type UtteranceReader } from './demo-sessions';
 import { type FamilyMember, type Invitations, memberFor } from './members';
 import type { Notifier } from './notifier';
 import { isPushEndpoint, removeSubscription, saveSubscription } from './push';
@@ -40,6 +40,8 @@ export function createApp(
     family?: FamilyBackend;
     /** お知らせを Claude で読む口（API の鍵がある時だけ）。無ければ、デモに文を入れられない。 */
     reader?: NoticeReader;
+    /** 家族の一言を Claude で読む口（同じく鍵がある時だけ）。 */
+    listener?: UtteranceReader;
   } = {},
 ): Hono {
   // 起きる時に、デモの家族とお知らせを読み、型と家族の決まりを確かめる（誤りなら起きない）。
@@ -49,6 +51,8 @@ export function createApp(
   // 家族の家庭を出すアプリでは、デモの読み取りを開けない（ログインの無いデモの道で、Claude の費用を
   // 使わせない）。読み取りを試すのは、デモだけのサーバー。
   const reader = family ? undefined : options.reader;
+  // 一言も同じ（デモの家族の名前を前提に送るので、家族の家庭では開けない。01-model §10）。
+  const listener = family ? undefined : options.listener;
   const app = new Hono();
   // API の返事は、どれも控えに残さない（家族の予定・場所を、端末や途中の控えに置かない）。
   app.use('/api/*', async (c, next) => {
@@ -220,8 +224,9 @@ export function createApp(
       household: data.household,
       readings: data.readings.map(({ sourceId, origin, model }) => ({ sourceId, origin, model })),
       stages: DEMO_STAGES.map((s) => ({ id: s.id, now: s.now, viewer: s.viewer })),
-      // お知らせの文を入れて読めるか（読み取りの鍵があるサーバーだけ）。
+      // お知らせの文を入れて読めるか（読み取りの鍵があるサーバーだけ）。一言を読めるか。
       canRead: reader !== undefined,
+      canHear: listener !== undefined,
     });
   });
   app.get('/api/demo/sessions/:sid/view', async (c) => {
@@ -275,6 +280,71 @@ export function createApp(
       case 'failed':
         // 中身や理由の文は返さない（種類だけ）。
         return c.json({ error: 'readingFailed', reason: done.reason }, 502);
+    }
+  });
+  // デモの家庭で、家族の一言（話した・打った短い文）を読み、記録の候補を返す。何も書かない。
+  const UtteranceBody = z.object({
+    memberId: z.string().min(1),
+    operationId: z.string().min(1).max(100),
+    text: z.string().trim().min(1).max(500),
+  });
+  app.post('/api/demo/sessions/:sid/utterances', async (c) => {
+    if (!listener) return c.json({ error: 'readingUnavailable' }, 503);
+    const body = UtteranceBody.safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badUtterance' }, 400);
+    const { memberId, operationId, text } = body.data;
+    const done = await sessions.utterance(
+      c.req.param('sid'),
+      memberId,
+      { text, operationId },
+      listener,
+    );
+    if (!done) return c.json({ error: 'unknownSession' }, 404);
+    switch (done.status) {
+      case 'ok':
+        return c.json({ view: done.view, reply: done.reply });
+      case 'limit':
+        return c.json({ error: 'readingLimit' }, 429);
+      case 'busy':
+        return c.json({ error: 'readingBusy' }, 429);
+      case 'invalid':
+        return c.json({ error: 'notAMember' }, 400);
+      case 'conflict':
+        return c.json({ error: 'operationReused' }, 409);
+      case 'stale':
+        return c.json({ error: 'readingStale' }, 409);
+      case 'failed':
+        return c.json({ error: 'readingFailed', reason: done.reason }, 502);
+    }
+  });
+  // 一言の候補を、言った本人が確かめて記録する。見せた後に対象が変わっていれば、記録せず見せ直す。
+  app.post('/api/demo/sessions/:sid/proposals/:pid', async (c) => {
+    const body = z
+      .object({ memberId: z.string().min(1), operationId: z.string().min(1).max(100) })
+      .safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badConfirm' }, 400);
+    const { memberId, operationId } = body.data;
+    const done = await sessions.confirm(
+      c.req.param('sid'),
+      memberId,
+      c.req.param('pid'),
+      operationId,
+    );
+    if (!done) return c.json({ error: 'unknownSession' }, 404);
+    switch (done.status) {
+      case 'ok':
+        return c.json({ view: done.view });
+      case 'changed':
+        return c.json({ error: 'proposalChanged', view: done.view }, 409);
+      case 'refused':
+        return c.json(
+          { error: 'refused', result: done.result, view: done.view },
+          statusOf(done.result),
+        );
+      case 'gone':
+        return c.json({ error: 'unknownProposal' }, 404);
+      case 'forbidden':
+        return c.json({ error: 'notTheSpeaker' }, 403);
     }
   });
   return app;

@@ -97,6 +97,7 @@ function Body(props: {
   readings: Reading[];
   /** お知らせの文を入れて読めるか（デモで、読み取りの鍵があるサーバーだけ）。 */
   canRead?: boolean;
+  canHear?: boolean;
   lang: UiLanguage;
   route: Route;
   onRoute: (route: Route) => void;
@@ -121,6 +122,7 @@ function Body(props: {
           sources: new Map(view.sources.map((s) => [s.id, s])),
           readings: withLive(props.readings, view.readings ?? []),
           ...(props.canRead ? { read: live.read } : {}),
+          ...(props.canHear ? { hear: live.hear, confirm: live.confirm } : {}),
           me,
           lang,
           tz: view.household.timeZone,
@@ -213,6 +215,7 @@ function DemoApp() {
         me={me}
         readings={session?.readings ?? []}
         canRead={session?.canRead === true}
+        canHear={session?.canHear === true}
         lang={lang}
         route={route}
         onRoute={setRoute}

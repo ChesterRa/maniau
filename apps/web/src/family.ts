@@ -60,6 +60,8 @@ interface Session {
   stages: Stage[];
   /** お知らせの文を入れて読めるか（読み取りの鍵があるサーバーだけ）。 */
   canRead?: boolean;
+  /** 家族の一言を読めるか（同じく、鍵のあるデモのサーバーだけ）。 */
+  canHear?: boolean;
 }
 
 /** 家族が入れたお知らせの文。操作 ID は、届いたか分からない時の送り直しに同じ物を使う。 */
@@ -74,6 +76,39 @@ export type ReadResult =
   /** limit：数・量を使い切った。busy：読んでいる途中。uncertain：返事が届かない。stale：読む間に前提が変わった。 */
   | { status: 'limit' | 'busy' | 'uncertain' | 'stale' }
   | { status: 'failed'; reason?: string };
+
+/** 一言の候補（サーバーが控えを持つ。画面は命令から説明を作る）。 */
+export interface ShownProposal {
+  id: string;
+  command: Command;
+  /** 値の答えの候補なら、その問いの名前。 */
+  label?: string;
+}
+
+/** 一言の答え（apps/server/src/demo-sessions.ts の ShownReply と同じ形）。 */
+export type Heard =
+  | { kind: 'change'; proposals: ShownProposal[] }
+  | { kind: 'clarify'; proposals: ShownProposal[]; reason: 'ambiguous' | 'otherAdultsTask' }
+  | { kind: 'question'; refs: { taskKeys: string[]; requestIds: string[]; itemIds: string[] } }
+  | { kind: 'unsupported'; reason: 'routineChange' | 'otherAdultsTask' | 'notInPlan' | 'other' };
+
+export type HearResult =
+  /** throughSeq：答えを読んだ時の計画の版（画面は、計画が先へ進んだら古い答えを閉じる）。 */
+  | { status: 'ok'; reply: Heard; throughSeq: number }
+  /**
+   * limit：数を使い切った。busy：読んでいる途中。uncertain：返事が届かない（何も書いていない）。
+   * stale：読む間に計画が変わった（もう一度読む）。
+   */
+  | { status: 'limit' | 'busy' | 'uncertain' | 'stale' }
+  | { status: 'failed'; reason?: string };
+
+/**
+ * changed：見せた後に変わった（記録していない）。gone：古い候補。uncertain：届いたか分からない。
+ * pending：前の操作が届いたか分からないまま（先にそれを確かめてもらう。順番を入れ替えない）。
+ */
+export type ConfirmResult = {
+  status: 'ok' | 'changed' | 'refused' | 'gone' | 'uncertain' | 'pending' | 'failed';
+};
 
 export type SendResult =
   | { status: 'ok' | 'noop' }
@@ -90,12 +125,25 @@ export type Notice = 'changed' | 'refused' | 'expired' | 'uncertain';
  * 一つの操作（画面の一回の押下）。送り直す時も、同じ家庭・同じ大人・同じ ID・同じ中身で送る
  * （使う人を替えた後に、前の人の操作を今の人として送らない）。epoch は送った時の画面の代。
  */
-interface Operation {
+interface CommandOperation {
+  kind: 'command';
   epoch: number;
   where: Where;
   operationId: string;
   command: Command;
 }
+
+/** 一言の候補の記録（デモだけ）。命令と同じく、届いたか分からない間は、ほかの書き込みを止める。 */
+interface ProposalOperation {
+  kind: 'proposal';
+  epoch: number;
+  sessionId: string;
+  memberId: string;
+  proposalId: string;
+  operationId: string;
+}
+
+type Operation = CommandOperation | ProposalOperation;
 
 /** 見せる物を読み、命令を送る先。 */
 export type Where =
@@ -233,7 +281,7 @@ export function useServerView(where: Where | undefined) {
   }, [kind, sessionId, memberId, reload, isCurrent, show]);
 
   const deliver = useCallback(
-    async (operation: Operation): Promise<SendResult> => {
+    async (operation: CommandOperation): Promise<SendResult> => {
       const { epoch: at, where: target, operationId, command } = operation;
       // 待つ間（中身を読む間も）に、段・やり直し・使う人が替わっていたら（替えて戻った時も）、この
       // 返事は使わず、前の画面の続き（移る等）もさせない。今の画面は読み直す。
@@ -307,7 +355,13 @@ export function useServerView(where: Where | undefined) {
       }
       const target: Where =
         kind === 'demo' ? { kind, sessionId: sessionId ?? '', memberId } : { kind, memberId };
-      return deliver({ epoch: now.epoch, where: target, operationId: operationId(), command });
+      return deliver({
+        kind: 'command',
+        epoch: now.epoch,
+        where: target,
+        operationId: operationId(),
+        command,
+      });
     },
     [deliver, kind, key, sessionId, memberId],
   );
@@ -366,6 +420,132 @@ export function useServerView(where: Where | undefined) {
     [kind, key, sessionId, memberId, isCurrent, show],
   );
 
+  /**
+   * デモの家庭で、家族の一言を読む。読むだけで何も書かないので、返事が届かなくても同じ操作 ID で
+   * 送り直せる。待つ間に段・使う人が替わっていたら、その返事は使わない。
+   */
+  const hear = useCallback(
+    async (text: string, op: string): Promise<HearResult> => {
+      const now = current.current;
+      if (kind !== 'demo' || !sessionId || !memberId || now.key !== key) {
+        return { status: 'failed', reason: 'stale' };
+      }
+      if (now.memberId !== memberId) return { status: 'failed', reason: 'stale' };
+      if (busy.current === now.epoch) return { status: 'busy' };
+      busy.current = now.epoch;
+      try {
+        const response = await fetch(`/api/demo/sessions/${sessionId}/utterances`, {
+          method: 'POST',
+          headers: json,
+          body: JSON.stringify({ memberId, operationId: op, text }),
+          signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+        });
+        const body = (await response.json()) as
+          | { view: SessionView; reply: Heard }
+          | { error: string };
+        if (!isCurrent(now.epoch)) {
+          setReload((n) => n + 1);
+          return { status: 'failed', reason: 'stale' };
+        }
+        if ('view' in body) {
+          show(now.epoch, body.view);
+          return { status: 'ok', reply: body.reply, throughSeq: body.view.throughSeq };
+        }
+        if (body.error === 'unknownSession') {
+          setNotice('expired');
+          return { status: 'failed', reason: 'unknownSession' };
+        }
+        if (body.error === 'readingLimit') return { status: 'limit' };
+        if (body.error === 'readingBusy') return { status: 'busy' };
+        if (body.error === 'readingStale') return { status: 'stale' };
+        return { status: 'failed', reason: body.error };
+      } catch {
+        return { status: 'uncertain' };
+      } finally {
+        if (busy.current === now.epoch) busy.current = undefined;
+      }
+    },
+    [kind, key, sessionId, memberId, isCurrent, show],
+  );
+
+  /**
+   * 一言の候補の記録を送る（送り直しも同じ ID で）。サーバーが、見せた時と今の対象の状態を比べ、違えば
+   * 記録しない。返事が届かない時は、記録したか分からないので、命令と同じく取っておき（確かめるまで、
+   * ほかの書き込みを送らない）、見せる物を読み直す（同じ ID の送り直しは二度記録しない）。
+   */
+  const deliverProposal = useCallback(
+    async (operation: ProposalOperation): Promise<ConfirmResult> => {
+      const { epoch: at, operationId: op } = operation;
+      if (busy.current === at) return { status: 'failed' };
+      busy.current = at;
+      try {
+        const response = await fetch(
+          `/api/demo/sessions/${operation.sessionId}/proposals/${encodeURIComponent(operation.proposalId)}`,
+          {
+            method: 'POST',
+            headers: json,
+            body: JSON.stringify({ memberId: operation.memberId, operationId: op }),
+            signal: AbortSignal.timeout(COMMAND_TIMEOUT_MS),
+          },
+        );
+        const body = (await response.json()) as { view?: SessionView; error?: string };
+        // 返事が届いたので、この操作の結果は分かった。
+        if (pending.current?.operationId === op) pending.current = undefined;
+        if (!isCurrent(at)) {
+          setReload((n) => n + 1);
+          return { status: 'failed' };
+        }
+        if (body.view) show(at, body.view);
+        if (response.ok) return { status: 'ok' };
+        if (body.error === 'unknownSession') {
+          setNotice('expired');
+          return { status: 'failed' };
+        }
+        if (body.error === 'proposalChanged') return { status: 'changed' };
+        if (body.error === 'unknownProposal') return { status: 'gone' };
+        return { status: 'refused' };
+      } catch {
+        if (!isCurrent(at)) {
+          setReload((n) => n + 1);
+          return { status: 'failed' };
+        }
+        setReload((n) => n + 1);
+        pending.current = operation;
+        setNotice('uncertain');
+        return { status: 'uncertain' };
+      } finally {
+        if (busy.current === at) busy.current = undefined;
+      }
+    },
+    [isCurrent, show],
+  );
+
+  /** 一言の候補を記録する（押すごとに新しい操作。届いたか分からない操作が残る間は送らない）。 */
+  const confirm = useCallback(
+    async (proposalId: string, op: string): Promise<ConfirmResult> => {
+      const now = current.current;
+      if (kind !== 'demo' || !sessionId || !memberId || now.key !== key) {
+        return { status: 'failed' };
+      }
+      if (now.memberId !== memberId) return { status: 'failed' };
+      // 届いたか分からない操作が残っていれば、先にそれを確かめてもらう（後から届いた前の操作が、
+      // この記録を上書きしないように。命令の送り方と同じ）。
+      if (pending.current) {
+        setNotice('uncertain');
+        return { status: 'pending' };
+      }
+      return deliverProposal({
+        kind: 'proposal',
+        epoch: now.epoch,
+        sessionId,
+        memberId,
+        proposalId,
+        operationId: op,
+      });
+    },
+    [kind, key, sessionId, memberId, deliverProposal],
+  );
+
   // 今の代の見せる物だけを返す（替えた直後は、読み終えるまで何も見せない）。家族の大人でなく
   // なった（外された）と分かったら、前に読んだ物も見せない。
   const view = shown && shown.epoch === epoch && !denied && !switched ? shown.view : undefined;
@@ -381,12 +561,21 @@ export function useServerView(where: Where | undefined) {
     clearNotice: () => setNotice(undefined),
     send,
     read,
+    hear,
+    confirm,
     /** 届いたか分からない操作を、同じ家庭・同じ大人・同じ ID・同じ代で送り直す。 */
-    retry: () => {
+    retry: async (): Promise<void> => {
       const operation = pending.current;
-      return operation && isCurrent(operation.epoch)
-        ? deliver(operation)
-        : Promise.resolve(undefined);
+      if (!operation || !isCurrent(operation.epoch)) return;
+      if (operation.kind === 'command') {
+        await deliver(operation);
+        return;
+      }
+      // 一言の答えは閉じてあるので、記録の結果は、この知らせで伝える。
+      const result = await deliverProposal(operation);
+      if (result.status === 'ok') setNotice(undefined);
+      else if (result.status === 'changed') setNotice('changed');
+      else if (result.status === 'refused' || result.status === 'gone') setNotice('refused');
     },
     /** 届いたか分からない操作を、送り直さずに手放す（次の押下は別の操作になる）。 */
     discard: () => {

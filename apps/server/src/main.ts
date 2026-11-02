@@ -16,6 +16,7 @@ import { invitationsFrom } from './members';
 import { type Notifier, notifier } from './notifier';
 import { type Vapid, webPushSender } from './push';
 import { extractNotice, ReadingError } from './reading/extract';
+import { readUtterance } from './reading/utterance';
 
 // 手元では、リポジトリの .env を読む（Claude の鍵。値は表示しない）。本番は置き場所の設定から。
 const envFile = fileURLToPath(new URL('../../../.env', import.meta.url));
@@ -108,8 +109,28 @@ const reader = anthropic
       }
     }
   : undefined;
+// 一言の読み取りも、同じ鍵と同じ記録の仕方で。
+const listener = anthropic
+  ? async (context: Parameters<typeof readUtterance>[1]) => {
+      try {
+        const result = await readUtterance(anthropic, context);
+        console.log(
+          `一言：${result.model} 入力 ${result.usage.input_tokens}・出力 ${result.usage.output_tokens} tokens`,
+        );
+        return result;
+      } catch (error) {
+        const kind = error instanceof ReadingError ? error.reason : 'error';
+        console.log(`一言：失敗（${kind}）。使った量は分からない`);
+        throw error;
+      }
+    }
+  : undefined;
 // 家族の家庭を出すサーバーでは、デモの読み取りは開かない（createApp が外す）。
-const app = createApp({ ...(family ? { family } : {}), ...(reader ? { reader } : {}) });
+const app = createApp({
+  ...(family ? { family } : {}),
+  ...(reader ? { reader } : {}),
+  ...(listener ? { listener } : {}),
+});
 const webDist = fileURLToPath(new URL('../../web/dist', import.meta.url));
 app.use('/*', serveStatic({ root: webDist }));
 app.get('/*', serveStatic({ root: webDist, path: 'index.html' }));

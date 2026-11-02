@@ -7,13 +7,20 @@ import {
   type DomainEvent,
   type Extraction,
   formatDateTime,
+  type ProposalSeen,
   type Source,
   type SourceSender,
+  seenOf,
   splitSentences,
   toExtraction,
+  toUtteranceReply,
+  type UnsupportedReason,
+  type UtteranceContext,
+  type UtteranceRefs,
+  type UtteranceReply,
 } from '@maniau/core';
 import { currentItems, foldEvents } from '@maniau/core/engine';
-import { type CommandResult, runCommand } from './commands';
+import { type CommandGuard, type CommandResult, runCommand } from './commands';
 import { DEMO_STAGES, type DemoStageId, demoEvents } from './demo';
 import {
   buildExtractInput,
@@ -21,7 +28,9 @@ import {
   type ExtractResult,
   ReadingError,
 } from './reading/extract';
+import { buildUtteranceInput, type UtteranceResult } from './reading/utterance';
 import { memoryStore } from './store';
+import { utteranceContext } from './utterance-context';
 import { type View, viewFor } from './views';
 
 const MAX_SESSIONS = 200;
@@ -46,6 +55,55 @@ export const readingInputFits = (request: ExtractRequest) =>
 
 /** お知らせを Claude で読む（試験では偽物に替える）。 */
 export type NoticeReader = (request: ExtractRequest) => Promise<ExtractResult>;
+
+/** 一つのデモで読める一言の数（一言は短く、何度も言い直すので、お知らせより多くする）。 */
+export const MAX_UTTERANCES_PER_SESSION = 20;
+/** 一言を読む時に送る入力（前提の計画を含む）の長さ。 */
+export const MAX_UTTERANCE_INPUT_CHARS = 40_000;
+
+/** 家族の一言を Claude で読む（試験では偽物に替える）。 */
+export type UtteranceReader = (context: UtteranceContext) => Promise<UtteranceResult>;
+
+export interface UtteranceInput {
+  text: string;
+  /** 画面が付ける操作の ID。送り直しで、二度読まない。 */
+  operationId: string;
+}
+
+/** 画面に返す一言の答え。候補の控え（見せた時の状態）はサーバーに置き、命令と ID だけを返す。 */
+/** 見せる候補。値の答えの候補には、その問いの名前（お知らせの読み取りの物）を添える。 */
+export interface ShownProposal {
+  id: string;
+  command: Command;
+  label?: string;
+}
+
+export type ShownReply =
+  | { kind: 'change'; proposals: ShownProposal[] }
+  | { kind: 'clarify'; proposals: ShownProposal[]; reason: 'ambiguous' | 'otherAdultsTask' }
+  | { kind: 'question'; refs: UtteranceRefs }
+  | { kind: 'unsupported'; reason: UnsupportedReason };
+
+export type UtteranceOutcome =
+  | { status: 'ok'; view: View; reply: ShownReply }
+  | { status: 'limit' }
+  | { status: 'busy' }
+  | { status: 'invalid' }
+  | { status: 'conflict' }
+  /** 読む間に計画が変わった（古い前提の答えを、今の事実として見せない）。もう一度読んでもらう。 */
+  | { status: 'stale' }
+  | { status: 'failed'; reason: string };
+
+export type ConfirmOutcome =
+  | { status: 'ok'; view: View }
+  /** 見せた後に、対象の状態が変わった（もう一人が記録した等）。記録せず、今の物を見せ直す。 */
+  | { status: 'changed'; view: View }
+  /** 命令が断られた（権限・前提）。 */
+  | { status: 'refused'; result: CommandResult; view: View }
+  /** 知らない候補（期限切れのデモの物を含む）。 */
+  | { status: 'gone' }
+  /** 一言を言った本人ではない。 */
+  | { status: 'forbidden' };
 
 /** 読み取りで、家族に確かめてほしい所（原文の文。どの文か分からない時は全体）。 */
 export interface ReadCheck {
@@ -84,14 +142,33 @@ interface ReadingOperation {
   check?: ReadCheck;
 }
 
+interface UtteranceOperation {
+  digest: string;
+  state: 'reading' | 'done';
+  reply?: ShownReply;
+  /** 読んだ時の前提の要約。送り直しの時に今と比べ、変わっていれば古い答えを返さない。 */
+  context?: string;
+}
+
+interface StoredProposal {
+  memberId: string;
+  command: Command;
+  seen: ProposalSeen;
+}
+
 interface Session {
   now: DateTime;
   touched: number;
   /** このデモで読んだ（読もうとした）お知らせの数。 */
   readings: number;
-  /** いま読んでいる操作の ID。 */
+  /** いま読んでいる操作の ID（お知らせと一言で一つずつ）。 */
   reading?: string;
   operations: Map<string, ReadingOperation>;
+  /** このデモで読んだ（読もうとした）一言の数。 */
+  utterances: number;
+  utteranceOperations: Map<string, UtteranceOperation>;
+  /** 見せた候補（確かめるまで、何も書かない）。 */
+  proposals: Map<string, StoredProposal>;
 }
 
 /**
@@ -135,6 +212,10 @@ function titleOf(text: string): string | undefined {
   if (!first) return undefined;
   return first.length > 40 ? `${first.slice(0, 40)}…` : first;
 }
+
+/** 一言の前提の要約（送り直しの時に、読んだ時の前提と今を比べる）。 */
+const contextDigest = (context: UtteranceContext) =>
+  createHash('sha256').update(JSON.stringify(context)).digest('hex');
 
 export function demoSessions(
   clock: () => number = Date.now,
@@ -266,6 +347,72 @@ export function demoSessions(
       .catch((): NoticeResult => ({ status: 'failed', reason: 'error' }));
   }
 
+  /** 候補を控えに置き、画面に返す形にする（控えの状態は返さない）。 */
+  const show = (
+    session: Session,
+    reply: UtteranceReply,
+    memberId: string,
+    context: UtteranceContext,
+  ): ShownReply => {
+    if (reply.kind === 'question' || reply.kind === 'unsupported') return reply;
+    const proposals = reply.proposals.map((p): ShownProposal => {
+      const id = randomUUID();
+      session.proposals.set(id, { memberId, command: p.command, seen: p.seen });
+      const command = p.command;
+      const label =
+        command.type === 'answer'
+          ? context.unknowns.find((u) => u.id === command.unknownId)?.label
+          : undefined;
+      return { id, command, ...(label ? { label } : {}) };
+    });
+    return reply.kind === 'change'
+      ? { kind: 'change', proposals }
+      : { kind: 'clarify', proposals, reason: reply.reason };
+  };
+
+  /** 今の計画を前提に一言を読み、確かめた候補を返す。何も書かない。 */
+  async function hear(
+    id: string,
+    session: Session,
+    memberId: string,
+    input: UtteranceInput,
+    digest: string,
+    read: UtteranceReader,
+  ): Promise<UtteranceOutcome | undefined> {
+    const context = await store.withHousehold(id, (log) =>
+      utteranceContext(log.events(), memberId, session.now, input.text),
+    );
+    if (!context) return { status: 'invalid' };
+    if (buildUtteranceInput(context).length > MAX_UTTERANCE_INPUT_CHARS) return { status: 'limit' };
+    let reply: UtteranceReply;
+    try {
+      const result = await read(context);
+      reply = toUtteranceReply(result.output, context, randomUUID);
+    } catch (error) {
+      return { status: 'failed', reason: error instanceof ReadingError ? error.reason : 'error' };
+    }
+    const gone = () => sessions.get(id) !== session || clock() - session.touched > TTL_MS;
+    if (gone()) return undefined;
+    return store
+      .withHousehold(id, (log): UtteranceOutcome | undefined => {
+        if (gone()) return undefined;
+        // 読む間に前提（作業・頼み事・値・事項・時刻）が変わったら、古い前提で選んだ候補や答えを
+        // 見せない（条件の決まった事項を、決まる前の答えで「予定」と見せない等）。
+        const now = utteranceContext(log.events(), memberId, session.now, input.text);
+        if (!now || JSON.stringify(now) !== JSON.stringify(context)) return { status: 'stale' };
+        const view = viewFor(log.events(), memberId, session.now);
+        const shown = show(session, reply, memberId, context);
+        session.utteranceOperations.set(input.operationId, {
+          digest,
+          state: 'done',
+          reply: shown,
+          context: contextDigest(context),
+        });
+        return { status: 'ok', view, reply: shown };
+      })
+      .catch((): UtteranceOutcome => ({ status: 'failed', reason: 'error' }));
+  }
+
   return {
     /** 段から新しいデモの家庭を作る。 */
     create(stage: DemoStageId): string {
@@ -274,7 +421,15 @@ export function demoSessions(
       const now = DEMO_STAGES.find((s) => s.id === stage)?.now;
       if (!now) throw new Error(`デモの段が無い：${stage}`);
       store.create(id, demoEvents(stage));
-      sessions.set(id, { now, touched: clock(), readings: 0, operations: new Map() });
+      sessions.set(id, {
+        now,
+        touched: clock(),
+        readings: 0,
+        operations: new Map(),
+        utterances: 0,
+        utteranceOperations: new Map(),
+        proposals: new Map(),
+      });
       return id;
     },
     async view(id: string, memberId: string): Promise<View | undefined> {
@@ -365,6 +520,103 @@ export function demoSessions(
           session.operations.delete(input.operationId);
         }
       }
+    },
+    /**
+     * 家族の一言を Claude で読み、今の計画の、どの作業・頼み事・値のことかを候補にして返す。確かめる
+     * までは何も書かない。数と同時に読む数は、お知らせと一緒に抑える。
+     */
+    async utterance(
+      id: string,
+      memberId: string,
+      input: UtteranceInput,
+      read: UtteranceReader,
+    ): Promise<UtteranceOutcome | undefined> {
+      const session = touch(id);
+      if (!session) return undefined;
+      const digest = createHash('sha256')
+        .update(JSON.stringify([memberId, input.text]))
+        .digest('hex');
+      const previous = session.utteranceOperations.get(input.operationId);
+      if (previous) {
+        if (previous.digest !== digest) return { status: 'conflict' };
+        if (previous.state === 'reading' || !previous.reply || !previous.context) {
+          return { status: 'busy' };
+        }
+        const { reply, context } = previous;
+        // 読み直さず、数えずに同じ答えを返す。ただし、読んだ後に前提が変わっていれば、古い答えを
+        // 今の計画と並べて見せない（新しい操作で読み直してもらう）。
+        return store.withHousehold(id, (log): UtteranceOutcome => {
+          const now = utteranceContext(log.events(), memberId, session.now, input.text);
+          if (!now || contextDigest(now) !== context) return { status: 'stale' };
+          return { status: 'ok', view: viewFor(log.events(), memberId, session.now), reply };
+        });
+      }
+      const today = new Date(clock()).toISOString().slice(0, 10);
+      if (daily.day !== today) Object.assign(daily, { day: today, count: 0 });
+      if (session.utterances >= MAX_UTTERANCES_PER_SESSION || daily.count >= perDay) {
+        return { status: 'limit' };
+      }
+      if (session.reading !== undefined || inFlight >= MAX_READINGS_IN_FLIGHT) {
+        return { status: 'busy' };
+      }
+      session.utterances += 1;
+      daily.count += 1;
+      const day = daily.day;
+      session.reading = input.operationId;
+      inFlight += 1;
+      session.utteranceOperations.set(input.operationId, { digest, state: 'reading' });
+      try {
+        const result = await hear(id, session, memberId, input, digest, read);
+        if (result?.status === 'invalid' || result?.status === 'limit') {
+          session.utterances -= 1;
+          if (daily.day === day) daily.count -= 1;
+        }
+        return result;
+      } finally {
+        session.reading = undefined;
+        inFlight -= 1;
+        if (session.utteranceOperations.get(input.operationId)?.state === 'reading') {
+          session.utteranceOperations.delete(input.operationId);
+        }
+      }
+    },
+    /**
+     * 見せた候補を記録する（本人だけ）。家庭を押さえた中で、候補の対象の今の状態を見せた時と比べ、
+     * 違えば記録せずに見せ直す。同じ操作 ID の送り直しは、比べる前に済んだと答える。
+     */
+    async confirm(
+      id: string,
+      memberId: string,
+      proposalId: string,
+      operationId: string,
+    ): Promise<ConfirmOutcome | undefined> {
+      const session = touch(id);
+      if (!session) return undefined;
+      const proposal = session.proposals.get(proposalId);
+      if (!proposal) return { status: 'gone' };
+      if (proposal.memberId !== memberId) return { status: 'forbidden' };
+      const guard: CommandGuard = (events) => {
+        const now = utteranceContext(events, memberId, session.now, '');
+        const same =
+          now !== undefined &&
+          JSON.stringify(seenOf(proposal.command, now)) === JSON.stringify(proposal.seen);
+        return same ? undefined : 'proposalChanged';
+      };
+      const result = await runCommand(
+        store,
+        id,
+        { memberId, operationId, now: session.now, demo: true },
+        proposal.command,
+        guard,
+      );
+      const view = await store.withHousehold(id, (log) =>
+        viewFor(log.events(), memberId, session.now),
+      );
+      if (result.status === 'ok' || result.status === 'noop') return { status: 'ok', view };
+      if (result.status === 'conflict' && result.reason === 'proposalChanged') {
+        return { status: 'changed', view };
+      }
+      return { status: 'refused', result, view };
     },
   };
 }

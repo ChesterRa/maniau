@@ -6,10 +6,11 @@
 
 Putting an event in a calendar does not settle by when each decision must be made, who acts, or whose reply is still pending. In a family where both parents work, one person usually handles this: working out by when each decision has to be made, asking family members or grandparents, waiting for replies and following up, and cleaning up what was arranged when plans change. Maniau puts this hidden work on the family's screens so it can be shared.
 
-- **Read notices:** Claude reads text you paste or dictate with your phone keyboard's voice input, and extracts events, belongings, submissions, schedule changes, and more. Each item stays linked to the original text, and the Notices screen shows what was done with each sentence.
+- **Read notices:** Claude reads text you paste or dictate with your phone keyboard's voice input, and extracts events, belongings, submissions, schedule changes, and more. Each item stays linked to the original text, and the Notices screen marks the sentences that have items or need a check.
 - **Show decision deadlines:** From the notice's deadlines, rules the family has registered (after-school care forms, leave requests, how far ahead to ask a grandparent), and the usual week (work, commute, and pickup duties), Maniau estimates by when each option must be chosen and shows the next task. For purchases, it shows when a shop on the way home is open.
 - **Make clear who does what:** Maniau proposes each task to one adult and records whether they take it on or decline. Requests to grandparents or after-school care keep "awaiting a reply" separate from "confirmed". Tasks in an option the family is pursuing that have no one assigned appear on every adult's screen.
 - **Adapt to changes:** When a postponement or other change arrives, Maniau removes preparations that are no longer needed and drafts cancellation messages for people who were already asked.
+- **Update in a few words:** From a short update such as "Grandma says 12/7 is fine", Maniau finds the matching request or task and suggests what to record. Nothing is recorded until you tap (demo).
 
 The family makes the choices and contacts grandparents, after-school care, and others. Maniau never chooses for the family or sends those messages on its behalf.
 
@@ -18,7 +19,7 @@ Built with Claude: Japan 2026 entry
 ## How it works
 
 1. **Read (Claude):** Claude reads the notice into typed items such as events, belongings, and deadlines, and records which sentence each item came from. Conditions such as "if the event is postponed" are kept as conditions.
-2. **Check (code):** Code confirms that each quote appears in the original text and looks for clear mismatches between the month and day written in the text and the dates read. Items with a problem have no effect on the plan and are shown to the family as needing a check. These checks cover quotes and month-day dates only; they do not guarantee that a reading is correct.
+2. **Check (code):** Code checks whether each quote appears in the original text and looks for clear mismatches between the month and day written in the text and the dates read. Items with a problem have no effect on the plan and are shown to the family as needing a check. These checks cover quotes and month-day dates only; they do not guarantee that a reading is correct.
 3. **Plan (planning engine):** From the items and the household's information, the engine computes decision deadlines, next tasks, whom to propose each task to, and what a change makes unnecessary.
 4. **Verify (verifier):** A verifier written separately from the engine checks plan and notification conditions and stops notifications when it finds a violation.
 
@@ -41,13 +42,16 @@ The demo runs on a fictional household and notices; it needs no API key or datab
 
 When the server has `ANTHROPIC_API_KEY` set (as an environment variable or in `.env` at the repository root), the Notices screen shows a box for your own text. Text you paste, or dictate with your phone keyboard's voice input, is read with the Claude API, and items that can be planned are added to the plan. Sentences with extracted items, and sentences that need a check, are marked as added to the plan, shown in the schedule, read only (no reminders yet), or needing a check.
 
-The text and the items already read in that demo are sent to Anthropic, so use made-up text or remove anything that identifies a person or place. Readings are limited to 5 per demo, 100 per day (UTC) per server process, and 2 at a time. A server running in family mode does not offer demo readings.
+With the same setting, a Quick update box appears at the top of the Today screen. Say that a reply came, that you asked or submitted something, that you finished or can no longer do a task, and Maniau finds the matching request or task, suggests what to record, and records it when you tap. If the item changed after it was shown (for example, the other adult recorded it), nothing is recorded and the current state is shown again. Ask about the plan ("What do we need on 12/5?") and it lists the matching items and their status.
+
+The text and the items already read in that demo are sent to Anthropic. For quick updates, the update and the demo's plan and (fictional) family names are sent. Use made-up text or remove anything that identifies a person or place. Each demo allows 5 notice readings and 20 quick updates; each server process allows 100 in total per day (UTC), and 2 at a time. A server running in family mode offers neither demo readings nor quick updates.
 
 ## Current scope and limitations
 
 - Reading from photos is in development. Adding a notice as text works only in the demo with an API key set (not yet in family mode).
 - Family mode (identity checks with Cloudflare Access, Postgres storage, and Web Push notifications) is implemented. It has not yet been verified on a real device together with an iPhone home-screen app. A push provider accepting a notification does not prove that a person received or read it.
 - Do not enter real family data until authentication, deletion, notifications, and related safeguards have been checked in the actual environment. See the [foundation design](docs/design/02-foundation.md) for the requirements.
+- Quick updates can record a reply, that a request was sent or submitted, done, can no longer do, decline, cancellation sent, and answers to open questions. Changes to the usual week (pickups, work), reassigning tasks, and recording more than one thing at once are not yet supported. Tasks of options the family hasn't chosen yet (candidates kept for comparison) can't be recorded by a quick update either; choose the option first.
 - Times and travel durations are estimates based on the information entered. Demo shops, opening hours, and travel times are prepared examples; inventory, actual opening hours, routes, and arrival times are not guaranteed.
 
 ## Development
