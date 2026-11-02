@@ -78,6 +78,8 @@ export function Button(props: {
   onClick: () => void;
   kind?: 'primary' | 'secondary';
   className?: string;
+  /** 押せない（待っている間など）。 */
+  disabled?: boolean;
 }) {
   const look =
     props.kind === 'secondary'
@@ -87,7 +89,8 @@ export function Button(props: {
     <button
       type="button"
       onClick={props.onClick}
-      className={`flex min-h-[54px] flex-1 items-center justify-center gap-2 rounded-2xl px-3.5 font-round text-lg font-bold ${look} ${props.className ?? ''}`}
+      disabled={props.disabled}
+      className={`flex min-h-[54px] flex-1 items-center justify-center gap-2 rounded-2xl px-3.5 font-round text-lg font-bold disabled:opacity-50 ${look} ${props.className ?? ''}`}
     >
       {props.children}
     </button>

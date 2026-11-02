@@ -122,10 +122,18 @@ export function memoryStore(
       };
       const run = household.tail.then(async () => {
         const before = household.events.length;
-        const result = await fn(log);
-        const last = household.events.at(-1);
-        if (household.events.length > before && last) household.batchEnds.push(last.seq);
-        return result;
+        const operations = new Map(household.operations);
+        try {
+          const result = await fn(log);
+          const last = household.events.at(-1);
+          if (household.events.length > before && last) household.batchEnds.push(last.seq);
+          return result;
+        } catch (error) {
+          // Postgres の取引と同じく、途中で投げたら、この中で足した事象と操作の控えを戻す（半分だけ残さない）。
+          household.events.length = before;
+          household.operations = operations;
+          throw error;
+        }
       });
       // 失敗しても、次の書き込みは待たせない。
       household.tail = run.catch(() => undefined);

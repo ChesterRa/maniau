@@ -23,8 +23,19 @@ export interface Stage {
 
 export interface Reading {
   sourceId: string;
-  origin: 'recorded' | 'expected';
+  /** recorded：前に録った Claude の応答。expected：手で書いた形。live：家族が入れた文を、いま読んだ。 */
+  origin: 'recorded' | 'expected' | 'live';
   model: string;
+  /** 家族に確かめてほしい文（読み取れなかった・食い違い・二通りに読める）。 */
+  check?: string[];
+  /** どの文か分からない問題があった（全体を確かめる）。 */
+  checkAll?: boolean;
+}
+
+/** 読み取りで、家族に確かめてほしい所。 */
+export interface ReadCheck {
+  sentenceIds: string[];
+  all: boolean;
 }
 
 /** サーバーが、その大人のために作った見せる物（apps/server/src/views.ts と同じ形）。 */
@@ -37,6 +48,8 @@ export interface SessionView {
   /** 後から届いたお知らせで変わったこと（二人に同じ物）。 */
   changes?: ChangeSummary;
   sources: Source[];
+  /** 出典ごとの読み取り（どのモデルが読んだか、家族に確かめてほしい文）。 */
+  readings?: { sourceId: string; model: string; check: string[]; checkAll: boolean }[];
   items: LiveItem[];
 }
 
@@ -45,7 +58,22 @@ interface Session {
   household: Household;
   readings: Reading[];
   stages: Stage[];
+  /** お知らせの文を入れて読めるか（読み取りの鍵があるサーバーだけ）。 */
+  canRead?: boolean;
 }
+
+/** 家族が入れたお知らせの文。操作 ID は、届いたか分からない時の送り直しに同じ物を使う。 */
+export interface NoticeInput {
+  text: string;
+  sender: string;
+  operationId: string;
+}
+
+export type ReadResult =
+  | { status: 'ok'; sourceId: string; check: ReadCheck }
+  /** limit：数・量を使い切った。busy：読んでいる途中。uncertain：返事が届かない。stale：読む間に前提が変わった。 */
+  | { status: 'limit' | 'busy' | 'uncertain' | 'stale' }
+  | { status: 'failed'; reason?: string };
 
 export type SendResult =
   | { status: 'ok' | 'noop' }
@@ -93,9 +121,11 @@ const DENIED = new Set(['unauthenticated', 'notAMember']);
 const json = { 'content-type': 'application/json' };
 /** 命令の返事を待つ長さ。過ぎたら「届いたか分からない」にする（同じ ID で送り直せる）。 */
 const COMMAND_TIMEOUT_MS = 20_000;
+/** 読み取りの返事を待つ長さ（Claude が読むので、命令より長い）。 */
+const READ_TIMEOUT_MS = 120_000;
 
 /** 操作 ID（同じ操作の送り直しを見分ける。§7.3 の 4）。 */
-function operationId(): string {
+export function operationId(): string {
   try {
     return crypto.randomUUID();
   } catch {
@@ -282,6 +312,60 @@ export function useServerView(where: Where | undefined) {
     [deliver, kind, key, sessionId, memberId],
   );
 
+  /**
+   * デモの家庭に、お知らせの文を入れて読む（家族の家庭では、まだ使えない）。読めたら、返った新しい
+   * 見せる物で見せ直す。待つ間に段・使う人が替わっていたら、その返事は使わない。
+   */
+  const read = useCallback(
+    async (input: NoticeInput): Promise<ReadResult> => {
+      const now = current.current;
+      if (kind !== 'demo' || !sessionId || !memberId || now.key !== key) {
+        return { status: 'failed', reason: 'stale' };
+      }
+      if (now.memberId !== memberId) return { status: 'failed', reason: 'stale' };
+      if (busy.current === now.epoch) return { status: 'busy' };
+      busy.current = now.epoch;
+      try {
+        const response = await fetch(`/api/demo/sessions/${sessionId}/notices`, {
+          method: 'POST',
+          headers: json,
+          body: JSON.stringify({ memberId, ...input }),
+          signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+        });
+        if (!isCurrent(now.epoch)) {
+          setReload((n) => n + 1);
+          return { status: 'failed', reason: 'stale' };
+        }
+        if (response.status === 404) {
+          setNotice('expired');
+          return { status: 'failed', reason: 'unknownSession' };
+        }
+        const body = (await response.json()) as
+          | { view: SessionView; sourceId: string; check: ReadCheck }
+          | { error: string };
+        if (!isCurrent(now.epoch)) {
+          setReload((n) => n + 1);
+          return { status: 'failed', reason: 'stale' };
+        }
+        if ('view' in body) {
+          show(now.epoch, body.view);
+          return { status: 'ok', sourceId: body.sourceId, check: body.check };
+        }
+        if (body.error === 'readingLimit') return { status: 'limit' };
+        if (body.error === 'readingBusy') return { status: 'busy' };
+        if (body.error === 'readingStale') return { status: 'stale' };
+        return { status: 'failed', reason: body.error };
+      } catch {
+        // 返事が届かなかった。読んで足したかもしれないので、読み直して確かめる。
+        if (isCurrent(now.epoch)) setReload((n) => n + 1);
+        return { status: 'uncertain' };
+      } finally {
+        if (busy.current === now.epoch) busy.current = undefined;
+      }
+    },
+    [kind, key, sessionId, memberId, isCurrent, show],
+  );
+
   // 今の代の見せる物だけを返す（替えた直後は、読み終えるまで何も見せない）。家族の大人でなく
   // なった（外された）と分かったら、前に読んだ物も見せない。
   const view = shown && shown.epoch === epoch && !denied && !switched ? shown.view : undefined;
@@ -296,6 +380,7 @@ export function useServerView(where: Where | undefined) {
     notice,
     clearNotice: () => setNotice(undefined),
     send,
+    read,
     /** 届いたか分からない操作を、同じ家庭・同じ大人・同じ ID・同じ代で送り直す。 */
     retry: () => {
       const operation = pending.current;

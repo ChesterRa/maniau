@@ -147,5 +147,12 @@ export const Extraction = z.object({
   irrelevantSentenceIds: z.array(Id),
   /** 二通りに読める所。未定の値として足すか、問いにする。 */
   ambiguities: z.array(z.object({ sentenceId: Id, note: z.string().min(1) })).default([]),
+  /**
+   * 家族に確かめてほしい文：事項にならなかった文、検査で外した・食い違った事項の文、二通りに読める文。
+   * ここに無い文も、読み取りが正しいとは限らない（文が事項に結ばれただけ）。無いのは古い形。
+   */
+  checkSentenceIds: z.array(Id).optional(),
+  /** どの文の問題か分からない物があった（出典の全体を確かめてもらう）。無いのは false。 */
+  checkAll: z.boolean().optional(),
 });
 export type Extraction = z.infer<typeof Extraction>;

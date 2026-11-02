@@ -73,10 +73,30 @@ function useMemberLanguage(me: Member | undefined) {
 }
 
 /** 画面の本体（家庭の種類によらない）：知らせ、読み込みの状態、画面、下のタブ。 */
+/**
+ * 前から有る読み取り（録った・手で書いた）に、家族が入れて、いま読んだ物を足す。確かめてほしい文は、
+ * どれもサーバーの見せる物から取る。
+ */
+function withLive(
+  known: Reading[],
+  fromView: { sourceId: string; model: string; check: string[]; checkAll: boolean }[],
+): Reading[] {
+  const checkOf = (sourceId: string) => {
+    const read = fromView.find((r) => r.sourceId === sourceId);
+    return read ? { check: read.check, checkAll: read.checkAll } : {};
+  };
+  const live = fromView
+    .filter((r) => !known.some((k) => k.sourceId === r.sourceId))
+    .map((r) => ({ sourceId: r.sourceId, origin: 'live' as const, model: r.model }));
+  return [...known, ...live].map((r) => ({ ...r, ...checkOf(r.sourceId) }));
+}
+
 function Body(props: {
   live: ServerView;
   me: Member | undefined;
   readings: Reading[];
+  /** お知らせの文を入れて読めるか（デモで、読み取りの鍵があるサーバーだけ）。 */
+  canRead?: boolean;
   lang: UiLanguage;
   route: Route;
   onRoute: (route: Route) => void;
@@ -99,7 +119,8 @@ function Body(props: {
           ...(view.changes ? { changes: view.changes } : {}),
           items: view.items,
           sources: new Map(view.sources.map((s) => [s.id, s])),
-          readings: props.readings,
+          readings: withLive(props.readings, view.readings ?? []),
+          ...(props.canRead ? { read: live.read } : {}),
           me,
           lang,
           tz: view.household.timeZone,
@@ -191,6 +212,7 @@ function DemoApp() {
         live={demo}
         me={me}
         readings={session?.readings ?? []}
+        canRead={session?.canRead === true}
         lang={lang}
         route={route}
         onRoute={setRoute}

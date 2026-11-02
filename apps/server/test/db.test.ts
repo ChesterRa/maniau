@@ -229,22 +229,27 @@ describe('Postgres の置き場所', () => {
     expect(corrected?.type === 'itemCorrected' && corrected.interpretation.what).toBe(marker);
   });
 
-  it('処理の途中で投げたら、事象も操作も書かない', async () => {
+  it('処理の途中で投げたら、事象も操作も書かない（メモリの置き場所も同じ）', async () => {
     const db = await database();
-    const store = await seeded(db, H, demoEvents('arrived'));
-    const before = await store.withHousehold(H, (log) => log.events().length);
-    await expect(
-      store.withHousehold(H, (log) => {
-        log.append([{ type: 'itemConfirmed', itemId: 'i1' }], 'b', '2026-11-25T19:41+09:00');
-        log.recordOperation({ id: 'op-x', actorId: 'b', digest: '{}', throughSeq: before + 1 });
-        throw new Error('途中で失敗');
-      }),
-    ).rejects.toThrow('途中で失敗');
-    const after = await store.withHousehold(H, (log) => ({
-      count: log.events().length,
-      op: log.operation('op-x'),
-    }));
-    expect(after).toEqual({ count: before, op: undefined });
+    const stores: Store[] = [
+      memoryStore(new Map([[H, demoEvents('arrived')]])),
+      await seeded(db, H, demoEvents('arrived')),
+    ];
+    for (const store of stores) {
+      const before = await store.withHousehold(H, (log) => log.events().length);
+      await expect(
+        store.withHousehold(H, (log) => {
+          log.append([{ type: 'itemConfirmed', itemId: 'i1' }], 'b', '2026-11-25T19:41+09:00');
+          log.recordOperation({ id: 'op-x', actorId: 'b', digest: '{}', throughSeq: before + 1 });
+          throw new Error('途中で失敗');
+        }),
+      ).rejects.toThrow('途中で失敗');
+      const after = await store.withHousehold(H, (log) => ({
+        count: log.events().length,
+        op: log.operation('op-x'),
+      }));
+      expect(after).toEqual({ count: before, op: undefined });
+    }
   });
 
   it('中身が消えた事象があれば、家庭を読まずに投げる', async () => {

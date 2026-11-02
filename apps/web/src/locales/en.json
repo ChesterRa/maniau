@@ -182,7 +182,19 @@
     "untitled": "(Untitled)",
     "recorded": "Read by Claude ({{model}})",
     "handWritten": "Using a hand-written correct reading",
-    "gone": "This notice was deleted."
+    "gone": "This notice was deleted.",
+    "live": "Read just now by Claude ({{model}}).",
+    "check_one": "Please check {{count}} sentence (not read, not matching the original, or readable two ways).",
+    "check_other": "Please check {{count}} sentences (not read, not matching the original, or readable two ways).",
+    "checkAll": "Part of the reading couldn't be tied to a sentence. Please check the whole notice.",
+    "status": {
+      "check": "Check",
+      "plan": "Added to the plan",
+      "week": "Shown in Schedule",
+      "readOnly": "Read only (no reminders yet)"
+    },
+    "statusOn": "{{status}} · {{dates}}",
+    "toToday": "See Today"
   },
   "week": {
     "title": "Schedule",
@@ -246,5 +258,29 @@
     "working": "Setting up…",
     "install": "Add to Home Screen to get notifications",
     "denied": "Notifications are off in your device settings"
+  },
+  "input": {
+    "label": "Add a notice",
+    "help": "Paste a notice from school or an activity, or speak it with your keyboard's microphone. Anything that can be planned becomes decisions and deadlines. What each sentence became is shown next to the original.",
+    "sender": "From",
+    "senders": {
+      "school": "School",
+      "nursery": "Nursery / kindergarten",
+      "afterSchoolCare": "After-school care",
+      "club": "Lessons / cram school",
+      "workplace": "Workplace",
+      "family": "Family",
+      "other": "Other"
+    },
+    "placeholder": "e.g. Monday 12/7 is a normal school day. The presentation is postponed to Tuesday 12/8.",
+    "privacy": "What you enter is sent to Anthropic's Claude API to be read (to understand changes, items already read in this demo are sent too). Use made-up text, or remove anything that identifies a person or place (names, school names, addresses). In this demo the text is kept only in the server's memory, and demos left unused for more than 12 hours are deleted periodically.",
+    "submit": "Read it",
+    "reading": "Reading (about 30 seconds)…",
+    "limit": "No readings left. For this demo, use \"Restart\" for a new demo. The server-wide limit resets the next day (UTC).",
+    "busy": "Another reading is in progress. Please wait a moment and press again.",
+    "uncertain": "No answer came back. Press again to check the previous reading (if it was added, it won't be added twice; if it wasn't read, it will be read again).",
+    "failed": "It couldn't be read. Please check the text and try again.",
+    "clock": "Words like “tomorrow” are read against the demo clock ({{now}}).",
+    "stale": "While reading, items read earlier changed (corrected, confirmed, etc.). Please press \"Read it\" again. Your text is still here."
   }
 }

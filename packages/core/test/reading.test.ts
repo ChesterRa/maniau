@@ -222,6 +222,132 @@ describe('読み取りの検査', () => {
   });
 });
 
+describe('家族に確かめてもらう文', () => {
+  const context = { priorItems: [], priorUnknowns: [] };
+
+  it('全部の文が事項か関係ない文になれば無い。外した事項の文は、同じ文の別の事項が残っても出す', () => {
+    const clean = toExtraction(output1, notice1, context).extraction;
+    expect(clean.checkSentenceIds).toEqual([]);
+    expect(clean.checkAll).toBe(false);
+    const twoInOne: ExtractionOutput = {
+      ...output1,
+      items: [
+        ...output1.items,
+        item({
+          id: 'i8',
+          sentenceIds: ['n1#8'],
+          kind: 'belongings',
+          deadline: '2026-13-01T08:00+09:00',
+        }),
+      ],
+    };
+    const { extraction, issues } = toExtraction(twoInOne, notice1, context);
+    expect(issues.map((i) => i.problem)).toEqual(['badDate']);
+    expect(extraction.items.map((i) => i.id)).toContain('n1:i3');
+    expect(extraction.checkSentenceIds).toEqual(['n1#8']);
+    expect(extraction.checkAll).toBe(false);
+  });
+
+  it('書かれた表現が指した文に無ければ「食い違い」にして出す（空白と全角・半角の違いは許す）', () => {
+    const invented: ExtractionOutput = {
+      ...output1,
+      items: [
+        ...output1.items,
+        item({
+          id: 'i9',
+          sentenceIds: ['n1#1'],
+          kind: 'belongings',
+          written: '白い長袖シャツは不要です。',
+          effects: [{ type: 'cancel', itemId: 'n0:i1', unknownId: null, value: null }],
+        }),
+      ],
+    };
+    const prior = toExtraction(output1, notice1, context).extraction.items[0];
+    if (!prior) throw new Error('事項が無い');
+    const { extraction, issues } = toExtraction(invented, notice1, {
+      priorItems: [{ ...prior, id: 'n0:i1' }],
+      priorUnknowns: [],
+    });
+    expect(issues).toEqual([{ problem: 'quoteMismatch', ref: 'n1:i9' }]);
+    expect(extraction.items.find((i) => i.id === 'n1:i9')?.evidence).toBe('conflicting');
+    expect(extraction.checkSentenceIds).toEqual(['n1#1']);
+    const spaced: ExtractionOutput = {
+      ...output1,
+      items: output1.items.map((i) =>
+        i.id === 'i3' ? { ...i, written: '衣装として、 白い長袖シャツを用意してください' } : i,
+      ),
+    };
+    expect(toExtraction(spaced, notice1, context).issues).toEqual([]);
+    // 二つの文にまたがる引用は、モデルが文を逆の順に挙げても、原文の順につないで探す。
+    const reversed: ExtractionOutput = {
+      ...output1,
+      items: output1.items.map((i) =>
+        i.id === 'i3'
+          ? {
+              ...i,
+              sentenceIds: ['n1#9', 'n1#8'],
+              written: '衣装として、白い長袖シャツを用意してください。5日(土)に行った場合',
+            }
+          : i,
+      ),
+    };
+    expect(toExtraction(reversed, notice1, context).issues).toEqual([]);
+  });
+
+  it('同じ ID の未定の値を二度宣言したら、どちらも使わず、それに頼る事項を外して全体を確かめてもらう', () => {
+    const twice: ExtractionOutput = {
+      ...output1,
+      unknowns: [
+        ...output1.unknowns,
+        { id: 'u-date', label: '実施するか', values: ['go', 'cancel'], kind: 'schedule' },
+      ],
+    };
+    const { extraction, issues } = toExtraction(twice, notice1, context);
+    expect(issues).toContainEqual({ problem: 'duplicateId', ref: 'n1:u-date' });
+    expect(extraction.unknowns).toEqual([]);
+    // 「12月5日(土)」「延期した場合」の条件に従う事項は使わない。
+    expect(extraction.items.map((i) => i.id)).toEqual(['n1:i2', 'n1:i3', 'n1:i7']);
+    expect(extraction.checkAll).toBe(true);
+  });
+
+  it('文に書かれた日付と合わない日付（曜日の同じ別の週）は「食い違い」にして出す', () => {
+    const shifted: ExtractionOutput = {
+      ...output1,
+      items: output1.items.map((i) => (i.id === 'i1' ? { ...i, date: '2026-12-12' } : i)),
+    };
+    const { extraction, issues } = toExtraction(shifted, notice1, context);
+    expect(issues).toEqual([{ problem: 'dateMismatch', ref: 'n1:i1', detail: '2026-12-12' }]);
+    expect(extraction.items.find((i) => i.id === 'n1:i1')?.evidence).toBe('conflicting');
+    expect(extraction.checkSentenceIds).toEqual(['n1#6']);
+  });
+
+  it('食い違い・事項にならなかった文・二通りに読める文（説明が空でも）を出し、文へ戻せない問題は全体', () => {
+    const broken: ExtractionOutput = {
+      ...output1,
+      items: [
+        item({ ...output1.items[3], id: 'i4', writtenWeekday: 'tue' }),
+        item({ id: 'x', sentenceIds: ['n1#99'], written: '無い文' }),
+      ],
+      ambiguities: [{ sentenceId: 'n1#2', note: '' }],
+    };
+    const { extraction } = toExtraction(broken, notice1, context);
+    // n1#9 は食い違い、n1#2 は二通り（関係ない文だが、説明の空の二通りでも出す）、他は事項にならなかった文。
+    expect(extraction.checkSentenceIds).toEqual([
+      'n1#2',
+      'n1#6',
+      'n1#7',
+      'n1#8',
+      'n1#9',
+      'n1#10',
+      'n1#11',
+      'n1#12',
+    ]);
+    expect(extraction.checkAll).toBe(true);
+    // 説明の空の二通りは、説明の一覧に入れない（読み取りは落ちない）。
+    expect(extraction.ambiguities).toEqual([]);
+  });
+});
+
 describe('「あした」「きょう」', () => {
   const club = {
     id: 'c1',

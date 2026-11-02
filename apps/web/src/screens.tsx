@@ -8,6 +8,7 @@ import {
   type ExternalRequest,
   type Household,
   type Item,
+  isActiveTask,
   type Member,
   type OptionPlan,
   type PlanResult,
@@ -19,8 +20,14 @@ import {
   toEpochMinutes,
 } from '@maniau/core';
 import type { TFunction } from 'i18next';
-import { useState } from 'react';
-import type { Reading, SendResult } from './family';
+import { useRef, useState } from 'react';
+import {
+  type NoticeInput,
+  operationId,
+  type Reading,
+  type ReadResult,
+  type SendResult,
+} from './family';
 import {
   daysBetween,
   formatDay,
@@ -74,6 +81,8 @@ export interface Ctx {
   outbound: (lng: string) => TFunction;
   /** 命令を送る。断られた時（内容が変わった等）は、新しい見せる物で見せ直される。 */
   send: (command: Command) => Promise<SendResult>;
+  /** お知らせの文を入れて読む（使える時だけ。デモで、読み取りの鍵があるサーバー）。 */
+  read?: (input: NoticeInput) => Promise<ReadResult>;
   go: (route: Route) => void;
 }
 
@@ -1035,6 +1044,14 @@ export function SourcesScreen(props: { ctx: Ctx; sourceId?: string; highlight?: 
   );
   const shown = props.sourceId ? sources.filter((s) => s.id === props.sourceId) : sources;
   const highlight = new Set(props.highlight ?? []);
+  const input = ctx.read ? (
+    <NoticeInputCard ctx={ctx} read={ctx.read} />
+  ) : (
+    <Card tone="accent">
+      <Label tone="accent">{ctx.t('sources.snapLabel')}</Label>
+      <Text>{ctx.t('sources.snapBody')}</Text>
+    </Card>
+  );
   return (
     <>
       <Header
@@ -1043,10 +1060,8 @@ export function SourcesScreen(props: { ctx: Ctx; sourceId?: string; highlight?: 
         title={ctx.t('sources.title')}
       />
       <Main>
-        <Card tone="accent">
-          <Label tone="accent">{ctx.t('sources.snapLabel')}</Label>
-          <Text>{ctx.t('sources.snapBody')}</Text>
-        </Card>
+        {/* 一つのお知らせを開いた時（読み終えた直後など）は、読み取りの結果を先に見せる。 */}
+        {!props.sourceId && input}
         {/* お知らせごと消した出典は、見せる物に来ない（原文を出さない）。 */}
         {props.sourceId && shown.length === 0 && (
           <Card>
@@ -1055,34 +1070,220 @@ export function SourcesScreen(props: { ctx: Ctx; sourceId?: string; highlight?: 
         )}
         {shown.map((source) => {
           const reading = ctx.readings.find((r) => r.sourceId === source.id);
+          const check = new Set(reading?.check ?? []);
+          const statusOf = sentenceStatus(ctx, source.id);
           return (
             <Card key={source.id}>
               <Label tone="sub">
                 {ctx.t('sources.received', { at: dayTime(ctx, source.receivedAt) })}
               </Label>
               <Title>{source.title ?? ctx.t('sources.untitled')}</Title>
+              {reading?.checkAll ? (
+                <Text>{ctx.t('sources.checkAll')}</Text>
+              ) : (
+                check.size > 0 && <Text>{ctx.t('sources.check', { count: check.size })}</Text>
+              )}
               <div className="flex flex-col gap-1">
-                {source.sentences.map((sentence) => (
-                  <p
-                    key={sentence.id}
-                    className={`rounded-lg px-1.5 text-base leading-relaxed ${highlight.has(sentence.id) ? 'bg-bag font-bold' : ''}`}
-                  >
-                    {sentence.text}
-                  </p>
-                ))}
+                {source.sentences.map((sentence) => {
+                  const read = statusOf(sentence.id);
+                  const status = check.has(sentence.id) ? 'check' : read?.status;
+                  // 読んだ日付も並べ、原文と見比べられるようにする。
+                  const dates = read?.dates.map((d) => day(ctx, d)) ?? [];
+                  return (
+                    <p
+                      key={sentence.id}
+                      className={`rounded-lg px-1.5 text-base leading-relaxed ${highlight.has(sentence.id) ? 'bg-bag font-bold' : ''} ${status === 'check' ? 'border-l-4 border-warn' : ''}`}
+                    >
+                      {sentence.text}
+                      {status && (
+                        <span
+                          className={`ml-1.5 whitespace-nowrap text-xs font-bold ${STATUS_TONE[status]}`}
+                        >
+                          {dates.length > 0
+                            ? ctx.t('sources.statusOn', {
+                                status: ctx.t(`sources.status.${status}`),
+                                dates: new Intl.ListFormat(ctx.lang).format(dates),
+                              })
+                            : ctx.t(`sources.status.${status}`)}
+                        </span>
+                      )}
+                    </p>
+                  );
+                })}
               </div>
+              {props.sourceId && (
+                <Button kind="secondary" onClick={() => ctx.go({ name: 'today' })}>
+                  {ctx.t('sources.toToday')}
+                </Button>
+              )}
               {reading && (
                 <Text quiet>
-                  {reading.origin === 'recorded'
-                    ? ctx.t('sources.recorded', { model: reading.model })
-                    : ctx.t('sources.handWritten')}
+                  {reading.origin === 'live'
+                    ? ctx.t('sources.live', { model: reading.model })
+                    : reading.origin === 'recorded'
+                      ? ctx.t('sources.recorded', { model: reading.model })
+                      : ctx.t('sources.handWritten')}
                 </Text>
               )}
             </Card>
           );
         })}
+        {props.sourceId && input}
       </Main>
     </>
+  );
+}
+
+/** 文の印の色：確かめる（警告）、計画に入れた・よていに出す（印）、読んだだけ（控えめ）。 */
+const STATUS_TONE = {
+  check: 'text-warn',
+  plan: 'text-accent',
+  week: 'text-accent',
+  readOnly: 'text-sub',
+} as const;
+
+/** よていに出す事項の種類（日付があれば）。 */
+const WEEK_KINDS = new Set(['event', 'dayChange', 'test']);
+
+/**
+ * 原文の文ごとに、そこから読んだ事項を何にしたか：作業・手配のある要件にした（計画に入れた）、よていに
+ * 出す、読んだだけ（まだ計画にも知らせにもしていない）。事項の無い文は無し。読み取れた全てを計画にできる
+ * とは限らないので、「何もしない」と「まだできない」を家族が見分けられるようにする。
+ */
+function sentenceStatus(ctx: Ctx, sourceId: string) {
+  // 計画に入れた：家族の目に入る次の一歩がある（今の案の作業、選べる・返事しだい・先に聞く手配、問い）。
+  // まだ判断できない・このままでは無理の手配だけなら、次の一歩は無いので「読んだだけ」。
+  const stepped = new Set(
+    ctx.plan.arrangements
+      .filter(
+        (a) =>
+          a.live &&
+          (a.status === 'decidable' || a.status === 'dependsOnReply' || a.status === 'askFirst'),
+      )
+      .map((a) => a.key),
+  );
+  const asked = new Set(ctx.plan.questions.flatMap((q) => q.affects));
+  const acted = new Set(
+    ctx.plan.requirements
+      .filter(
+        (r) =>
+          r.live &&
+          (ctx.plan.tasks.some(
+            (t) => t.live && t.basis.requirementKey === r.key && isActiveTask(ctx.plan, t),
+          ) ||
+            ctx.plan.arrangements.some(
+              (a) => a.requirementKey === r.key && (stepped.has(a.key) || asked.has(a.key)),
+            )),
+      )
+      .flatMap((r) => r.basis.itemIds),
+  );
+  const items = ctx.items.filter((e) => e.live && e.item.sourceId === sourceId);
+  return (
+    sentenceId: string,
+  ): { status: 'plan' | 'week' | 'readOnly'; dates: string[] } | undefined => {
+    const here = items.filter((e) => e.item.sentenceIds.includes(sentenceId));
+    if (here.length === 0) return undefined;
+    const dates = [
+      ...new Set(
+        here.flatMap(({ item }) => [
+          item.interpretation.date,
+          item.interpretation.deadline?.slice(0, 10),
+        ]),
+      ),
+    ]
+      .filter((d): d is string => d !== undefined)
+      .sort();
+    const status = here.some((e) => acted.has(e.item.id))
+      ? 'plan'
+      : here.some((e) => WEEK_KINDS.has(e.item.kind) && e.item.interpretation.date)
+        ? 'week'
+        : 'readOnly';
+    return { status, dates };
+  };
+}
+
+/** お知らせの出どころ（読み取りが、誰からの物かを知るため）。 */
+const SENDERS = ['school', 'nursery', 'afterSchoolCare', 'club', 'workplace', 'family', 'other'];
+
+/**
+ * お知らせの文を入れる。貼るか、キーボードのマイクで話す（携帯の音声入力をそのまま使う）。読めたら
+ * 「きょう」に戻り、決めることと期限が出る。読む間は押せない。
+ */
+function NoticeInputCard({
+  ctx,
+  read,
+}: {
+  ctx: Ctx;
+  read: (input: NoticeInput) => Promise<ReadResult>;
+}) {
+  const [text, setText] = useState('');
+  const [sender, setSender] = useState('school');
+  const [state, setState] = useState<'idle' | 'reading' | ReadResult['status']>('idle');
+  // 同じ文の送り直し（返事が届かなかった時など）は、同じ操作 ID で送る（二度読まない・二度足さない）。
+  // 文か出どころを変えたら、新しい操作。
+  const operation = useRef<string | undefined>(undefined);
+  const change = (next: () => void) => {
+    operation.current = undefined;
+    next();
+  };
+  const submit = async () => {
+    setState('reading');
+    operation.current ??= operationId();
+    const result = await read({ text, sender, operationId: operation.current });
+    if (result.status === 'ok') {
+      operation.current = undefined;
+      setText('');
+      setState('idle');
+      // 読んだお知らせの文ごとに、何にしたか（計画・よてい・読んだだけ・要確認）を先に見せる。
+      // 「読んだだけ」の事項は、きょうの札にならないので、ここで見ないと気づけない。
+      ctx.go({ name: 'sources', sourceId: result.sourceId });
+      return;
+    }
+    setState(result.status);
+  };
+  return (
+    <Card tone="accent">
+      <Label tone="accent">{ctx.t('input.label')}</Label>
+      <Text>{ctx.t('input.help')}</Text>
+      <label className="flex flex-col gap-1 text-sm">
+        <span className="text-sub">{ctx.t('input.sender')}</span>
+        <select
+          value={sender}
+          disabled={state === 'reading'}
+          onChange={(e) => change(() => setSender(e.target.value))}
+          className="rounded-lg border border-line bg-card px-2 py-2 text-base"
+        >
+          {SENDERS.map((s) => (
+            <option key={s} value={s}>
+              {ctx.t(`input.senders.${s}`)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <textarea
+        value={text}
+        readOnly={state === 'reading'}
+        onChange={(e) => change(() => setText(e.target.value))}
+        rows={6}
+        maxLength={4000}
+        aria-label={ctx.t('input.label')}
+        placeholder={ctx.t('input.placeholder')}
+        className="w-full rounded-lg border border-line bg-card p-3 text-base leading-relaxed"
+      />
+      <Text quiet>{ctx.t('input.clock', { now: dayTime(ctx, ctx.now) })}</Text>
+      <Text quiet>{ctx.t('input.privacy')}</Text>
+      {(state === 'limit' ||
+        state === 'busy' ||
+        state === 'uncertain' ||
+        state === 'stale' ||
+        state === 'failed') && <Text>{ctx.t(`input.${state}`)}</Text>}
+      <Button
+        onClick={() => void submit()}
+        disabled={state === 'reading' || text.trim().length === 0}
+      >
+        {ctx.t(state === 'reading' ? 'input.reading' : 'input.submit')}
+      </Button>
+    </Card>
   );
 }
 

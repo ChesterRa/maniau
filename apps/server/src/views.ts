@@ -5,6 +5,7 @@ import {
   changeSummary,
   type DateTime,
   type DomainEvent,
+  Extraction,
   formatDateTime,
   type Household,
   type PlanResult,
@@ -27,6 +28,9 @@ export interface View {
   changes?: ChangeSummary;
   /** 元の文（どの予定からも戻れるように）。 */
   sources: Source[];
+  /** 出典ごとの読み取り（どのモデルが読んだか）。後から入れたお知らせの物も含む。 */
+  /** 出典ごとの最後の読み取り：読んだモデルと、家族に確かめてほしい文（どの文か分からない時は全体）。 */
+  readings: { sourceId: string; model: string; check: string[]; checkAll: boolean }[];
   /** 今の事項（確かめてほしい推定も含む）。 */
   items: LiveItem[];
 }
@@ -45,8 +49,27 @@ export function viewFor(events: readonly DomainEvent[], memberId: string, now: D
     today: todayCards(plan, memberId),
     ...withChange(events, plan),
     sources: [...state.sources.values()],
+    readings: readingsOf(events),
     items: liveItems(state),
   };
+}
+
+/** 出典ごとの最後の読み取りのモデル。 */
+function readingsOf(events: readonly DomainEvent[]): View['readings'] {
+  const last = new Map<string, View['readings'][number]>();
+  for (const e of events) {
+    if (e.type === 'modelOutputRecorded' && e.call === 'extract' && e.sourceId) {
+      // 形の分からない読み取りは、全体を確かめてもらう。
+      const read = Extraction.safeParse(e.output);
+      last.set(e.sourceId, {
+        sourceId: e.sourceId,
+        model: e.model,
+        check: read.success ? (read.data.checkSentenceIds ?? []) : [],
+        checkAll: read.success ? (read.data.checkAll ?? false) : true,
+      });
+    }
+  }
+  return [...last.values()];
 }
 
 /** 変わったことを見るお知らせの数（新しい物から）。 */

@@ -19,7 +19,9 @@ Open [http://localhost:5173](http://localhost:5173). The web app normally uses p
 
 The demo uses a fictional household and school notices; it needs no API key or database. Use the scene and viewer selectors at the top to explore a new notice, a pending reply and backup option, and cancellation messages after a postponement. Each scene starts from a prepared state. Actions are kept in server memory and are not persisted.
 
-The demo uses Claude responses recorded in advance from fictional text. It does not call the Claude API while you use it. If a recording is unavailable, it uses a hand-written reading and identifies that on screen.
+The prepared notices use Claude responses recorded in advance from fictional text, so reading them does not call the Claude API. If a recording is unavailable, it uses a hand-written reading and identifies that on screen.
+
+When the server has `ANTHROPIC_API_KEY` set (as an environment variable or in `.env` at the repository root), the demo's Notices screen shows a box for your own text. Text you paste, or speak with your phone keyboard's voice input, is read with the Claude API, and anything that can be planned is added to the plan. Sentences with extracted items, and sentences that need a check, are marked as added to the plan, shown in the schedule, read only, or needing a check. The text and the items already read in this demo are sent to Anthropic, so use made-up text or remove anything that identifies a person or place. Readings are limited to 5 per demo, 100 per day (UTC) per server process, and 2 at a time. A server that serves family households does not offer demo readings.
 
 ## What it does
 
@@ -32,7 +34,7 @@ The project includes a Claude-based text extraction component, a TypeScript plan
 
 ## Not yet available or verified
 
-- Adding a new notice from the interface and taking a photo for extraction are still in development. The demo uses prepared notices.
+- Taking a photo for extraction is still in development. Adding a notice as text works only in the demo with an API key set (not yet in family mode).
 - The combination of an iPhone home-screen app, Cloudflare Access, and Web Push has not yet been verified on a real device. A push provider accepting a notification does not prove that a person received or read it.
 - Do not enter real family data until authentication, deletion, notifications, and related safeguards have been checked in the actual environment. See the [foundation design](docs/design/02-foundation.md) for the requirements.
 - Demo shops, opening hours, and travel times use prepared example data. Inventory, actual opening hours, routes, and arrival times are not guaranteed.

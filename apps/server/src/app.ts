@@ -1,6 +1,6 @@
 // API。見る人ごとのデモの家庭（架空の家族。ログインなし）と、家族の家庭（Cloudflare Access の身元。
 // Postgres）。どちらも、画面には見せる物だけを渡し、事象の列は渡さない（02-foundation §7.1）。
-import { Command } from '@maniau/core';
+import { Command, SourceSender } from '@maniau/core';
 import { type Context, Hono } from 'hono';
 import { z } from 'zod';
 import { ACCESS_HEADER, type AccessVerifier } from './auth/access';
@@ -8,7 +8,7 @@ import { nowIn } from './clock';
 import { type CommandResult, runCommand } from './commands';
 import type { Db } from './db/store';
 import { DEMO_STAGES, isDemoStage, loadDemoData } from './demo';
-import { demoSessions } from './demo-sessions';
+import { demoSessions, type NoticeReader } from './demo-sessions';
 import { type FamilyMember, type Invitations, memberFor } from './members';
 import type { Notifier } from './notifier';
 import { isPushEndpoint, removeSubscription, saveSubscription } from './push';
@@ -35,11 +35,20 @@ export interface FamilyBackend {
 const STATUS = { ok: 200, noop: 200, conflict: 409, forbidden: 403, invalid: 400 } as const;
 const statusOf = (result: CommandResult) => STATUS[result.status];
 
-export function createApp(options: { family?: FamilyBackend } = {}): Hono {
+export function createApp(
+  options: {
+    family?: FamilyBackend;
+    /** お知らせを Claude で読む口（API の鍵がある時だけ）。無ければ、デモに文を入れられない。 */
+    reader?: NoticeReader;
+  } = {},
+): Hono {
   // 起きる時に、デモの家族とお知らせを読み、型と家族の決まりを確かめる（誤りなら起きない）。
   loadDemoData();
   const sessions = demoSessions();
   const { family } = options;
+  // 家族の家庭を出すアプリでは、デモの読み取りを開けない（ログインの無いデモの道で、Claude の費用を
+  // 使わせない）。読み取りを試すのは、デモだけのサーバー。
+  const reader = family ? undefined : options.reader;
   const app = new Hono();
   // API の返事は、どれも控えに残さない（家族の予定・場所を、端末や途中の控えに置かない）。
   app.use('/api/*', async (c, next) => {
@@ -211,6 +220,8 @@ export function createApp(options: { family?: FamilyBackend } = {}): Hono {
       household: data.household,
       readings: data.readings.map(({ sourceId, origin, model }) => ({ sourceId, origin, model })),
       stages: DEMO_STAGES.map((s) => ({ id: s.id, now: s.now, viewer: s.viewer })),
+      // お知らせの文を入れて読めるか（読み取りの鍵があるサーバーだけ）。
+      canRead: reader !== undefined,
     });
   });
   app.get('/api/demo/sessions/:sid/view', async (c) => {
@@ -228,6 +239,43 @@ export function createApp(options: { family?: FamilyBackend } = {}): Hono {
     const done = await sessions.command(c.req.param('sid'), memberId, operationId, command);
     if (!done) return c.json({ error: 'unknownSession' }, 404);
     return c.json(done, statusOf(done.result));
+  });
+  // デモの家庭に、お知らせの文を入れる（貼る・キーボードのマイクで話す）。Claude で読み、計画に入れる。
+  const NoticeInput = z.object({
+    memberId: z.string().min(1),
+    operationId: z.string().min(1).max(100),
+    text: z.string().trim().min(1).max(4000),
+    sender: SourceSender.default('school'),
+  });
+  app.post('/api/demo/sessions/:sid/notices', async (c) => {
+    if (!reader) return c.json({ error: 'readingUnavailable' }, 503);
+    const body = NoticeInput.safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badNotice' }, 400);
+    const { memberId, operationId, text, sender } = body.data;
+    const done = await sessions.notice(
+      c.req.param('sid'),
+      memberId,
+      { text, sender, operationId },
+      reader,
+    );
+    if (!done) return c.json({ error: 'unknownSession' }, 404);
+    switch (done.status) {
+      case 'ok':
+        return c.json({ view: done.view, sourceId: done.sourceId, check: done.check });
+      case 'limit':
+        return c.json({ error: 'readingLimit' }, 429);
+      case 'busy':
+        return c.json({ error: 'readingBusy' }, 429);
+      case 'invalid':
+        return c.json({ error: 'notAMember' }, 400);
+      case 'conflict':
+        return c.json({ error: 'operationReused' }, 409);
+      case 'stale':
+        return c.json({ error: 'readingStale' }, 409);
+      case 'failed':
+        // 中身や理由の文は返さない（種類だけ）。
+        return c.json({ error: 'readingFailed', reason: done.reason }, 502);
+    }
   });
   return app;
 }

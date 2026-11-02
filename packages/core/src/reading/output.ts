@@ -89,7 +89,11 @@ export interface ReadingIssue {
     | 'badTime'
     | 'badCondition'
     | 'unknownEffectTarget'
-    | 'duplicateId';
+    | 'duplicateId'
+    /** 書かれた表現が、指した文に無い（原文に無い言葉を根拠にしている）。 */
+    | 'quoteMismatch'
+    /** 指した文に日付が書かれているのに、モデルの日付・期限がどれとも合わない。 */
+    | 'dateMismatch';
   ref: string;
   detail?: string;
 }
@@ -115,18 +119,29 @@ export function toExtraction(
   const issues: ReadingIssue[] = [];
   const sentenceIds = new Set(source.sentences.map((s) => s.id));
   const local = (id: string) => `${source.id}:${id}`;
-  const localUnknowns = new Map(output.unknowns.map((u) => [u.id, local(u.id)]));
-  const localNodes = new Map(output.conditions.map((c) => [c.id, local(c.id)]));
+  // 同じ ID を二度宣言した未定の値と条件の節点は、どちらも使わない（どちらかを選ぶと、確かめる時と
+  // 答える時で別の宣言を使いかねない）。それに頼る条件と事項は、下の検査で外れ、全体を確かめてもらう。
+  const repeated = (ids: readonly string[]) =>
+    new Set(ids.filter((id, i) => ids.indexOf(id) !== i));
+  const twiceUnknowns = repeated(output.unknowns.map((u) => u.id));
+  const twiceNodes = repeated(output.conditions.map((c) => c.id));
+  for (const id of [...twiceUnknowns, ...twiceNodes]) {
+    issues.push({ problem: 'duplicateId', ref: local(id) });
+  }
+  const declaredUnknowns = output.unknowns.filter((u) => !twiceUnknowns.has(u.id));
+  const declaredConditions = output.conditions.filter((c) => !twiceNodes.has(c.id));
+  const localUnknowns = new Map(declaredUnknowns.map((u) => [u.id, local(u.id)]));
+  const localNodes = new Map(declaredConditions.map((c) => [c.id, local(c.id)]));
   const priorItemIds = new Set(context.priorItems.map((i) => i.id));
   const unknownId = (id: string) =>
     localUnknowns.get(id) ?? (context.priorUnknowns.some((u) => u.id === id) ? id : undefined);
 
-  const unknowns: Unknown[] = output.unknowns
+  const unknowns: Unknown[] = declaredUnknowns
     .filter((u) => u.values.length >= 2)
     .map((u) => ({ id: local(u.id), label: u.label, values: u.values, kind: u.kind }));
 
   const conditions: ConditionNode[] = [];
-  for (const c of output.conditions) {
+  for (const c of declaredConditions) {
     const id = local(c.id);
     if (c.kind === 'eq') {
       const target = c.unknownId === null ? undefined : unknownId(c.unknownId);
@@ -259,6 +274,30 @@ export function toExtraction(
       issues.push({ problem: 'unknownEffectTarget', ref: id });
       continue;
     }
+    // 書かれた表現は、指した文の中にそのまま有るはず（空白と全角・半角の違いだけ許す）。無ければ、原文に
+    // 無い言葉を根拠にしている。外さずに「食い違い」にして家族に確かめてもらい、作用（取り消し・置き換え）
+    // も確かめるまで効かせない。合っても、解釈が正しいことまでは言えない。
+    // 指した文は、原文の順につなぐ（モデルが文を逆の順に挙げても、引用の続きが切れないように）。
+    const cited = quoteForm(
+      source.sentences
+        .filter((s) => raw.sentenceIds.includes(s.id))
+        .map((s) => s.text)
+        .join(''),
+    );
+    const quote = quoteForm(raw.written);
+    if (quote === '' || !cited.includes(quote)) {
+      issues.push({ problem: 'quoteMismatch', ref: id });
+      evidence = 'conflicting';
+    }
+    // 指した文に「12月5日」「8日」「12/5」と書かれていれば、モデルの日付と期限の日は、そのどれかと合うはず
+    // （曜日の同じ別の週に読み違えるのを、曜日の検査は見つけない）。合っても、正しく読めたとまでは言えない。
+    const mentioned = writtenDates(cited);
+    const read = [date, raw.deadline?.slice(0, 10) ?? null].filter((d) => d !== null);
+    const unmentioned = read.find((d) => !mentioned.some((m) => sameDay(m, d)));
+    if (mentioned.length > 0 && unmentioned !== undefined) {
+      issues.push({ problem: 'dateMismatch', ref: id, detail: unmentioned });
+      evidence = 'conflicting';
+    }
     items.push({
       id,
       sourceId: source.id,
@@ -289,13 +328,70 @@ export function toExtraction(
     if (!covered.has(sentence.id)) issues.push({ problem: 'uncoveredSentence', ref: sentence.id });
   }
 
+  const ambiguous = output.ambiguities.filter((a) => sentenceIds.has(a.sentenceId));
+  // 説明の空の「二通りに読める」も、その文は確かめてもらう（説明の無い物は、説明の一覧に入れない）。
+  const { checkSentenceIds, checkAll } = toCheck(issues, output, source, ambiguous);
+  const ambiguities = ambiguous.filter((a) => a.note.trim() !== '');
   const extraction = Extraction.parse({
     sourceId: source.id,
     items,
     unknowns,
     conditions: conditions.filter((c) => !badNodes.has(c.id)),
     irrelevantSentenceIds: irrelevant,
-    ambiguities: output.ambiguities.filter((a) => sentenceIds.has(a.sentenceId)),
+    ambiguities,
+    checkSentenceIds,
+    checkAll,
   });
   return { extraction, issues };
+}
+
+/** 文に書かれた日付（月と日、または日だけ）。「12月5日」「8日」「12/5」。 */
+function writtenDates(text: string): { month?: number; day: number }[] {
+  const found: { month?: number; day: number }[] = [];
+  for (const m of text.matchAll(/(?:(\d{1,2})月)?(\d{1,2})日/g)) {
+    found.push({ ...(m[1] ? { month: Number(m[1]) } : {}), day: Number(m[2]) });
+  }
+  for (const m of text.matchAll(/(\d{1,2})\/(\d{1,2})/g)) {
+    found.push({ month: Number(m[1]), day: Number(m[2]) });
+  }
+  return found;
+}
+
+const sameDay = (mention: { month?: number; day: number }, date: string) =>
+  Number(date.slice(8, 10)) === mention.day &&
+  (mention.month === undefined || Number(date.slice(5, 7)) === mention.month);
+
+/** 引用を比べる形：全角・半角をそろえ、空白を除く。 */
+const quoteForm = (text: string) => text.normalize('NFKC').replace(/\s+/g, '');
+
+/**
+ * 問題を、家族が原文で確かめる文に戻す。事項の問題は、モデルの出力のその事項の文へ（外した事項の文も、
+ * 同じ文から別の事項が取れていても）。文へ戻せない問題（節点だけの条件の誤り、文の無い事項）は、全体を
+ * 確かめてもらう。
+ */
+function toCheck(
+  issues: readonly ReadingIssue[],
+  output: ExtractionOutput,
+  source: Source,
+  ambiguities: readonly { sentenceId: string }[],
+): { checkSentenceIds: string[]; checkAll: boolean } {
+  const sentenceIds = new Set(source.sentences.map((s) => s.id));
+  const check = new Set<string>();
+  let checkAll = false;
+  for (const issue of issues) {
+    if (issue.problem === 'uncoveredSentence') {
+      check.add(issue.ref);
+      continue;
+    }
+    const sentences = output.items
+      .filter((raw) => `${source.id}:${raw.id}` === issue.ref)
+      .flatMap((raw) => raw.sentenceIds)
+      .filter((s) => sentenceIds.has(s));
+    if (sentences.length === 0) checkAll = true;
+    for (const s of sentences) check.add(s);
+  }
+  for (const a of ambiguities) check.add(a.sentenceId);
+  // 原文の順に並べる。
+  const checkSentenceIds = source.sentences.map((s) => s.id).filter((id) => check.has(id));
+  return { checkSentenceIds, checkAll };
 }
