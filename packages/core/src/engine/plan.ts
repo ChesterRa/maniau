@@ -497,6 +497,9 @@ function belongingsDeadline(
   return first === undefined ? undefined : zonedToEpochMinutes(first, '08:00', ctx.tz);
 }
 
+/** 過ぎた買い物の機会を探す幅（ふだんの週と店の時間は、週ごとにくり返す）。 */
+const LOOKBACK_MIN = 7 * 24 * 60;
+
 /** 提出物の作業の手順（家で用意して出す。かばんに入れるまで）。 */
 const SUBMIT_STEP = {
   id: 'submit',
@@ -642,7 +645,8 @@ function purchase(
   });
   const unknownId = keys.atHomeUnknown(rootId);
   const atHome = assignment.get(unknownId);
-  if (atHome === 'yes' || by === undefined) return;
+  // 持って行く時（by）を過ぎたら、もう買う手配も問いも出さない（要件は記録に残す）。
+  if (atHome === 'yes' || by === undefined || by <= ctx.now) return;
 
   const arrangementKey = keys.purchaseArrangement(rootId);
   const optionKey = keys.option(arrangementKey, 'buy');
@@ -673,6 +677,8 @@ function purchase(
     const first = chances[0];
     const last = chances.at(-1);
     if (done) {
+      // 買い終えたら、家にあるかは聞かない（手配は済んだ作業で決まっている）。
+      status = 'decidable';
       option.deadlineCertainty = 'undetermined';
       option.taskKeys.push(key);
       tasks.push(
@@ -690,9 +696,42 @@ function purchase(
         }),
       );
     } else if (!first || !last) {
-      status = 'infeasible';
+      // 買える時は過ぎた。ふだんの週と店の時間は週ごとにくり返すので、一週間さかのぼって、過ぎた最後の
+      // 機会の始まりを決め時として示す（お知らせが来る前に過ぎていても、その時刻）。一週間に一度も機会が
+      // 無ければ、決め時は示せない（作らない）。家にあるかがまだ分からなければ、不可能と決めず、家に
+      // あるかを聞き続ける（家にあれば買わなくてよい。答えの入口を消さない）。
+      const missed = purchaseOpportunities(
+        ctx.household,
+        goods,
+        PURCHASE_MINUTES,
+        ctx.now - LOOKBACK_MIN,
+        by,
+      )
+        .filter((c) => c.start < ctx.now && (assignee === undefined || c.memberId === assignee))
+        .at(-1);
       option.expired = true;
+      if (missed) {
+        option.decisionDeadline = ctx.fmt(missed.start);
+        option.deadlineCertainty = 'estimate';
+      }
       reasons.push({ code: 'noOptionLeft', refs: [optionKey] });
+      if (atHome === undefined) {
+        status = 'askFirst';
+        const questionKey = keys.question(unknownId);
+        reasons.push({ code: 'askFirst', refs: [questionKey] });
+        // 答えが役に立つのは、持って行く時まで（無ければ、ほかの手を考える時が要る）。
+        questions.push({
+          key: questionKey,
+          unknownId,
+          askBy: ctx.fmt(by),
+          fallbackValue: 'no',
+          affects: [arrangementKey],
+        });
+      } else {
+        // 家に無く、買える時も過ぎた。過ぎた決め時を示せる時だけ「このままでは無理」と言い、示せなければ
+        // 判断できないとする（確かめられない時刻で、不可能と言わない）。
+        status = missed ? 'infeasible' : 'undetermined';
+      }
     } else {
       option.decisionDeadline = ctx.fmt(last.start);
       option.deadlineCertainty = 'estimate';
