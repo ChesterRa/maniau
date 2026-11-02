@@ -7,7 +7,7 @@ import { createLocalJWKSet, exportJWK, generateKeyPair, type JWK, SignJWT } from
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createApp, type FamilyBackend } from '../src/app';
 import { accessVerifier } from '../src/auth/access';
-import { identities, members } from '../src/db/schema';
+import { identities, members, pushSubscriptions } from '../src/db/schema';
 import { demoEvents } from '../src/demo';
 import { invitationsFrom } from '../src/members';
 import type { Store } from '../src/store';
@@ -52,17 +52,25 @@ function token(claims: Claims = {}) {
   return jwt.sign((claims.key ?? keys).privateKey);
 }
 
-async function setup() {
+async function setup(options: { push?: boolean } = {}) {
   const db = await database();
+  /** 知らせの仕事を起こした家庭（書き込み・登録の後）。 */
+  const pokes: string[] = [];
   const base = await seeded(db, H, demoEvents('arrived'));
   // 次に家庭を押さえる直前に一度だけ走らせる（身元を確かめた後、押さえる前の取り消しを起こす）。
   let beforeLock: (() => Promise<unknown>) | undefined;
+  // 次に家庭を押さえて書き終えた直後に一度だけ走らせる（押さえた中で確かめた後の取り消しを起こす）。
+  let afterLock: (() => Promise<unknown>) | undefined;
   const store: Store = {
     async withHousehold(householdId, fn) {
       const hook = beforeLock;
       beforeLock = undefined;
       await hook?.();
-      return base.withHousehold(householdId, fn);
+      const result = await base.withHousehold(householdId, fn);
+      const after = afterLock;
+      afterLock = undefined;
+      await after?.();
+      return result;
     },
   };
   const family: FamilyBackend = {
@@ -75,6 +83,9 @@ async function setup() {
     ),
     origin: ORIGIN,
     clock: () => NOW_MS,
+    ...(options.push
+      ? { push: { publicKey: 'test-public-key', notifier: { poke: (h: string) => pokes.push(h) } } }
+      : {}),
   };
   const app = createApp({ family });
   const call = async (
@@ -102,7 +113,23 @@ async function setup() {
   const revokeBeforeLock = (fn: () => Promise<unknown>) => {
     beforeLock = fn;
   };
-  return { db, app, call, count, revokeBeforeLock };
+  const revokeAfterLock = (fn: () => Promise<unknown>) => {
+    afterLock = fn;
+  };
+  const remove = async (jwt: string, body: unknown) => {
+    const response = await app.request('/api/push/subscriptions', {
+      method: 'DELETE',
+      headers: {
+        'content-type': 'application/json',
+        origin: ORIGIN,
+        'cf-access-jwt-assertion': jwt,
+      },
+      body: JSON.stringify(body),
+    });
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    return response.status;
+  };
+  return { db, app, call, count, revokeBeforeLock, revokeAfterLock, pokes, remove };
 }
 
 describe('家族の家庭の入口', () => {
@@ -314,5 +341,180 @@ describe('家族の家庭の入口', () => {
     expect(await (await app.request('/api/me')).json()).toEqual({ mode: 'demo' });
     expect((await app.request('/api/view')).status).toBe(404);
     expect((await app.request('/api/commands', { method: 'POST', body: '{}' })).status).toBe(404);
+  });
+
+  it('知らせがあれば、/api/me で登録に使う公開鍵を渡す。書いた後は知らせの仕事を起こす', async () => {
+    const { call, pokes } = await setup({ push: true });
+    const jwt = await token({ sub: 'sub-b', email: 'b@example.test' });
+    expect((await call('/api/me', jwt)).body).toEqual({
+      mode: 'family',
+      memberId: 'b',
+      pushKey: 'test-public-key',
+    });
+    const done = await call('/api/commands', jwt, {
+      as: 'b',
+      operationId: 'op-p',
+      command: { type: 'proposeAssignment', taskKey: ASK, assigneeId: 'b' },
+    });
+    expect(done.status).toBe(200);
+    expect(pokes).toEqual([H]);
+  });
+
+  it('知らせの登録：知っている Push の事業者の https の登録先だけ。大人ごとに一つ。外せる', async () => {
+    const { call, db, pokes, remove } = await setup({ push: true });
+    const aya = await token({ sub: 'sub-b', email: 'b@example.test' });
+    const kenta = await token({ sub: 'sub-a', email: 'a@example.test' });
+    expect((await call('/api/me', aya)).status).toBe(200);
+    expect((await call('/api/me', kenta)).status).toBe(200);
+    const register = (jwt: string, as: string, endpoint: string, extra = {}) =>
+      call(
+        '/api/push/subscriptions',
+        jwt,
+        {
+          as,
+          subscription: { endpoint, keys: { p256dh: 'p', auth: 'x' } },
+          language: 'ja',
+          requestedAt: Date.now(),
+        },
+        extra,
+      );
+    // 知らない宛先・http・内部の住所には送らないので、登録しない。
+    for (const endpoint of [
+      'https://evil.example/push',
+      'http://web.push.apple.com/x',
+      'https://web.push.apple.com:8443/x',
+      'https://169.254.169.254/latest',
+      'https://web.push.apple.com.evil.example/x',
+    ]) {
+      expect((await register(aya, 'b', endpoint)).body, endpoint).toEqual({ error: 'badEndpoint' });
+    }
+    // 画面の Origin・JSON・見ている大人の確かめは、命令と同じ。
+    expect(
+      (await register(aya, 'b', 'https://web.push.apple.com/1', { origin: undefined })).status,
+    ).toBe(403);
+    expect(
+      (await register(aya, 'b', 'https://web.push.apple.com/1', { 'content-type': 'text/plain' }))
+        .status,
+    ).toBe(415);
+    expect((await register(aya, 'a', 'https://web.push.apple.com/1')).status).toBe(409);
+    expect(await db.select().from(pushSubscriptions)).toEqual([]);
+
+    expect((await register(aya, 'b', 'https://web.push.apple.com/1')).body).toEqual({ ok: true });
+    expect(pokes).toEqual([H]);
+    // 同じ大人が別の端末で登録し直せば、前の登録は外れる（大人ごとに一つ）。
+    expect((await register(aya, 'b', 'https://fcm.googleapis.com/fcm/send/2')).status).toBe(200);
+    const rows = async () =>
+      (await db.select().from(pushSubscriptions)).map((r) => [
+        r.endpoint,
+        r.memberId,
+        r.identityId,
+      ]);
+    const ids = await db.select().from(identities);
+    const idOf = (subject: string) => ids.find((i) => i.subject === subject)?.id;
+    expect(await rows()).toEqual([['https://fcm.googleapis.com/fcm/send/2', 'b', idOf('sub-b')]]);
+    // 同じ端末（登録先）で健太が登録すれば、彩との結び付きは外れる。
+    expect((await register(kenta, 'a', 'https://fcm.googleapis.com/fcm/send/2')).status).toBe(200);
+    expect(await rows()).toEqual([['https://fcm.googleapis.com/fcm/send/2', 'a', idOf('sub-a')]]);
+    // 外すのは、自分の登録だけ。
+    expect(await remove(aya, { as: 'b', endpoint: 'https://fcm.googleapis.com/fcm/send/2' })).toBe(
+      200,
+    );
+    expect(await rows()).toHaveLength(1);
+    expect(
+      await remove(kenta, { as: 'a', endpoint: 'https://fcm.googleapis.com/fcm/send/2' }),
+    ).toBe(200);
+    expect(await rows()).toEqual([]);
+  });
+
+  it('知らせの登録と外す事も、押さえた中で結びを確かめ、同じ取引で書く（外された身元で書かない）', {
+    timeout: 60_000,
+  }, async () => {
+    const revoke = (db: Awaited<ReturnType<typeof database>>) =>
+      db
+        .update(members)
+        .set({ active: false })
+        .where(and(eq(members.householdId, H), eq(members.id, 'b')));
+    const jwt = await token({ sub: 'sub-b', email: 'b@example.test' });
+    const subscription = {
+      endpoint: 'https://web.push.apple.com/1',
+      keys: { p256dh: 'p', auth: 'x' },
+    };
+    const registration = { as: 'b', subscription, language: 'ja', requestedAt: Date.now() };
+    // 身元を確かめた後、押さえる前に外された：登録しない。
+    {
+      const { call, db, revokeBeforeLock } = await setup({ push: true });
+      expect((await call('/api/me', jwt)).status).toBe(200);
+      revokeBeforeLock(() => revoke(db));
+      expect(await call('/api/push/subscriptions', jwt, registration)).toEqual({
+        status: 403,
+        body: { error: 'notAMember' },
+      });
+      expect(await db.select().from(pushSubscriptions)).toEqual([]);
+    }
+    // 押さえた中で確かめた後に外された：登録は、外す前に同じ取引で済んでいる（外した後に書かない）。
+    {
+      const { call, db, revokeAfterLock } = await setup({ push: true });
+      expect((await call('/api/me', jwt)).status).toBe(200);
+      let atRevocation = -1;
+      revokeAfterLock(async () => {
+        atRevocation = (await db.select().from(pushSubscriptions)).length;
+        await revoke(db);
+      });
+      expect((await call('/api/push/subscriptions', jwt, registration)).status).toBe(200);
+      expect(atRevocation).toBe(1);
+      expect(await db.select().from(pushSubscriptions)).toHaveLength(1);
+    }
+    // 外す入口も、押さえる前に外された身元からは受けない（残った登録は、知らせの仕事が消す）。
+    {
+      const { call, db, remove, revokeBeforeLock } = await setup({ push: true });
+      expect((await call('/api/push/subscriptions', jwt, registration)).status).toBe(200);
+      revokeBeforeLock(() => revoke(db));
+      expect(await remove(jwt, { as: 'b', endpoint: subscription.endpoint })).toBe(403);
+      expect(await db.select().from(pushSubscriptions)).toHaveLength(1);
+    }
+  });
+
+  it('同じ端末で使う人が替わった後に、遅れて届いた前の人の登録は使わない', async () => {
+    const { call, db } = await setup({ push: true });
+    const aya = await token({ sub: 'sub-b', email: 'b@example.test' });
+    const kenta = await token({ sub: 'sub-a', email: 'a@example.test' });
+    expect((await call('/api/me', aya)).status).toBe(200);
+    expect((await call('/api/me', kenta)).status).toBe(200);
+    const endpoint = 'https://web.push.apple.com/1';
+    const register = (jwt: string, as: string, requestedAt: number) =>
+      call('/api/push/subscriptions', jwt, {
+        as,
+        subscription: { endpoint, keys: { p256dh: 'p', auth: 'x' } },
+        language: 'ja',
+        requestedAt,
+      });
+    const owners = async () => (await db.select().from(pushSubscriptions)).map((r) => r.memberId);
+    // 健太の登録（端末の時計で 1000 に頼んだ）が遅れ、その後に替わった彩の登録（2000）が先に済む。
+    expect((await register(aya, 'b', 2000)).status).toBe(200);
+    expect(await register(kenta, 'a', 1000)).toEqual({
+      status: 409,
+      body: { error: 'staleRegistration' },
+    });
+    expect(await owners()).toEqual(['b']);
+    // 後で健太に替われば（3000）、健太の物になる。
+    expect((await register(kenta, 'a', 3000)).status).toBe(200);
+    expect(await owners()).toEqual(['a']);
+    // 同じ時に頼まれた別の人の登録は、どちらが後か分からないので、先に済んだ方を残す。
+    expect((await register(aya, 'b', 3000)).status).toBe(409);
+    expect(await owners()).toEqual(['a']);
+    // 同じ人の同じ時の登録（送り直し）は受ける。
+    expect((await register(kenta, 'a', 3000)).status).toBe(200);
+    expect(await owners()).toEqual(['a']);
+  });
+
+  it('知らせの無いサーバーでは、登録の入口は無い', async () => {
+    const { call } = await setup();
+    const jwt = await token({ sub: 'sub-b', email: 'b@example.test' });
+    const done = await call('/api/push/subscriptions', jwt, {
+      as: 'b',
+      subscription: { endpoint: 'https://web.push.apple.com/1', keys: { p256dh: 'p', auth: 'x' } },
+      language: 'ja',
+    });
+    expect(done).toEqual({ status: 404, body: { error: 'pushDisabled' } });
   });
 });

@@ -1,6 +1,7 @@
 // 事象の置き場所（02-foundation §6・§7.3）。家庭ごとに書き込みを一列に並べ、操作 ID で二重の書き込みを防ぐ。
 // メモリの置き場所（デモと試験）と、Postgres の置き場所（db/store.ts）は、同じ形（Store）を持つ。
 import { type DateTime, DomainEvent } from '@maniau/core';
+import type { Db } from './db/store';
 
 type Envelope = 'id' | 'householdId' | 'seq' | 'version' | 'occurredAt' | 'recordedAt' | 'actorId';
 type Body<E> = E extends DomainEvent ? Omit<E, Envelope> : never;
@@ -35,6 +36,18 @@ export interface HouseholdLog {
    * 読んだ物。身元で入る家族の家庭は、家庭の物を読む・書く前に、必ずこれで確かめ直す。
    */
   isBound?(memberId: string, identityId: string): boolean;
+  /**
+   * 書き込みのまとまり（一度の withHousehold で足した事象）ごとの、最後の通し番号（昇順）。知らせの
+   * 回を数える時に、まとまりの途中の形を見ないために使う。まとまりの分からない古い事象は、一つずつ
+   * を一まとまりとする。
+   */
+  batchEnds?(): readonly number[];
+  /**
+   * 家庭を押さえている取引（Postgres の置き場所だけ）。事象の他の表（知らせの登録先など）を、押さえた
+   * 中で確かめた事と同じ取引で書く時に使う（確かめた後・書く前に外された身元で、書きを残さない。外す
+   * 側も家庭を押さえる）。
+   */
+  transaction?: Db;
 }
 
 export interface Store {
@@ -44,6 +57,8 @@ export interface Store {
 
 interface MemoryHousehold {
   events: DomainEvent[];
+  /** 書き込みのまとまりの、最後の通し番号。 */
+  batchEnds: number[];
   operations: Map<string, Operation>;
   /** 前の書き込みが終わるのを待つための鎖。 */
   tail: Promise<unknown>;
@@ -59,8 +74,11 @@ export function memoryStore(
 } {
   const households = new Map<string, MemoryHousehold>();
   const create = (householdId: string, events: readonly DomainEvent[]) => {
+    const sorted = [...events].sort((a, b) => a.seq - b.seq);
     households.set(householdId, {
-      events: [...events].sort((a, b) => a.seq - b.seq),
+      events: sorted,
+      // 最初に置いた事象は、まとまりが分からないので一つずつ。
+      batchEnds: sorted.map((e) => e.seq),
       operations: new Map(),
       tail: Promise.resolve(),
     });
@@ -100,8 +118,15 @@ export function memoryStore(
         },
         operation: (id) => household.operations.get(id),
         recordOperation: (operation) => household.operations.set(operation.id, operation),
+        batchEnds: () => household.batchEnds,
       };
-      const run = household.tail.then(() => fn(log));
+      const run = household.tail.then(async () => {
+        const before = household.events.length;
+        const result = await fn(log);
+        const last = household.events.at(-1);
+        if (household.events.length > before && last) household.batchEnds.push(last.seq);
+        return result;
+      });
       // 失敗しても、次の書き込みは待たせない。
       household.tail = run.catch(() => undefined);
       return run;

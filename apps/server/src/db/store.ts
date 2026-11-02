@@ -171,17 +171,31 @@ export function postgresStore(db: Db): Store {
           recordOperation: (operation) => {
             recorded.push(operation);
           },
+          transaction: tx,
           isActiveAdult: (memberId) => adults.has(memberId),
           isBound: (memberId, identityId) =>
             adults.has(memberId) &&
             liveIdentities.has(identityId) &&
             people.some((m) => m.id === memberId && m.identityId === identityId),
+          batchEnds: () => {
+            const ends: number[] = [];
+            rows.forEach((row, i) => {
+              const next = rows[i + 1];
+              // 印の無い古い行は、一つずつを一まとまりとする。
+              if (!next || row.batch === null || next.batch !== row.batch) ends.push(row.seq);
+            });
+            const pending = added.at(-1);
+            if (pending) ends.push(pending.seq);
+            return ends;
+          },
         };
 
         const result = await fn(log);
 
         // 一つの命令は、操作を一つ記録する。その操作で足した事象に、操作の ID を付ける（たどれるように）。
+        // 足した事象は一つの書き込みのまとまりで、最初の通し番号で印を付ける（知らせの回を数える区切り）。
         const opId = recorded.length === 1 ? recorded[0]?.id : undefined;
+        const batch = added[0]?.seq;
         for (const event of added) {
           const { row, payload } = dehydrate(event);
           if (payload) {
@@ -197,6 +211,7 @@ export function postgresStore(db: Db): Store {
             householdId,
             ...row,
             ...(opId === undefined ? {} : { opId }),
+            batch,
             // 中身の ID は body に置く（§6.1）。許す一覧に payloadId は無いので、事象の欄とは混ざらない。
             body: payload ? { ...row.body, payloadId: payload.id } : row.body,
           });

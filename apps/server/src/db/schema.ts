@@ -1,9 +1,11 @@
 // Postgres の表（02-foundation §6.1）。家庭に属する表は household_id を持ち、参照は
 // (household_id, id) の組で結ぶ。ログインの身元（identities）だけは家庭に属さない。
 // 敏感な中身は payloads にだけ置き、events には許した欄と中身の ID だけを置く（§6.2）。
-// 知らせ・仕事・写真などの表は、それを使う段（直す順 7）で足す。
+// 写真・削除の仕事などの表は、それを使う段で足す。
 import {
+  bigint,
   boolean,
+  foreignKey,
   integer,
   jsonb,
   pgTable,
@@ -24,6 +26,8 @@ export const households = pgTable('households', {
   timeZone: text('time_zone').notNull(),
   /** 次に使う通し番号（行を押さえた中で進める）。 */
   nextSeq: integer('next_seq').notNull().default(1),
+  /** 知らせの仕事が、どの通し番号まで事象を見たか（回を数える続きの位置）。 */
+  notifiedThroughSeq: integer('notified_through_seq'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -74,6 +78,8 @@ export const events = pgTable(
     recordedAt: text('recorded_at').notNull(),
     actorId: text('actor_id').notNull(),
     opId: text('op_id'),
+    /** 書き込みのまとまり（一つのトランザクションで足した事象）の、最初の通し番号。 */
+    batch: integer('batch'),
     body: jsonb('body').notNull(),
   },
   (t) => [
@@ -113,4 +119,88 @@ export const payloads = pgTable(
     deletedReason: text('deleted_reason'),
   },
   (t) => [primaryKey({ columns: [t.householdId, t.id] })],
+);
+
+/**
+ * Push の登録先（§9）。大人ごとに一つ（今週は複数の端末の流れを作らない）。同じ登録先（一台の
+ * iPhone）で使う人が替われば、前の人との結び付きを外す。登録した身元を持ち、送る前に、その身元が
+ * 今もその大人に結ばれているかを確かめる。登録先の URL と鍵は、知らせを送るためだけに使う。
+ */
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    endpoint: text('endpoint').primaryKey(),
+    householdId: text('household_id')
+      .notNull()
+      .references(() => households.id),
+    memberId: text('member_id').notNull(),
+    identityId: text('identity_id')
+      .notNull()
+      .references(() => identities.id),
+    p256dh: text('p256dh').notNull(),
+    auth: text('auth').notNull(),
+    /** 知らせの文の言葉（登録した時の画面の言葉。替えたら登録し直す）。 */
+    language: text('language', { enum: ['ja', 'en'] }).notNull(),
+    /**
+     * 登録ごとの版（乱数）。送る直前と、無くなった登録先を消す時に、同じ登録かを比べる（時刻は
+     * Postgres とプログラムで精度が違うので、版には使わない）。
+     */
+    registration: text('registration').notNull(),
+    /**
+     * 端末が登録を頼んだ時（その端末の時計のミリ秒）。同じ登録先で、後から頼まれた登録が先に済んで
+     * いれば、遅れて届いた前の登録で上書きしない（一台の端末で使う人が替わった時）。同じ端末の中の
+     * 順にだけ使い、違う端末の時計とは比べない。
+     */
+    requestedAt: bigint('requested_at', { mode: 'number' }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('push_subscriptions_member').on(t.householdId, t.memberId),
+    foreignKey({
+      columns: [t.householdId, t.memberId],
+      foreignColumns: [members.householdId, members.id],
+    }),
+  ],
+);
+
+/**
+ * 知らせの意図（運用の表。§5.7）。キーごとに一行で、回を数える。回ごとに、送る待ち（pending）→
+ * 送っている（sending、期限付きの引き受け）→ 受け付けられた（sent。事象 notified を足す）・
+ * 要らなくなった（dropped）・あきらめた（failed）。中身の文は持たない（送る直前に作り直す）。
+ */
+export const notificationIntents = pgTable(
+  'notification_intents',
+  {
+    householdId: text('household_id')
+      .notNull()
+      .references(() => households.id),
+    key: text('key').notNull(),
+    memberId: text('member_id').notNull(),
+    kind: text('kind', {
+      enum: ['decisionApproaching', 'question', 'cancellation', 'assignment'],
+    }).notNull(),
+    until: timestamp('until', { withTimezone: true }),
+    /** 何回目か（キーが無い所から出るたびに一つ進む。notified には「キー#回」を残す）。 */
+    round: integer('round').notNull().default(1),
+    /** 今の計画に出ているか。 */
+    present: boolean('present').notNull().default(true),
+    state: text('state', { enum: ['pending', 'sending', 'sent', 'dropped', 'failed'] })
+      .notNull()
+      .default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    /** 送っている間の引き受けの期限。過ぎたら、もう一度引き受けてよい。 */
+    leaseUntil: timestamp('lease_until', { withTimezone: true }),
+    /**
+     * 引き受けの札（引き受けるごとの乱数）。送った後の状態は、自分の札の行だけを替える（期限の切れた
+     * 古い引き受けが、後から引き受けた物の結果を上書きしない）。
+     */
+    leaseToken: text('lease_token'),
+    /** 次に試してよい時刻（失敗の後の間隔）。 */
+    notBefore: timestamp('not_before', { withTimezone: true }),
+    /** 最後の失敗の種類（HTTP の状態など。中身は置かない）。 */
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.householdId, t.key] })],
 );

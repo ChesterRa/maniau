@@ -21,11 +21,13 @@
     "hono": "4.13.14",
     "jose": "6.2.13",
     "pg": "8.23.1",
+    "web-push": "3.6.7",
     "zod": "4.6.7"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.11",
     "@types/pg": "8.23.1",
+    "@types/web-push": "3.6.4",
     "drizzle-kit": "0.31.11",
     "tsx": "4.23.15",
     "vitest": "5.0.5"

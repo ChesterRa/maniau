@@ -10,6 +10,8 @@ import type { Db } from './db/store';
 import { DEMO_STAGES, isDemoStage, loadDemoData } from './demo';
 import { demoSessions } from './demo-sessions';
 import { type FamilyMember, type Invitations, memberFor } from './members';
+import type { Notifier } from './notifier';
+import { isPushEndpoint, removeSubscription, saveSubscription } from './push';
 import type { Store } from './store';
 import { viewFor } from './views';
 
@@ -26,6 +28,8 @@ export interface FamilyBackend {
   origin: string;
   /** 今の時刻（ミリ秒。試験で替える）。 */
   clock?: () => number;
+  /** 知らせ（VAPID の公開鍵と、書き込みの後に知らせの仕事を起こす口）。無ければ知らせは無い。 */
+  push?: { publicKey: string; notifier: Pick<Notifier, 'poke'> };
 }
 
 const STATUS = { ok: 200, noop: 200, conflict: 409, forbidden: 403, invalid: 400 } as const;
@@ -60,12 +64,25 @@ export function createApp(options: { family?: FamilyBackend } = {}): Hono {
         : undefined,
     );
   const notAMember = (c: Context) => c.json({ error: 'notAMember' }, 403);
+  // 書き込みは、画面の Origin から、JSON で来た物だけ（Host や転送の見出しからは決めない）。
+  const refuseWrite = (c: Context, backend: FamilyBackend): Response | undefined => {
+    if (c.req.header('origin') !== backend.origin) return c.json({ error: 'badOrigin' }, 403);
+    if (!(c.req.header('content-type') ?? '').toLowerCase().startsWith('application/json')) {
+      return c.json({ error: 'notJson' }, 415);
+    }
+    return undefined;
+  };
   // どちらの家庭を見せるか（画面が最初に聞く）。家族の家庭の無いサーバーは、デモだけ。
+  // 知らせがあれば、登録に使う公開鍵も渡す。
   app.get('/api/me', async (c) => {
     if (!family) return c.json({ mode: 'demo' });
     const member = await memberOf(c, family);
     if (member instanceof Response) return member;
-    return c.json({ mode: 'family', memberId: member.memberId });
+    return c.json({
+      mode: 'family',
+      memberId: member.memberId,
+      ...(family.push ? { pushKey: family.push.publicKey } : {}),
+    });
   });
   // 画面は、自分が見ていると思っている大人（as）を毎回添える。今の身元と違えば（別の画面でログインが
   // 替わった等）、家庭の物を返さず、画面に確かめ直させる。as は比べるだけで、権限には使わない。
@@ -80,11 +97,8 @@ export function createApp(options: { family?: FamilyBackend } = {}): Hono {
   });
   app.post('/api/commands', async (c) => {
     if (!family) return c.json({ error: 'familyDisabled' }, 404);
-    // 書き込みは、画面の Origin から、JSON で来た物だけ（Host や転送の見出しからは決めない）。
-    if (c.req.header('origin') !== family.origin) return c.json({ error: 'badOrigin' }, 403);
-    if (!(c.req.header('content-type') ?? '').toLowerCase().startsWith('application/json')) {
-      return c.json({ error: 'notJson' }, 415);
-    }
+    const refused = refuseWrite(c, family);
+    if (refused) return refused;
     const member = await memberOf(c, family);
     if (member instanceof Response) return member;
     // 操作する人は身元から決める（本文の memberId は使わない）。as は画面が見ていた大人で、今の身元と
@@ -106,9 +120,83 @@ export function createApp(options: { family?: FamilyBackend } = {}): Hono {
       },
       body.data.command,
     );
+    // 書いたら、知らせの仕事を起こす（出すべき物が増えた・消えたかを見る）。
+    if (result.status === 'ok') family.push?.notifier.poke(member.householdId);
     // 断られた命令でも、今も家族の大人なら、新しい見せる物を返す（外された人には返さない）。
     const view = await viewOf(family, member);
     return view ? c.json({ result, view }, statusOf(result)) : notAMember(c);
+  });
+  // 知らせの登録（この端末に送る）。大人ごとに一つ。登録先は、知っている Push の事業者の物だけ。
+  const PushRegistration = z.object({
+    as: z.string().min(1),
+    subscription: z.object({
+      endpoint: z.string().min(1).max(2048),
+      keys: z.object({ p256dh: z.string().min(1).max(256), auth: z.string().min(1).max(64) }),
+    }),
+    language: z.enum(['ja', 'en']),
+    /** 端末が登録を頼んだ時（その端末の時計のミリ秒）。同じ端末の中の順にだけ使う。 */
+    requestedAt: z.number().int().nonnegative(),
+  });
+  app.post('/api/push/subscriptions', async (c) => {
+    if (!family?.push) return c.json({ error: 'pushDisabled' }, 404);
+    const refused = refuseWrite(c, family);
+    if (refused) return refused;
+    const member = await memberOf(c, family);
+    if (member instanceof Response) return member;
+    const body = PushRegistration.safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badSubscription' }, 400);
+    if (body.data.as !== member.memberId) return switched(c);
+    const { endpoint, keys } = body.data.subscription;
+    if (!isPushEndpoint(endpoint)) return c.json({ error: 'badEndpoint' }, 400);
+    // 押さえた中で、今もこの大人に結ばれた身元かを確かめ、同じ取引の中で登録する（送る前にも確かめ
+    // 直す）。
+    const saved = await family.store.withHousehold(member.householdId, async (log) => {
+      if (!log.transaction || !(log.isBound?.(member.memberId, member.identityId) ?? false)) {
+        return 'unbound' as const;
+      }
+      return saveSubscription(log.transaction, {
+        endpoint,
+        p256dh: keys.p256dh,
+        auth: keys.auth,
+        householdId: member.householdId,
+        memberId: member.memberId,
+        identityId: member.identityId,
+        language: body.data.language,
+        requestedAt: body.data.requestedAt,
+      });
+    });
+    if (saved === 'unbound') return notAMember(c);
+    // 同じ端末で、後から頼まれた登録が先に済んでいる（使う人が替わった後に届いた、前の人の登録）。
+    if (saved === 'stale') return c.json({ error: 'staleRegistration' }, 409);
+    family.push.notifier.poke(member.householdId);
+    return c.json({ ok: true });
+  });
+  app.delete('/api/push/subscriptions', async (c) => {
+    if (!family?.push) return c.json({ error: 'pushDisabled' }, 404);
+    const refused = refuseWrite(c, family);
+    if (refused) return refused;
+    const member = await memberOf(c, family);
+    if (member instanceof Response) return member;
+    const body = z
+      .object({ as: z.string().min(1), endpoint: z.string().min(1).max(2048) })
+      .safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badSubscription' }, 400);
+    if (body.data.as !== member.memberId) return switched(c);
+    // 外すのも、押さえた中で結びを確かめ直し、同じ取引の中で（外された身元の書きを受けない）。
+    const removed = await family.store.withHousehold(member.householdId, async (log) => {
+      if (!log.transaction || !(log.isBound?.(member.memberId, member.identityId) ?? false)) {
+        return false;
+      }
+      await removeSubscription(
+        log.transaction,
+        member.householdId,
+        member.memberId,
+        body.data.endpoint,
+      );
+      return true;
+    });
+    if (!removed) return notAMember(c);
+    return c.json({ ok: true });
   });
   // デモの家庭を、見る人ごとにサーバーに作る。計画はサーバーで作り、画面は見せる物を受け取る（§7.1）。
   app.post('/api/demo/sessions', async (c) => {
