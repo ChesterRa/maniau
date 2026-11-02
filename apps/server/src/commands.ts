@@ -1,0 +1,325 @@
+// 命令（02-foundation §7.2・§7.3）。画面は事象を直接書かず、命令を送る。サーバーが、権限と前提を
+// 確かめて事象に展開する。一つの命令は、家庭を押さえた一続きの中で処理する。
+import {
+  type Command,
+  type DateTime,
+  type DomainEvent,
+  formatDateTime,
+  type PlanResult,
+  proposalSnapshot,
+  sameProposal,
+  toEpochMinutes,
+} from '@maniau/core';
+import {
+  type EngineState,
+  foldEvents,
+  itemsOf,
+  planFromState,
+  requestSnapshot,
+  retiredUnknowns,
+} from '@maniau/core/engine';
+import type { EventBody, HouseholdLog, Store } from './store';
+
+export interface CommandContext {
+  /** 確かめた身元の成員（§7.3 の 1。身元の確かめは、この前に済ませる）。 */
+  memberId: string;
+  /** 操作 ID（画面が作る。送り直しても同じ）。 */
+  operationId: string;
+  now: DateTime;
+  /** デモの家庭か（時計を進めてよい）。 */
+  demo: boolean;
+}
+
+export type CommandResult =
+  | { status: 'ok' | 'noop'; throughSeq: number }
+  /** 見た物が古い（提案が変わった等）。新しい計画を見せて、本人に見直してもらう（409）。 */
+  | { status: 'conflict'; reason: string; throughSeq: number }
+  | { status: 'forbidden' | 'invalid'; reason: string; throughSeq: number };
+
+/** 命令を処理する（§7.3）。家庭を押さえ、身元を確かめ直し、操作 ID を引き、前提を確かめて事象を足す。 */
+export function runCommand(
+  store: Store,
+  householdId: string,
+  context: CommandContext,
+  command: Command,
+): Promise<CommandResult> {
+  return store.withHousehold(householdId, (log) => handle(log, context, command));
+}
+
+function handle(log: HouseholdLog, context: CommandContext, command: Command): CommandResult {
+  const events = log.events();
+  const throughSeq = () => log.events().at(-1)?.seq ?? 0;
+  const state = foldEvents(events);
+  const household = state.household;
+  // 押さえた後に、その成員が今も有効な大人かを確かめ直す（§7.3 の 3）。
+  const member = household?.members.find((m) => m.id === context.memberId);
+  if (!household || !member || member.kind !== 'adult' || !member.active) {
+    return { status: 'forbidden', reason: 'notAnActiveAdult', throughSeq: throughSeq() };
+  }
+  // 同じ操作 ID：同じ人・同じ中身なら何も足さない。違えば衝突（§7.3 の 4）。
+  const digest = JSON.stringify(command);
+  const previous = log.operation(context.operationId);
+  if (previous) {
+    return previous.actorId === context.memberId && previous.digest === digest
+      ? { status: 'noop', throughSeq: throughSeq() }
+      : { status: 'conflict', reason: 'operationIdReused', throughSeq: throughSeq() };
+  }
+  // デモの家庭で時計を進めていれば、その時刻で処理する。押さえた中で事象から決めるので、並んで
+  // 届いた命令でも、時計を進めた後の事象に前の時刻が付くことはない。
+  const now =
+    state.clock === undefined ? context.now : formatDateTime(state.clock, household.timeZone);
+  const at = { ...context, now };
+  const plan = planFromState(state, now);
+  const decided = expand({ plan, state, events }, at, command);
+  if ('reason' in decided) return { ...decided, throughSeq: throughSeq() };
+  if (decided.bodies.length > 0) log.append(decided.bodies, context.memberId, now);
+  // 何も起きなかった操作も残す（同じ操作の送り直しで、後の別の人の変更を戻さないため。§7.3 の 7）。
+  log.recordOperation({
+    id: context.operationId,
+    actorId: context.memberId,
+    digest,
+    throughSeq: throughSeq(),
+  });
+  return { status: decided.bodies.length > 0 ? 'ok' : 'noop', throughSeq: throughSeq() };
+}
+
+type Expanded =
+  | { bodies: EventBody[] }
+  | { status: 'conflict' | 'forbidden' | 'invalid'; reason: string };
+
+interface Now {
+  plan: PlanResult;
+  state: EngineState;
+  events: readonly DomainEvent[];
+}
+
+/** 権限（§7.2）と前提を確かめ、命令を事象に展開する。 */
+function expand({ plan, state, events }: Now, context: CommandContext, command: Command): Expanded {
+  const me = context.memberId;
+  const taskOf = (key: string) => plan.tasks.find((t) => t.key === key);
+  const requestOf = (id: string) => plan.requests.find((r) => r.requestId === id);
+  switch (command.type) {
+    case 'answer': {
+      // 答えられるのは、今の読み取りにある未定の値か、計画の問いの値だけ（宣言の値の中から）。
+      // 取り下げた・消した出典の未定の値は、答えても使わないので断る（§5.3）。
+      const declared = [...state.extractions.values()]
+        .flatMap((e) => e.unknowns)
+        .find((u) => u.id === command.unknownId);
+      const asked = plan.questions.some((q) => q.unknownId === command.unknownId);
+      if (!declared && !asked) return { status: 'conflict', reason: 'unknownGone' };
+      if (retiredUnknowns(state).has(command.unknownId)) {
+        return { status: 'conflict', reason: 'unknownRetired' };
+      }
+      if (declared && !declared.values.includes(command.value)) {
+        return { status: 'invalid', reason: 'undeclaredValue' };
+      }
+      return { bodies: [{ type: 'answered', unknownId: command.unknownId, value: command.value }] };
+    }
+    case 'chooseOption': {
+      const arrangement = plan.arrangements.find((a) => a.key === command.arrangementKey);
+      const option = arrangement?.options.find((o) => o.key === command.optionKey);
+      if (!arrangement || !option) return { status: 'conflict', reason: 'optionGone' };
+      // 新しく決める命令（選ぶ・担当を提案する・引き受ける）は、今も要る手配・作業にだけ。
+      // 既に起きた事の記録（済んだ・送った・返事）は、要らなくなった後でも受け付ける。
+      if (!arrangement.live) return { status: 'conflict', reason: 'arrangementGone' };
+      // 決め時を過ぎた案は、もう選べない。既に動き出した案（依頼を出した・済んだ作業がある）は、
+      // 本命と予備の入れ替えのために選び直してよい。
+      const started =
+        [...state.requests.values()].some((r) => option.taskKeys.includes(r.taskKey)) ||
+        option.taskKeys.some((k) => state.commitments.get(k) === 'done');
+      if (option.expired && !started) return { status: 'conflict', reason: 'optionExpired' };
+      // 一つの案は、本命か予備のどちらか（予備を本命にするのはよい。本命を予備にはしない）。
+      if (command.role === 'backup' && arrangement.chosenOptionKey === option.key) {
+        return { status: 'conflict', reason: 'alreadyPrimary' };
+      }
+      const chosen: EventBody = {
+        type: 'optionChosen',
+        arrangementKey: arrangement.key,
+        optionKey: option.key,
+        role: command.role,
+      };
+      if (command.assigneeId === undefined) {
+        return command.shown === undefined
+          ? { bodies: [chosen] }
+          : { status: 'invalid', reason: 'shownWithoutAssignee' };
+      }
+      const assignee = adultOf(state, command.assigneeId);
+      if (!assignee) return { status: 'invalid', reason: 'assigneeNotAnAdult' };
+      const steps = option.taskKeys
+        .map((key) => taskOf(key))
+        .filter((t): t is NonNullable<typeof t> => t !== undefined && !t.extra);
+      const bodies: EventBody[] = [
+        chosen,
+        ...steps.map((t) => ({
+          type: 'assignmentProposed' as const,
+          taskKey: t.key,
+          assigneeId: assignee,
+        })),
+      ];
+      // 自分が担当なら、本人が画面で見た提案の控え（作業ごと）が今の提案と同じ作業だけを引き受ける。
+      // 控えを付けない作業は提案のまま残す。控えが今の提案と違えば、何も足さずに見せ直す（§5.5）。
+      const shown = command.shown ?? [];
+      if (shown.length > 0 && assignee !== me) {
+        return { status: 'invalid', reason: 'shownForAnother' };
+      }
+      for (const entry of shown) {
+        const step = steps.find((t) => t.key === entry.taskKey);
+        if (!step) return { status: 'invalid', reason: 'shownForUnknownTask' };
+        const current = proposalSnapshot(step);
+        if (!current || !sameProposal(current, entry.snapshot)) {
+          return { status: 'conflict', reason: 'proposalChanged' };
+        }
+        bodies.push({
+          type: 'commitmentChanged',
+          taskKey: step.key,
+          assigneeId: me,
+          action: 'accept',
+          shown: entry.snapshot,
+        });
+      }
+      return { bodies };
+    }
+    case 'dropOption': {
+      // 取り下げられるのは、今選んでいる案（本命か予備）だけ。
+      const arrangement = plan.arrangements.find((a) => a.key === command.arrangementKey);
+      const chosen =
+        arrangement?.chosenOptionKey === command.optionKey ||
+        arrangement?.backupOptionKeys.includes(command.optionKey);
+      if (!chosen) return { status: 'conflict', reason: 'notChosen' };
+      return {
+        bodies: [{ type: 'optionDropped', ...pick(command, ['arrangementKey', 'optionKey']) }],
+      };
+    }
+    case 'proposeAssignment':
+      if (!taskOf(command.taskKey)?.live) return { status: 'conflict', reason: 'taskGone' };
+      if (!adultOf(state, command.assigneeId)) {
+        return { status: 'invalid', reason: 'assigneeNotAnAdult' };
+      }
+      return {
+        bodies: [
+          { type: 'assignmentProposed', taskKey: command.taskKey, assigneeId: command.assigneeId },
+        ],
+      };
+    case 'accept': {
+      // 引き受けは担当の本人だけ。本人が見た提案が今の提案と同じ時だけ（§5.5・§7.3 の 6）。
+      const task = taskOf(command.taskKey);
+      if (!task?.live) return { status: 'conflict', reason: 'taskGone' };
+      if (task.assigneeId !== me) return { status: 'forbidden', reason: 'notTheAssignee' };
+      const now = proposalSnapshot(task);
+      if (!now || !sameProposal(now, command.shown)) {
+        return { status: 'conflict', reason: 'proposalChanged' };
+      }
+      return {
+        bodies: [
+          {
+            type: 'commitmentChanged',
+            taskKey: task.key,
+            assigneeId: me,
+            action: 'accept',
+            shown: command.shown,
+          },
+        ],
+      };
+    }
+    case 'commitment': {
+      const task = taskOf(command.taskKey);
+      if (!task) return { status: 'conflict', reason: 'taskGone' };
+      if (task.assigneeId !== me) return { status: 'forbidden', reason: 'notTheAssignee' };
+      return {
+        bodies: [
+          { type: 'commitmentChanged', taskKey: task.key, assigneeId: me, action: command.action },
+        ],
+      };
+    }
+    case 'recordSent': {
+      // 送ったと記録するのは担当の本人だけ。控えは、今の事象からサーバーが作る（§5.6）。
+      const task = taskOf(command.taskKey);
+      if (!task?.external) return { status: 'conflict', reason: 'taskGone' };
+      if (task.assigneeId !== me) return { status: 'forbidden', reason: 'notTheAssignee' };
+      // 依頼の ID は、押し間違いを直して消した物も含めて、二度使わない。同じ作業の依頼は一通だけ。
+      if (state.sentRequestIds.has(command.requestId)) {
+        return { status: 'invalid', reason: 'requestIdTaken' };
+      }
+      if ([...state.requests.values()].some((r) => r.taskKey === task.key)) {
+        return { status: 'conflict', reason: 'alreadySent' };
+      }
+      return {
+        bodies: [
+          {
+            type: 'externalRequestSent',
+            taskKey: task.key,
+            requestId: command.requestId,
+            snapshot: requestSnapshot(events, context.now, task.key),
+          },
+        ],
+      };
+    }
+    case 'correctSentRecord': {
+      const request = requestOf(command.requestId);
+      if (!request) return { status: 'conflict', reason: 'requestGone' };
+      if (request.sentBy !== me) return { status: 'forbidden', reason: 'notTheSender' };
+      if (request.state !== 'awaitingReply')
+        return { status: 'conflict', reason: 'alreadyAnswered' };
+      return { bodies: [{ type: 'requestRecordCorrected', requestId: request.requestId }] };
+    }
+    case 'recordReply':
+    case 'recordCancellationSent': {
+      const request = requestOf(command.requestId);
+      if (!request) return { status: 'conflict', reason: 'requestGone' };
+      return {
+        bodies: [
+          command.type === 'recordReply'
+            ? { type: 'externalReplyRecorded', requestId: request.requestId, reply: command.reply }
+            : { type: 'cancellationSent', requestId: request.requestId },
+        ],
+      };
+    }
+    case 'confirmItem':
+    case 'correctItem':
+    case 'dismissItem': {
+      // 確かめられるのは、今の読み取りにあり、取り下げていない出典の事項だけ。
+      const item = itemsOf(state).find((i) => i.id === command.itemId);
+      if (!item) return { status: 'conflict', reason: 'itemGone' };
+      if (state.withdrawnSources.has(item.sourceId)) {
+        return { status: 'conflict', reason: 'sourceWithdrawn' };
+      }
+      if (command.type === 'confirmItem') {
+        return { bodies: [{ type: 'itemConfirmed', itemId: item.id }] };
+      }
+      if (command.type === 'dismissItem') {
+        return { bodies: [{ type: 'itemDismissed', itemId: item.id, reason: command.reason }] };
+      }
+      if (Object.keys(command.interpretation).length === 0) {
+        return { status: 'invalid', reason: 'nothingToCorrect' };
+      }
+      return {
+        bodies: [
+          { type: 'itemCorrected', itemId: item.id, interpretation: command.interpretation },
+        ],
+      };
+    }
+    case 'withdrawSource':
+      if (!state.sources.has(command.sourceId)) return { status: 'conflict', reason: 'sourceGone' };
+      // 取り下げ済みなら何も足さない（操作は記録する）。
+      if (state.withdrawnSources.has(command.sourceId)) return { bodies: [] };
+      return { bodies: [{ type: 'sourceWithdrawn', sourceId: command.sourceId }] };
+    case 'advanceClock': {
+      if (!context.demo) return { status: 'forbidden', reason: 'demoOnly' };
+      // 時計は進めるだけ（戻すと、記録の時刻が前後する）。
+      const delta = toEpochMinutes(command.to) - toEpochMinutes(context.now);
+      if (delta < 0) return { status: 'invalid', reason: 'clockBackwards' };
+      if (delta === 0) return { bodies: [] };
+      return { bodies: [{ type: 'clockAdvanced', to: command.to }] };
+    }
+  }
+}
+
+/** 担当にできるのは、今有効な大人だけ。 */
+function adultOf(state: EngineState, memberId: string): string | undefined {
+  return state.household?.members.find((m) => m.id === memberId && m.kind === 'adult' && m.active)
+    ?.id;
+}
+
+function pick<T extends object, K extends keyof T>(value: T, keys: readonly K[]): Pick<T, K> {
+  return Object.fromEntries(keys.map((k) => [k, value[k]])) as Pick<T, K>;
+}
