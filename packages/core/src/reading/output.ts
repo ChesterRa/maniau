@@ -14,7 +14,7 @@ import {
   type Unknown,
 } from '../schema/source';
 import {
-  addBusinessDays,
+  addDays,
   isValidDateTime,
   isValidLocalDate,
   localDateOf,
@@ -84,6 +84,8 @@ export interface ReadingIssue {
     | 'uncoveredSentence'
     | 'badDate'
     | 'weekdayMismatch'
+    /** 「あした」「きょう」から決めた日付と、モデルの日付が違う。 */
+    | 'relativeDayMismatch'
     | 'badTime'
     | 'badCondition'
     | 'unknownEffectTarget'
@@ -200,19 +202,26 @@ export function toExtraction(
       issues.push({ problem: 'badTime', ref: id, detail: times.join(',') });
       continue;
     }
-    // 「あした」は、出典が届いた日の次の登校日（土日・祝日を飛ばす）。「きょう」は届いた日。
+    // 「あした」は、出典が届いた日の次の日（暦どおり。習い事の金曜の連絡の「あした」は土曜）。
+    // 「きょう」は届いた日。書かれた曜日と食い違えば、下で「食い違い」にして家族に確かめてもらう。
     const relativeDay = raw.relativeDay === 'none' ? undefined : raw.relativeDay;
     const receivedOn = localDateOf(
       toEpochMinutes(source.receivedAt),
       context.timeZone ?? 'Asia/Tokyo',
     );
-    const date =
-      raw.date ??
-      (relativeDay === 'tomorrow'
-        ? addBusinessDays(receivedOn, 1)
+    // 相対の言い方があれば、日付はコードが決める。モデルが別の日付を返したら、取らずに「食い違い」にする
+    // （プロンプトで date を空にさせても、守られるとは限らないため）。
+    const relativeDate =
+      relativeDay === 'tomorrow'
+        ? addDays(receivedOn, 1)
         : relativeDay === 'today'
           ? receivedOn
-          : null);
+          : null;
+    if (relativeDate !== null && raw.date !== null && raw.date !== relativeDate) {
+      issues.push({ problem: 'relativeDayMismatch', ref: id, detail: raw.date });
+      evidence = 'conflicting';
+    }
+    const date = relativeDate ?? raw.date;
     const writtenWeekday =
       raw.writtenWeekday === 'none' ? undefined : WEEKDAYS.indexOf(raw.writtenWeekday) + 1;
     if (date !== null && writtenWeekday !== undefined && weekdayOf(date) !== writtenWeekday) {

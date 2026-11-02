@@ -221,3 +221,91 @@ describe('読み取りの検査', () => {
     ]);
   });
 });
+
+describe('「あした」「きょう」', () => {
+  const club = {
+    id: 'c1',
+    version: 1,
+    receivedAt: '2026-11-27T18:00+09:00',
+    sender: 'club' as const,
+    language: 'ja' as const,
+    medium: 'text' as const,
+    sentences: [{ id: 'c1#1', text: 'あした（土）はれんしゅうじあいです。' }],
+  };
+  const output = (writtenWeekday: 'sat' | 'mon'): ExtractionOutput => ({
+    items: [
+      item({
+        id: 'i1',
+        sentenceIds: ['c1#1'],
+        kind: 'event',
+        written: 'あした（土）はれんしゅうじあいです。',
+        writtenWeekday,
+        relativeDay: 'tomorrow',
+        what: '練習試合',
+      }),
+    ],
+    unknowns: [],
+    conditions: [],
+    irrelevantSentenceIds: [],
+    ambiguities: [],
+  });
+
+  it('金曜に届いた習い事の連絡の「あした（土）」は、暦の次の日（土曜）', () => {
+    const { extraction, issues } = toExtraction(output('sat'), club, {
+      priorItems: [],
+      priorUnknowns: [],
+    });
+    expect(issues).toEqual([]);
+    expect(extraction.items[0]?.interpretation).toMatchObject({
+      date: '2026-11-28',
+      relativeDay: 'tomorrow',
+      writtenWeekday: 6,
+    });
+  });
+
+  it('書かれた曜日と食い違えば、食い違いとして家族に確かめてもらう', () => {
+    const { extraction, issues } = toExtraction(output('mon'), club, {
+      priorItems: [],
+      priorUnknowns: [],
+    });
+    expect(issues.map((i) => i.problem)).toEqual(['weekdayMismatch']);
+    expect(extraction.items[0]?.evidence).toBe('conflicting');
+  });
+});
+
+describe('「あした」とモデルの日付', () => {
+  it('「あした」から決めた日付とモデルの日付が違えば、モデルの日付を取らずに食い違いにする', () => {
+    const club = {
+      id: 'c2',
+      version: 1,
+      receivedAt: '2026-11-27T18:00+09:00',
+      sender: 'club' as const,
+      language: 'ja' as const,
+      medium: 'text' as const,
+      sentences: [{ id: 'c2#1', text: 'あしたはれんしゅうです。' }],
+    };
+    const output: ExtractionOutput = {
+      items: [
+        item({
+          id: 'i1',
+          sentenceIds: ['c2#1'],
+          written: 'あしたはれんしゅうです。',
+          relativeDay: 'tomorrow',
+          date: '2026-11-30',
+          what: '練習',
+        }),
+      ],
+      unknowns: [],
+      conditions: [],
+      irrelevantSentenceIds: [],
+      ambiguities: [],
+    };
+    const { extraction, issues } = toExtraction(output, club, {
+      priorItems: [],
+      priorUnknowns: [],
+    });
+    expect(issues.map((i) => i.problem)).toEqual(['relativeDayMismatch']);
+    expect(extraction.items[0]?.evidence).toBe('conflicting');
+    expect(extraction.items[0]?.interpretation.date).toBe('2026-11-28');
+  });
+});
