@@ -194,7 +194,7 @@ describe('ひとこと', () => {
     });
     expect(shown).toContain('計画では、次のとおりです。');
     expect(shown).toContain('学習発表会・12/5（土）');
-    expect(shown).toContain('条件しだい');
+    expect(shown).toContain('学習発表会・12/5（土） 学習発表会の実施日が12/5（土）なら');
     expect(shown).toContain('元の文');
     expect(shown).toContain(
       'おばあちゃんへの頼み事（振替休業日・12/7（月） 8:10–18:15）：返事待ち',

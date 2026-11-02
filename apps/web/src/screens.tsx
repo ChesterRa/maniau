@@ -9,6 +9,7 @@ import {
   type Household,
   type Item,
   isActiveTask,
+  isValidLocalDate,
   type Member,
   type OptionPlan,
   type PlanResult,
@@ -25,6 +26,7 @@ import {
   type ConfirmResult,
   type Heard,
   type HearResult,
+  type ItemWhen,
   type NoticeInput,
   operationId,
   type Reading,
@@ -74,7 +76,14 @@ export interface Ctx {
   /** 後から届いたお知らせで変わったこと（二人に同じ物。無ければ出さない）。 */
   changes?: ChangeSummary;
   /** 今の事項。条件しだい・確かめていない物は、確かな予定と見分けて見せる。 */
-  items: { item: Item; live: boolean; conditional: boolean; trusted: boolean }[];
+  items: {
+    item: Item;
+    live: boolean;
+    conditional: boolean;
+    trusted: boolean;
+    /** 条件しだいの時、一つの値で決まるなら、その条件。 */
+    when?: ItemWhen;
+  }[];
   sources: Map<string, Source>;
   readings: Reading[];
   me: Member;
@@ -1059,16 +1068,19 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
   const nextWeek = Array.from({ length: 7 }, (_, i) => addDaysIso(start, i + 7));
   const linesFor = (date: string) => {
     const lines: string[] = [];
-    for (const { item, live, conditional, trusted } of ctx.items) {
+    for (const { item, live, conditional, trusted, when: condition } of ctx.items) {
       if (!live || item.interpretation.date !== date) continue;
       if (item.kind === 'event' || item.kind === 'dayChange' || item.kind === 'test') {
         const what = item.interpretation.what ?? item.written;
-        // 確かでない予定を、決まった予定と同じ形で見せない。
+        const when = whenText(ctx, condition) ?? ctx.t('say.conditional');
+        // 確かでない予定を、決まった予定と同じ形で見せない。確かめていない上に条件しだいなら、両方を書く。
         lines.push(
           !trusted
-            ? ctx.t('week.unconfirmed', { what })
+            ? conditional
+              ? ctx.t('week.unconfirmedConditional', { what, when })
+              : ctx.t('week.unconfirmed', { what })
             : conditional
-              ? ctx.t('week.conditional', { what })
+              ? ctx.t('week.conditional', { what, when })
               : what,
         );
       }
@@ -1404,6 +1416,25 @@ function requestFor(ctx: Ctx, request: ExternalRequest): string {
   return ctx.t('say.requestStep', { step, what: base });
 }
 
+/**
+ * 未定の値の値（実在する日付は日で、ほかは答えの言葉で。訳が無ければ、お知らせの言葉のまま）。値は
+ * モデルの書いた文字なので、日付に見えても実在しない日（2/30 等）は、別の日に直さず、そのまま書く。
+ */
+const valueText = (ctx: Ctx, value: string) =>
+  isValidLocalDate(value) ? day(ctx, value) : ctx.t(`answer.${value}`, { defaultValue: value });
+
+/**
+ * 条件しだいの事項の条件（「学習発表会の実施日が12/5（土）なら」）。一つの値で決まらない時は、
+ * 「条件しだい」とだけ書く（長い式を短く言い換えない）。
+ */
+function whenText(ctx: Ctx, when: ItemWhen | undefined): string | undefined {
+  if (!when) return undefined;
+  return ctx.t(when.not ? 'condition.unless' : 'condition.if', {
+    label: when.label,
+    value: valueText(ctx, when.value),
+  });
+}
+
 /** 一言の候補の説明（計画から作る。モデルの文は使わない）。 */
 function proposalLabel(ctx: Ctx, proposal: ShownProposal): string {
   const { command } = proposal;
@@ -1428,12 +1459,11 @@ function proposalLabel(ctx: Ctx, proposal: ShownProposal): string {
       // 頼んだ日時は、送ったと記録した時の控え（今の手配の日ではない）。
       return dated(ctx, key, { name }, request && requestFor(ctx, request));
     }
-    case 'answer': {
-      const value = /^\d{4}-\d{2}-\d{2}$/.test(command.value)
-        ? day(ctx, command.value)
-        : ctx.t(`answer.${command.value}`, { defaultValue: command.value });
-      return ctx.t('say.do.answer', { label: proposal.label ?? '', value });
-    }
+    case 'answer':
+      return ctx.t('say.do.answer', {
+        label: proposal.label ?? '',
+        value: valueText(ctx, command.value),
+      });
     default:
       return '';
   }
@@ -1460,7 +1490,7 @@ function SayAnswer({
     <div className="flex flex-col gap-2">
       <Text quiet>{ctx.t('say.answer')}</Text>
       <ul className="flex flex-col gap-2">
-        {items.map(({ item, conditional, trusted }) => {
+        {items.map(({ item, conditional, trusted, when: condition }) => {
           const when = item.interpretation.date ?? item.interpretation.deadline;
           return (
             <li key={item.id} className="flex flex-wrap items-baseline gap-x-2">
@@ -1472,7 +1502,11 @@ function SayAnswer({
                   when ? day(ctx, when) : undefined,
                 )}
               </span>
-              {conditional && <span className="text-sub text-sm">{ctx.t('say.conditional')}</span>}
+              {conditional && (
+                <span className="text-sub text-sm">
+                  {whenText(ctx, condition) ?? ctx.t('say.conditional')}
+                </span>
+              )}
               {/* 推定・食い違いは、家族が確かめるまで確かな事実として見せない。 */}
               {!trusted && (
                 <span className="text-sub text-sm">

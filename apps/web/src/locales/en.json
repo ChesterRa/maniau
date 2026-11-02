@@ -208,6 +208,10 @@
     "statusOn": "{{status}} · {{dates}}",
     "toToday": "See Today"
   },
+  "condition": {
+    "if": "if {{label}} is {{value}}",
+    "unless": "if {{label}} is not {{value}}"
+  },
   "week": {
     "title": "Schedule",
     "today": "Today",
@@ -215,8 +219,9 @@
     "next": "Next week",
     "task": "{{name}}: {{what}} {{time}}",
     "deadline": "Deadline: {{option}}",
-    "conditional": "{{what}} (depends)",
+    "conditional": "{{what}} ({{when}})",
     "unconfirmed": "{{what}} (unconfirmed)",
+    "unconfirmedConditional": "{{what}} (unconfirmed; {{when}})",
     "taskReconfirm": "{{name}}: {{what}} {{time}} (check again)"
   },
   "missing": {

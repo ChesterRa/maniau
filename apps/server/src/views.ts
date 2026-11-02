@@ -13,7 +13,13 @@ import {
   type TodayCard,
   todayCards,
 } from '@maniau/core';
-import { foldEvents, type LiveItem, liveItems, planFromState } from '@maniau/core/engine';
+import {
+  type EngineState,
+  foldEvents,
+  type LiveItem,
+  liveItems,
+  planFromState,
+} from '@maniau/core/engine';
 
 export interface View {
   /** この見せる物を作った、最後の通し番号。命令に付けて返すと、見た版が分かる。 */
@@ -31,8 +37,20 @@ export interface View {
   /** 出典ごとの読み取り（どのモデルが読んだか）。後から入れたお知らせの物も含む。 */
   /** 出典ごとの最後の読み取り：読んだモデルと、家族に確かめてほしい文（どの文か分からない時は全体）。 */
   readings: { sourceId: string; model: string; check: string[]; checkAll: boolean }[];
-  /** 今の事項（確かめてほしい推定も含む）。 */
-  items: LiveItem[];
+  /** 今の事項（確かめてほしい推定も含む）。条件しだいの事項には、分かる時だけ条件を添える。 */
+  items: (LiveItem & { when?: ItemWhen })[];
+}
+
+/**
+ * 条件しだいの事項の条件。一つの未定の値で決まる時だけ作る（画面は「開催日が12/5（土）なら」と書く）。
+ * 二つ以上の値の組み合わせは作らず、画面は「条件しだい」とだけ書く（長い式を短く言い換えない）。
+ */
+export interface ItemWhen {
+  /** 未定の値の名前（お知らせの言葉）。 */
+  label: string;
+  value: string;
+  /** その値でない時に当てはまる。 */
+  not?: true;
 }
 
 /** 事象の列から、その大人に見せる物を作る。 */
@@ -50,8 +68,37 @@ export function viewFor(events: readonly DomainEvent[], memberId: string, now: D
     ...withChange(events, plan),
     sources: [...state.sources.values()],
     readings: readingsOf(events),
-    items: liveItems(state),
+    items: withWhen(state),
   };
+}
+
+/**
+ * 条件の分からない事項に、一つの値で決まる条件を添える（効くか分からない作用の先の物には付けない）。
+ * 未定の値の名前と条件の式は、今も確かな読み取り（取り下げていない出典の、今の版の文を読んだ物）
+ * からだけ取る。確かめられない時は添えず、画面は「条件しだい」とだけ書く（事項は隠さない）。
+ */
+function withWhen(state: EngineState): View['items'] {
+  const extractions = [...state.extractions]
+    .filter(([sourceId]) => {
+      const source = state.sources.get(sourceId);
+      if (!source || state.withdrawnSources.has(sourceId)) return false;
+      return (state.extractionVersion.get(sourceId) ?? 0) >= source.version;
+    })
+    .map(([, extraction]) => extraction);
+  const nodes = new Map(extractions.flatMap((e) => e.conditions).map((n) => [n.id, n]));
+  const labels = new Map(extractions.flatMap((e) => e.unknowns).map((u) => [u.id, u.label]));
+  const whenOf = (id: string): ItemWhen | undefined => {
+    const node = nodes.get(id);
+    const eq = node?.kind === 'not' ? nodes.get(node.childId) : node;
+    const label = eq?.kind === 'eq' ? labels.get(eq.unknownId) : undefined;
+    if (eq?.kind !== 'eq' || label === undefined) return undefined;
+    return { label, value: eq.value, ...(node?.kind === 'not' ? { not: true as const } : {}) };
+  };
+  return liveItems(state).map((l) => {
+    const id = l.item.conditionNodeId;
+    const when = l.conditional && !l.doubted && id !== undefined ? whenOf(id) : undefined;
+    return when ? { ...l, when } : l;
+  });
 }
 
 /** 出典ごとの最後の読み取りのモデル。 */

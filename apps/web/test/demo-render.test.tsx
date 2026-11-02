@@ -7,7 +7,7 @@ import { AskScreen, DecideScreen, SourcesScreen, TodayScreen, WeekScreen } from 
 import { ctxFor, demoData } from './ctx';
 
 const RAW_KEY =
-  /\b(?:card|today|decide|ask|quiet|week|sources|draft|option|task|cost|notice|demo|answer|missing)\.[a-zA-Z]/;
+  /\b(?:card|today|decide|ask|quiet|week|sources|draft|option|task|cost|notice|demo|answer|missing|condition|say)\.[a-zA-Z]/;
 
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ');
 

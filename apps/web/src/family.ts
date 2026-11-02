@@ -50,7 +50,17 @@ export interface SessionView {
   sources: Source[];
   /** 出典ごとの読み取り（どのモデルが読んだか、家族に確かめてほしい文）。 */
   readings?: { sourceId: string; model: string; check: string[]; checkAll: boolean }[];
-  items: LiveItem[];
+  /** 今の事項。条件しだいの事項には、一つの値で決まる時だけ条件が付く。 */
+  items: (LiveItem & { when?: ItemWhen })[];
+}
+
+/** 条件しだいの事項の条件（一つの未定の値で決まる時。apps/server/src/views.ts と同じ形）。 */
+export interface ItemWhen {
+  /** 未定の値の名前（お知らせの言葉）。 */
+  label: string;
+  value: string;
+  /** その値でない時に当てはまる。 */
+  not?: true;
 }
 
 interface Session {

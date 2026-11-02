@@ -207,6 +207,10 @@
     "statusOn": "{{status}}・{{dates}}",
     "toToday": "きょうを見る"
   },
+  "condition": {
+    "if": "{{label}}が{{value}}なら",
+    "unless": "{{label}}が{{value}}でなければ"
+  },
   "week": {
     "title": "よてい",
     "today": "きょう",
@@ -214,8 +218,9 @@
     "next": "来週",
     "task": "{{name}}：{{what}} {{time}}",
     "deadline": "{{option}}の決め時",
-    "conditional": "{{what}}（条件しだい）",
+    "conditional": "{{what}}（{{when}}）",
     "unconfirmed": "{{what}}（未確認）",
+    "unconfirmedConditional": "{{what}}（未確認・{{when}}）",
     "taskReconfirm": "{{name}}：{{what}} {{time}}（確かめ直し）"
   },
   "missing": {
