@@ -1,12 +1,28 @@
 // @vitest-environment happy-dom
 // お知らせの文を入れる：貼るか、キーボードのマイクで話した文を、出どころと一緒に読みに出す。読めたら
 // 「きょう」に戻る。読めない・数を使い切った時は、その旨を出す。読み取りの使えない画面には出さない。
+// 写真・PDF は書き起こして文の欄に入れ、家族が見比べて直してから、写真の印を付けて読む。
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { NoticeInput, ReadResult } from '../src/family';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NoticeInput, PhotoResult, PhotoUpload, ReadResult } from '../src/family';
 import i18n from '../src/i18n';
 import { type Ctx, type Route, SourcesScreen } from '../src/screens';
 import { step } from './fake-fetch';
+
+// 写真を縮める間を止められるようにし、写真は端末の画像処理を使わずに送る形にする（試験の環境は絵を描けない）。
+const conversion = vi.hoisted(() => ({ gate: undefined as Promise<void> | undefined }));
+vi.mock('../src/photo', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../src/photo')>();
+  return {
+    ...real,
+    toUploadable: async (file: File) => {
+      if (conversion.gate) await conversion.gate;
+      return file.type.startsWith('image/')
+        ? { mediaType: 'image/jpeg' as const, data: '/9j/' }
+        : real.toUploadable(file);
+    },
+  };
+});
 
 /** お知らせの画面に要る物だけの画面の材料（DOM の試験では、デモのファイルを読まない）。 */
 function baseCtx(): Ctx {
@@ -87,7 +103,12 @@ describe('お知らせの文を入れる', () => {
     expect(button()?.disabled).toBe(false);
     await step(() => button()?.click());
     expect(reads).toEqual([
-      { text: '12月10日(木)の練習は中止です。', sender: 'club', operationId: expect.any(String) },
+      {
+        text: '12月10日(木)の練習は中止です。',
+        sender: 'club',
+        medium: 'text',
+        operationId: expect.any(String),
+      },
     ]);
     expect(routes).toEqual([{ name: 'sources', sourceId: 'u1' }]);
     // 「あした」の基準（デモの時計）と、送る先を、入れる前に見せる。
@@ -226,5 +247,260 @@ describe('お知らせの文を入れる', () => {
     await step(() => root.render(<SourcesScreen ctx={baseCtx()} />));
     expect(host.querySelector('textarea')).toBeNull();
     expect(host.textContent).toContain('撮る');
+  });
+});
+
+describe('写真・PDF から書き起こす', () => {
+  /** ファイルを選んだように、選ぶ欄に一つ入れる。 */
+  const choose = async (file: File) => {
+    const input = host.querySelector('input[type=file]') as HTMLInputElement;
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    await step(() => input.dispatchEvent(new Event('change', { bubbles: true })));
+    await step();
+  };
+  const pdf = () =>
+    new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], 'oshirase.pdf', {
+      type: 'application/pdf',
+    });
+
+  it('書き起こした文を欄に入れ、見比べてから、写真の印を付けて読む', async () => {
+    const { ctx, reads } = setup(OK);
+    const photos: PhotoUpload[] = [];
+    const withPhoto: Ctx = {
+      ...ctx,
+      transcribe: async (input) => {
+        photos.push(input);
+        return { status: 'ok', text: '12月7日(月)は通常授業です。' };
+      },
+    };
+    await step(() => root.render(<SourcesScreen ctx={withPhoto} />));
+    expect(host.textContent).toContain('写真・PDF から書き起こす');
+    expect(host.textContent).toContain('このアプリは写真を残しません');
+    await choose(pdf());
+    expect(photos).toEqual([
+      { mediaType: 'application/pdf', data: 'JVBERg==', operationId: expect.any(String) },
+    ]);
+    expect((host.querySelector('textarea') as HTMLTextAreaElement).value).toBe(
+      '12月7日(月)は通常授業です。',
+    );
+    expect(host.textContent).toContain('PDF を開く：oshirase.pdf');
+    expect(host.textContent).toContain('PDF を開いて見比べ');
+    await step(() => button()?.click());
+    expect(reads).toEqual([
+      {
+        text: '12月7日(月)は通常授業です。',
+        sender: 'school',
+        medium: 'photo',
+        operationId: expect.any(String),
+      },
+    ]);
+  });
+
+  it('文字が読めなかった時は、欄を変えずにその旨を出す。書き起こしの口が無ければ、選ぶ欄を出さない', async () => {
+    const { ctx } = setup(OK);
+    await step(() => root.render(<SourcesScreen ctx={ctx} />));
+    expect(host.querySelector('input[type=file]')).toBeNull();
+    const empty: Ctx = { ...ctx, transcribe: async () => ({ status: 'ok', text: '  ' }) };
+    await step(() => root.render(<SourcesScreen ctx={empty} />));
+    await choose(pdf());
+    expect((host.querySelector('textarea') as HTMLTextAreaElement).value).toBe('');
+    expect(host.textContent).toContain('文字を読み取れませんでした');
+  });
+});
+
+describe('写真・PDF：選び直し・送り直し・閉じた時', () => {
+  const choose = async (file: File) => {
+    const input = host.querySelector('input[type=file]') as HTMLInputElement;
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    await step(() => input.dispatchEvent(new Event('change', { bubbles: true })));
+    await step();
+  };
+  const pdf = (name: string) =>
+    new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], name, { type: 'application/pdf' });
+  const image = (name: string) =>
+    new File([new Uint8Array([0xff, 0xd8, 0xff])], name, { type: 'image/jpeg' });
+  const area = () => host.querySelector('textarea') as HTMLTextAreaElement;
+  const fileInput = () => host.querySelector('input[type=file]') as HTMLInputElement;
+  const urls = { made: [] as string[], revoked: [] as string[] };
+  const saved = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+  beforeEach(() => {
+    urls.made = [];
+    urls.revoked = [];
+    URL.createObjectURL = () => {
+      const url = `blob:test/${urls.made.length + 1}`;
+      urls.made.push(url);
+      return url;
+    };
+    URL.revokeObjectURL = (url: string) => {
+      urls.revoked.push(url);
+    };
+  });
+  afterEach(() => {
+    URL.createObjectURL = saved.create;
+    URL.revokeObjectURL = saved.revoke;
+    conversion.gate = undefined;
+  });
+  const hold = () => {
+    let open = () => {};
+    conversion.gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    return async () => {
+      open();
+      conversion.gate = undefined;
+      await step();
+      await step();
+    };
+  };
+  const transcribing = (answers: PhotoResult[], calls: PhotoUpload[] = []) => {
+    const { ctx, reads } = setup(OK);
+    const withPhoto: Ctx = {
+      ...ctx,
+      transcribe: async (input) => {
+        calls.push(input);
+        return answers.shift() ?? { status: 'failed' };
+      },
+    };
+    return { ctx: withPhoto, reads, calls };
+  };
+
+  it('縮める間から、もう一枚は選べない。縮め終えてから送り、写真と文を一緒に出す', async () => {
+    const calls: PhotoUpload[] = [];
+    const { ctx } = transcribing([{ status: 'ok', text: 'A の文' }], calls);
+    await step(() => root.render(<SourcesScreen ctx={ctx} />));
+    const open = hold();
+    await choose(image('a.jpg'));
+    expect(fileInput().disabled).toBe(true);
+    expect(calls).toHaveLength(0);
+    await open();
+    expect(calls).toHaveLength(1);
+    expect(fileInput().disabled).toBe(false);
+    expect(area().value).toBe('A の文');
+    expect(host.querySelector('img')?.getAttribute('src')).toBe('blob:test/1');
+  });
+
+  it('二枚目を書き起こせなかった時は、一枚目の写真・文・写真の印をそのまま残す', async () => {
+    const { ctx, reads } = transcribing([
+      { status: 'ok', text: 'A の文' },
+      { status: 'failed', reason: 'readingFailed' },
+    ]);
+    await step(() => root.render(<SourcesScreen ctx={ctx} />));
+    await choose(pdf('a.pdf'));
+    await choose(pdf('b.pdf'));
+    expect(area().value).toBe('A の文');
+    expect(host.textContent).toContain('PDF を開く：a.pdf');
+    expect(host.textContent).not.toContain('PDF を開く：b.pdf');
+    expect(host.textContent).toContain('書き起こせませんでした');
+    await step(() => button()?.click());
+    expect(reads.map((r) => r.medium)).toEqual(['photo']);
+  });
+
+  it('返事が届かなかった時は「もう一度送る」で、同じ操作 ID のまま送り直す', async () => {
+    const calls: PhotoUpload[] = [];
+    const { ctx } = transcribing(
+      [{ status: 'uncertain' }, { status: 'ok', text: '送り直した文' }],
+      calls,
+    );
+    await step(() => root.render(<SourcesScreen ctx={ctx} />));
+    await choose(pdf('a.pdf'));
+    expect(host.textContent).toContain('返事が届きませんでした');
+    const retry = [...host.querySelectorAll('button')].find(
+      (b) => b.textContent === 'もう一度送る',
+    );
+    await step(() => retry?.click());
+    await step();
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.operationId).toBe(calls[0]?.operationId);
+    expect(area().value).toBe('送り直した文');
+  });
+
+  it('縮める間に画面を閉じたら、書き起こしに送らず、写真の URL も作らない', async () => {
+    const calls: PhotoUpload[] = [];
+    const { ctx } = transcribing([{ status: 'ok', text: 'A の文' }], calls);
+    await step(() => root.render(<SourcesScreen ctx={ctx} />));
+    const open = hold();
+    await choose(image('a.jpg'));
+    await step(() => root.render(<div />));
+    await open();
+    expect(calls).toHaveLength(0);
+    expect(urls.made).toEqual([]);
+  });
+
+  it('写真から書き起こした文を読み終えるか、文を消し切ったら、写真の URL を手放す', async () => {
+    const { ctx } = transcribing([{ status: 'ok', text: 'A の文' }]);
+    await step(() => root.render(<SourcesScreen ctx={ctx} />));
+    await choose(image('a.jpg'));
+    expect(urls.made).toEqual(['blob:test/1']);
+    const proto = Object.getPrototypeOf(area()) as object;
+    Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(area(), '');
+    await step(() => area().dispatchEvent(new Event('input', { bubbles: true })));
+    expect(urls.revoked).toEqual(['blob:test/1']);
+    expect(host.querySelector('img')).toBeNull();
+  });
+});
+
+describe('写真・PDF：見比べる原本と、長い文・大きすぎる物', () => {
+  const choose = async (file: File) => {
+    const input = host.querySelector('input[type=file]') as HTMLInputElement;
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    await step(() => input.dispatchEvent(new Event('change', { bubbles: true })));
+    await step();
+  };
+  const pdf = () =>
+    new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], 'a.pdf', { type: 'application/pdf' });
+  const answering = (answer: PhotoResult) => {
+    const { ctx, reads } = setup(OK);
+    return { ctx: { ...ctx, transcribe: async () => answer } as Ctx, reads };
+  };
+
+  it('PDF は、新しい窓で開いて見比べられる', async () => {
+    const { ctx } = answering({ status: 'ok', text: '12月7日(月)は通常授業です。' });
+    await step(() => root.render(<SourcesScreen ctx={ctx} />));
+    await choose(pdf());
+    const link = [...host.querySelectorAll('a')].find((a) => a.textContent?.includes('a.pdf'));
+    expect(link?.getAttribute('href')).toMatch(/^blob:/);
+    expect(link?.getAttribute('target')).toBe('_blank');
+  });
+
+  it('長すぎる書き起こしは切らずに入れ、長すぎると示して、読み取りを押せなくする', async () => {
+    const long = 'あ'.repeat(4001);
+    const { ctx, reads } = answering({ status: 'ok', text: long });
+    await step(() => root.render(<SourcesScreen ctx={ctx} />));
+    await choose(pdf());
+    expect((host.querySelector('textarea') as HTMLTextAreaElement).value).toHaveLength(4001);
+    expect(host.textContent).toContain('文が長すぎます（4,001字。4,000字まで）');
+    expect(button()?.disabled).toBe(true);
+    expect(reads).toEqual([]);
+  });
+
+  it('選べても読めないファイルは、送らずにその旨を出し、選び直せるようにする', async () => {
+    const { ctx } = setup(OK);
+    let sent = 0;
+    const at = {
+      ...ctx,
+      transcribe: async () => {
+        sent += 1;
+        return { status: 'ok', text: '12月7日(月)は通常授業です。' };
+      },
+    } as Ctx;
+    await step(() => root.render(<SourcesScreen ctx={at} />));
+    const gone = pdf();
+    Object.defineProperty(gone, 'arrayBuffer', {
+      value: () => Promise.reject(new DOMException('gone', 'NotReadableError')),
+    });
+    await choose(gone);
+    expect(host.textContent).toContain('ファイルを読めませんでした');
+    expect((host.querySelector('input[type=file]') as HTMLInputElement).disabled).toBe(false);
+    expect(sent).toBe(0);
+  });
+
+  it('大きすぎる・ページが多すぎる時は、その旨と、要るページだけにすることを示す', async () => {
+    const { ctx } = answering({ status: 'tooLarge' });
+    await step(() => root.render(<SourcesScreen ctx={ctx} />));
+    await choose(pdf());
+    expect(host.textContent).toContain('ページが多すぎます');
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent === 'もう一度送る')).toBe(
+      false,
+    );
   });
 });

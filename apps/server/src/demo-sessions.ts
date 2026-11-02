@@ -29,6 +29,7 @@ import {
   type ExtractResult,
   ReadingError,
 } from './reading/extract';
+import { type PhotoInput, PhotoTooLarge, type TranscribeResult } from './reading/transcribe';
 import { buildUtteranceInput, type UtteranceResult } from './reading/utterance';
 import { memoryStore } from './store';
 import { utteranceContext } from './utterance-context';
@@ -56,6 +57,18 @@ export const readingInputFits = (request: ExtractRequest) =>
 
 /** お知らせを Claude で読む（試験では偽物に替える）。 */
 export type NoticeReader = (request: ExtractRequest) => Promise<ExtractResult>;
+
+/** 一つのデモで書き起こせる写真・PDF の数（一日の数と、同時に読む数は、お知らせと同じ枠を使う）。 */
+export const MAX_PHOTOS_PER_SESSION = 5;
+
+/** お知らせの写真・PDF を Claude で書き起こす（試験では偽物に替える）。 */
+export type PhotoReader = (photo: PhotoInput) => Promise<TranscribeResult>;
+
+export type PhotoResult =
+  | { status: 'ok'; text: string }
+  /** tooLarge：入力の見積もりが多すぎて、書き起こしを呼ばなかった（見積もりで Anthropic に送ったので、一回と数える）。 */
+  | { status: 'limit' | 'busy' | 'invalid' | 'conflict' | 'tooLarge' }
+  | { status: 'failed'; reason: string };
 
 /** 一つのデモで読める一言の数（一言は短く、何度も言い直すので、お知らせより多くする）。 */
 export const MAX_UTTERANCES_PER_SESSION = 20;
@@ -120,6 +133,8 @@ export interface ReadCheck {
 export interface NoticeInput {
   text: string;
   sender: SourceSender;
+  /** 写真・PDF から書き起こし、家族が見比べて直した文なら photo。 */
+  medium?: Source['medium'];
   /** 画面が付ける操作の ID。届いたか分からない時の送り直しで、二度読まない・二度足さない。 */
   operationId: string;
 }
@@ -170,6 +185,14 @@ interface Session {
   /** いま読んでいる操作の ID（お知らせと一言で一つずつ）。 */
   reading?: string;
   operations: Map<string, ReadingOperation>;
+  /** このデモで書き起こした（書き起こそうとした）写真・PDF の数。 */
+  photos: number;
+  /** 書き起こしの操作（送り直しには、もう一度呼ばずに同じ文を返す。写真は残さない）。 */
+  /** 操作ごとの控え。結果の無い間は、書き起こしの途中。 */
+  photoOperations: Map<
+    string,
+    { digest: string; result?: { status: 'ok'; text: string } | { status: 'tooLarge' } }
+  >;
   /** このデモで読んだ（読もうとした）一言の数。 */
   utterances: number;
   utteranceOperations: Map<string, UtteranceOperation>;
@@ -245,7 +268,11 @@ export function demoSessions(
       }
     }
     while (sessions.size >= MAX_SESSIONS) {
-      const oldest = [...sessions.entries()].sort((a, b) => a[1].touched - b[1].touched)[0];
+      // 読んでいる途中のデモは追い出さない（外に送った後の結果を捨てず、後の段の呼び出しも無駄にしない）。
+      // 途中の物は同時に読む数までなので、上限を少し超えるだけ。
+      const oldest = [...sessions.entries()]
+        .filter(([, s]) => s.reading === undefined)
+        .sort((a, b) => a[1].touched - b[1].touched)[0];
       if (!oldest) break;
       sessions.delete(oldest[0]);
       store.drop(oldest[0]);
@@ -267,6 +294,9 @@ export function demoSessions(
     session.touched = clock();
     return session;
   };
+  // 待つ間に、期限が切れた・数の上限で捨てたデモではないか（外に送る前と、結果を足す前に確かめる）。
+  const alive = (id: string, session: Session) =>
+    sessions.get(id) === session && clock() - session.touched <= TTL_MS;
 
   /** 読む前の前提を取り、Claude で読み、前提が変わっていない時だけ、出典と読み取りを一度に足す。 */
   async function readNotice(
@@ -280,6 +310,8 @@ export function demoSessions(
     const prior = await store.withHousehold(id, (log) =>
       contextOf(log.events(), memberId, session.now),
     );
+    // 前提を取る間にデモが消えたら、外に送らない（結果を返せないのに、送らないように）。
+    if (!alive(id, session)) return undefined;
     if (!prior) return { status: 'invalid' };
     const sourceId = `u${session.readings}`;
     const title = titleOf(input.text);
@@ -289,7 +321,7 @@ export function demoSessions(
       receivedAt: prior.at,
       sender: input.sender,
       language: languageOf(input.text),
-      medium: 'text',
+      medium: input.medium ?? 'text',
       ...(title ? { title } : {}),
       sentences: splitSentences(input.text, sourceId),
     };
@@ -317,7 +349,7 @@ export function demoSessions(
       all: extraction.checkAll ?? false,
     };
     // 読む間に期限が切れた・数の上限で捨てたデモには足さない（押さえた中でも、もう一度確かめる）。
-    const gone = () => sessions.get(id) !== session || clock() - session.touched > TTL_MS;
+    const gone = () => !alive(id, session);
     if (gone()) return undefined;
     // 足す途中で投げたら（形の合わない記録など）、置き場所が全部を戻す。読めなかったとして返す。
     return store
@@ -417,6 +449,7 @@ export function demoSessions(
       const context = utteranceContext(events, memberId, session.now, input.text);
       return context && { context, throughSeq: events.at(-1)?.seq ?? 0 };
     });
+    if (!alive(id, session)) return undefined;
     if (!heardOn) return { status: 'invalid' };
     const { context, throughSeq } = heardOn;
     if (buildUtteranceInput(context).length > MAX_UTTERANCE_INPUT_CHARS) return { status: 'limit' };
@@ -427,7 +460,7 @@ export function demoSessions(
     } catch (error) {
       return { status: 'failed', reason: error instanceof ReadingError ? error.reason : 'error' };
     }
-    const gone = () => sessions.get(id) !== session || clock() - session.touched > TTL_MS;
+    const gone = () => !alive(id, session);
     if (gone()) return undefined;
     return store
       .withHousehold(id, (log): UtteranceOutcome | undefined => {
@@ -467,6 +500,8 @@ export function demoSessions(
         readings: 0,
         operations: new Map(),
         utterances: 0,
+        photos: 0,
+        photoOperations: new Map(),
         utteranceOperations: new Map(),
         proposals: new Map(),
       });
@@ -501,6 +536,78 @@ export function demoSessions(
      * 家族が貼った・話したお知らせの文を、Claude で読んで計画に入れる。読む間は家庭を押さえない
      * （待つ間も、他の画面を止めない）。数と同時に読む数を、ここで抑える。
      */
+    /**
+     * お知らせの写真・PDF を書き起こし、文を返す（何も記録しない。写真は残さない）。家族が写真と見比べて
+     * 直してから、文として読む（notice）。
+     */
+    async photo(
+      id: string,
+      memberId: string,
+      input: PhotoInput & { operationId: string },
+      read: PhotoReader,
+    ): Promise<PhotoResult | undefined> {
+      const session = touch(id);
+      if (!session) return undefined;
+      const digest = createHash('sha256')
+        .update(memberId)
+        .update(input.mediaType)
+        .update(input.data)
+        .digest('hex');
+      // 同じ操作の送り直しは、数の上限より先に見る（返事が届かなかった時も、同じ文を返す）。
+      const previous = session.photoOperations.get(input.operationId);
+      if (previous) {
+        if (previous.digest !== digest) return { status: 'conflict' };
+        return previous.result ?? { status: 'busy' };
+      }
+      const adult = await store.withHousehold(id, (log) =>
+        foldEvents(log.events()).household?.members.some(
+          (m) => m.id === memberId && m.kind === 'adult' && m.active,
+        ),
+      );
+      // 確かめる間にデモが消えたら、数を使わず、外にも送らない。
+      if (!alive(id, session)) return undefined;
+      if (!adult) return { status: 'invalid' };
+      const today = new Date(clock()).toISOString().slice(0, 10);
+      if (daily.day !== today) Object.assign(daily, { day: today, count: 0 });
+      if (session.photos >= MAX_PHOTOS_PER_SESSION || daily.count >= perDay) {
+        return { status: 'limit' };
+      }
+      if (session.reading !== undefined || inFlight >= MAX_READINGS_IN_FLIGHT) {
+        return { status: 'busy' };
+      }
+      // 数は、待つ前に押さえる（同じ時に来た二つが、どちらも上限の手前を見て進まないように）。
+      session.photos += 1;
+      daily.count += 1;
+      session.reading = input.operationId;
+      inFlight += 1;
+      session.photoOperations.set(input.operationId, { digest });
+      try {
+        const result = await read({ mediaType: input.mediaType, data: input.data });
+        // 待つ間にデモが消えた（期限切れ・追い出し）なら、結果を返さない（消えたデモの成功にしない）。
+        if (!alive(id, session)) {
+          session.photoOperations.delete(input.operationId);
+          return undefined;
+        }
+        const done = { status: 'ok' as const, text: result.text };
+        session.photoOperations.set(input.operationId, { digest, result: done });
+        return done;
+      } catch (error) {
+        // 入力の見積もりが多すぎて書き起こしを呼ばなかった時も、見積もりで Anthropic に送ったので、数は
+        // 戻さない（大きすぎる物を選び直し続けて、外への要求が上限なく増えないように）。同じ操作の送り直しには、
+        // もう一度数えずに同じ答えを返す。
+        if (error instanceof PhotoTooLarge) {
+          const tooLarge = { status: 'tooLarge' as const };
+          session.photoOperations.set(input.operationId, { digest, result: tooLarge });
+          return tooLarge;
+        }
+        // 書き起こせなかった操作は控えを消す（同じ ID で、もう一度送れる）。数は戻さない（外への要求の数を抑える）。
+        session.photoOperations.delete(input.operationId);
+        return { status: 'failed', reason: error instanceof ReadingError ? error.reason : 'error' };
+      } finally {
+        session.reading = undefined;
+        inFlight -= 1;
+      }
+    },
     async notice(
       id: string,
       memberId: string,
@@ -510,7 +617,7 @@ export function demoSessions(
       const session = touch(id);
       if (!session) return undefined;
       const digest = createHash('sha256')
-        .update(JSON.stringify([memberId, input.sender, input.text]))
+        .update(JSON.stringify([memberId, input.sender, input.text, input.medium ?? 'text']))
         .digest('hex');
       // 同じ操作の送り直しは、数の上限より先に見る（最後の一回の返事が届かなかった時も、結果を返す）。
       const previous = session.operations.get(input.operationId);

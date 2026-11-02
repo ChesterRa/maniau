@@ -13,6 +13,7 @@ import type {
 } from '@maniau/core';
 import type { LiveItem } from '@maniau/core/engine';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Uploadable } from './photo';
 
 export interface Stage {
   id: string;
@@ -72,14 +73,30 @@ interface Session {
   canRead?: boolean;
   /** 家族の一言を読めるか（同じく、鍵のあるデモのサーバーだけ）。 */
   canHear?: boolean;
+  /** お知らせの写真・PDF を書き起こせるか（同じく）。 */
+  canPhoto?: boolean;
 }
 
 /** 家族が入れたお知らせの文。操作 ID は、届いたか分からない時の送り直しに同じ物を使う。 */
 export interface NoticeInput {
   text: string;
   sender: string;
+  /** 写真・PDF から書き起こし、家族が見比べて直した文なら photo。 */
+  medium?: 'text' | 'photo';
   operationId: string;
 }
+
+/** 書き起こす写真・PDF（画面で縮めた物）。操作 ID は、返事が届かなかった時の送り直しに同じ物を使う。 */
+export type PhotoUpload = Uploadable & { operationId: string };
+
+export type PhotoResult =
+  | { status: 'ok'; text: string }
+  /**
+   * limit：数を使い切った。busy：読んでいる途中。uncertain：返事が届かない（何も記録していない）。
+   * tooLarge：大きすぎる・ページが多すぎる（呼んでいない）。
+   */
+  | { status: 'limit' | 'busy' | 'uncertain' | 'tooLarge' }
+  | { status: 'failed'; reason?: string };
 
 export type ReadResult =
   | { status: 'ok'; sourceId: string; check: ReadCheck }
@@ -440,6 +457,48 @@ export function useServerView(where: Where | undefined) {
   );
 
   /**
+   * デモの家庭で、お知らせの写真・PDF を書き起こす。文を返すだけで何も書かない（写真も残さない）。家族が
+   * 写真と見比べて直してから、read で読む。待つ間に段・使う人が替わっていたら、その返事は使わない。
+   */
+  const transcribe = useCallback(
+    async (input: PhotoUpload): Promise<PhotoResult> => {
+      const now = current.current;
+      if (kind !== 'demo' || !sessionId || !memberId || now.key !== key) {
+        return { status: 'failed', reason: 'stale' };
+      }
+      if (now.memberId !== memberId) return { status: 'failed', reason: 'stale' };
+      if (busy.current === now.epoch) return { status: 'busy' };
+      busy.current = now.epoch;
+      try {
+        const response = await fetch(`/api/demo/sessions/${sessionId}/photos`, {
+          method: 'POST',
+          headers: json,
+          body: JSON.stringify({ memberId, ...input }),
+          signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+        });
+        if (!isCurrent(now.epoch)) return { status: 'failed', reason: 'stale' };
+        if (response.status === 404) {
+          setNotice('expired');
+          return { status: 'failed', reason: 'unknownSession' };
+        }
+        // 大きすぎて断られた時は、途中の中継が返した物（JSON でない）でも、そう示す。
+        if (response.status === 413) return { status: 'tooLarge' };
+        const body = (await response.json()) as { text: string } | { error: string };
+        if (!isCurrent(now.epoch)) return { status: 'failed', reason: 'stale' };
+        if ('text' in body) return { status: 'ok', text: body.text };
+        if (body.error === 'readingLimit') return { status: 'limit' };
+        if (body.error === 'readingBusy') return { status: 'busy' };
+        return { status: 'failed', reason: body.error };
+      } catch {
+        return { status: 'uncertain' };
+      } finally {
+        if (busy.current === now.epoch) busy.current = undefined;
+      }
+    },
+    [kind, key, sessionId, memberId, isCurrent],
+  );
+
+  /**
    * デモの家庭で、家族の一言を読む。読むだけで何も書かないので、返事が届かなくても同じ操作 ID で
    * 送り直せる。待つ間に段・使う人が替わっていたら、その返事は使わない。
    */
@@ -580,6 +639,7 @@ export function useServerView(where: Where | undefined) {
     clearNotice: () => setNotice(undefined),
     send,
     read,
+    transcribe,
     hear,
     confirm,
     /** 届いたか分からない操作を、同じ家庭・同じ大人・同じ ID・同じ代で送り直す。 */

@@ -98,6 +98,8 @@ function Body(props: {
   /** お知らせの文を入れて読めるか（デモで、読み取りの鍵があるサーバーだけ）。 */
   canRead?: boolean;
   canHear?: boolean;
+  /** お知らせの写真・PDF を書き起こせるか（同じく）。 */
+  canPhoto?: boolean;
   lang: UiLanguage;
   route: Route;
   onRoute: (route: Route) => void;
@@ -122,6 +124,7 @@ function Body(props: {
           sources: new Map(view.sources.map((s) => [s.id, s])),
           readings: withLive(props.readings, view.readings ?? []),
           ...(props.canRead ? { read: live.read } : {}),
+          ...(props.canRead && props.canPhoto ? { transcribe: live.transcribe } : {}),
           ...(props.canHear ? { hear: live.hear, confirm: live.confirm } : {}),
           me,
           lang,
@@ -225,6 +228,7 @@ function DemoApp() {
         readings={session?.readings ?? []}
         canRead={session?.canRead === true}
         canHear={session?.canHear === true}
+        canPhoto={session?.canPhoto === true}
         lang={lang}
         route={route}
         onRoute={setRoute}

@@ -2,16 +2,23 @@
 // Postgres）。どちらも、画面には見せる物だけを渡し、事象の列は渡さない（02-foundation §7.1）。
 import { Command, SourceSender } from '@maniau/core';
 import { type Context, Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
 import { ACCESS_HEADER, type AccessVerifier } from './auth/access';
 import { nowIn } from './clock';
 import { type CommandResult, runCommand } from './commands';
 import type { Db } from './db/store';
 import { DEMO_STAGES, isDemoStage, loadDemoData } from './demo';
-import { demoSessions, type NoticeReader, type UtteranceReader } from './demo-sessions';
+import {
+  demoSessions,
+  type NoticeReader,
+  type PhotoReader,
+  type UtteranceReader,
+} from './demo-sessions';
 import { type FamilyMember, type Invitations, memberFor } from './members';
 import type { Notifier } from './notifier';
 import { isPushEndpoint, removeSubscription, saveSubscription } from './push';
+import { checkPhoto, PhotoMediaType } from './reading/transcribe';
 import type { Store } from './store';
 import { viewFor } from './views';
 
@@ -32,6 +39,11 @@ export interface FamilyBackend {
   push?: { publicKey: string; notifier: Pick<Notifier, 'poke'> };
 }
 
+// 写真の中身は base64 で、5MB の写真がおよそ 7,000,000 字になる。中身の外の項目には 1KB を見込む。
+export const MAX_PHOTO_DATA = 7_000_000;
+export const MAX_PHOTO_BODY = MAX_PHOTO_DATA + 1024;
+export const MAX_JSON_BODY = 64 * 1024;
+const PHOTO_PATH = /^\/api\/demo\/sessions\/[^/]+\/photos$/;
 const STATUS = { ok: 200, noop: 200, conflict: 409, forbidden: 403, invalid: 400 } as const;
 const statusOf = (result: CommandResult) => STATUS[result.status];
 
@@ -42,6 +54,8 @@ export function createApp(
     reader?: NoticeReader;
     /** 家族の一言を Claude で読む口（同じく鍵がある時だけ）。 */
     listener?: UtteranceReader;
+    /** お知らせの写真・PDF を Claude で書き起こす口（同じく鍵がある時だけ）。 */
+    transcriber?: PhotoReader;
   } = {},
 ): Hono {
   // 起きる時に、デモの家族とお知らせを読み、型と家族の決まりを確かめる（誤りなら起きない）。
@@ -53,12 +67,27 @@ export function createApp(
   const reader = family ? undefined : options.reader;
   // 一言も同じ（デモの家族の名前を前提に送るので、家族の家庭では開けない。01-model §10）。
   const listener = family ? undefined : options.listener;
+  // 写真の書き起こしも同じ（家族の家庭では、まだ開けない）。
+  const transcriber = family ? undefined : options.transcriber;
   const app = new Hono();
   // API の返事は、どれも控えに残さない（家族の予定・場所を、端末や途中の控えに置かない）。
   app.use('/api/*', async (c, next) => {
     await next();
     c.header('Cache-Control', 'no-store');
   });
+  // 要求の中身は、読む前に大きさで断る（JSON を読み終えてから形を確かめるのでは、大きな中身を先に抱える）。
+  // 写真の口だけを大きくし、他の口は文の上限（お知らせ 4,000 字）を UTF-8 で送っても収まる大きさにする。
+  const jsonLimit = bodyLimit({
+    maxSize: MAX_JSON_BODY,
+    onError: (c) => c.json({ error: 'bodyTooLarge' }, 413),
+  });
+  const photoLimit = bodyLimit({
+    maxSize: MAX_PHOTO_BODY,
+    onError: (c) => c.json({ error: 'photoTooLarge' }, 413),
+  });
+  app.use('/api/*', (c, next) =>
+    PHOTO_PATH.test(c.req.path) ? photoLimit(c, next) : jsonLimit(c, next),
+  );
   app.get('/api/health', (c) => c.json({ ok: true }));
 
   // 家族の家庭：毎回の要求で Access のトークンを確かめ、成員の表で、今も有効な大人かを引く。
@@ -227,6 +256,7 @@ export function createApp(
       // お知らせの文を入れて読めるか（読み取りの鍵があるサーバーだけ）。一言を読めるか。
       canRead: reader !== undefined,
       canHear: listener !== undefined,
+      canPhoto: reader !== undefined && transcriber !== undefined,
     });
   });
   app.get('/api/demo/sessions/:sid/view', async (c) => {
@@ -251,16 +281,18 @@ export function createApp(
     operationId: z.string().min(1).max(100),
     text: z.string().trim().min(1).max(4000),
     sender: SourceSender.default('school'),
+    // 写真・PDF から書き起こし、家族が見比べて直した文か。
+    medium: z.enum(['text', 'photo']).default('text'),
   });
   app.post('/api/demo/sessions/:sid/notices', async (c) => {
     if (!reader) return c.json({ error: 'readingUnavailable' }, 503);
     const body = NoticeInput.safeParse(await c.req.json().catch(() => ({})));
     if (!body.success) return c.json({ error: 'badNotice' }, 400);
-    const { memberId, operationId, text, sender } = body.data;
+    const { memberId, operationId, text, sender, medium } = body.data;
     const done = await sessions.notice(
       c.req.param('sid'),
       memberId,
-      { text, sender, operationId },
+      { text, sender, medium, operationId },
       reader,
     );
     if (!done) return c.json({ error: 'unknownSession' }, 404);
@@ -279,6 +311,52 @@ export function createApp(
         return c.json({ error: 'readingStale' }, 409);
       case 'failed':
         // 中身や理由の文は返さない（種類だけ）。
+        return c.json({ error: 'readingFailed', reason: done.reason }, 502);
+    }
+  });
+  // デモの家庭で、お知らせの写真・PDF を書き起こし、文を返す。何も書かず、写真も残さない（家族が見比べて
+  // 直してから、文として入れる）。写真は画面で長い辺 2576px までに縮める。中身の大きさの上限は、写真で
+  // およそ 5MB。
+  const PhotoBody = z.object({
+    memberId: z.string().min(1),
+    operationId: z.string().min(1).max(100),
+    mediaType: PhotoMediaType,
+    data: z
+      .string()
+      .min(1)
+      .max(MAX_PHOTO_DATA)
+      .regex(/^[A-Za-z0-9+/]+=*$/),
+  });
+  app.post('/api/demo/sessions/:sid/photos', async (c) => {
+    if (!transcriber || !reader) return c.json({ error: 'readingUnavailable' }, 503);
+    const body = PhotoBody.safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badPhoto' }, 400);
+    const { memberId, operationId, mediaType, data } = body.data;
+    // 形の崩れた・言った形式と違う・大きすぎる中身は、呼ぶ前に断る（モデルの費用を使わない）。
+    const checked = checkPhoto({ mediaType, data });
+    if (checked === 'badPhoto') return c.json({ error: 'badPhoto' }, 400);
+    if (checked === 'tooLarge') return c.json({ error: 'photoTooLarge' }, 413);
+    const done = await sessions.photo(
+      c.req.param('sid'),
+      memberId,
+      { mediaType, data, operationId },
+      transcriber,
+    );
+    if (!done) return c.json({ error: 'unknownSession' }, 404);
+    switch (done.status) {
+      case 'ok':
+        return c.json({ text: done.text });
+      case 'limit':
+        return c.json({ error: 'readingLimit' }, 429);
+      case 'busy':
+        return c.json({ error: 'readingBusy' }, 429);
+      case 'invalid':
+        return c.json({ error: 'notAMember' }, 400);
+      case 'conflict':
+        return c.json({ error: 'operationReused' }, 409);
+      case 'tooLarge':
+        return c.json({ error: 'photoTooLarge' }, 413);
+      case 'failed':
         return c.json({ error: 'readingFailed', reason: done.reason }, 502);
     }
   });

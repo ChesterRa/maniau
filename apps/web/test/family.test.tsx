@@ -4,7 +4,7 @@
 import type { Command } from '@maniau/core';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { type SendResult, type SessionView, useDemoSession } from '../src/family';
+import { type PhotoResult, type SendResult, type SessionView, useDemoSession } from '../src/family';
 import { type Call, installFetch, step, take as takeFrom } from './fake-fetch';
 
 type Demo = ReturnType<typeof useDemoSession>;
@@ -165,5 +165,23 @@ describe('画面の返事の行き違い', () => {
       void demo?.retry();
     });
     expect(calls.filter(isCommand)).toHaveLength(1);
+  });
+});
+
+describe('写真の書き起こしの返事', () => {
+  it('大きすぎて断られたら、途中の中継が JSON でない物を返しても、大きすぎると示す', async () => {
+    await step(() => take(isView('a')).respond(200, view(12)));
+    let result: PhotoResult | undefined;
+    await step(() => {
+      void demo
+        ?.transcribe({ mediaType: 'image/jpeg', data: '/9j/', operationId: 'p-1' })
+        .then((r) => {
+          result = r;
+        });
+    });
+    const notJson = Promise.reject(new SyntaxError('Unexpected token <'));
+    notJson.catch(() => {});
+    await step(() => take((c) => c.url.endsWith('/photos')).respond(413, undefined, notJson));
+    expect(result).toEqual({ status: 'tooLarge' });
   });
 });

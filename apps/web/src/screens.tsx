@@ -21,7 +21,7 @@ import {
   toEpochMinutes,
 } from '@maniau/core';
 import type { TFunction } from 'i18next';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   type ConfirmResult,
   type Heard,
@@ -29,6 +29,8 @@ import {
   type ItemWhen,
   type NoticeInput,
   operationId,
+  type PhotoResult,
+  type PhotoUpload,
   type Reading,
   type ReadResult,
   type SendResult,
@@ -45,6 +47,7 @@ import {
   minutesBetween,
 } from './format';
 import type { UiLanguage } from './i18n';
+import { type NotUploadable, toUploadable, type Uploadable } from './photo';
 import {
   Button,
   Card,
@@ -96,6 +99,8 @@ export interface Ctx {
   send: (command: Command) => Promise<SendResult>;
   /** お知らせの文を入れて読む（使える時だけ。デモで、読み取りの鍵があるサーバー）。 */
   read?: (input: NoticeInput) => Promise<ReadResult>;
+  /** お知らせの写真・PDF を書き起こす（同じく、使える時だけ。何も記録しない）。 */
+  transcribe?: (input: PhotoUpload) => Promise<PhotoResult>;
   /** 家族の一言を読む・その候補を記録する（同じく、使える時だけ）。 */
   hear?: (text: string, operationId: string) => Promise<HearResult>;
   confirm?: (proposalId: string, operationId: string) => Promise<ConfirmResult>;
@@ -1389,6 +1394,7 @@ export function SourcesScreen(props: { ctx: Ctx; sourceId?: string; highlight?: 
                 {ctx.t('sources.received', { at: dayTime(ctx, source.receivedAt) })}
               </Label>
               <Title>{source.title ?? ctx.t('sources.untitled')}</Title>
+              {source.medium === 'photo' && <Text quiet>{ctx.t('sources.fromPhoto')}</Text>}
               {reading?.checkAll ? (
                 <Text>{ctx.t('sources.checkAll')}</Text>
               ) : (
@@ -1985,6 +1991,9 @@ export function SayCard({
   );
 }
 
+/** 一度に読めるお知らせの文の長さ（サーバーの上限と同じ）。 */
+const MAX_NOTICE_CHARS = 4000;
+
 function NoticeInputCard({
   ctx,
   read,
@@ -1995,6 +2004,35 @@ function NoticeInputCard({
   const [text, setText] = useState('');
   const [sender, setSender] = useState('school');
   const [state, setState] = useState<'idle' | 'reading' | ReadResult['status']>('idle');
+  // 写真・PDF から書き起こした時：見比べる写真（端末の中の一時の URL だけ。どこにも残さない）と、文の欄の
+  // 文がその写真から来たか。この二つと文は、書き起こせた時だけ一緒に替える（失敗・送り直しの間は、前の
+  // 物をそのまま残す。違う写真と文を並べない）。書き起こせた文は、家族が直してから、写真の印を付けて読む。
+  const [photo, setPhoto] = useState<{ url: string; name: string; pdf: boolean }>();
+  const [fromPhoto, setFromPhoto] = useState(false);
+  const [photoState, setPhotoState] = useState<
+    | 'idle'
+    | 'preparing'
+    | 'transcribing'
+    | 'empty'
+    | NotUploadable
+    | Exclude<PhotoResult['status'], 'ok'>
+  >('idle');
+  const photoUrl = useRef<string | undefined>(undefined);
+  // 選んだ順の番号と、画面が出ているか（後から終わった前の選択や、閉じた後の結果を使わない）。
+  const pickNumber = useRef(0);
+  const mounted = useRef(true);
+  // 返事が届かなかった・混んでいた時に、同じ操作 ID で送り直す物（書き起こし済みなら、もう一度は読まない）。
+  const attempt = useRef<{ file: File; upload: Uploadable; operationId: string } | undefined>(
+    undefined,
+  );
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (photoUrl.current) URL.revokeObjectURL(photoUrl.current);
+      photoUrl.current = undefined;
+    };
+  }, []);
   // 同じ文の送り直し（返事が届かなかった時など）は、同じ操作 ID で送る（二度読まない・二度足さない）。
   // 文か出どころを変えたら、新しい操作。
   const operation = useRef<string | undefined>(undefined);
@@ -2002,13 +2040,72 @@ function NoticeInputCard({
     operation.current = undefined;
     next();
   };
+  const clearPhoto = () => {
+    if (photoUrl.current) URL.revokeObjectURL(photoUrl.current);
+    photoUrl.current = undefined;
+    setPhoto(undefined);
+    setFromPhoto(false);
+  };
+  const send = async (current: { file: File; upload: Uploadable; operationId: string }) => {
+    if (!ctx.transcribe) return;
+    const mine = pickNumber.current;
+    setPhotoState('transcribing');
+    const result = await ctx.transcribe({ ...current.upload, operationId: current.operationId });
+    if (!mounted.current || pickNumber.current !== mine) return;
+    if (result.status !== 'ok') {
+      setPhotoState(result.status);
+      return;
+    }
+    attempt.current = undefined;
+    if (result.text.trim().length === 0) {
+      setPhotoState('empty');
+      return;
+    }
+    // 見比べる原本（写真は並べて見せ、PDF は開ける）。端末の中の一時の URL だけで、どこにも送らない。
+    if (photoUrl.current) URL.revokeObjectURL(photoUrl.current);
+    photoUrl.current = URL.createObjectURL(current.file);
+    setPhoto({
+      url: photoUrl.current,
+      name: current.file.name,
+      pdf: current.file.type === 'application/pdf',
+    });
+    change(() => setText(result.text));
+    setFromPhoto(true);
+    setPhotoState('idle');
+  };
+  const pick = async (file: File | undefined) => {
+    if (!file || !ctx.transcribe) return;
+    const mine = ++pickNumber.current;
+    attempt.current = undefined;
+    // 縮める間から押せなくする（後から選んだ物と、前に選んだ物が入れ替わらないように）。
+    setPhotoState('preparing');
+    const upload = await toUploadable(file);
+    if (!mounted.current || pickNumber.current !== mine) return;
+    if (typeof upload === 'string') {
+      setPhotoState(upload);
+      return;
+    }
+    attempt.current = { file, upload, operationId: operationId() };
+    await send(attempt.current);
+  };
+  const busy = state === 'reading' || photoState === 'preparing' || photoState === 'transcribing';
+  // 書き起こした文は、長くても切らずに入れ、長すぎることを示す（読む前に家族が要らない所を消す）。
+  const tooLong = text.length > MAX_NOTICE_CHARS;
+  const count = (n: number) => new Intl.NumberFormat(ctx.lang).format(n);
   const submit = async () => {
     setState('reading');
     operation.current ??= operationId();
-    const result = await read({ text, sender, operationId: operation.current });
+    const result = await read({
+      text,
+      sender,
+      medium: fromPhoto ? 'photo' : 'text',
+      operationId: operation.current,
+    });
     if (result.status === 'ok') {
       operation.current = undefined;
       setText('');
+      clearPhoto();
+      setPhotoState('idle');
       setState('idle');
       // 読んだお知らせの文ごとに、何にしたか（計画・よてい・読んだだけ・要確認）を先に見せる。
       // 「読んだだけ」の事項は、きょうの札にならないので、ここで見ないと気づけない。
@@ -2025,7 +2122,7 @@ function NoticeInputCard({
         <span className="text-sub">{ctx.t('input.sender')}</span>
         <select
           value={sender}
-          disabled={state === 'reading'}
+          disabled={busy}
           onChange={(e) => change(() => setSender(e.target.value))}
           className="rounded-lg border border-line bg-card px-2 py-2 text-base"
         >
@@ -2036,12 +2133,75 @@ function NoticeInputCard({
           ))}
         </select>
       </label>
+      {ctx.transcribe && (
+        <div className="flex flex-col gap-1">
+          <label
+            className={`flex min-h-[54px] cursor-pointer items-center justify-center gap-2 rounded-2xl border-[1.5px] border-btn-line bg-white px-3.5 font-round text-lg font-bold text-ink active:bg-paper ${busy ? 'pointer-events-none opacity-50' : ''}`}
+          >
+            <input
+              type="file"
+              accept="image/*,application/pdf"
+              className="sr-only"
+              disabled={busy}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                // 同じ写真を選び直せるように、選んだ物を外す。
+                e.target.value = '';
+                void pick(file);
+              }}
+            />
+            {ctx.t(busy && photoState !== 'idle' ? 'input.transcribing' : 'input.photo')}
+          </label>
+          <Text quiet>{ctx.t('input.photoPrivacy')}</Text>
+        </div>
+      )}
+      {photo && (
+        <div className="flex flex-col gap-2">
+          {photo.pdf ? (
+            <a
+              href={photo.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-10 items-center self-start font-bold text-accent underline"
+            >
+              {ctx.t('input.pdfOpen', { name: photo.name })}
+            </a>
+          ) : (
+            <img
+              src={photo.url}
+              alt={ctx.t('input.photoAlt')}
+              className="max-h-[60vh] w-full rounded-lg border border-line object-contain"
+            />
+          )}
+          {fromPhoto && <Text>{ctx.t(photo.pdf ? 'input.pdfNote' : 'input.photoNote')}</Text>}
+        </div>
+      )}
+      {photoState !== 'idle' && photoState !== 'preparing' && photoState !== 'transcribing' && (
+        <Text>{ctx.t(`input.photoStatus.${photoState}`)}</Text>
+      )}
+      {(photoState === 'uncertain' || photoState === 'busy' || photoState === 'failed') &&
+        attempt.current && (
+          <Button
+            kind="secondary"
+            onClick={() => {
+              const current = attempt.current;
+              if (current) void send(current);
+            }}
+          >
+            {ctx.t('input.photoRetry')}
+          </Button>
+        )}
       <textarea
         value={text}
-        readOnly={state === 'reading'}
-        onChange={(e) => change(() => setText(e.target.value))}
+        readOnly={busy}
+        onChange={(e) => {
+          const next = e.target.value;
+          change(() => setText(next));
+          // 文を消し切ったら、写真の書き起こしとしては扱わない（新しく貼る・話す）。
+          if (next.length === 0) clearPhoto();
+        }}
         rows={6}
-        maxLength={4000}
+        maxLength={MAX_NOTICE_CHARS}
         aria-label={ctx.t('input.label')}
         placeholder={ctx.t('input.placeholder')}
         className="w-full rounded-lg border border-line bg-card p-3 text-base leading-relaxed"
@@ -2053,10 +2213,12 @@ function NoticeInputCard({
         state === 'uncertain' ||
         state === 'stale' ||
         state === 'failed') && <Text>{ctx.t(`input.${state}`)}</Text>}
-      <Button
-        onClick={() => void submit()}
-        disabled={state === 'reading' || text.trim().length === 0}
-      >
+      {tooLong && (
+        <Text>
+          {ctx.t('input.tooLong', { count: count(text.length), max: count(MAX_NOTICE_CHARS) })}
+        </Text>
+      )}
+      <Button onClick={() => void submit()} disabled={busy || tooLong || text.trim().length === 0}>
         {ctx.t(state === 'reading' ? 'input.reading' : 'input.submit')}
       </Button>
     </Card>

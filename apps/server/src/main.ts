@@ -16,6 +16,7 @@ import { invitationsFrom } from './members';
 import { type Notifier, notifier } from './notifier';
 import { type Vapid, webPushSender } from './push';
 import { extractNotice, ReadingError } from './reading/extract';
+import { PhotoTooLarge, transcribePhoto } from './reading/transcribe';
 import { readUtterance } from './reading/utterance';
 
 // 手元では、リポジトリの .env を読む（Claude の鍵。値は表示しない）。本番は置き場所の設定から。
@@ -125,11 +126,32 @@ const listener = anthropic
       }
     }
   : undefined;
+// 写真・PDF の書き起こしも、同じ鍵と同じ記録の仕方で（写真は残さない）。
+const transcriber = anthropic
+  ? async (photo: Parameters<typeof transcribePhoto>[1]) => {
+      try {
+        const result = await transcribePhoto(anthropic, photo);
+        console.log(
+          `書き起こし：${result.model} 入力 ${result.usage.input_tokens}・出力 ${result.usage.output_tokens} tokens`,
+        );
+        return result;
+      } catch (error) {
+        if (error instanceof PhotoTooLarge) {
+          console.log(`書き起こし：入力が多すぎる（${error.inputTokens} tokens）。呼ばなかった`);
+          throw error;
+        }
+        const kind = error instanceof ReadingError ? error.reason : 'error';
+        console.log(`書き起こし：失敗（${kind}）。使った量は分からない`);
+        throw error;
+      }
+    }
+  : undefined;
 // 家族の家庭を出すサーバーでは、デモの読み取りは開かない（createApp が外す）。
 const app = createApp({
   ...(family ? { family } : {}),
   ...(reader ? { reader } : {}),
   ...(listener ? { listener } : {}),
+  ...(transcriber ? { transcriber } : {}),
 });
 const webDist = fileURLToPath(new URL('../../web/dist', import.meta.url));
 app.use('/*', serveStatic({ root: webDist }));
