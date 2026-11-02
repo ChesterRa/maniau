@@ -11,6 +11,7 @@ import {
   isActiveTask,
   type PlanResult,
   type Task,
+  toEpochMinutes,
   type UtteranceContext,
 } from '@maniau/core';
 import {
@@ -129,6 +130,31 @@ export function conditionText(
   return visit(nodeId, 0) ?? CONDITION_TOO_COMPLEX;
 }
 
+/**
+ * 持ち物の「家にあるか」の値（エンジンが宣言する。答えは「ある」yes・「ない」no だけ）。要件が生きていて
+ * 要る時の前なら、問いが消えた後も載せる（「やっぱり無かった」「用意できた」と言えるように。サーバーが
+ * 受け付ける範囲と同じ）。一言の答えの命令には、サーバーが見せた品物を付ける（品物が直された後の古い候補で、
+ * 別の物を「ある」にしない）。今の答えは、今の品物について答えた物だけ（前の品物への答えは使わない）。
+ * 同じ品物が別の日にも要る時に見分けられるよう、名前に要る日を添える（画面の候補にも同じ日を出す）。
+ */
+function atHomeUnknowns(state: EngineState, plan: PlanResult): UtteranceContext['unknowns'] {
+  const now = toEpochMinutes(plan.now);
+  return plan.requirements.flatMap((r) => {
+    if (!r.live || r.atHomeUnknownId === undefined) return [];
+    if (r.by === undefined || toEpochMinutes(r.by) <= now) return [];
+    const answer = state.resolved.get(r.atHomeUnknownId);
+    const current = answer && (answer.about === undefined || answer.about === r.what);
+    return [
+      {
+        id: r.atHomeUnknownId,
+        label: `${r.what}が家にあるか（${r.by.slice(0, 10)}までに要る）`,
+        values: ['yes', 'no'],
+        answer: current ? answer.value : null,
+      },
+    ];
+  });
+}
+
 function contextFrom(
   state: EngineState,
   plan: PlanResult,
@@ -192,12 +218,15 @@ function contextFrom(
           needed: r.live,
         };
       }),
-    unknowns: unknowns.map((u) => ({
-      id: u.id,
-      label: u.label,
-      values: u.values,
-      answer: state.resolved.get(u.id)?.value ?? null,
-    })),
+    unknowns: [
+      ...unknowns.map((u) => ({
+        id: u.id,
+        label: u.label,
+        values: u.values,
+        answer: state.resolved.get(u.id)?.value ?? null,
+      })),
+      ...atHomeUnknowns(state, plan),
+    ],
     items: liveItems(state)
       .filter((l) => l.live)
       .map(({ item, conditional }) => ({

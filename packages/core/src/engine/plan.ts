@@ -61,6 +61,14 @@ const SUBMIT_MINUTES = 10;
 /** 問いの期限は、最後の買える時より、この分だけ前に置く（答えを受けて動ける時間）。 */
 const QUESTION_LEAD_MIN = 24 * 60;
 
+/**
+ * 問いの期限：動ける時間を残した目安の時（early）がまだ先ならそれ、過ぎていれば答えが役に立つ最後の時
+ * （latest）。今に揃えない（期限が今と同じ問いは、知らせの意図にならず、押しの知らせが一度も出ない）。
+ */
+function askByOf(ctx: Context, early: EpochMinutes, latest: EpochMinutes): EpochMinutes {
+  return early > ctx.now ? early : latest;
+}
+
 /** 安定したキー（§4）。種類と、置き換えをたどった元の事項の ID から作る。時刻や担当は入れない。 */
 export const keys = {
   childCareRequirement: (rootId: string, childId: string) => `req:childCare:${rootId}:${childId}`,
@@ -567,6 +575,7 @@ function belongingsDeadline(
 
 /** 過ぎた買い物の機会を探す幅（ふだんの週と店の時間は、週ごとにくり返す）。 */
 const LOOKBACK_MIN = 7 * 24 * 60;
+const DAY_MIN = 24 * 60;
 
 /** 提出物の作業の手順（家で用意して出す。かばんに入れるまで）。 */
 const SUBMIT_STEP = {
@@ -700,6 +709,7 @@ function purchase(
   const what = item.interpretation.what ?? item.written;
   const requirementKey = keys.belongingsRequirement(rootId);
   const basis = { itemIds: [item.id], requirementKey };
+  const unknownId = keys.atHomeUnknown(rootId);
   requirements.push({
     key: requirementKey,
     kind: 'belongings',
@@ -709,8 +719,8 @@ function purchase(
     basis,
     live,
     ...(conditional ? { conditional } : {}),
+    atHomeUnknownId: unknownId,
   });
-  const unknownId = keys.atHomeUnknown(rootId);
   // 答えた時に見せた品物が、今の品物と違えば（直されて別の物になった）、その答えは使わない（家に
   // あるかは、まだ分からないものとして扱う）。
   const answer = ctx.state.resolved.get(unknownId);
@@ -736,9 +746,28 @@ function purchase(
     cost: { leaveMinutes: 0, helperRequests: 0, yen: 0, extraTasks: 1 },
     taskKeys: [],
   };
+  // 家にあるかを先に聞く（答えるまで買い物を決めない）。要らなくなった持ち物（条件が外れた等）には聞かない
+  // （問いの札も知らせも出さない。その間の答えを、条件が戻った時に使わない）。
+  const askFirst = (askBy: EpochMinutes) => {
+    status = 'askFirst';
+    const questionKey = keys.question(unknownId);
+    reasons.push({ code: 'askFirst', refs: [questionKey] });
+    if (!live) return;
+    questions.push({
+      key: questionKey,
+      unknownId,
+      askBy: ctx.fmt(askBy),
+      fallbackValue: 'no',
+      affects: [arrangementKey],
+    });
+  };
   if (goods === undefined) {
+    // 扱う店の種類が分からない品物も、家にあるかは聞く（持ち物を黙って落とさない）。聞くのは要る日の
+    // 前の日まで（目安。用意する時を残す）。無いと答えたら、買う時を決められないと示し、用意は家族が
+    // 考える（どこで買えるか分からない）。
     status = 'undetermined';
     reasons.push({ code: 'inputMissing', refs: ['storeKind'] });
+    if (atHome === undefined) askFirst(askByOf(ctx, by - DAY_MIN, by));
   } else {
     const key = keys.task(optionKey, 'buy');
     // 誰かが引き受けた・頼まれた買い物は、その人の機会から選ぶ（別の人に勝手に移さない）。
@@ -789,17 +818,8 @@ function purchase(
       }
       reasons.push({ code: 'noOptionLeft', refs: [optionKey] });
       if (atHome === undefined) {
-        status = 'askFirst';
-        const questionKey = keys.question(unknownId);
-        reasons.push({ code: 'askFirst', refs: [questionKey] });
         // 答えが役に立つのは、持って行く時まで（無ければ、ほかの手を考える時が要る）。
-        questions.push({
-          key: questionKey,
-          unknownId,
-          askBy: ctx.fmt(by),
-          fallbackValue: 'no',
-          affects: [arrangementKey],
-        });
+        askFirst(by);
       } else {
         // 家に無く、買える時も過ぎた。過ぎた決め時を示せる時だけ「このままでは無理」と言い、示せなければ
         // 判断できないとする（確かめられない時刻で、不可能と言わない）。
@@ -838,17 +858,7 @@ function purchase(
           live,
         }),
       );
-      if (atHome === undefined) {
-        const questionKey = keys.question(unknownId);
-        reasons.push({ code: 'askFirst', refs: [questionKey] });
-        questions.push({
-          key: questionKey,
-          unknownId,
-          askBy: ctx.fmt(Math.max(ctx.now, last.start - QUESTION_LEAD_MIN)),
-          fallbackValue: 'no',
-          affects: [arrangementKey],
-        });
-      }
+      if (atHome === undefined) askFirst(askByOf(ctx, last.start - QUESTION_LEAD_MIN, last.start));
     }
   }
   arrangements.push({

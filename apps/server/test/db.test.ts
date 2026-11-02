@@ -211,7 +211,7 @@ describe('Postgres の置き場所', () => {
           type: 'answer',
           unknownId: question.unknownId,
           value: 'no',
-          ...(what ? { seen: { what } } : {}),
+          ...(what ? { seen: { what, throughSeq: plan.throughSeq } } : {}),
         })
       ).status,
     ).toBe('ok');

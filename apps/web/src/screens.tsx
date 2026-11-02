@@ -516,23 +516,43 @@ function DecideCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 
 
 function QuestionCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 'question' }> }) {
   const { question, requirement } = card;
+  // どのお知らせの物か（元の文へ戻れる。同じ品物を同じ日に求めるお知らせが二つあっても、札を見分けられる）。
+  const item =
+    requirement && ctx.items.find((l) => requirement.basis.itemIds.includes(l.item.id))?.item;
+  const title = item && ctx.sources.get(item.sourceId)?.title;
   // 見せた品物を付ける（直された後の古い札で、別の品物に答えない）。
   const answer = (value: string) =>
     void ctx.send({
       type: 'answer',
       unknownId: question.unknownId,
       value,
-      ...(requirement ? { seen: { what: requirement.what } } : {}),
+      ...(requirement ? { seen: { what: requirement.what, throughSeq: ctx.plan.throughSeq } } : {}),
     });
   return (
     <Card>
       <Label tone="accent">{ctx.t('card.question.label')}</Label>
       <Title>{ctx.t('card.question.atHome', { what: requirement?.what ?? '' })}</Title>
+      {/* 条件しだいの持ち物は、確かに要る物として聞かない（その条件を書く。§5.5）。 */}
+      {requirement && (
+        <ConditionLine
+          ctx={ctx}
+          basis={{ itemIds: requirement.basis.itemIds, requirementKey: requirement.key }}
+        />
+      )}
       <Text quiet>
         {ctx.t('card.question.body', {
           by: requirement?.by ? due(ctx, requirement.by, requirement.basis.itemIds) : '',
         })}
       </Text>
+      {item && (
+        <MoreLink
+          onClick={() =>
+            ctx.go({ name: 'sources', sourceId: item.sourceId, highlight: item.sentenceIds })
+          }
+        >
+          {title ? ctx.t('card.question.sourceTitled', { title }) : ctx.t('card.question.source')}
+        </MoreLink>
+      )}
       <Row>
         <Button kind="secondary" onClick={() => answer('yes')}>
           {ctx.t('answer.yes')}
@@ -560,9 +580,13 @@ export function StuckCard({
   const date = requirement?.by ?? requirement?.date ?? arrangement.end;
   const purchase = arrangement.kind === 'purchase';
   const unknownId = arrangement.atHomeUnknownId;
+  // どの店で買えるか分からない品物（間に合わないのではなく、買う時を決められない）。
+  const noStore =
+    purchase &&
+    arrangement.reasons.some((r) => r.code === 'inputMissing' && r.refs.includes('storeKind'));
   return (
     <Card>
-      <Label tone="warn">{ctx.t('card.stuck.label')}</Label>
+      <Label tone="warn">{ctx.t(noStore ? 'card.stuck.noStoreLabel' : 'card.stuck.label')}</Label>
       <Title>
         {purchase
           ? ctx.t('card.stuck.purchaseTitle', { what: requirement?.what ?? '' })
@@ -581,7 +605,7 @@ export function StuckCard({
       />
       <Text>
         {purchase
-          ? ctx.t('card.stuck.purchase', {
+          ? ctx.t(noStore ? 'card.stuck.noStore' : 'card.stuck.purchase', {
               date: due(ctx, date, requirement?.basis.itemIds ?? []),
             })
           : ctx.t('card.stuck.childCare', { child: childName(ctx.household) })}
@@ -595,7 +619,7 @@ export function StuckCard({
                 type: 'answer',
                 unknownId,
                 value: 'yes',
-                seen: { what: requirement.what },
+                seen: { what: requirement.what, throughSeq: ctx.plan.throughSeq },
               })
             }
           >
@@ -1632,11 +1656,22 @@ function proposalLabel(ctx: Ctx, proposal: ShownProposal): string {
       // 頼んだ日時は、送ったと記録した時の控え（今の手配の日ではない）。
       return dated(ctx, key, { name }, request && requestFor(ctx, request));
     }
-    case 'answer':
-      return ctx.t('say.do.answer', {
-        label: proposal.label ?? '',
-        value: valueText(ctx, command.value),
-      });
+    case 'answer': {
+      // 持ち物の「家にあるか」の値なら、問いの札と同じ言葉で（画面の言葉で、品物と要る日を添えて。同じ
+      // 品物が別の日にも要る時に、どちらに答えるかを見分ける）。
+      const requirement = ctx.plan.requirements.find(
+        (r) => r.atHomeUnknownId === command.unknownId,
+      );
+      const label = requirement
+        ? ctx.t('card.question.atHome', { what: requirement.what })
+        : (proposal.label ?? '');
+      return dated(
+        ctx,
+        'say.do.answer',
+        { label, value: valueText(ctx, command.value) },
+        requirement?.by ? due(ctx, requirement.by, requirement.basis.itemIds) : undefined,
+      );
+    }
     default:
       return '';
   }
@@ -1755,24 +1790,48 @@ export function SayReply({
     reply.kind === 'clarify'
       ? reply.proposals.map((proposal) => ({ proposal, label: proposalLabel(ctx, proposal) }))
       : [];
-  const choices = labeled.filter((c) => labeled.filter((o) => o.label === c.label).length === 1);
+  // 一つだけの候補でも、同じ文になる別の対象（同じ品物を同じ日に求める「家にあるか」）があれば、どれが
+  // 記録されるか分からないので記録させない（札から答えてもらう）。
+  const sameAsOther = (proposal: ShownProposal) => {
+    const { command } = proposal;
+    if (command.type !== 'answer') return false;
+    const label = proposalLabel(ctx, proposal);
+    return ctx.plan.requirements.some(
+      (r) =>
+        r.live &&
+        r.atHomeUnknownId !== undefined &&
+        r.atHomeUnknownId !== command.unknownId &&
+        proposalLabel(ctx, {
+          ...proposal,
+          command: { ...command, unknownId: r.atHomeUnknownId },
+        }) === label,
+    );
+  };
+  const choices = labeled.filter(
+    (c) => labeled.filter((o) => o.label === c.label).length === 1 && !sameAsOther(c.proposal),
+  );
   return (
     <>
       {reply.kind === 'change' &&
-        reply.proposals.map((proposal) => (
-          <div key={proposal.id} className="flex flex-col gap-2">
-            <Text quiet>{ctx.t('say.confirm')}</Text>
-            <Title>{proposalLabel(ctx, proposal)}</Title>
-            <Row>
-              <Button onClick={() => onRecord(proposal)} disabled={busy}>
-                {ctx.t('say.record')}
-              </Button>
-              <Button kind="secondary" onClick={onClear} disabled={busy}>
-                {ctx.t('say.cancel')}
-              </Button>
-            </Row>
-          </div>
-        ))}
+        reply.proposals.map((proposal) => {
+          const blocked = sameAsOther(proposal);
+          return (
+            <div key={proposal.id} className="flex flex-col gap-2">
+              <Text quiet>{ctx.t(blocked ? 'say.sameTarget' : 'say.confirm')}</Text>
+              <Title>{proposalLabel(ctx, proposal)}</Title>
+              <Row>
+                {!blocked && (
+                  <Button onClick={() => onRecord(proposal)} disabled={busy}>
+                    {ctx.t('say.record')}
+                  </Button>
+                )}
+                <Button kind="secondary" onClick={onClear} disabled={busy}>
+                  {ctx.t('say.cancel')}
+                </Button>
+              </Row>
+            </div>
+          );
+        })}
       {reply.kind === 'clarify' && (
         <div className="flex flex-col gap-2">
           {reply.reason === 'otherAdultsTask' && <Text>{ctx.t('say.otherAdult')}</Text>}
@@ -1795,7 +1854,13 @@ export function SayReply({
               </Button>
             </>
           )}
-          {labeled.length > choices.length && <Text>{ctx.t('say.lookAlike')}</Text>}
+          {labeled.length > choices.length && (
+            <Text>
+              {ctx.t(
+                labeled.some((c) => sameAsOther(c.proposal)) ? 'say.sameTarget' : 'say.lookAlike',
+              )}
+            </Text>
+          )}
           {labeled.length === 0 && reply.reason === 'ambiguous' && (
             <Text>{ctx.t('say.whichUnknown')}</Text>
           )}

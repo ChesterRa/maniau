@@ -14,6 +14,10 @@ const at = '2026-12-04T20:50+09:00';
 const shirt = 'arr:purchase:n1:i5';
 const unknownId = 'u-atHome:n1:i5';
 
+/** 押す直前に開き直した画面が見ている事象の位置。 */
+const shownAt = (store: ReturnType<typeof memoryStore>) =>
+  store.withHousehold('demo', (log) => log.events().at(-1)?.seq ?? 0);
+
 function late() {
   const events = [...demoEvents('arrived')];
   const add = (actorId: string, body: object) =>
@@ -76,7 +80,12 @@ it('買える時を過ぎても、家にあるかが分からなければ問い�
     store,
     'demo',
     { memberId: 'b', operationId: 'at-home', now: at, demo: true },
-    { type: 'answer', unknownId, value: 'yes', seen: { what: '白い長袖シャツ' } },
+    {
+      type: 'answer',
+      unknownId,
+      value: 'yes',
+      seen: { what: '白い長袖シャツ', throughSeq: await shownAt(store) },
+    },
   );
   expect(answered).toMatchObject({ status: 'ok' });
   const after = await store.withHousehold('demo', (log) => viewFor(log.events(), 'b', at));
@@ -90,7 +99,12 @@ it('家に無いと答えた後は、買える時が無いと示し、検証器�
     store,
     'demo',
     { memberId: 'b', operationId: 'not-at-home', now: at, demo: true },
-    { type: 'answer', unknownId, value: 'no', seen: { what: '白い長袖シャツ' } },
+    {
+      type: 'answer',
+      unknownId,
+      value: 'no',
+      seen: { what: '白い長袖シャツ', throughSeq: await shownAt(store) },
+    },
   );
   expect(answered).toMatchObject({ status: 'ok' });
   const all = await store.withHousehold('demo', (log) => [...log.events()]);
@@ -186,7 +200,12 @@ it('ふだんの週に一度も買える時が無く、家に無いと答えて�
     store,
     'demo',
     { memberId: 'b', operationId: 'none-at-home', now: at, demo: true },
-    { type: 'answer', unknownId, value: 'no', seen: { what: '白い長袖シャツ' } },
+    {
+      type: 'answer',
+      unknownId,
+      value: 'no',
+      seen: { what: '白い長袖シャツ', throughSeq: await shownAt(store) },
+    },
   );
   expect(answered).toMatchObject({ status: 'ok' });
   const all = await store.withHousehold('demo', (log) => [...log.events()]);
@@ -210,7 +229,7 @@ it('家に無いと答えた後も、ほかの手で用意できたら答えら�
       type: 'answer',
       unknownId,
       value: 'no',
-      seen: { what: '白い長袖シャツ' },
+      seen: { what: '白い長袖シャツ', throughSeq: await shownAt(store) },
     }),
   ).toMatchObject({ status: 'ok' });
   const stuck = await store.withHousehold('demo', (log) => viewFor(log.events(), 'b', at));
@@ -227,7 +246,7 @@ it('家に無いと答えた後も、ほかの手で用意できたら答えら�
       type: 'answer',
       unknownId,
       value: 'maybe',
-      seen: { what: '白い長袖シャツ' },
+      seen: { what: '白い長袖シャツ', throughSeq: await shownAt(store) },
     }),
   ).toMatchObject({ status: 'invalid', reason: 'undeclaredValue' });
   expect(
@@ -235,7 +254,7 @@ it('家に無いと答えた後も、ほかの手で用意できたら答えら�
       type: 'answer',
       unknownId,
       value: 'yes',
-      seen: { what: '白い長袖シャツ' },
+      seen: { what: '白い長袖シャツ', throughSeq: await shownAt(store) },
     }),
   ).toMatchObject({ status: 'ok' });
   const after = await store.withHousehold('demo', (log) => viewFor(log.events(), 'b', at));
@@ -266,7 +285,7 @@ it('直されて別の品物になった後の古い札の「用意できた」�
     type: 'answer',
     unknownId,
     value: 'no',
-    seen: { what: '白い長袖シャツ' },
+    seen: { what: '白い長袖シャツ', throughSeq: await shownAt(store) },
   });
   // b が品物を直す。a の画面は、まだ白い長袖シャツの札。
   expect(
@@ -281,7 +300,7 @@ it('直されて別の品物になった後の古い札の「用意できた」�
       type: 'answer',
       unknownId,
       value: 'yes',
-      seen: { what: '白い長袖シャツ' },
+      seen: { what: '白い長袖シャツ', throughSeq: await shownAt(store) },
     }),
   ).toMatchObject({ status: 'conflict', reason: 'proposalChanged' });
   const view = await store.withHousehold('demo', (log) => viewFor(log.events(), 'a', at));
@@ -293,7 +312,7 @@ it('直されて別の品物になった後の古い札の「用意できた」�
       type: 'answer',
       unknownId,
       value: 'yes',
-      seen: { what: '赤い帽子' },
+      seen: { what: '赤い帽子', throughSeq: await shownAt(store) },
     }),
   ).toMatchObject({ status: 'ok' });
   await runCommand(store, 'demo', as('b', 'fix-back'), {

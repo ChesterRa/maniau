@@ -167,7 +167,11 @@ export function todayCards(
   const stuck: TodayCard[] = [];
   for (const arrangement of plan.arrangements) {
     if (!arrangement.live || arrangement.status === 'askFirst') continue;
-    if (!arrangement.reasons.some((r) => r.code === 'noOptionLeft')) continue;
+    // 間に合う手が見つからない時と、買い物でどの店で買えるか分からない時（家に無いと分かった後）。
+    const noStore =
+      arrangement.kind === 'purchase' &&
+      arrangement.reasons.some((r) => r.code === 'inputMissing' && r.refs.includes('storeKind'));
+    if (!noStore && !arrangement.reasons.some((r) => r.code === 'noOptionLeft')) continue;
     if (toEpochMinutes(arrangement.end) <= now) continue;
     const requirement = requirementOf(arrangement);
     stuck.push({ kind: 'stuck', arrangement, ...(requirement ? { requirement } : {}) });

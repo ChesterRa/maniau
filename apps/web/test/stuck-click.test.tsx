@@ -38,7 +38,7 @@ it('「用意できた」は、家にあるかの値に「ある」と答える'
     lang: 'ja',
     tz: 'Asia/Tokyo',
     household: { members: [] },
-    plan: { requirements: [card.requirement], arrangements: [card.arrangement] },
+    plan: { requirements: [card.requirement], arrangements: [card.arrangement], throughSeq: 7 },
     items: [],
     t: i18n.getFixedT('ja'),
     send: async (command: Command) => {
@@ -53,7 +53,12 @@ it('「用意できた」は、家にあるかの値に「ある」と答える'
   expect(button).toBeDefined();
   await step(() => button?.click());
   expect(sent).toEqual([
-    { type: 'answer', unknownId: 'u-atHome:n1:i5', value: 'yes', seen: { what: '白い長袖シャツ' } },
+    {
+      type: 'answer',
+      unknownId: 'u-atHome:n1:i5',
+      value: 'yes',
+      seen: { what: '白い長袖シャツ', throughSeq: 7 },
+    },
   ]);
   await step(() => root.unmount());
 });

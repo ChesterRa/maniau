@@ -580,6 +580,23 @@ export function checkPlan(
           '必須の子の居場所を満たす手配を確認できない。',
         );
       }
+      if (
+        requirement.kind === 'belongings' &&
+        requirement.by !== undefined &&
+        instantMinute(requirement.by) > instantMinute(plan.now) &&
+        !plan.arrangements.some(
+          (entry) =>
+            entry.kind === 'purchase' && entry.live && entry.requirementKey === requirement.key,
+        )
+      ) {
+        // 家にあると答えた場合も手配は出ない。答えと現在の品物の対応をここでは再生していないため、
+        // 手配が無いことだけから読み落としや違反と断定しない。
+        report.undetermined(
+          'purchase_arrangement_absence_unverified',
+          requirement.key,
+          '持ち物の手配が無い理由を、家にあるかの答えまで含めて確認できない。',
+        );
+      }
       for (const id of requirement.basis.itemIds) {
         const item = facts.items.get(id);
         const correction = facts.corrections.get(id);
@@ -674,6 +691,51 @@ export function checkPlan(
         '不要な要件から手配が残っている。',
       );
     if (!arrangement.live) continue;
+    if (arrangement.kind === 'purchase') {
+      const requirementUnknown =
+        requirement?.kind === 'belongings' ? requirement.atHomeUnknownId : undefined;
+      if (
+        arrangement.atHomeUnknownId !== undefined &&
+        requirementUnknown !== undefined &&
+        arrangement.atHomeUnknownId !== requirementUnknown
+      ) {
+        report.violation(
+          'purchase_unknown_mismatch',
+          arrangement.key,
+          '買い物の手配と要件が別の「家にあるか」を指している。',
+        );
+      }
+      if (arrangement.status === 'askFirst') {
+        const expectedUnknown = arrangement.atHomeUnknownId ?? requirementUnknown;
+        if (arrangement.atHomeUnknownId === undefined || requirementUnknown === undefined) {
+          report.undetermined(
+            'purchase_unknown_unverified',
+            arrangement.key,
+            '買い物の手配と要件の「家にあるか」を照らせない。',
+          );
+        }
+        for (const reason of arrangement.reasons.filter((entry) => entry.code === 'askFirst')) {
+          for (const ref of reason.refs) {
+            const question = plan.questions.find((entry) => entry.key === ref);
+            if (!question) continue; // 問いの不在は checkReasons が検出する。
+            if (expectedUnknown !== undefined && question.unknownId !== expectedUnknown) {
+              report.violation(
+                'purchase_question_unknown_mismatch',
+                question.key,
+                '買い物の問いが、別の「家にあるか」を指している。',
+              );
+            }
+            if (!question.affects.includes(arrangement.key)) {
+              report.violation(
+                'purchase_question_target_mismatch',
+                question.key,
+                '買い物の問いが、その手配に影響すると記されていない。',
+              );
+            }
+          }
+        }
+      }
+    }
     if (
       arrangement.kind === 'childCare' &&
       requirement?.kind === 'childCare' &&
@@ -1004,6 +1066,23 @@ export function checkPlan(
     );
   }
   for (const question of plan.questions) {
+    const owners = plan.requirements.filter(
+      (entry) => entry.kind === 'belongings' && entry.atHomeUnknownId === question.unknownId,
+    );
+    const purchases = plan.arrangements.filter(
+      (entry) => entry.kind === 'purchase' && entry.atHomeUnknownId === question.unknownId,
+    );
+    const ownerInactive =
+      owners.length > 0
+        ? owners.every((entry) => !entry.live)
+        : purchases.length > 0 && purchases.every((entry) => !entry.live);
+    if (ownerInactive) {
+      report.violation(
+        'purchase_question_inactive',
+        question.key,
+        '不要な持ち物の「家にあるか」を、答える問いとして残している。',
+      );
+    }
     if (!facts.unknowns.has(question.unknownId)) {
       report.undetermined(
         'question_unknown_not_declared',

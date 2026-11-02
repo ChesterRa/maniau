@@ -65,7 +65,9 @@
     "question": {
       "label": "Please tell us",
       "atHome": "Do you have {{what}} at home?",
-      "body": "Needed by {{by}}."
+      "body": "Needed by {{by}}.",
+      "source": "See the original text",
+      "sourceTitled": "See the original: {{title}}"
     },
     "proposal": {
       "label": "A request for you",
@@ -142,6 +144,8 @@
       "fixed": "Only {{name}} can do this step."
     },
     "stuck": {
+      "noStoreLabel": "No store found",
+      "noStore": "It's needed by {{date}}, but we couldn't tell which store sells it, so no time to buy it was planned. If you get it another way, tap \"Got it\".",
       "label": "No way found in time",
       "purchaseTitle": "{{what}}",
       "purchase": "It's needed by {{date}}, but no time to buy it was found on your registered routes and stores. If you get it another way, tap \"Got it\".",
@@ -329,6 +333,7 @@
     "none": "None of these",
     "whichUnknown": "We couldn't tell which one you mean. Please say it again with the date or the person.",
     "lookAlike": "Some matches look the same, so they aren't offered. Please say it again with the date, time, or person.",
+    "sameTarget": "Another notice asks for the same item on the same day, so we can't tell which one this answers. On Today, check which notice each card comes from and answer there.",
     "requestFor": "{{what}}",
     "requestFor_dated": "{{what}}, {{date}}",
     "requestStep": "{{step}}: {{what}}",
@@ -381,7 +386,8 @@
       "replyNo_dated": "Record that {{name}} said no (for {{date}})",
       "cancelSent": "Record that you told {{name}} it is cancelled",
       "cancelSent_dated": "Record that you told {{name}} it is cancelled (for {{date}})",
-      "answer": "Answer \"{{value}}\" to: {{label}}"
+      "answer": "Answer \"{{value}}\" to: {{label}}",
+      "answer_dated": "Answer \"{{value}}\" to: {{label}} (needed by {{date}})"
     },
     "recorded": "Recorded.",
     "changed": "This changed after it was shown, so nothing was recorded. Check the current screen and send your update again.",

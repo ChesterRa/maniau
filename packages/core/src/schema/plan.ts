@@ -88,6 +88,11 @@ export const Requirement = z.object({
    * 残すが、確かな事実や自動で進めてよい物としては見せない（02-foundation §1 の2）。無ければ確か。
    */
   conditional: z.boolean().optional(),
+  /**
+   * 持ち物なら、家にあるかの値（仕組みが作る）。家にあると答えて買い物の手配が無い時も、要る時までは
+   * 答え直せるように（「やっぱり無かった」）、要件が持つ。
+   */
+  atHomeUnknownId: Id.optional(),
 });
 export type Requirement = z.infer<typeof Requirement>;
 

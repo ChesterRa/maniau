@@ -7,12 +7,12 @@ import {
   type DomainEvent,
   type Extraction,
   formatDateTime,
+  type PlanResult,
   type ProposalSeen,
   type Source,
   type SourceSender,
   seenOf,
   splitSentences,
-  type Task,
   toExtraction,
   toUtteranceReply,
   type UnsupportedReason,
@@ -354,15 +354,23 @@ export function demoSessions(
   }
 
   /**
-   * 済んだの候補には、前提に載せた作業の今の用件を付ける（命令は見せた用件を必ず持つ。押すまでに
-   * 直されて別の物になっていれば、サーバーが断る）。
+   * 候補の命令に、前提で見せた物を付ける：済んだには作業の今の用件、家にあるかの答えには品物（命令は
+   * どちらも見せた物を必ず持つ。押すまでに直されて別の物になっていれば、サーバーが断る）。
    */
-  const withContent = (command: Command, tasks: readonly Task[]): Command => {
-    if (command.type !== 'commitment' || command.action !== 'done') return command;
-    const task = tasks.find((t) => t.key === command.taskKey);
-    return task
-      ? { ...command, seen: { titleKey: task.titleKey, titleParams: task.titleParams } }
-      : command;
+  // 家にあるかの答えには、モデルに渡した前提が見ていた事象の位置を付ける（その後に入った答えを、古い
+  // 候補で上書きしない。札と同じ確かめ）。
+  const withSeen = (command: Command, plan: PlanResult, throughSeq: number): Command => {
+    if (command.type === 'commitment' && command.action === 'done') {
+      const task = plan.tasks.find((t) => t.key === command.taskKey);
+      return task
+        ? { ...command, seen: { titleKey: task.titleKey, titleParams: task.titleParams } }
+        : command;
+    }
+    if (command.type === 'answer') {
+      const what = plan.requirements.find((r) => r.atHomeUnknownId === command.unknownId)?.what;
+      return what === undefined ? command : { ...command, seen: { what, throughSeq } };
+    }
+    return command;
   };
 
   /** 候補を控えに置き、画面に返す形にする（控えの状態は返さない）。 */
@@ -371,12 +379,13 @@ export function demoSessions(
     reply: UtteranceReply,
     memberId: string,
     context: UtteranceContext,
-    tasks: readonly Task[],
+    plan: PlanResult,
+    throughSeq: number,
   ): ShownReply => {
     if (reply.kind === 'question' || reply.kind === 'unsupported') return reply;
     const proposals = reply.proposals.map((p): ShownProposal => {
       const id = randomUUID();
-      const command = withContent(p.command, tasks);
+      const command = withSeen(p.command, plan, throughSeq);
       session.proposals.set(id, { memberId, command, seen: p.seen });
       const label =
         command.type === 'answer'
@@ -403,10 +412,13 @@ export function demoSessions(
     digest: string,
     read: UtteranceReader,
   ): Promise<UtteranceOutcome | undefined> {
-    const context = await store.withHousehold(id, (log) =>
-      utteranceContext(log.events(), memberId, session.now, input.text),
-    );
-    if (!context) return { status: 'invalid' };
+    const heardOn = await store.withHousehold(id, (log) => {
+      const events = log.events();
+      const context = utteranceContext(events, memberId, session.now, input.text);
+      return context && { context, throughSeq: events.at(-1)?.seq ?? 0 };
+    });
+    if (!heardOn) return { status: 'invalid' };
+    const { context, throughSeq } = heardOn;
     if (buildUtteranceInput(context).length > MAX_UTTERANCE_INPUT_CHARS) return { status: 'limit' };
     let reply: UtteranceReply;
     try {
@@ -421,11 +433,15 @@ export function demoSessions(
       .withHousehold(id, (log): UtteranceOutcome | undefined => {
         if (gone()) return undefined;
         // 読む間に前提（作業・頼み事・値・事項・時刻）が変わったら、古い前提で選んだ候補や答えを
-        // 見せない（条件の決まった事項を、決まる前の答えで「予定」と見せない等）。
-        const now = utteranceContext(log.events(), memberId, session.now, input.text);
+        // 見せない（条件の決まった事項を、決まる前の答えで「予定」と見せない等）。読む間に入った答えは、
+        // 同じ答えの言い直しでも前提が変わったものとする（もう一人の新しい答えに、古い前提の候補を並べない）。
+        const events = log.events();
+        if (events.some((e) => e.type === 'answered' && e.seq > throughSeq))
+          return { status: 'stale' };
+        const now = utteranceContext(events, memberId, session.now, input.text);
         if (!now || JSON.stringify(now) !== JSON.stringify(context)) return { status: 'stale' };
         const view = viewFor(log.events(), memberId, session.now);
-        const shown = show(session, reply, memberId, context, view.plan.tasks);
+        const shown = show(session, reply, memberId, context, view.plan, throughSeq);
         session.utteranceOperations.set(input.operationId, {
           digest,
           state: 'done',

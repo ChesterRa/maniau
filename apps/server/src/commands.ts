@@ -133,12 +133,15 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         .flatMap((e) => e.unknowns)
         .find((u) => u.id === command.unknownId);
       const asked = plan.questions.some((q) => q.unknownId === command.unknownId);
-      // 家にあるかの値（買い物の手配。仕組みが作る値）は、家に無いと答えた後も、手配が生きている間は、
-      // ほかの手で用意できたと答えられる。
-      const purchase = plan.arrangements.find(
-        (a) => a.kind === 'purchase' && a.atHomeUnknownId === command.unknownId,
-      );
-      if (!declared && !asked && !purchase?.live) {
+      // 家にあるかの値（持ち物の要件。仕組みが作る値）は、要件が生きていて要る時の前だけ答えられる。問いが
+      // 消えた後も答えられる（無いと答えた後の「用意できた」、あると答えた後の「やっぱり無かった」）。条件が
+      // 外れて要らない間は、古い札から答えても受けない（条件が戻った時に、その答えを使ってしまう）。
+      const atHome = plan.requirements.find((r) => r.atHomeUnknownId === command.unknownId);
+      const answerable =
+        atHome?.live === true &&
+        atHome.by !== undefined &&
+        toEpochMinutes(atHome.by) > toEpochMinutes(plan.now);
+      if (atHome ? !answerable : !declared && !asked) {
         return { status: 'conflict', reason: 'unknownGone' };
       }
       if (retiredUnknowns(state).has(command.unknownId)) {
@@ -151,12 +154,22 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       if (!declared && command.value !== 'yes' && command.value !== 'no') {
         return { status: 'invalid', reason: 'undeclaredValue' };
       }
-      if (purchase) {
+      if (atHome) {
         // 家にあるかの新しい答えには、札で見せた品物を必ず付け、今の品物と同じ時だけ受ける（問いの札でも。
         // 品物を付けない古い画面からの答えは、直された後の別の品物に答えてしまうので受けない）。
-        const what = plan.requirements.find((r) => r.key === purchase.requirementKey)?.what;
         if (command.seen === undefined) return { status: 'invalid', reason: 'seenRequired' };
-        if (command.seen.what !== what) return { status: 'conflict', reason: 'proposalChanged' };
+        if (command.seen.what !== atHome.what) {
+          return { status: 'conflict', reason: 'proposalChanged' };
+        }
+        // 見せた後に、この値への答えが入っていれば（もう一人の答え・同じ答えの言い直しでも）、受けない。
+        const shownAt = command.seen.throughSeq;
+        if (
+          events.some(
+            (e) => e.type === 'answered' && e.unknownId === command.unknownId && e.seq > shownAt,
+          )
+        ) {
+          return { status: 'conflict', reason: 'proposalChanged' };
+        }
       }
       return {
         bodies: [
@@ -164,7 +177,7 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
             type: 'answered',
             unknownId: command.unknownId,
             value: command.value,
-            ...(purchase && command.seen ? { about: command.seen.what } : {}),
+            ...(atHome && command.seen ? { about: command.seen.what } : {}),
           },
         ],
       };

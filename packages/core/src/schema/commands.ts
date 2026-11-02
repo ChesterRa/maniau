@@ -28,10 +28,13 @@ export const Command = z.discriminatedUnion('type', [
     unknownId: Id,
     value: z.string().min(1),
     /**
-     * 札で見せた品物（家にあるかの値に答える時は必ず付ける）。今の品物と違えば断って見せ直す（直された
-     * 後の古い札で、別の品物を「ある」にしない）。
+     * 札で見せた品物と、見せた計画の事象の位置（家にあるかの値に答える時は必ず付ける）。今の品物と違うか、
+     * 見せた後にその値への答えが入っていれば、断って見せ直す（直された後の古い札で別の品物を「ある」に
+     * しない。もう一人の新しい答えを、古い札や候補で上書きしない）。
      */
-    seen: z.object({ what: z.string().min(1) }).optional(),
+    seen: z
+      .object({ what: z.string().min(1), throughSeq: z.number().int().nonnegative() })
+      .optional(),
   }),
   /**
    * 案を選ぶ（本命・予備）。担当を付ければ、その案の作業（当日の準備を除く）を提案する。自分が担当なら、
