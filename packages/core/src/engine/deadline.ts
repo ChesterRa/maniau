@@ -108,6 +108,54 @@ function placeChain(
   return placed;
 }
 
+/** 人がほかの作業で使う時間（移動も含む）。 */
+export interface Busy {
+  start: EpochMinutes;
+  end: EpochMinutes;
+}
+
+/** 区間から、使われている時間を除いた残り（前と後に分かれることがある）。 */
+function withoutBusy(slot: Slot, busy: readonly Busy[]): Slot[] {
+  let pieces = [slot];
+  for (const used of busy) {
+    pieces = pieces.flatMap((piece) =>
+      used.end <= piece.start || used.start >= piece.end
+        ? [piece]
+        : [
+            ...(used.start > piece.start ? [{ ...piece, end: used.start }] : []),
+            ...(used.end < piece.end ? [{ ...piece, start: used.end }] : []),
+          ],
+    );
+  }
+  return pieces;
+}
+
+/**
+ * 一つの手順を、一人の大人のふだんの時間の中で、期限までに終わる最も遅い所に置く。今より前と、
+ * その人のほかの作業が使う時間（busy）には置かない。置けなければ無し。案の無い作業（提出物）に使う。
+ */
+export function placeStep(
+  step: StepTemplate,
+  memberId: string,
+  household: Household,
+  now: EpochMinutes,
+  latestEnd: EpochMinutes,
+  busy: readonly Busy[],
+): PlacedStep | undefined {
+  if (latestEnd <= now) return undefined;
+  const tz = household.timeZone;
+  const free = slotsBetweenDates(
+    household,
+    memberId,
+    localDateOf(now, tz),
+    localDateOf(latestEnd, tz),
+  )
+    .map((slot) => ({ ...slot, start: Math.max(slot.start, now) }))
+    .flatMap((slot) => withoutBusy(slot, busy))
+    .filter((slot) => slot.end > slot.start);
+  return placeChain([step], memberId, new Map([[memberId, free]]), latestEnd)?.[0];
+}
+
 /**
  * 案の決め時を、手順の逆算で求める（一つの案だけを見た目安。計画全体との重なりは §5 の2で確かめる）。
  * 探すのは now の日から締切の日まで。only を渡すと、その大人だけで手順を置く（担当の決まった作業を、

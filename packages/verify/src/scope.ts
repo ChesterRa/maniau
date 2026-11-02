@@ -1,6 +1,65 @@
-import type { Household, PlanResult, Task } from '@maniau/core';
+import type { Arrangement, Household, PlanResult, Task } from '@maniau/core';
 import type { History } from './history';
 import { optionFailure } from './plan';
+
+/**
+ * 本命が外の相手の返事で決まったか。依頼の返事は計画の state を信じず事象から読み、送信時の根拠
+ * （古い事象なら本命の手順）で案をたどる。手配が生き、本命として選ばれている間、その本命の依頼は
+ * 生きている。事象や依頼の所属が足りなければ、決まったとは言えない。
+ */
+function primaryConfirmed(
+  arrangement: Arrangement,
+  primary: string,
+  plan: PlanResult,
+  history: History,
+): boolean | undefined {
+  if (!history.complete || !arrangement.live) return undefined;
+  const option = arrangement.options.find((entry) => entry.key === primary);
+  if (!option) return undefined;
+  if (optionFailure(option, arrangement, plan, history)) return false;
+
+  const primaryRequests = [...history.requests.entries()].filter(([, sent]) => {
+    if (sent.snapshot) {
+      const { basis } = sent.snapshot;
+      return basis.arrangementKey === arrangement.key && basis.optionKey === primary;
+    }
+    const task = plan.tasks.find((entry) => entry.key === sent.taskKey);
+    return (
+      option.taskKeys.includes(sent.taskKey) ||
+      (task?.basis.arrangementKey === arrangement.key && task.basis.optionKey === primary)
+    );
+  });
+  const confirmed = primaryRequests.filter(([, request]) => request.state === 'confirmed');
+  if (confirmed.length === 0) return false;
+  const waiting = primaryRequests.filter(([, request]) => request.state === 'awaitingReply');
+  if (
+    waiting.some(([id]) =>
+      plan.requests.some((request) => request.requestId === id && request.live),
+    )
+  )
+    return false;
+  // 返事待ちだが今は不要という計画だけでは、予備を不要と確定しない。
+  if (waiting.length > 0) return undefined;
+  // 控えも今の作業も無い送信は、どの案の返事待ちか分からない。無かった事にはしない。
+  if (
+    [...history.requests.values()].some(
+      (sent) =>
+        !sent.snapshot &&
+        sent.state === 'awaitingReply' &&
+        !plan.tasks.some((task) => task.key === sent.taskKey) &&
+        !arrangement.options.some((entry) => entry.taskKeys.includes(sent.taskKey)),
+    )
+  )
+    return undefined;
+  // 現在の依頼が計画から欠けている・不要とされている時、根拠を確かめずに予備を外さない。
+  if (
+    !confirmed.some(([id]) =>
+      plan.requests.some((request) => request.requestId === id && request.live),
+    )
+  )
+    return undefined;
+  return true;
+}
 
 /** 比較中の候補と、家族が実際に選んだ本命・予備を区別する。 */
 export function executionScope(
@@ -38,6 +97,14 @@ export function executionScope(
       }
       if (!inUse) return 'unknown';
       if (inUse !== task.basis.optionKey) return 'candidate';
+    } else if (
+      primary &&
+      task.basis.optionKey !== primary &&
+      backups.includes(task.basis.optionKey)
+    ) {
+      const confirmed = primaryConfirmed(arrangement, primary, plan, history);
+      if (confirmed === undefined) return 'unknown';
+      if (confirmed) return 'inactive';
     }
     return 'active';
   }

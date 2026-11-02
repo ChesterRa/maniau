@@ -509,6 +509,20 @@ function activityOf(
 }
 
 /**
+ * 今も確かな読み取り：取り下げていない出典の、今の版の文を読んだ物。未定の値の名前と条件の式を家族に
+ * 見せる時は、ここからだけ取る（画面の条件の添え書きと、引き受けの控えの条件で、同じ物を使う）。
+ */
+export function currentReadings(state: EngineState): Extraction[] {
+  return [...state.extractions]
+    .filter(([sourceId]) => {
+      const source = state.sources.get(sourceId);
+      if (!source || state.withdrawnSources.has(sourceId)) return false;
+      return (state.extractionVersion.get(sourceId) ?? 0) >= source.version;
+    })
+    .map(([, extraction]) => extraction);
+}
+
+/**
  * 取り下げた・消した出典が出した未定の値。家族の答えも含めて答えを使わない（他の出典の事項が
  * その値を条件にしていれば、条件しだいに残る。02-foundation §5.1・§5.3）。
  */

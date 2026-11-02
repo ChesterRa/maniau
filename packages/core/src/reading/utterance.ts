@@ -117,14 +117,23 @@ export type UtteranceRefs = { taskKeys: string[]; requestIds: string[]; itemIds:
 
 export type UtteranceReply =
   | { kind: 'change'; proposals: [UtteranceProposal] }
-  /** どれのことか決められない（候補から選ぶ）か、別の大人の作業で、話した人には変えられない。 */
-  | { kind: 'clarify'; proposals: UtteranceProposal[]; reason: 'ambiguous' | 'otherAdultsTask' }
+  /**
+   * どれのことか決められない（候補から選ぶ）か、別の大人の作業で話した人には変えられないか、まだだれも
+   * 持っていない作業を含む（先に持つ人を決めてもらう。unowned はコードだけが出す理由）。別の大人の作業と
+   * だれも持っていない作業の両方を含む時は、reason を otherAdultsTask にし、unowned を付ける。
+   */
+  | {
+      kind: 'clarify';
+      proposals: UtteranceProposal[];
+      reason: 'ambiguous' | 'otherAdultsTask' | 'unowned';
+      unowned?: true;
+    }
   | { kind: 'question'; refs: UtteranceRefs }
   | { kind: 'unsupported'; reason: UnsupportedReason };
 
 type Checked =
   | { ok: true; proposal: UtteranceProposal }
-  | { ok: false; why: 'otherAdultsTask' | 'notApplicable' };
+  | { ok: false; why: 'otherAdultsTask' | 'unowned' | 'notApplicable' };
 
 /** 候補の対象の、今の形（見せた時と確かめる時で、同じ形で比べる）。 */
 export function seenOf(command: Command, context: UtteranceContext): ProposalSeen {
@@ -164,7 +173,7 @@ function check(
     if (!task) return no;
     // 別の大人が持つ作業は、話した人の言葉では変えない（本人の操作だけ。02-foundation §7.2）。
     if (task.assigneeId !== me) {
-      return task.assigneeId !== null ? { ok: false, why: 'otherAdultsTask' } : no;
+      return { ok: false, why: task.assigneeId !== null ? 'otherAdultsTask' : 'unowned' };
     }
     switch (action.type) {
       case 'withdraw':
@@ -266,6 +275,7 @@ export function toUtteranceReply(
   }
   const proposals: UtteranceProposal[] = [];
   let otherAdults = false;
+  let unowned = false;
   for (const action of output.actions) {
     const checked = check(action, context, newRequestId);
     if (checked.ok) {
@@ -274,13 +284,23 @@ export function toUtteranceReply(
       }
     } else if (checked.why === 'otherAdultsTask') {
       otherAdults = true;
+    } else if (checked.why === 'unowned') {
+      unowned = true;
     }
   }
   // 一言の一部が別の大人の作業なら、話した人の分だけを黙って一つの変更にしない（残りを本人が記録する
   // と示す）。話した人の分は、選べる候補として残す。
   if (otherAdults || output.unsupported === 'otherAdultsTask') {
-    return { kind: 'clarify', proposals, reason: 'otherAdultsTask' };
+    return {
+      kind: 'clarify',
+      proposals,
+      reason: 'otherAdultsTask',
+      ...(unowned ? { unowned: true as const } : {}),
+    };
   }
+  // まだだれも持っていない作業を含む時も、黙って落とさない（計画に無いとも言わない）。話した人の分は、
+  // 選べる候補として残す。
+  if (unowned) return { kind: 'clarify', proposals, reason: 'unowned' };
   const [only] = proposals;
   if (output.kind === 'change' && only && proposals.length === 1) {
     return { kind: 'change', proposals: [only] };

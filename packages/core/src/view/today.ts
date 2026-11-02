@@ -47,7 +47,10 @@ export type TodayCard =
 export const BACKUP_LEAD_MIN = 26 * 60;
 
 /** その作業が、家族が選んだ（または勧められた買い物の）案の物か。比べるための候補の作業は出さない。 */
-export function isActiveTask(plan: PlanResult, task: Task): boolean {
+export function isActiveTask(
+  plan: Pick<PlanResult, 'arrangements' | 'requests'>,
+  task: Task,
+): boolean {
   const { arrangementKey, optionKey } = task.basis;
   if (arrangementKey === undefined || optionKey === undefined) return true;
   const arrangement = plan.arrangements.find((a) => a.key === arrangementKey);
@@ -68,7 +71,7 @@ export function isActiveTask(plan: PlanResult, task: Task): boolean {
 }
 
 /** 本命の案が、外の相手の「はい」で決まった（返事を待つ依頼が無く、確定の依頼がある）。 */
-function primaryConfirmed(plan: PlanResult, arrangement: Arrangement): boolean {
+function primaryConfirmed(plan: Pick<PlanResult, 'requests'>, arrangement: Arrangement): boolean {
   const chosen = arrangement.chosenOptionKey;
   if (chosen === undefined || arrangement.inUseOptionKey !== chosen) return false;
   const requests = plan.requests.filter((r) => r.live && r.basis.optionKey === chosen);

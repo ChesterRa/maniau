@@ -57,6 +57,12 @@ export const ProposalSnapshot = z.object({
   travelAfterMin: z.number().int().nonnegative(),
   /** 外の相手に頼む作業なら、相手と返事の種類。 */
   external: z.object({ to: Id, kind: ExternalKind }).optional(),
+  /**
+   * 見せた時の根拠の条件（作業の condition：式の形・未定の値の名前・確かでないか）。画面は条件を添えて
+   * 見せるので、条件も見た物に入る。
+   * 無いのは条件の無い作業か、古い控え（条件の有る今の作業とは違う物として扱う）。
+   */
+  condition: z.string().min(1).optional(),
 });
 export type ProposalSnapshot = z.infer<typeof ProposalSnapshot>;
 
@@ -73,6 +79,7 @@ export function sameProposal(a: ProposalSnapshot, b: ProposalSnapshot): boolean 
       p.travelBeforeMin,
       p.travelAfterMin,
       p.external ? [p.external.to, p.external.kind] : null,
+      p.condition ?? null,
     ]);
   return key(a) === key(b);
 }
@@ -93,6 +100,7 @@ export function proposalSnapshot(task: Task): ProposalSnapshot | undefined {
     travelBeforeMin: task.travelBeforeMin,
     travelAfterMin: task.travelAfterMin,
     ...(task.external ? { external: task.external } : {}),
+    ...(task.condition === undefined ? {} : { condition: task.condition }),
   };
 }
 

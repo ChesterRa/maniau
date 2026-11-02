@@ -469,7 +469,14 @@ function DecideCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 
         {ctx.t('card.decide.title', { date: day(ctx, date), what: requirement?.what ?? '' })}
       </Title>
       {turnedDown && <Text>{ctx.t('card.decide.turnedDown')}</Text>}
-      {isConditional(arrangement) && <Text quiet>{ctx.t('card.decide.conditional')}</Text>}
+      <ConditionLine
+        ctx={ctx}
+        basis={{
+          itemIds: requirement?.basis.itemIds ?? [],
+          requirementKey: arrangement.requirementKey,
+          arrangementKey: arrangement.key,
+        }}
+      />
       {recommended?.decisionDeadline && (
         <Text>
           {ctx.t('card.decide.body', {
@@ -516,6 +523,11 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
     if (shown) void ctx.send({ type: 'accept', taskKey: task.key, shown });
   };
   const decline = () => void ctx.send({ type: 'commitment', taskKey: task.key, action: 'decline' });
+  // 案の無い作業（提出物）は、時刻に置けなくても（締切の日の朝を過ぎた等）、済んだ事実を記録できる
+  // ようにする（時刻の無い物を、時刻のある提案として引き受けさせない）。
+  const standalone =
+    task.basis.optionKey === undefined && task.external === undefined && task.cancels === undefined;
+  const done = () => void ctx.send({ type: 'commitment', taskKey: task.key, action: 'done' });
   // 置ける時間が無い時は、その場でもう一人に頼めるようにする（断ってから探し直させない）。本人しか
   // できない手順は頼めない。
   const other =
@@ -542,6 +554,7 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
     <Card>
       <Label tone="accent">{ctx.t('card.proposal.label')}</Label>
       <Title>{taskTitle(ctx, task)}</Title>
+      <ConditionLine ctx={ctx} basis={task.basis} />
       {task.start && task.end && (
         <div className="flex flex-col gap-1 rounded-xl bg-paper px-3 py-2.5">
           <span className="font-bold tabular-nums">
@@ -581,10 +594,19 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
       )}
       {task.reconfirm && <Text quiet>{ctx.t('card.proposal.changed')}</Text>}
       {!shown && (
-        <Text>{ctx.t(task.handoff ? 'card.proposal.handoff' : 'card.proposal.unplaced')}</Text>
+        <Text>
+          {ctx.t(
+            task.handoff
+              ? 'card.proposal.handoff'
+              : standalone
+                ? 'card.proposal.unplacedDue'
+                : 'card.proposal.unplaced',
+          )}
+        </Text>
       )}
       <Row>
         {shown && <Button onClick={accept}>{ctx.t('card.proposal.accept')}</Button>}
+        {!shown && standalone && <Button onClick={done}>{ctx.t('card.proposal.done')}</Button>}
         {!shown && other && (
           <Button onClick={askOther}>{ctx.t('card.proposal.ask', { name: other.name })}</Button>
         )}
@@ -642,6 +664,7 @@ function UnownedCard({
     <Card tone="accent">
       <Label tone="warn">{ctx.t('card.unowned.label')}</Label>
       <Title>{taskTitle(ctx, task)}</Title>
+      <ConditionLine ctx={ctx} basis={task.basis} />
       {why && task.assigneeId && (
         <Text>
           {ctx.t(`card.unowned.${why}`, { name: nameOf(ctx.household, task.assigneeId) })}
@@ -654,6 +677,10 @@ function UnownedCard({
         <Text>
           {ctx.t('card.unowned.deadline', { deadline: dayTime(ctx, option.decisionDeadline) })}
         </Text>
+      )}
+      {/* 案の無い作業（提出物）は、外の締切の日を出す（朝の時刻は目安なので、日だけ）。 */}
+      {!option && task.deadline && (
+        <Text>{ctx.t('card.unowned.by', { date: day(ctx, task.deadline) })}</Text>
       )}
       <Row>
         {mine ? ask : self}
@@ -788,6 +815,7 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
   }
   if (card.kind === 'todo') {
     const { task } = card;
+    const condition = conditionOf(ctx, task.basis);
     const external = task.external !== undefined;
     const ask = asksPerson(ctx, task);
     // 所へ出す物（学童の申込書・会社への届け）は、出した時に「送った」と記録し、相手の返事を待つ。
@@ -803,6 +831,9 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
           <span>{taskTitle(ctx, task)}</span>
           {task.start && (
             <span className="text-sm text-sub tabular-nums">{dayTime(ctx, task.start)}</span>
+          )}
+          {condition && (
+            <span className="text-sm text-sub">{condition.when ?? ctx.t('say.conditional')}</span>
           )}
         </span>
         <button
@@ -1435,6 +1466,36 @@ function whenText(ctx: Ctx, when: ItemWhen | undefined): string | undefined {
   });
 }
 
+/**
+ * 作業・手配が条件しだいなら、その条件（一つの値で決まる時は「学習発表会の実施日が12/5（土）なら」、
+ * 決まらなければ when は無し）。条件しだいでなければ無し。要件か手配のどちらかで見る（提出物は要件だけ）。
+ */
+function conditionOf(
+  ctx: Ctx,
+  basis: { itemIds: readonly string[]; requirementKey?: string; arrangementKey?: string },
+): { when: string | undefined } | undefined {
+  const requirement = ctx.plan.requirements.find((r) => r.key === basis.requirementKey);
+  const arrangement = ctx.plan.arrangements.find((a) => a.key === basis.arrangementKey);
+  if (requirement?.conditional !== true && arrangement?.conditional !== true) return undefined;
+  const condition = basis.itemIds
+    .map((id) => ctx.items.find((l) => l.item.id === id)?.when)
+    .find((found) => found !== undefined);
+  return { when: whenText(ctx, condition) };
+}
+
+/** 条件しだいの札の一行（確かな作業として見せない）。 */
+function ConditionLine({ ctx, basis }: { ctx: Ctx; basis: Parameters<typeof conditionOf>[1] }) {
+  const condition = conditionOf(ctx, basis);
+  if (!condition) return null;
+  return (
+    <Text quiet>
+      {condition.when
+        ? ctx.t('card.decide.conditionalWhen', { when: condition.when })
+        : ctx.t('card.decide.conditional')}
+    </Text>
+  );
+}
+
 /** 一言の候補の説明（計画から作る。モデルの文は使わない）。 */
 function proposalLabel(ctx: Ctx, proposal: ShownProposal): string {
   const { command } = proposal;
@@ -1602,6 +1663,7 @@ export function SayReply({
       {reply.kind === 'clarify' && (
         <div className="flex flex-col gap-2">
           {reply.reason === 'otherAdultsTask' && <Text>{ctx.t('say.otherAdult')}</Text>}
+          {(reply.reason === 'unowned' || reply.unowned) && <Text>{ctx.t('say.unowned')}</Text>}
           {choices.length > 0 && (
             <>
               <Text quiet>{ctx.t('say.which')}</Text>

@@ -56,6 +56,7 @@ function shown(task: Task): ProposalSnapshot {
     travelBeforeMin: task.travelBeforeMin,
     travelAfterMin: task.travelAfterMin,
     ...(task.external ? { external: task.external } : {}),
+    ...(task.condition ? { condition: task.condition } : {}),
   };
 }
 

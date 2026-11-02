@@ -56,6 +56,7 @@
       "body": "What about {{child}}? To go with “{{option}}”, decide by about {{deadline}} (estimate).",
       "action": "Decide",
       "conditional": "Needed only if the notice's condition holds (not settled yet).",
+      "conditionalWhen": "Needed {{when}} (not settled yet).",
       "turnedDown": "The person you asked said no. Please pick another option."
     },
     "question": {
@@ -74,6 +75,8 @@
       "at": "{{place}}",
       "back": "About {{min}} min to get back (estimate)",
       "unplaced": "Your usual schedule has no time for this before the deadline. If you can't do it, please ask someone else.",
+      "unplacedDue": "Your usual schedule has no time left before the due date. If it's already done, tap Done.",
+      "done": "Done",
       "handoff": "Someone else does the step before or after this one, so we can't tell when the papers change hands. No time is set. Have one person do both steps, or agree on the handoff together.",
       "external": {
         "reply": "Ask {{to}} and wait for their reply.",
@@ -128,6 +131,7 @@
       "declined": "{{name}} said they can't.",
       "withdrawn": "{{name}} can no longer do it.",
       "deadline": "Decide by about {{deadline}} (estimate).",
+      "by": "Due {{date}}",
       "self": "I'll do it",
       "ask": "Ask {{name}}",
       "dropBackup": "Drop this backup",
@@ -256,6 +260,7 @@
     },
     "cancelRequest": "Tell {{to}} it's cancelled",
     "buy": "Buy {{what}}",
+    "submit": "Prepare and hand in {{what}}",
     "gakudoForm": {
       "write": "Fill in the after-school care form",
       "submit": "Hand in the after-school care form"
@@ -318,6 +323,7 @@
     "requestStep": "{{step}}: {{what}}",
     "unknownRequest": "a request whose content is unknown",
     "otherAdult": "This looks like another adult's task. That person records changes such as not being able to do it or having done it.",
+    "unowned": "One of these tasks has no one assigned yet. Choose who does it on the Today card first.",
     "unsupported": {
       "routineChange": "Changes to the usual week (pickups, work) can't be recorded yet.",
       "otherAdultsTask": "This looks like another adult's task. That person records it.",

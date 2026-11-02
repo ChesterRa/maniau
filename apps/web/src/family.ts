@@ -98,9 +98,18 @@ export interface ShownProposal {
 /** 一言の答え（apps/server/src/demo-sessions.ts の ShownReply と同じ形）。 */
 export type Heard =
   | { kind: 'change'; proposals: ShownProposal[] }
-  | { kind: 'clarify'; proposals: ShownProposal[]; reason: 'ambiguous' | 'otherAdultsTask' }
+  | {
+      kind: 'clarify';
+      proposals: ShownProposal[];
+      reason: 'ambiguous' | 'otherAdultsTask' | 'unowned';
+      /** 別の大人の作業に加えて、まだだれも持っていない作業も含む。 */
+      unowned?: true;
+    }
   | { kind: 'question'; refs: { taskKeys: string[]; requestIds: string[]; itemIds: string[] } }
-  | { kind: 'unsupported'; reason: 'routineChange' | 'otherAdultsTask' | 'notInPlan' | 'other' };
+  | {
+      kind: 'unsupported';
+      reason: 'routineChange' | 'otherAdultsTask' | 'notInPlan' | 'other';
+    };
 
 export type HearResult =
   /** throughSeq：答えを読んだ時の計画の版（画面は、計画が先へ進んだら古い答えを閉じる）。 */

@@ -108,6 +108,77 @@ describe('本人が見た提案の控え', () => {
     expect(issueCodes(report, 'violation')).toContain('proposal_reconfirm_unnecessary');
   });
 
+  it('引き受けた時の条件が変わった・増えた・無くなった時は再確認が要る', () => {
+    const condition = (value: string, label: string | null, doubted = false) =>
+      JSON.stringify([
+        JSON.stringify(['eq', 'u', value]),
+        [['u', label]],
+        ...(doubted ? ['doubted'] : []),
+      ]);
+    const oldCondition = condition('2026-12-05', '発表会の日');
+    const newCondition = condition('2026-12-08', '発表会の日');
+    for (const [before, after] of [
+      [oldCondition, newCondition],
+      [undefined, newCondition],
+      [oldCondition, undefined],
+      [oldCondition, condition('2026-12-05', '音楽会の日')],
+      [oldCondition, condition('2026-12-05', null)],
+      [oldCondition, condition('2026-12-05', '発表会の日', true)],
+    ]) {
+      const acceptedEvents = [
+        ...events.slice(0, 2),
+        event(3, {
+          type: 'commitmentChanged',
+          taskKey: 't',
+          assigneeId: 'a',
+          action: 'accept',
+          shown: { ...shown, ...(before === undefined ? {} : { condition: before }) },
+        }),
+      ];
+      const input = {
+        household: household(),
+        events: acceptedEvents,
+        plan: plan({ throughSeq: 3, tasks: [current({ condition: after })] }),
+      };
+      expect(issueCodes(verifyPlan(input), 'violation')).toContain('proposal_reconfirm_missing');
+      const marked = {
+        ...input,
+        plan: plan({ throughSeq: 3, tasks: [current({ condition: after, reconfirm: true })] }),
+      };
+      const codes = issueCodes(verifyPlan(marked), 'violation');
+      expect(codes).not.toContain('proposal_reconfirm_missing');
+      expect(codes).not.toContain('proposal_reconfirm_unnecessary');
+    }
+  });
+
+  it('条件の式が同じなら、再確認は要らない', () => {
+    const condition = JSON.stringify([
+      JSON.stringify(['eq', 'u', '2026-12-05']),
+      [['u', '発表会の日']],
+    ]);
+    const acceptedEvents = [
+      ...events.slice(0, 2),
+      event(3, {
+        type: 'commitmentChanged',
+        taskKey: 't',
+        assigneeId: 'a',
+        action: 'accept',
+        shown: { ...shown, condition },
+      }),
+    ];
+    const input = {
+      household: household(),
+      events: acceptedEvents,
+      plan: plan({ throughSeq: 3, tasks: [current({ condition })] }),
+    };
+    expect(issueCodes(verifyPlan(input), 'violation')).not.toContain('proposal_reconfirm_missing');
+    const marked = {
+      ...input,
+      plan: plan({ throughSeq: 3, tasks: [current({ condition, reconfirm: true })] }),
+    };
+    expect(issueCodes(verifyPlan(marked), 'violation')).toContain('proposal_reconfirm_unnecessary');
+  });
+
   it('引き受け後に作業が未配置になれば、再確認が要る', () => {
     const input = {
       household: household(),

@@ -1,7 +1,7 @@
 // 事象の列と今の時刻から、計画の結果を作る（docs/design/01-model.md §1 の 3〜9）。
 // v0：要件 → 手配 → 案と決め時（逆算の目安）→ 問い → 買い物の置き場所 → 取り消しの連絡。
 // 計画全体を解いての決め時の確かめ（§5 の2）と、最小の組み直し（§8）は、まだ無い。
-import { conditionShape, evaluateCondition } from '../schema/condition';
+import { conditionShape, evaluateCondition, NO_CONDITION } from '../schema/condition';
 import {
   type DomainEvent,
   proposalSnapshot,
@@ -31,10 +31,11 @@ import {
   toEpochMinutes,
   zonedToEpochMinutes,
 } from '../time';
+import { isActiveTask } from '../view/today';
 import { noAdultAtHome } from './availability';
-import { optionDeadline } from './deadline';
+import { type Busy, optionDeadline, placeStep } from './deadline';
 import { purchaseOpportunities } from './purchase';
-import { currentItems, type EngineState, foldEvents, itemFate } from './state';
+import { currentItems, currentReadings, type EngineState, foldEvents, itemFate } from './state';
 
 /** 代償の重みの初期値（家族が変えられる。§8）。安い案ほど小さい。 */
 export const DEFAULT_COST_WEIGHTS = {
@@ -44,6 +45,8 @@ export const DEFAULT_COST_WEIGHTS = {
   extraTasks: 30,
 };
 const PURCHASE_MINUTES = 15;
+/** 提出物を用意して出す（かばんに入れる）時間の目安。 */
+const SUBMIT_MINUTES = 10;
 /** 問いの期限は、最後の買える時より、この分だけ前に置く（答えを受けて動ける時間）。 */
 const QUESTION_LEAD_MIN = 24 * 60;
 
@@ -52,6 +55,8 @@ export const keys = {
   childCareRequirement: (rootId: string, childId: string) => `req:childCare:${rootId}:${childId}`,
   childCareArrangement: (rootId: string, childId: string) => `arr:childCare:${rootId}:${childId}`,
   belongingsRequirement: (rootId: string) => `req:belongings:${rootId}`,
+  submissionRequirement: (rootId: string) => `req:submission:${rootId}`,
+  submissionTask: (rootId: string) => `task:submit:${rootId}`,
   purchaseArrangement: (rootId: string) => `arr:purchase:${rootId}`,
   option: (arrangementKey: string, templateId: string) => `opt:${arrangementKey}:${templateId}`,
   task: (optionKey: string, stepId: string) => `task:${optionKey}:${stepId}`,
@@ -82,6 +87,8 @@ interface Context {
   now: EpochMinutes;
   tz: string;
   fmt: (m: EpochMinutes) => DateTime;
+  /** 今の事項（ID ごと）。作業の根拠が今、確かでないか（doubted）を引く。 */
+  items: ReadonlyMap<string, LiveItem>;
 }
 
 export interface LiveItem {
@@ -129,15 +136,22 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
   const nowMin = state.clock ?? (now === undefined ? undefined : toEpochMinutes(now));
   if (nowMin === undefined) throw new Error('今の時刻が無い');
   const tz = household.timeZone;
-  const ctx: Context = { state, household, now: nowMin, tz, fmt: (m) => formatDateTime(m, tz) };
-
   const assignment = new Map([...state.resolved].map(([id, r]) => [id, r.value]));
   const items = liveItems(state);
+  const ctx: Context = {
+    state,
+    household,
+    now: nowMin,
+    tz,
+    fmt: (m) => formatDateTime(m, tz),
+    items: new Map(items.map((l) => [l.item.id, l])),
+  };
 
   const requirements: Requirement[] = [];
   const arrangements: Arrangement[] = [];
   const tasks: Task[] = [];
   const questions: Question[] = [];
+  const submissions: { item: Item; rootId: string; live: boolean; conditional: boolean }[] = [];
 
   for (const { item, rootId, rootSourceId, live, trusted, conditional } of items) {
     // 推定・食い違いは、家族が確かめるまで要件を作らない。画面は「確かめてください」として出す。
@@ -161,9 +175,17 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
         questions,
       );
     }
+    if (item.kind === 'submission') submissions.push({ item, rootId, live, conditional });
   }
-
   const requests = externalRequests(ctx, tasks, arrangements, items);
+  // 提出物の作業は、ほかの作業と依頼がそろった後に置く（持った人の、選んだ案のほかの作業と重ならない
+  // ように）。提出物は外の相手が無いので、依頼には影響しない。
+  for (const s of submissions) {
+    submission(ctx, s.item, s.rootId, s.live, s.conditional, requirements, tasks, {
+      arrangements,
+      requests,
+    });
+  }
   tasks.push(...cancellationTasks(ctx, requests));
 
   return {
@@ -360,12 +382,14 @@ function task(
     Partial<Pick<Task, 'travelBeforeMin' | 'travelAfterMin' | 'travelSource'>>,
 ): Task {
   const assignee = ctx.state.assignees.get(key);
+  const condition = taskCondition(ctx, fields.basis.itemIds);
   const built: Task = {
     key,
     travelBeforeMin: 0,
     travelAfterMin: 0,
     travelSource: 'none',
     ...fields,
+    ...(condition === undefined ? {} : { condition }),
     ...(assignee === undefined ? {} : { assigneeId: assignee }),
     commitment: ctx.state.commitments.get(key) ?? 'proposed',
   };
@@ -471,6 +495,123 @@ function belongingsDeadline(
     .sort();
   const first = dates[0];
   return first === undefined ? undefined : zonedToEpochMinutes(first, '08:00', ctx.tz);
+}
+
+/** 提出物の作業の手順（家で用意して出す。かばんに入れるまで）。 */
+const SUBMIT_STEP = {
+  id: 'submit',
+  titleKey: 'task.submit',
+  durationMin: SUBMIT_MINUTES,
+  segments: ['home' as const],
+  waitAfterMin: 0,
+};
+
+/** 作業を止めた・断った・取り消した状態（時間を使わない）。 */
+const NOT_DOING = new Set(['declined', 'withdrawn', 'cancelled']);
+
+type Chosen = Pick<PlanResult, 'arrangements' | 'requests'>;
+
+/**
+ * その作業が時間を使うか（検証器と同じ見方）。済んだ物は、今は要らなくなっていても使う。止めた・
+ * 断った・取り消した物と、要らなくなった物は使わない。案の無い作業と取り消しの作業は使う。案の作業は、
+ * 選んだ案（本命・予備・使っている案）か、勧めている案の物だけが使う（比べるためだけの候補は使わない）。
+ */
+function occupies(t: Task, chosen: Chosen): boolean {
+  if (t.commitment === 'done') return true;
+  if (!t.live || NOT_DOING.has(t.commitment)) return false;
+  if (t.cancels !== undefined || t.basis.optionKey === undefined) return true;
+  const arrangement = chosen.arrangements.find((a) => a.key === t.basis.arrangementKey);
+  // 手配が分からない時は、重ねない側（使う）にする。
+  if (!arrangement) return true;
+  return isActiveTask(chosen, t) || arrangement.recommendedOptionKey === t.basis.optionKey;
+}
+
+/** その人が、時刻のある作業に使う時間（検証器と同じく、移動と寄り道の帰りを含む）。 */
+function busyOf(tasks: readonly Task[], memberId: string, chosen: Chosen): Busy[] {
+  return tasks.flatMap((t) =>
+    t.assigneeId === memberId && t.start && t.end && occupies(t, chosen)
+      ? [
+          {
+            start: toEpochMinutes(t.start) - t.travelBeforeMin,
+            end: Math.max(
+              toEpochMinutes(t.end) + t.travelAfterMin,
+              t.detour ? toEpochMinutes(t.detour.delayedArrival) : 0,
+            ),
+          },
+        ]
+      : [],
+  );
+}
+
+/**
+ * 提出物：出す日（締切）までに、家で用意して出す作業を一つ作る（書く・印を押す等の手順には分けない）。
+ * 誰がするかの決まりが無いので、初めは担当を付けず、二人の「きょう」に出す（誰かが持つ）。持った人が
+ * いれば、その人の家の時間の中で、締切までに終わる最も遅い所に置く（今より前と、その人のほかの作業の
+ * 時間には置かない）。出す日の分からない物は、要件だけにする（作業は作らない）。
+ */
+function submission(
+  ctx: Context,
+  item: Item,
+  rootId: string,
+  live: boolean,
+  conditional: boolean,
+  requirements: Requirement[],
+  tasks: Task[],
+  chosen: Chosen,
+): void {
+  const what = item.interpretation.what ?? item.written;
+  // 日付だけの時は、その日の朝、学校へ持って行く前に（物の要る日と同じ扱い）。
+  const by = item.interpretation.deadline
+    ? toEpochMinutes(item.interpretation.deadline)
+    : item.interpretation.date
+      ? zonedToEpochMinutes(item.interpretation.date, '08:00', ctx.tz)
+      : undefined;
+  const requirementKey = keys.submissionRequirement(rootId);
+  const basis = { itemIds: [item.id], requirementKey };
+  requirements.push({
+    key: requirementKey,
+    kind: 'submission',
+    what,
+    ...(by === undefined ? {} : { by: ctx.fmt(by) }),
+    nature: 'required',
+    basis,
+    live,
+    ...(conditional ? { conditional } : {}),
+  });
+  if (by === undefined) return;
+  const key = keys.submissionTask(rootId);
+  const assignee = ctx.state.assignees.get(key);
+  const commitment = ctx.state.commitments.get(key) ?? 'proposed';
+  const placed =
+    assignee === undefined || !live || NOT_DOING.has(commitment) || commitment === 'done'
+      ? undefined
+      : placeStep(
+          SUBMIT_STEP,
+          assignee,
+          ctx.household,
+          ctx.now,
+          by,
+          busyOf(tasks, assignee, chosen),
+        );
+  tasks.push(
+    task(ctx, key, {
+      titleKey: 'task.submit',
+      titleParams: { what },
+      basis,
+      durationMin: SUBMIT_MINUTES,
+      deadline: ctx.fmt(by),
+      after: [],
+      segments: ['home'],
+      ...(placed
+        ? {
+            start: ctx.fmt(placed.start),
+            end: ctx.fmt(placed.end),
+            ...(placed.slot.placeId === undefined ? {} : { atPlaceId: placed.slot.placeId }),
+          }
+        : {}),
+      live,
+    }),
+  );
 }
 
 function purchase(
@@ -650,6 +791,7 @@ function optionStillNeeded(ctx: Context, tasks: readonly Task[], basis: Basis): 
  * 根拠の事項（置き換えをたどった今の事項）の条件の形。事項ごとの conditionShape を並べ替えて重ねを除き、
  * 一つならその形、二つ以上なら ["all", …]。送った時の控えと今を、この同じ関数で作って比べる。
  * 今の事項でない物（取り消された・見つからない）は入れない（それらは別の決まりで確かめる）。
+ * 今の事項が一つも無ければ NO_CONDITION（依頼では、その時は見つからない・取り消しの決まりが働く）。
  */
 export function basisCondition(state: EngineState, itemIds: readonly string[]): string {
   const nodes = [...state.extractions.values()].flatMap((e) => e.conditions);
@@ -661,7 +803,47 @@ export function basisCondition(state: EngineState, itemIds: readonly string[]): 
       }),
     ),
   ].sort();
+  if (shapes.length === 0) return NO_CONDITION;
   return shapes.length === 1 && shapes[0] !== undefined ? shapes[0] : `["all",${shapes.join(',')}]`;
+}
+
+/**
+ * 作業の根拠の条件（引き受けの控えに写す）：式の形（basisCondition）、式が使う未定の値の名前、根拠が今
+ * 確かでないか（doubted）。画面は、確かでない事項（直した文をまだ読み直していない・取り消されるかも
+ * しれない）には「条件しだい」とだけ添え、確かな条件には名前と値を添える。名前は画面と同じく今も確かな
+ * 読み取りからだけ取り、確かめられなければ null。どれかが替われば、本人が見た条件が替わったので見せ
+ * 直す。未定の値に答えが出ただけなら、どれも替わらない。条件が無く確かな作業には付けない。
+ */
+function taskCondition(ctx: Context, itemIds: readonly string[]): string | undefined {
+  const { state } = ctx;
+  const shape = basisCondition(state, itemIds);
+  const current = itemIds.flatMap((id) => {
+    const fate = itemFate(state, id);
+    return fate.status === 'current' ? [fate.item] : [];
+  });
+  const doubted = current.some((item) => ctx.items.get(item.id)?.doubted === true);
+  if (shape === NO_CONDITION && !doubted) return undefined;
+  const nodes = new Map(
+    [...state.extractions.values()].flatMap((e) => e.conditions).map((n) => [n.id, n]),
+  );
+  const labels = new Map(
+    currentReadings(state)
+      .flatMap((e) => e.unknowns)
+      .map((u) => [u.id, u.label]),
+  );
+  const used = new Set<string>();
+  const seen = new Set<string>();
+  const visit = (id: string): void => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    const node = nodes.get(id);
+    if (node?.kind === 'eq') used.add(node.unknownId);
+    else if (node?.kind === 'not') visit(node.childId);
+    else if (node) for (const child of node.childIds) visit(child);
+  };
+  for (const item of current) if (item.conditionNodeId) visit(item.conditionNodeId);
+  const names = [...used].sort().map((u) => [u, labels.get(u) ?? null]);
+  return JSON.stringify([shape, names, ...(doubted ? ['doubted'] : [])]);
 }
 
 /**

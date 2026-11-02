@@ -27,7 +27,8 @@ export function proposalMatches(task: Task, shown: ProposalSnapshot): boolean | 
     task.travelBeforeMin === shown.travelBeforeMin &&
     task.travelAfterMin === shown.travelAfterMin &&
     task.external?.to === shown.external?.to &&
-    task.external?.kind === shown.external?.kind
+    task.external?.kind === shown.external?.kind &&
+    task.condition === shown.condition
   );
 }
 

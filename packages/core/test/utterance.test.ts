@@ -181,6 +181,57 @@ describe('家族の一言を、確かめた候補にする', () => {
     });
   });
 
+  it('まだだれも持っていない作業のことなら、計画に無いとは言わず、先に持つ人を決めてもらう', () => {
+    const withUnowned: UtteranceContext = {
+      ...context,
+      tasks: [
+        ...context.tasks,
+        {
+          key: 'submit',
+          what: '個人面談の出欠票を出す',
+          date: '2026-11-27',
+          deadline: '2026-11-27T08:00+09:00',
+          assigneeId: null,
+          commitment: 'proposed',
+          external: null,
+          sent: false,
+          cancels: null,
+        },
+      ],
+    };
+    const said = (o: UtteranceOutput) => toUtteranceReply(o, withUnowned, () => 'r-new');
+    expect(
+      said(output({ kind: 'change', actions: [action({ type: 'done', taskKey: 'submit' })] })),
+    ).toEqual({ kind: 'clarify', proposals: [], reason: 'unowned' });
+    // 話した人の作業と一緒に言っても、だれも持っていない作業を黙って落とさない（話した人の分は選べる）。
+    const both = said(
+      output({
+        kind: 'change',
+        actions: [
+          action({ type: 'done', taskKey: 'mine-proposed' }),
+          action({ type: 'done', taskKey: 'submit' }),
+        ],
+      }),
+    );
+    expect(both).toMatchObject({ kind: 'clarify', reason: 'unowned' });
+    if (both.kind !== 'clarify') return;
+    expect(both.proposals.map((p) => p.command)).toEqual([
+      { type: 'commitment', taskKey: 'mine-proposed', action: 'done' },
+    ]);
+    // 別の大人の作業とも一緒なら、両方を示す。
+    expect(
+      said(
+        output({
+          kind: 'clarify',
+          actions: [
+            action({ type: 'withdraw', taskKey: 'his' }),
+            action({ type: 'done', taskKey: 'submit' }),
+          ],
+        }),
+      ),
+    ).toEqual({ kind: 'clarify', proposals: [], reason: 'otherAdultsTask', unowned: true });
+  });
+
   it('どれのことか決められない時は、確かめた候補から選んでもらう。候補が無くても聞き返す', () => {
     const two = reply(
       output({

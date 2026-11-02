@@ -80,7 +80,12 @@ export interface ShownProposal {
 
 export type ShownReply =
   | { kind: 'change'; proposals: ShownProposal[] }
-  | { kind: 'clarify'; proposals: ShownProposal[]; reason: 'ambiguous' | 'otherAdultsTask' }
+  | {
+      kind: 'clarify';
+      proposals: ShownProposal[];
+      reason: 'ambiguous' | 'otherAdultsTask' | 'unowned';
+      unowned?: true;
+    }
   | { kind: 'question'; refs: UtteranceRefs }
   | { kind: 'unsupported'; reason: UnsupportedReason };
 
@@ -367,7 +372,12 @@ export function demoSessions(
     });
     return reply.kind === 'change'
       ? { kind: 'change', proposals }
-      : { kind: 'clarify', proposals, reason: reply.reason };
+      : {
+          kind: 'clarify',
+          proposals,
+          reason: reply.reason,
+          ...(reply.unowned ? { unowned: true as const } : {}),
+        };
   };
 
   /** 今の計画を前提に一言を読み、確かめた候補を返す。何も書かない。 */

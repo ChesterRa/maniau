@@ -14,6 +14,7 @@ import {
   todayCards,
 } from '@maniau/core';
 import {
+  currentReadings,
   type EngineState,
   foldEvents,
   type LiveItem,
@@ -78,13 +79,7 @@ export function viewFor(events: readonly DomainEvent[], memberId: string, now: D
  * からだけ取る。確かめられない時は添えず、画面は「条件しだい」とだけ書く（事項は隠さない）。
  */
 function withWhen(state: EngineState): View['items'] {
-  const extractions = [...state.extractions]
-    .filter(([sourceId]) => {
-      const source = state.sources.get(sourceId);
-      if (!source || state.withdrawnSources.has(sourceId)) return false;
-      return (state.extractionVersion.get(sourceId) ?? 0) >= source.version;
-    })
-    .map(([, extraction]) => extraction);
+  const extractions = currentReadings(state);
   const nodes = new Map(extractions.flatMap((e) => e.conditions).map((n) => [n.id, n]));
   const labels = new Map(extractions.flatMap((e) => e.unknowns).map((u) => [u.id, u.label]));
   const whenOf = (id: string): ItemWhen | undefined => {
