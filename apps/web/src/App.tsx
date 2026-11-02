@@ -96,6 +96,7 @@ function Body(props: {
           plan: view.plan,
           household: view.household,
           today: view.today,
+          ...(view.changes ? { changes: view.changes } : {}),
           items: view.items,
           sources: new Map(view.sources.map((s) => [s.id, s])),
           readings: props.readings,

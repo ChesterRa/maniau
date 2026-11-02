@@ -8,5 +8,6 @@ export * from './schema/sentences';
 export * from './schema/source';
 export * from './schema/validate-household';
 export * from './time';
+export * from './view/changes';
 export * from './view/notify';
 export * from './view/today';

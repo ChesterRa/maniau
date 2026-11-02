@@ -2,7 +2,15 @@
 // エンジンを動かさない（02-foundation §7.1・§7.2）。家庭は二通り：見る人ごとのデモの家庭（ログイン
 // なし。段と使う人を選ぶ）と、家族の家庭（Access でログインした大人。使う人は身元で決まる）。
 // 返事の行き違い（遅れた返事・切り替え・途切れ）の扱いは、どちらも同じ（useServerView）。
-import type { Command, DateTime, Household, PlanResult, Source, TodayCard } from '@maniau/core';
+import type {
+  ChangeSummary,
+  Command,
+  DateTime,
+  Household,
+  PlanResult,
+  Source,
+  TodayCard,
+} from '@maniau/core';
 import type { LiveItem } from '@maniau/core/engine';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -26,6 +34,8 @@ export interface SessionView {
   household: Household;
   plan: PlanResult;
   today: { main: TodayCard[]; quiet: TodayCard[] };
+  /** 後から届いたお知らせで変わったこと（二人に同じ物）。 */
+  changes?: ChangeSummary;
   sources: Source[];
   items: LiveItem[];
 }

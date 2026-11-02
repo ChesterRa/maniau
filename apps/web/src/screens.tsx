@@ -2,6 +2,8 @@
 // 命令を送ることだけ（02-foundation §7.1・§7.2）。
 import {
   type Arrangement,
+  type ChangedRequirement,
+  type ChangeSummary,
   type Command,
   type ExternalRequest,
   type Household,
@@ -10,6 +12,7 @@ import {
   type OptionPlan,
   type PlanResult,
   proposalSnapshot,
+  type Requirement,
   type Source,
   type Task,
   type TodayCard,
@@ -57,6 +60,8 @@ export interface Ctx {
   household: Household;
   /** その大人の「きょう」の札（サーバーが作る）。 */
   today: { main: TodayCard[]; quiet: TodayCard[] };
+  /** 後から届いたお知らせで変わったこと（二人に同じ物。無ければ出さない）。 */
+  changes?: ChangeSummary;
   /** 今の事項。条件しだい・確かめていない物は、確かな予定と見分けて見せる。 */
   items: { item: Item; live: boolean; conditional: boolean; trusted: boolean }[];
   sources: Map<string, Source>;
@@ -250,7 +255,8 @@ export function TodayScreen({ ctx }: { ctx: Ctx }) {
         title={ctx.t(evening ? 'today.titleEvening' : 'today.title')}
       />
       <Main>
-        {shown.length === 0 && (
+        {ctx.changes && <ChangeCard ctx={ctx} change={ctx.changes} />}
+        {shown.length === 0 && !ctx.changes && (
           <Card tone="accent">
             <Title>{ctx.t('today.nothing')}</Title>
             <Text quiet>{ctx.t('today.nothingBody')}</Text>
@@ -281,6 +287,76 @@ export function TodayScreen({ ctx }: { ctx: Ctx }) {
         )}
       </Main>
     </>
+  );
+}
+
+/**
+ * 後から届いたお知らせで変わったこと。要らなくなった物と日が変わった物を、それで要る取り消し（誰が・
+ * 済んだか）と一緒に見せる。二人に同じ物を見せ、自分の分の他に、相手の分も分かるようにする。自分の
+ * 取り消しは、下の「もう要らないこと」の札で伝える。
+ */
+function ChangeCard({ ctx, change }: { ctx: Ctx; change: ChangeSummary }) {
+  const source = ctx.sources.get(change.sourceId);
+  const who = (id: string) =>
+    id === ctx.me.id ? ctx.t('card.change.you') : nameOf(ctx.household, id);
+  const undo = (item: ChangedRequirement) =>
+    item.undo.map((u) => (
+      <li key={u.request.requestId} className="flex justify-between gap-2 pl-3 text-sm">
+        <span>
+          {ctx.t('card.change.undo', {
+            to: nameOf(ctx.household, u.request.to),
+            who: who(u.assigneeId),
+          })}
+        </span>
+        <span className={u.done ? 'text-sub' : 'font-bold text-warn'}>
+          {ctx.t(u.done ? 'card.change.done' : 'card.change.notYet')}
+        </span>
+      </li>
+    ));
+  const gone = (r: Requirement) =>
+    r.kind === 'childCare' && r.date
+      ? ctx.t('card.change.gone.childCare', { date: day(ctx, r.date), what: r.what })
+      : ctx.t('card.change.gone.other', { what: r.what });
+  const moved = (item: ChangedRequirement) => {
+    const { before, after } = item;
+    const text =
+      after?.by && before.by
+        ? ctx.t('card.change.moved.by', {
+            what: before.what,
+            before: dayTime(ctx, before.by),
+            after: dayTime(ctx, after.by),
+          })
+        : ctx.t('card.change.moved.date', {
+            what: before.what,
+            before: before.date ? day(ctx, before.date) : '',
+            after: after?.date ? day(ctx, after.date) : '',
+          });
+    if (item.ready === undefined) return text;
+    return `${text}${ctx.t(item.ready ? 'card.change.ready' : 'card.change.notReady')}`;
+  };
+  return (
+    <Card>
+      <Label tone="warn">{ctx.t('card.change.label')}</Label>
+      <Title>{source?.title ?? ctx.t('card.change.untitled')}</Title>
+      <Text quiet>{ctx.t('card.change.from', { date: day(ctx, change.receivedAt) })}</Text>
+      <ul className="flex flex-col gap-2">
+        {change.gone.map((item) => (
+          <li key={item.before.key} className="flex flex-col gap-1">
+            <span>{gone(item.before)}</span>
+            {item.undo.length > 0 && <ul className="flex flex-col gap-1">{undo(item)}</ul>}
+          </li>
+        ))}
+        {change.moved.map((item) => (
+          <li key={item.before.key} className="flex flex-col gap-1">
+            <span>{moved(item)}</span>
+            {item.undo.length > 0 && <ul className="flex flex-col gap-1">{undo(item)}</ul>}
+          </li>
+        ))}
+      </ul>
+      <MoreLink onClick={() => ctx.go({ name: 'sources', sourceId: change.sourceId })}>
+        {ctx.t('card.change.source')}
+      </MoreLink>
+    </Card>
   );
 }
 

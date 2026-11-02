@@ -101,6 +101,26 @@
       "title": "Is your request to {{to}} still needed?",
       "body": "Something it relied on has changed (the notice changed or was deleted). You decide whether to cancel.",
       "action": "See details"
+    },
+    "change": {
+      "label": "What changed",
+      "untitled": "Notice",
+      "from": "A notice received on {{date}} changed the following.",
+      "gone": {
+        "childCare": "Childcare on {{date}} ({{what}}) is no longer needed",
+        "other": "{{what}} is no longer needed"
+      },
+      "moved": {
+        "by": "{{what}}: due {{before}} → {{after}}",
+        "date": "{{what}}: {{before}} → {{after}}"
+      },
+      "ready": " (already prepared)",
+      "notReady": " (not prepared yet)",
+      "undo": "Tell {{to}} it's cancelled: {{who}}",
+      "you": "you",
+      "done": "Done",
+      "notYet": "Not yet",
+      "source": "See the notice"
     }
   },
   "answer": {

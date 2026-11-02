@@ -16,6 +16,7 @@ export function ctxFor(stageId: string, memberId: string, lang: 'ja' | 'en', at?
     plan: view.plan,
     household: view.household,
     today: view.today,
+    ...(view.changes ? { changes: view.changes } : {}),
     items: view.items,
     sources: new Map(view.sources.map((s) => [s.id, s])),
     readings: demoData.readings,
