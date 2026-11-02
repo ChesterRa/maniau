@@ -83,6 +83,11 @@ export const Requirement = z.object({
   nature: Nature,
   basis: Basis,
   live: z.boolean(),
+  /**
+   * 条件しだい：元の事項の条件が分からないか、効くか分からない作用の先にある。間に合わなくならない側で
+   * 残すが、確かな事実や自動で進めてよい物としては見せない（02-foundation §1 の2）。無ければ確か。
+   */
+  conditional: z.boolean().optional(),
 });
 export type Requirement = z.infer<typeof Requirement>;
 
@@ -115,6 +120,17 @@ export const ExternalRequest = z.object({
   basis: Basis,
   /** 根拠が今の事実で成り立つか。成り立たず、取り消していなければ、取り消しの連絡が要る。 */
   live: z.boolean(),
+  /**
+   * 根拠が分からない（読み直しで見つからない、確かでない事項になった）。取り消しの連絡は作らず、
+   * 要るかを家族に確かめる（02-foundation §5.6）。この間 live は true のまま（取り消したとは決めない）。
+   */
+  needsCheck: z.boolean().optional(),
+  /**
+   * 根拠が今、条件しだい（例：5日に行えば要る）。送った時から分かっていた不確かさで、それだけでは
+   * 確かめを求めない。送った後に生じた疑い（送った時は確かだった、置き換え・取り消しが分からない、
+   * 読み直しで見つからない）は needsCheck にする。
+   */
+  conditional: z.boolean().optional(),
 });
 export type ExternalRequest = z.infer<typeof ExternalRequest>;
 
@@ -156,10 +172,17 @@ export const Arrangement = z.object({
   chosenOptionKey: z.string().optional(),
   /** 本命の返事を待つ間に、家族が押さえた予備の案（例：祖母の返事待ちの間の学童の届け）。 */
   backupOptionKeys: z.array(z.string()).default([]),
+  /**
+   * 選んだ本命・予備のうち、今使う案（本命から順に、断られず決め時も逃していない最初の物）。
+   * 無ければ、選んでいないか、選び直しが要る。当日の準備（Task.extra）は、この案の物だけが要る。
+   */
+  inUseOptionKey: z.string().optional(),
   options: z.array(OptionPlan),
   /** status が decidable でない時の理由。 */
   reasons: z.array(Reason).default([]),
   live: z.boolean(),
+  /** 条件しだい（Requirement と同じ）。決めてよくても、条件付きで決めることを画面に出す。 */
+  conditional: z.boolean().optional(),
 });
 export type Arrangement = z.infer<typeof Arrangement>;
 
@@ -206,6 +229,11 @@ export const Task = z.object({
   live: z.boolean(),
   /** 取り消しの連絡の作業なら、取り消す依頼の requestId。 */
   cancels: z.string().optional(),
+  /**
+   * 案を実際に使う時だけ要る当日の準備（家庭の決まりの extraSteps。例：学童の日の弁当）。
+   * その案が今使う案（手配の inUseOptionKey）でない間は候補で、引き受けを求めない。
+   */
+  extra: z.boolean().optional(),
 });
 export type Task = z.infer<typeof Task>;
 

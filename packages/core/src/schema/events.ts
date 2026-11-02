@@ -1,7 +1,8 @@
 // 事象（状態の正本）。追記だけの列で、今の状態はいつでも事象から作り直せる（docs/design/01-model.md §2）。
 import { z } from 'zod';
 import { DateTime } from '../time';
-import { Household, Id } from './household';
+import { ExternalKind, Household, Id } from './household';
+import { Basis } from './plan';
 import { Source } from './source';
 
 /** 事象の共通の欄。 */
@@ -17,6 +18,26 @@ const envelope = {
   /** 操作した成員。仕組みが起こした物は system。 */
   actorId: Id,
 };
+
+/**
+ * 依頼を送った時の控え（02-foundation §5.6）。送った時に計画で見えていた物を写す（requestSnapshot で作る）。
+ * 後で今の計画と比べ、送った後に条件や時間が替わったら、要るかを頼んだ本人に確かめる。
+ */
+export const RequestSnapshot = z.object({
+  to: Id,
+  kind: ExternalKind,
+  basis: Basis,
+  /** 送った時、根拠が条件しだいだったか（頼んだ文がもともと条件付き）。後から生じた疑いと分ける。 */
+  conditional: z.boolean().optional(),
+  /**
+   * 送った時の根拠の条件の形（conditionShape。節点の ID を除いた式。条件が無ければ NO_CONDITION）。
+   * 無いのは古い事象で、その時は条件が替わったかを決めない。
+   */
+  condition: z.string().min(1).optional(),
+  /** 頼んだ時間（子の居場所の手配の区間）。無いのは古い事象か、時間で頼まない依頼。 */
+  window: z.object({ start: DateTime, end: DateTime }).optional(),
+});
+export type RequestSnapshot = z.infer<typeof RequestSnapshot>;
 
 /** モデルの呼び出しの種類（§10）。 */
 export const ModelCall = z.enum([
@@ -95,6 +116,11 @@ export const DomainEvent = z.discriminatedUnion('type', [
     type: z.literal('externalRequestSent'),
     taskKey: z.string().min(1),
     requestId: Id,
+    /**
+     * 送った時の控え。依頼は、後の作業の一覧から逆算せず、この控えから作る（02-foundation §5.6）。
+     * 控えの無い古い事象だけ、今の作業から補う。
+     */
+    snapshot: RequestSnapshot.optional(),
   }),
   /** 外の返事（祖母、学童、勤務先）。家族の誰でも記録できる。依頼の一件ごとに記録する。 */
   z.object({

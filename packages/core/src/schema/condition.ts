@@ -84,6 +84,63 @@ function childrenOf(node: ConditionNode): string[] {
   }
 }
 
+/** 条件の無い事項の、条件の形。 */
+export const NO_CONDITION = 'true';
+
+/** 条件の形の長さの上限。共有された子を広げて、これを超える時は ID 付きの形にする。 */
+const MAX_SHAPE_LENGTH = 4096;
+
+/**
+ * 条件の式の形：節点の ID を除き、and・or の子を並べ替えた JSON の文字列（02-foundation §5.6）。
+ * 読み直しで節点の ID が替わっても、式が同じなら同じ形になる。ID が同じでも、式が替われば違う形になる。
+ * 形は ["eq", 未定の値の ID, 値]・["not", 子]・["and", 子…]・["or", 子…]。条件が無ければ NO_CONDITION。
+ * 共有された子を広げると大きくなりすぎる式は、たどれる節点を ID 付きで並べた形にする
+ * （比べられない時は「替わった」側に倒す）。
+ */
+export function conditionShape(
+  nodeId: string | undefined,
+  nodes: readonly ConditionNode[],
+): string {
+  if (nodeId === undefined) return NO_CONDITION;
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  // 大きすぎた節点も覚える（覚えないと、共有された子をたどり直して指数的に遅くなる）。null は大きすぎ。
+  const memo = new Map<string, string | null>();
+  const shape = (id: string): string | undefined => {
+    const known = memo.get(id);
+    if (known !== undefined) return known ?? undefined;
+    const node = byId.get(id);
+    if (!node) throw new Error(`条件の節点が無い：${id}`);
+    let text: string | undefined;
+    if (node.kind === 'eq') text = JSON.stringify(['eq', node.unknownId, node.value]);
+    else if (node.kind === 'not') {
+      const child = shape(node.childId);
+      text = child === undefined ? undefined : `["not",${child}]`;
+    } else {
+      const children = node.childIds.map(shape);
+      text = children.some((c) => c === undefined)
+        ? undefined
+        : `[${JSON.stringify(node.kind)},${[...new Set(children)].sort().join(',')}]`;
+    }
+    const fits = text !== undefined && text.length <= MAX_SHAPE_LENGTH ? text : undefined;
+    memo.set(id, fits ?? null);
+    return fits;
+  };
+  const text = shape(nodeId);
+  if (text !== undefined) return text;
+  const reachable = new Map<string, ConditionNode>();
+  const visit = (id: string): void => {
+    const node = byId.get(id);
+    if (!node || reachable.has(id)) return;
+    reachable.set(id, node);
+    for (const child of childrenOf(node)) visit(child);
+  };
+  visit(nodeId);
+  const listed = [...reachable.values()]
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .map((n) => JSON.stringify(n));
+  return `["ids",${JSON.stringify(nodeId)},${listed.join(',')}]`;
+}
+
 /** 条件を評価する。検査（validateConditions）を通った節点だけを渡す。共有された子は一度だけ評価する。 */
 export function evaluateCondition(
   nodeId: string,

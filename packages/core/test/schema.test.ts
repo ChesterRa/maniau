@@ -2,10 +2,12 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   type ConditionNode,
+  conditionShape,
   DomainEvent,
   evaluateCondition,
   Household,
   MAX_CONDITION_NODES,
+  NO_CONDITION,
   type Unknown,
   validateConditions,
   validateHousehold,
@@ -97,6 +99,45 @@ describe('条件の式', () => {
     expect(evaluateCondition(`d${depth}`, deep, held5)).toBe(true);
     expect(evaluateCondition(`d${depth}`, deep, new Map())).toBe('unknown');
     expect(performance.now() - started).toBeLessThan(100);
+  });
+
+  it('条件の形は、節点の ID によらず式で決まる（読み直しで ID が替わっても、式が替わっても見分ける）', () => {
+    const shape = (id: string, list: ConditionNode[]) => conditionShape(id, list);
+    expect(shape('c-held-5', nodes)).toBe('["eq","u-date","2026-12-05"]');
+    expect(conditionShape(undefined, nodes)).toBe(NO_CONDITION);
+    // ID を付け替え、or の子の順を入れ替えても、同じ式なら同じ形。
+    const renamed: ConditionNode[] = [
+      { id: 'r8', kind: 'eq', unknownId: 'u-date', value: '2026-12-08' },
+      { id: 'r5', kind: 'eq', unknownId: 'u-date', value: '2026-12-05' },
+      { id: 'r-either', kind: 'or', childIds: ['r8', 'r5'] },
+    ];
+    expect(shape('r-either', renamed)).toBe(shape('c-either', nodes));
+    // 同じ ID のまま値が替われば、違う形。
+    const changed = nodes.map((n) =>
+      n.id === 'c-held-5' && n.kind === 'eq' ? { ...n, value: '2026-12-08' } : n,
+    );
+    expect(shape('c-held-5', changed)).not.toBe(shape('c-held-5', nodes));
+    expect(shape('c-not-5', changed)).not.toBe(shape('c-not-5', nodes));
+  });
+
+  it('共有された子を広げると大きすぎる式は、ID 付きの形にして、速く終わる', () => {
+    const depth = 40;
+    const deep: ConditionNode[] = [
+      { id: 'd0', kind: 'eq', unknownId: 'u-date', value: '2026-12-05' },
+      { id: 'e0', kind: 'eq', unknownId: 'u-date', value: '2026-12-08' },
+    ];
+    for (let i = 1; i <= depth; i += 1) {
+      deep.push({ id: `d${i}`, kind: 'and', childIds: [`d${i - 1}`, `e${i - 1}`] });
+      deep.push({ id: `e${i}`, kind: 'or', childIds: [`d${i - 1}`, `e${i - 1}`] });
+    }
+    const started = performance.now();
+    const shape = conditionShape(`d${depth}`, deep);
+    expect(performance.now() - started).toBeLessThan(100);
+    expect(shape.startsWith('["ids","d40",')).toBe(true);
+    expect(shape.length).toBeLessThan(20_000);
+    // 式が替われば、ID 付きの形も替わる。
+    const changed = deep.map((n) => (n.id === 'd0' ? { ...n, value: '2026-12-06' } : n));
+    expect(conditionShape(`d${depth}`, changed)).not.toBe(shape);
   });
 
   it('節点が多すぎる式は使わない', () => {

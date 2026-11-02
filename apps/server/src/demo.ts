@@ -14,7 +14,7 @@ import {
   toExtraction,
   validateHousehold,
 } from '@maniau/core';
-import { computePlan, keys } from '@maniau/core/engine';
+import { computePlan, keys, requestSnapshot } from '@maniau/core/engine';
 
 const ROOT = new URL('../../../', import.meta.url);
 const read = (path: string) => readFileSync(new URL(path, ROOT), 'utf8');
@@ -136,6 +136,16 @@ export function demoEvents(stage: DemoStageId): DomainEvent[] {
       }),
     );
   };
+  // 依頼を送ったと記録する。送った時の控え（相手・種類・根拠）は、その時の計画の作業から取る
+  // （02-foundation §5.6。依頼は後の作業の一覧から逆算しない）。
+  const sent = (at: string, actorId: string, taskKey: string, requestId: string) => {
+    add(at, actorId, {
+      type: 'externalRequestSent',
+      taskKey,
+      requestId,
+      snapshot: requestSnapshot(events, at, taskKey),
+    });
+  };
   const notice = (index: number, at: string) => {
     const source = data.sources[index];
     const output = data.outputs[index];
@@ -187,11 +197,7 @@ export function demoEvents(stage: DemoStageId): DomainEvent[] {
       assigneeId: 'b',
       action: 'accept',
     });
-    add('2026-11-25T19:40+09:00', 'b', {
-      type: 'externalRequestSent',
-      taskKey: keys.task(grandma, 'ask'),
-      requestId: 'r-grandma',
-    });
+    sent('2026-11-25T19:40+09:00', 'b', keys.task(grandma, 'ask'), 'r-grandma');
     // 健太が、帰りの買い物（11/26 18:55–19:10、家に着くのは 19:25）を見て引き受ける。
     add('2026-11-26T12:12+09:00', 'a', {
       type: 'commitmentChanged',
@@ -248,11 +254,7 @@ export function demoEvents(stage: DemoStageId): DomainEvent[] {
       assigneeId: 'a',
       action: 'done',
     });
-    add('2026-11-30T18:00+09:00', 'a', {
-      type: 'externalRequestSent',
-      taskKey: keys.task(gakudo, 'submit'),
-      requestId: 'r-gakudo',
-    });
+    sent('2026-11-30T18:00+09:00', 'a', keys.task(gakudo, 'submit'), 'r-gakudo');
     add('2026-11-30T18:01+09:00', 'a', {
       type: 'externalReplyRecorded',
       requestId: 'r-gakudo',
