@@ -16,6 +16,30 @@ export interface FactState {
   items: Map<string, Item>;
   active: Map<string, Truth>;
   unknowns: Map<string, Unknown>;
+  conditions: Map<string, ConditionNode>;
+  changes: Map<string, { kind: 'replace' | 'cancel'; itemId: string; active: Truth }[]>;
+}
+
+/** 送信時の根拠は、確かな一対一の置き換えをたどる。競合や循環は決めつけない。 */
+export function historicalItem(
+  facts: FactState,
+  originalId: string,
+): { itemId: string; active: Truth } {
+  const seen = new Set<string>();
+  let itemId = originalId;
+  for (;;) {
+    if (seen.has(itemId)) return { itemId, active: 'unknown' };
+    seen.add(itemId);
+    if (!facts.items.has(itemId)) return { itemId, active: 'unknown' };
+    const changes = facts.changes.get(itemId) ?? [];
+    if (changes.some((change) => change.active === 'unknown')) return { itemId, active: 'unknown' };
+    const effective = changes.filter((change) => change.active === true);
+    if (effective.length > 1) return { itemId, active: 'unknown' };
+    const only = effective[0];
+    if (!only) return { itemId, active: facts.active.get(itemId) ?? 'unknown' };
+    if (only.kind === 'cancel') return { itemId, active: false };
+    itemId = only.itemId;
+  }
 }
 
 interface Extracted extends Extraction {
@@ -87,7 +111,6 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
 
   const extracted = [...latestBySource.values()].sort((a, b) => a.sourceSeq - b.sourceSeq);
   // 再読は通知を新しくしない。家族の後の答えを、再読しただけで上書きしない。
-  const extractionByEvent = new Map(extracted.map((entry) => [entry.sourceSeq, entry]));
   for (const extraction of extracted) {
     for (const item of extraction.items) {
       if (item.sourceId !== extraction.sourceId)
@@ -165,7 +188,47 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
       report.violation('invalid_condition', problem.nodeId, '条件の参照・値・循環が不正。');
     }
   }
-  const assignments = new Map<string, string>();
+  // 未定値ごとに、最後に効く可能性のある答えを列挙する。条件が不明なら「効く」と「効かない」の両方を
+  // 残す。値の集合を全候補から徐々に絞るので、出典の後に家族が条件へ答えても作用を再評価できる。
+  type Candidate = { value: string; seq: number; order: number; item?: Item };
+  const candidates = new Map<string, Candidate[]>();
+  let order = 0;
+  const addCandidate = (id: string, candidate: Candidate) => {
+    const list = candidates.get(id) ?? [];
+    list.push(candidate);
+    candidates.set(id, list);
+  };
+  for (const event of events) {
+    if (event.type === 'answered') {
+      addCandidate(event.unknownId, { value: event.value, seq: event.seq, order: order++ });
+    }
+  }
+  for (const extraction of extracted) {
+    for (const item of extraction.items) {
+      for (const effect of item.effects) {
+        if (effect.type === 'resolveUnknown') {
+          addCandidate(effect.unknownId, {
+            value: effect.value,
+            seq: extraction.sourceSeq,
+            order: order++,
+            item,
+          });
+        }
+      }
+    }
+  }
+  for (const list of candidates.values()) list.sort((a, b) => b.seq - a.seq || b.order - a.order);
+  const domains = new Map<string, Set<string | undefined>>();
+  for (const id of new Set([...unknowns.keys(), ...candidates.keys()])) {
+    domains.set(
+      id,
+      new Set([
+        undefined,
+        ...(unknowns.get(id)?.values ?? []),
+        ...(candidates.get(id) ?? []).map((c) => c.value),
+      ]),
+    );
+  }
   const memo = new Map<string, Truth>();
   const evaluate = (id: string): Truth => {
     const saved = memo.get(id);
@@ -175,8 +238,11 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
     if (!node) return 'unknown';
     let result: Truth = 'unknown';
     if (node.kind === 'eq') {
-      const value = assignments.get(node.unknownId);
-      result = value === undefined ? 'unknown' : value === node.value;
+      const possible = domains.get(node.unknownId);
+      if (possible && !possible.has(undefined)) {
+        if (possible.size === 1 && possible.has(node.value)) result = true;
+        else if (!possible.has(node.value)) result = false;
+      }
     } else if (node.kind === 'not') {
       const value = evaluate(node.childId);
       result = value === 'unknown' ? 'unknown' : !value;
@@ -194,34 +260,107 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
     if (!nodes.has(item.conditionNodeId)) return 'unknown';
     return evaluate(item.conditionNodeId);
   };
-  for (const event of events) {
-    if (event.type === 'answered') {
-      assignments.set(event.unknownId, event.value);
-      memo.clear();
-    }
-    const extraction = extractionByEvent.get(event.seq);
-    if (!extraction) continue;
+  const changes = new Map<string, Item[]>();
+  for (const extraction of extracted) {
     for (const item of extraction.items) {
       for (const effect of item.effects) {
-        if (effect.type !== 'resolveUnknown') continue;
-        const condition = conditionOf(item);
-        if (condition === false) continue;
+        if (effect.type === 'resolveUnknown') continue;
         if (
-          item.evidence === 'inferred' ||
-          item.evidence === 'conflicting' ||
-          condition === 'unknown'
-        ) {
-          assignments.delete(effect.unknownId);
-          memo.clear();
-          report.undetermined(
-            'resolution_unconfirmed',
-            item.id,
-            '未定の値を決める作用を確かめられない。',
-          );
-        } else if (condition) {
-          assignments.set(effect.unknownId, effect.value);
-          memo.clear();
-        }
+          !items.has(effect.itemId) ||
+          (itemSeq.get(effect.itemId) ?? Infinity) > extraction.sourceSeq
+        )
+          continue;
+        const list = changes.get(effect.itemId) ?? [];
+        list.push(item);
+        changes.set(effect.itemId, list);
+      }
+    }
+  }
+  const baseActivity = (item: Item): Truth => {
+    const condition = conditionOf(item);
+    if (condition === false) return false;
+    return item.evidence === 'inferred' || item.evidence === 'conflicting' ? 'unknown' : condition;
+  };
+  const sourceActivity = (item: Item): Truth => {
+    const base = baseActivity(item);
+    if (base === false) return false;
+    let uncertain = base === 'unknown';
+    for (const change of changes.get(item.id) ?? []) {
+      const truth = baseActivity(change);
+      if (truth === false) continue;
+      // 変更した事項にも別の変更が及ぶ時は、古い事項が復活するかを決めつけない。
+      const changedAgain = (changes.get(change.id) ?? []).some(
+        (later) => baseActivity(later) !== false,
+      );
+      if (truth === 'unknown' || changedAgain) uncertain = true;
+      else return false;
+    }
+    return uncertain ? 'unknown' : true;
+  };
+  const possibleFor = (id: string): Set<string | undefined> => {
+    const possible = new Set<string | undefined>();
+    const list = candidates.get(id) ?? [];
+    let index = 0;
+    while (index < list.length) {
+      const seq = list[index]?.seq;
+      let certainAtThisSeq = false;
+      while (index < list.length && list[index]?.seq === seq) {
+        const candidate = list[index];
+        index += 1;
+        if (!candidate) continue;
+        const truth: Truth = candidate.item ? sourceActivity(candidate.item) : true;
+        if (truth === false) continue;
+        possible.add(candidate.value);
+        if (truth === true) certainAtThisSeq = true;
+      }
+      // 同じ通知に異なる答えが複数あれば、配列の後ろを「後に届いた」とは扱わない。
+      if (certainAtThisSeq) return possible;
+    }
+    possible.add(undefined);
+    return possible;
+  };
+  const maxRounds = Math.min(
+    256,
+    1 + [...domains.values()].reduce((sum, set) => sum + set.size, 0),
+  );
+  let converged = false;
+  for (let round = 0; round < maxRounds; round++) {
+    memo.clear();
+    const next = new Map<string, Set<string | undefined>>();
+    for (const [id, previous] of domains) {
+      const possible = possibleFor(id);
+      next.set(id, new Set([...previous].filter((value) => possible.has(value))));
+    }
+    converged = [...next].every(([id, set]) => {
+      const previous = domains.get(id);
+      return previous?.size === set.size && [...set].every((value) => previous.has(value));
+    });
+    for (const [id, set] of next) domains.set(id, set);
+    if (converged) break;
+  }
+  memo.clear();
+  const inconsistent = [...domains.values()].some((possible) => possible.size === 0);
+  if (!converged || inconsistent) {
+    report.undetermined('resolution_graph_limit', 'events', '条件つきの答えを確認し切れない。');
+    // 絞り込みが破綻した時は、途中で得た一意の値も根拠にしない。
+    for (const id of domains.keys()) domains.set(id, new Set([undefined]));
+  }
+  const assignments = new Map<string, string>();
+  for (const [id, possible] of domains) {
+    const only = possible.size === 1 ? [...possible][0] : undefined;
+    if (only !== undefined) assignments.set(id, only);
+  }
+  memo.clear();
+  for (const [id, list] of candidates) {
+    const possible = domains.get(id);
+    if (possible?.size === 1 && !possible.has(undefined)) continue;
+    for (const candidate of list) {
+      if (candidate.item && sourceActivity(candidate.item) !== false) {
+        report.undetermined(
+          'resolution_unconfirmed',
+          candidate.item.id,
+          '未定の値を決める作用を確かめられない。',
+        );
       }
     }
   }
@@ -238,19 +377,29 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
     if (item.conditionNodeId && !nodes.has(item.conditionNodeId)) {
       report.undetermined('item_condition_missing', item.id, '事項の適用条件がない。');
     }
-    const condition = conditionOf(item);
-    active.set(
-      item.id,
-      condition === false
-        ? false
-        : item.evidence === 'inferred' || item.evidence === 'conflicting'
-          ? 'unknown'
-          : condition,
-    );
+    active.set(item.id, sourceActivity(item));
+  }
+  const itemChanges: FactState['changes'] = new Map();
+  for (const extraction of extracted) {
+    for (const item of extraction.items) {
+      for (const effect of item.effects) {
+        if (effect.type === 'resolveUnknown') continue;
+        if (
+          !items.has(effect.itemId) ||
+          (itemSeq.get(effect.itemId) ?? Infinity) > extraction.sourceSeq
+        )
+          continue;
+        let activity = sourceActivity(item);
+        // 作用を持つ事項が後の変更を受けた時、元の事項がどうなるかは保守的に扱う。
+        if (activity === false && changes.has(item.id)) activity = 'unknown';
+        const list = itemChanges.get(effect.itemId) ?? [];
+        list.push({ kind: effect.type, itemId: item.id, active: activity });
+        itemChanges.set(effect.itemId, list);
+      }
+    }
   }
   for (const extraction of extracted) {
     for (const item of extraction.items) {
-      const effectTruth = active.get(item.id) ?? 'unknown';
       for (const effect of item.effects) {
         if (effect.type === 'resolveUnknown') continue;
         const target = items.get(effect.itemId);
@@ -263,13 +412,9 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
             item.id,
             '変更前の事項を事象から確認できない。',
           );
-          continue;
         }
-        if (effectTruth === true) active.set(effect.itemId, false);
-        else if (effectTruth === 'unknown' && active.get(effect.itemId) !== false)
-          active.set(effect.itemId, 'unknown');
       }
     }
   }
-  return { items, active, unknowns };
+  return { items, active, unknowns, conditions: nodes, changes: itemChanges };
 }

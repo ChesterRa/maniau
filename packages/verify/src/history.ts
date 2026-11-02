@@ -1,15 +1,31 @@
 import type { DomainEvent, Household, PlanResult, Truth } from '@maniau/core';
-import type { FactState } from './facts';
-import type { Collector } from './report';
+import { collectFacts, type FactState, historicalItem } from './facts';
+import { Collector } from './report';
 import { instantMinute } from './time';
 
 type RequestState = 'awaitingReply' | 'confirmed' | 'turnedDown' | 'cancelled';
 
 interface SentRequest {
   taskKey: string;
+  seq: number;
   sentAt: string;
   sentBy: string;
   state: RequestState;
+  snapshot?: Extract<DomainEvent, { type: 'externalRequestSent' }>['snapshot'];
+}
+
+type RequestBasis = Extract<DomainEvent, { type: 'externalRequestSent' }>['snapshot'];
+
+function sameBasis(
+  a: NonNullable<RequestBasis>['basis'],
+  b: NonNullable<RequestBasis>['basis'],
+): boolean {
+  return (
+    a.arrangementKey === b.arrangementKey &&
+    a.optionKey === b.optionKey &&
+    a.requirementKey === b.requirementKey &&
+    JSON.stringify([...a.itemIds].sort()) === JSON.stringify([...b.itemIds].sort())
+  );
 }
 
 interface Selection {
@@ -176,9 +192,11 @@ export function checkHistory(
       }
       requests.set(event.requestId, {
         taskKey: event.taskKey,
+        seq: event.seq,
         sentAt: event.occurredAt,
         sentBy: event.actorId,
         state: 'awaitingReply',
+        ...(event.snapshot ? { snapshot: event.snapshot } : {}),
       });
       commitment.set(event.taskKey, 'done');
     } else if (event.type === 'externalReplyRecorded' || event.type === 'cancellationSent') {
@@ -299,17 +317,25 @@ export function checkHistory(
           );
       }
     }
+    // 送った時の控えは、現在の作業より優先する。変更後の作業から、過去の相手や根拠を作り直さない。
     const task = tasks.get(request.taskKey);
-    if (!task) {
+    const original = sent?.snapshot;
+    if (original && (original.to !== request.to || original.kind !== request.kind)) {
+      report.violation(
+        'request_recipient_mismatch',
+        request.requestId,
+        '依頼の相手または種類が送った時の控えと違う。',
+      );
+    } else if (!original && !task) {
       report.undetermined(
         'request_task_missing',
         request.requestId,
-        '依頼を送った作業が計画にない。',
+        '送った時の控えも、依頼を送った作業も確認できない。',
       );
     } else if (
-      !task.external ||
-      task.external.to !== request.to ||
-      task.external.kind !== request.kind
+      !original &&
+      task &&
+      (!task.external || task.external.to !== request.to || task.external.kind !== request.kind)
     ) {
       report.violation(
         'request_recipient_mismatch',
@@ -317,14 +343,8 @@ export function checkHistory(
         '依頼の相手または種類が作業と違う。',
       );
     }
-    if (
-      task &&
-      (task.basis.arrangementKey !== request.basis.arrangementKey ||
-        task.basis.optionKey !== request.basis.optionKey ||
-        task.basis.requirementKey !== request.basis.requirementKey ||
-        JSON.stringify([...task.basis.itemIds].sort()) !==
-          JSON.stringify([...request.basis.itemIds].sort()))
-    )
+    const originalBasis = original?.basis ?? task?.basis;
+    if (originalBasis && !sameBasis(originalBasis, request.basis))
       report.violation(
         'request_basis_mismatch',
         request.requestId,
@@ -359,9 +379,11 @@ export function checkRequestNeed(
   facts: FactState,
   report: Collector,
 ): void {
+  const beforeSending = new Map<number, FactState>();
   for (const request of plan.requests) {
     const source = plan.tasks.find((task) => task.key === request.taskKey);
-    const basis = source?.basis ?? request.basis;
+    const sent = history.requests.get(request.requestId);
+    const basis = sent?.snapshot?.basis ?? source?.basis ?? request.basis;
     let optionNeeded: Truth = true;
     if (basis.arrangementKey && basis.optionKey) {
       if (!history.complete) optionNeeded = 'unknown';
@@ -392,15 +414,18 @@ export function checkRequestNeed(
         }
       }
     } else if (basis.optionKey || basis.arrangementKey) optionNeeded = 'unknown';
-    let factsNeeded: Truth = basis.itemIds.length ? true : 'unknown';
-    for (const itemId of basis.itemIds) {
-      const active = facts.active.get(itemId);
-      if (active === false) {
-        factsNeeded = false;
-        break;
-      }
-      if (active === undefined || active === 'unknown') factsNeeded = 'unknown';
-    }
+    const basisStates = basis.itemIds.map((itemId) =>
+      sent?.snapshot ? historicalItem(facts, itemId).active : facts.active.get(itemId),
+    );
+    // 複数の根拠の一部が外れただけでは、依頼全体が不要か分からない。
+    const factsNeeded: Truth =
+      basisStates.length === 0
+        ? 'unknown'
+        : basisStates.every((active) => active === false)
+          ? false
+          : basisStates.every((active) => active === true)
+            ? true
+            : 'unknown';
     const needed: Truth =
       optionNeeded === false || factsNeeded === false
         ? false
@@ -420,12 +445,118 @@ export function checkRequestNeed(
         task.cancels === request.requestId &&
         !['declined', 'withdrawn', 'cancelled'].includes(task.commitment),
     );
-    const sent = history.requests.get(request.requestId);
     const state = sent?.state ?? request.state;
+    const partiallyCancelled =
+      sent?.snapshot !== undefined &&
+      history.complete &&
+      optionNeeded === true &&
+      basisStates.some((active) => active !== false) &&
+      basis.itemIds.some((id) => {
+        const resolved = historicalItem(facts, id);
+        if (resolved.active !== false) return false;
+        const changes = facts.changes.get(resolved.itemId) ?? [];
+        const effective = changes.filter((change) => change.active === true);
+        return (
+          !changes.some((change) => change.active === 'unknown') &&
+          effective.length === 1 &&
+          effective[0]?.kind === 'cancel'
+        );
+      }) &&
+      plan.arrangements.some((entry) => entry.key === basis.arrangementKey && entry.live);
+    if (partiallyCancelled && !request.live && (state === 'awaitingReply' || state === 'confirmed'))
+      report.violation(
+        'request_liveness_mismatch',
+        request.requestId,
+        '根拠の一部だけが取り消された依頼を、確かめずに不要と扱っている。',
+      );
     if (
-      (needed === false || (needed === 'unknown' && !request.live)) &&
-      (state === 'awaitingReply' || state === 'confirmed')
+      needed !== false &&
+      history.complete &&
+      sent?.snapshot &&
+      request.live &&
+      (state === 'awaitingReply' || state === 'confirmed') &&
+      !request.needsCheck
     ) {
+      const original = sent.snapshot;
+      const currentItems = basis.itemIds.map((id) =>
+        facts.items.get(historicalItem(facts, id).itemId),
+      );
+      const missingOrUntrusted = currentItems.some(
+        (item) => !item || item.evidence === 'inferred' || item.evidence === 'conflicting',
+      );
+      // 同じ節点 ID の再利用だけでは条件が同じとは限らない。送信前の読み取りを事象から作り直し、
+      // 一つの未定値について別の値を指す条件に変わったケースだけ、意味の変更を確定する。
+      let changedEquality = false;
+      const conditionDataInvalid = report.issues.some((issue) =>
+        [
+          'invalid_extraction',
+          'duplicate_condition',
+          'invalid_condition',
+          'condition_graph_too_large',
+          'unknown_values_conflict',
+        ].includes(issue.code),
+      );
+      if (!conditionDataInvalid) {
+        let previous = beforeSending.get(sent.seq);
+        if (!previous) {
+          const scratch = new Collector();
+          const parsed = collectFacts(
+            history.events.filter((event) => event.seq < sent.seq),
+            scratch,
+          );
+          if (!scratch.issues.some((issue) => issue.kind === 'violation')) {
+            beforeSending.set(sent.seq, parsed);
+            previous = parsed;
+          }
+        }
+        if (previous) {
+          changedEquality = basis.itemIds.some((id) => {
+            const oldId = previous.items.get(id)?.conditionNodeId;
+            const newId = facts.items.get(historicalItem(facts, id).itemId)?.conditionNodeId;
+            const oldNode = oldId ? previous.conditions.get(oldId) : undefined;
+            const newNode = newId ? facts.conditions.get(newId) : undefined;
+            const oldUnknown =
+              oldNode?.kind === 'eq' ? previous.unknowns.get(oldNode.unknownId) : undefined;
+            const newUnknown =
+              newNode?.kind === 'eq' ? facts.unknowns.get(newNode.unknownId) : undefined;
+            return (
+              oldNode?.kind === 'eq' &&
+              newNode?.kind === 'eq' &&
+              oldNode.unknownId === newNode.unknownId &&
+              oldNode.value !== newNode.value &&
+              oldUnknown !== undefined &&
+              newUnknown !== undefined &&
+              JSON.stringify(oldUnknown) === JSON.stringify(newUnknown)
+            );
+          });
+        }
+      }
+      if (
+        partiallyCancelled ||
+        changedEquality ||
+        (needed === 'unknown' &&
+          (missingOrUntrusted || (original.conditional === false && request.conditional === true)))
+      ) {
+        report.violation(
+          'request_uncertainty_unmarked',
+          request.requestId,
+          '送った依頼の新たな不確かさを、要確認または条件付きとして示していない。',
+        );
+      } else if (
+        needed === 'unknown' ||
+        original.conditional === true ||
+        currentItems.some((item) => item?.conditionNodeId !== undefined)
+      ) {
+        // 検証器の近似だけで unknown になった場合は、実際の新たな不確かさと断定できない。
+        // 節点 ID が同じでも内容が変わり得るし、違っても同じ意味かもしれない。
+        report.undetermined(
+          'request_condition_history_unverified',
+          request.requestId,
+          '送った時の条件と、今の条件の意味が同じか確認できない。',
+        );
+      }
+    }
+    if (needed === false && (state === 'awaitingReply' || state === 'confirmed')) {
       if (cancellations.length === 0)
         report.violation(
           'cancellation_missing',
@@ -439,30 +570,30 @@ export function checkRequestNeed(
           '取消し作業は済みだが、送った事象を確認できない。',
         );
     }
-    // 根拠が不明でも、計画が必要とする依頼と同時に取消しを置くのは矛盾。
-    if (
-      (needed === true || (needed === 'unknown' && optionNeeded === true && request.live)) &&
-      cancellations.length > 0
-    )
+    if (needed === true && cancellations.length > 0)
       report.violation(
         'unexpected_cancellation',
         request.requestId,
         'まだ必要な依頼に取消しの連絡がある。',
       );
-    if (
-      (needed === true || (needed === 'unknown' && optionNeeded === true && request.live)) &&
-      state === 'cancelled'
-    )
+    if (needed === true && state === 'cancelled')
       report.violation(
         'needed_request_cancelled',
         request.requestId,
         '必要な依頼が取り消されている。',
       );
-    if (needed === 'unknown')
+    if (needed === 'unknown') {
       report.undetermined(
         'request_need_unverified',
         request.requestId,
         '依頼の必要性を事象と元の事項から確定できない。',
       );
+      if (cancellations.length > 0)
+        report.undetermined(
+          'cancellation_need_unverified',
+          request.requestId,
+          '取消しの要否を事象と元の事項から確定できない。',
+        );
+    }
   }
 }

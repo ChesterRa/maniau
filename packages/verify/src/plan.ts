@@ -8,7 +8,7 @@ import {
   type PlanResult,
   type Task,
 } from '@maniau/core';
-import type { FactState } from './facts';
+import { type FactState, historicalItem } from './facts';
 import type { History } from './history';
 import type { Collector } from './report';
 import { dateFromIndex, dateIndex, instantMinute, localMinute, weekday } from './time';
@@ -36,22 +36,28 @@ function checkBasis(
   plan: PlanResult,
   report: Collector,
   exempt: boolean,
+  missingReferencesUncertain = false,
+  historical = false,
 ): void {
   if (!live || exempt) return;
   if (basis.itemIds.length === 0 && !basis.requirementKey && !basis.arrangementKey) {
     report.undetermined('basis_missing', subject, '生きている物の根拠をたどれない。');
   }
   for (const itemId of basis.itemIds) {
-    const item = facts.items.get(itemId);
-    const active = facts.active.get(itemId);
+    const resolved = historical ? historicalItem(facts, itemId) : undefined;
+    const item = facts.items.get(resolved?.itemId ?? itemId);
+    const active = resolved?.active ?? facts.active.get(itemId);
     if (!item || active === undefined) {
       report.undetermined('basis_item_missing', subject, '元の事項を事象から確認できない。');
     } else if (active === false) {
-      report.violation(
-        'inactive_item_basis',
-        subject,
-        '適用されない元の事項から導いた物が残っている。',
-      );
+      if (historical && missingReferencesUncertain)
+        report.undetermined('item_condition_unknown', subject, '依頼の根拠の一部を確認できない。');
+      else
+        report.violation(
+          'inactive_item_basis',
+          subject,
+          '適用されない元の事項から導いた物が残っている。',
+        );
     } else if (active === 'unknown') {
       report.undetermined(
         'item_condition_unknown',
@@ -62,24 +68,37 @@ function checkBasis(
   }
   if (basis.requirementKey) {
     const requirement = plan.requirements.find((entry) => entry.key === basis.requirementKey);
-    if (!requirement) report.violation('requirement_missing', subject, '根拠の要件がない。');
-    else if (!requirement.live)
-      report.violation(
-        'inactive_requirement_basis',
-        subject,
-        '不要な要件から導いた物が残っている。',
-      );
+    if (!requirement) {
+      if (missingReferencesUncertain)
+        report.undetermined('requirement_unverified', subject, '根拠の要件を確認できない。');
+      else report.violation('requirement_missing', subject, '根拠の要件がない。');
+    } else if (!requirement.live) {
+      if (missingReferencesUncertain)
+        report.undetermined('requirement_unverified', subject, '根拠の要件が必要か確認できない。');
+      else
+        report.violation(
+          'inactive_requirement_basis',
+          subject,
+          '不要な要件から導いた物が残っている。',
+        );
+    }
   }
   if (basis.arrangementKey) {
     const arrangement = plan.arrangements.find((entry) => entry.key === basis.arrangementKey);
-    if (!arrangement) report.violation('arrangement_missing', subject, '根拠の手配がない。');
-    else if (!arrangement.live)
-      report.violation(
-        'inactive_arrangement_basis',
-        subject,
-        '不要な手配から導いた物が残っている。',
-      );
-    else if (
+    if (!arrangement) {
+      if (missingReferencesUncertain)
+        report.undetermined('arrangement_unverified', subject, '根拠の手配を確認できない。');
+      else report.violation('arrangement_missing', subject, '根拠の手配がない。');
+    } else if (!arrangement.live) {
+      if (missingReferencesUncertain)
+        report.undetermined('arrangement_unverified', subject, '根拠の手配が必要か確認できない。');
+      else
+        report.violation(
+          'inactive_arrangement_basis',
+          subject,
+          '不要な手配から導いた物が残っている。',
+        );
+    } else if (
       basis.optionKey &&
       !arrangement.options.some((option) => option.key === basis.optionKey)
     ) {
@@ -777,7 +796,25 @@ export function checkPlan(
   };
   for (const task of plan.tasks) if (task.live) visit(task.key);
   for (const request of plan.requests) {
-    checkBasis(request.basis, request.requestId, request.live, facts, plan, report, false);
+    const original = history.requests.get(request.requestId)?.snapshot;
+    // 根拠の不確かさは計画の needsCheck ではなく、送信時の控えと事象から判定する。
+    const originalStates = original?.basis.itemIds.map((id) => historicalItem(facts, id).active);
+    const uncertain =
+      originalStates !== undefined &&
+      (originalStates.some((active) => active === 'unknown') ||
+        (originalStates.some((active) => active === false) &&
+          originalStates.some((active) => active !== false)));
+    checkBasis(
+      request.basis,
+      request.requestId,
+      request.live,
+      facts,
+      plan,
+      report,
+      false,
+      uncertain,
+      original !== undefined,
+    );
   }
   for (const question of plan.questions) {
     if (!facts.unknowns.has(question.unknownId)) {

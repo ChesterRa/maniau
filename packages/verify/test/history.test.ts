@@ -198,7 +198,7 @@ describe('事象と外への依頼', () => {
     expect(codes(report)).not.toContain('request_liveness_mismatch');
   });
 
-  it('本命の返事待ちなら、まだ必要な予備への取消しを見つける', () => {
+  it('本命の返事待ちでも、予備の根拠が不明なら取消しの要否を断定しない', () => {
     const basis = { itemIds: [], arrangementKey: 'arrangement', optionKey: 'two' };
     const events = [
       event(1, {
@@ -254,7 +254,8 @@ describe('事象と外への依頼', () => {
       }),
       events,
     });
-    expect(codes(report)).toContain('unexpected_cancellation');
+    expect(codes(report)).not.toContain('unexpected_cancellation');
+    expect(codes(report)).toContain('cancellation_need_unverified');
   });
 
   it('本命の依頼が確定すると、出していた予備への取消しが必要になる', () => {
@@ -479,7 +480,7 @@ describe('事象と外への依頼', () => {
     expect(codes(report)).toContain('unexpected_cancellation');
   });
 
-  it('不要になった送信済みの依頼に取消しの連絡を要求する', () => {
+  it('計画だけが不要と示し根拠が不明な依頼は、取消しの要否を断定しない', () => {
     const events = [
       event(1, { type: 'assignmentProposed', taskKey: 't', assigneeId: 'a' }),
       event(2, { type: 'commitmentChanged', taskKey: 't', assigneeId: 'a', action: 'accept' }),
@@ -509,7 +510,8 @@ describe('事象と外への依頼', () => {
       plan: plan({ throughSeq: 4, tasks: [sentTask], requests: [request] }),
       events,
     });
-    expect(codes(without)).toContain('cancellation_missing');
+    expect(codes(without)).not.toContain('cancellation_missing');
+    expect(codes(without)).toContain('request_need_unverified');
     const cancellation = task('cancel', { cancels: 'r1', start: undefined, end: undefined });
     const withCancellation = verifyPlan({
       household: household(),
@@ -517,6 +519,7 @@ describe('事象と外への依頼', () => {
       events,
     });
     expect(codes(withCancellation)).not.toContain('cancellation_missing');
+    expect(codes(withCancellation)).toContain('cancellation_need_unverified');
     expect(codes(withCancellation)).not.toContain('request_state_mismatch');
   });
 
