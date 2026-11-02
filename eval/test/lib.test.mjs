@@ -39,10 +39,13 @@ test('曜日と時刻の算数は存在しない日時を受け付けない', ()
   assert.throws(() => calculateCalendar({ operation: 'add_minutes', value: '2026-11-30T24:00:00+09:00', amount: 1 }));
 });
 
-test('料金の根拠がない使用量とキャッシュ料金は不明にする', () => {
-  const usage = { input_tokens: 1000, output_tokens: 500, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+test('料金の根拠がない使用量、地域割増、キャッシュ料金は不明にする', () => {
+  const usage = { input_tokens: 1000, output_tokens: 500, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, inference_geo: 'global', speed: 'standard' };
   assert.equal(estimateCost(usage, { input: 4, output: 20 }), 0.014);
   assert.equal(estimateCost(usage, null), null);
   assert.equal(estimateCost({ ...usage, cache_read_input_tokens: 1 }, { input: 4, output: 20 }), null);
+  assert.equal(estimateCost({ ...usage, inference_geo: 'us' }, { input: 4, output: 20 }), null);
+  assert.equal(estimateCost({ ...usage, inference_geo: undefined }, { input: 4, output: 20 }), null);
+  assert.equal(estimateCost({ ...usage, speed: 'fast' }, { input: 4, output: 20 }), null);
   assert.equal(estimateCost(null, { input: 4, output: 20 }), null);
 });

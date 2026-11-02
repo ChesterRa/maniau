@@ -10,7 +10,7 @@ test('使用量とモデルを各リクエストに対応付け、鍵は台帳�
     fetchImpl: async (_url, options) => {
       assert.equal(entries[0].event, 'request_started');
       assert.equal(options.headers['x-api-key'], '架空の鍵');
-      return new Response(JSON.stringify({ model: 'served-model', stop_reason: 'end_turn', usage: { input_tokens: 1000, output_tokens: 500 } }), {
+      return new Response(JSON.stringify({ model: 'served-model', stop_reason: 'end_turn', usage: { input_tokens: 1000, output_tokens: 500, inference_geo: 'global', speed: 'standard' } }), {
         status: 200, headers: { 'request-id': 'request-test' },
       });
     },
