@@ -50,6 +50,32 @@ describe('どちらの家庭か', () => {
   }
 });
 
+describe('知らせから前の画面に戻った時', () => {
+  it('Service Worker が知らせたら、身元を確かめ直す（確かめる間は、前の人の画面を出さない）', async () => {
+    const container = new EventTarget();
+    Object.defineProperty(navigator, 'serviceWorker', { value: container, configurable: true });
+    const isMe = (c: Call) => c.url === '/api/me';
+    try {
+      await step(() => root.render(<ModeProbe />));
+      await step(() => take(calls, isMe).respond(200, { mode: 'family', memberId: 'a' }));
+      expect(mode).toEqual({ kind: 'family', memberId: 'a' });
+      // 別の知らせは使わない。
+      await step(() => {
+        container.dispatchEvent(new MessageEvent('message', { data: { type: 'other' } }));
+      });
+      expect(mode).toEqual({ kind: 'family', memberId: 'a' });
+      await step(() => {
+        container.dispatchEvent(new MessageEvent('message', { data: { type: 'maniau:opened' } }));
+      });
+      expect(mode).toEqual({ kind: 'loading' });
+      await step(() => take(calls, isMe).respond(200, { mode: 'family', memberId: 'b' }));
+      expect(mode).toEqual({ kind: 'family', memberId: 'b' });
+    } finally {
+      delete (navigator as { serviceWorker?: unknown }).serviceWorker;
+    }
+  });
+});
+
 describe('家族の家庭', () => {
   const isView = (c: Call) => c.url === '/api/view?as=b';
   const isCommand = (c: Call) => c.url === '/api/commands';

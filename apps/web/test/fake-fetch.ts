@@ -3,6 +3,7 @@ import { act } from 'react';
 
 export interface Call {
   url: string;
+  method: string;
   body: Record<string, unknown> | undefined;
   done: boolean;
   /** 返事を返す。gate を渡すと、中身（json）を読み終えるのを gate まで遅らせる。 */
@@ -17,6 +18,7 @@ export function installFetch(): Call[] {
     new Promise((resolve, reject) => {
       const call: Call = {
         url: String(input),
+        method: init?.method ?? 'GET',
         body: init?.body ? JSON.parse(String(init.body)) : undefined,
         done: false,
         respond: (status, payload, gate) => {

@@ -14,6 +14,7 @@ import {
 } from './family';
 import { formatDayTime } from './format';
 import { isUiLanguage, rememberedLanguage, rememberLanguage, type UiLanguage } from './i18n';
+import { usePush } from './push';
 import {
   AskScreen,
   type Ctx,
@@ -34,7 +35,14 @@ export function App() {
   if (mode.kind === 'demo') return <DemoApp />;
   // 身元が替わったら確かめ直す。確かめる間は読み込み中で、前の人の画面は捨てる（作り直す）。
   if (mode.kind === 'family') {
-    return <FamilyApp key={mode.memberId} memberId={mode.memberId} onSwitched={recheck} />;
+    return (
+      <FamilyApp
+        key={mode.memberId}
+        memberId={mode.memberId}
+        {...(mode.pushKey ? { pushKey: mode.pushKey } : {})}
+        onSwitched={recheck}
+      />
+    );
   }
   const key =
     mode.kind === 'loading' ? 'loading' : mode.kind === 'denied' ? 'error.denied' : 'error.load';
@@ -192,7 +200,15 @@ function DemoApp() {
 }
 
 /** 家族の家庭：ログインした大人の画面。使う人は替えず、言葉だけを選ぶ。 */
-function FamilyApp({ memberId, onSwitched }: { memberId: string; onSwitched: () => void }) {
+function FamilyApp({
+  memberId,
+  pushKey,
+  onSwitched,
+}: {
+  memberId: string;
+  pushKey?: string;
+  onSwitched: () => void;
+}) {
   const { t } = useTranslation();
   const [route, setRoute] = useState<Route>({ name: 'today' });
   const live = useFamilySession(memberId);
@@ -207,6 +223,7 @@ function FamilyApp({ memberId, onSwitched }: { memberId: string; onSwitched: () 
     <div className={FRAME}>
       <div className="mx-3 mt-2 flex flex-wrap items-center justify-between gap-2 px-1 text-sm">
         <span className="font-bold">{me?.name ?? ''}</span>
+        <PushControl memberId={memberId} pushKey={pushKey} lang={lang} onSwitched={onSwitched} />
         <Switcher
           label={t('language.label')}
           options={[
@@ -220,6 +237,51 @@ function FamilyApp({ memberId, onSwitched }: { memberId: string; onSwitched: () 
       <Body live={live} me={me} readings={[]} lang={lang} route={route} onRoute={setRoute} />
     </div>
   );
+}
+
+/** この端末で知らせを受け取るか（家族の家庭だけ。デモには知らせが無い）。 */
+function PushControl({
+  memberId,
+  pushKey,
+  lang,
+  onSwitched,
+}: {
+  memberId: string;
+  pushKey: string | undefined;
+  lang: UiLanguage;
+  onSwitched: () => void;
+}) {
+  const { t } = useTranslation();
+  const push = usePush(memberId, pushKey, lang, { onSwitched });
+  const button = 'rounded-full border border-btn-line bg-card px-3 py-1 text-xs';
+  switch (push.state) {
+    case 'off':
+      return (
+        <button type="button" className={button} onClick={push.enable}>
+          {t('push.enable')}
+        </button>
+      );
+    case 'on':
+      return (
+        <button type="button" className={button} onClick={push.disable}>
+          {t('push.on')}
+        </button>
+      );
+    case 'failed':
+      return (
+        <button type="button" className={button} onClick={push.enable}>
+          {t('push.failed')}
+        </button>
+      );
+    case 'working':
+      return <span className="text-xs text-sub">{t('push.working')}</span>;
+    case 'needsInstall':
+      return <span className="text-xs text-sub">{t('push.install')}</span>;
+    case 'denied':
+      return <span className="text-xs text-sub">{t('push.denied')}</span>;
+    default:
+      return null;
+  }
 }
 
 function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {

@@ -218,5 +218,13 @@
       "shop": "Shop for the packed lunch",
       "make": "Make the packed lunch"
     }
+  },
+  "push": {
+    "enable": "Get notifications",
+    "on": "Notifications: on (turn off)",
+    "failed": "Couldn't turn on (try again)",
+    "working": "Setting up…",
+    "install": "Add to Home Screen to get notifications",
+    "denied": "Notifications are off in your device settings"
   }
 }

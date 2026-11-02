@@ -354,7 +354,8 @@ export function useFamilySession(memberId: string) {
 export type Mode =
   | { kind: 'loading' }
   | { kind: 'demo' }
-  | { kind: 'family'; memberId: string }
+  /** pushKey：知らせの登録に使う公開鍵（サーバーに知らせが無ければ無い）。 */
+  | { kind: 'family'; memberId: string; pushKey?: string }
   | { kind: 'denied' }
   | { kind: 'failed' };
 
@@ -372,8 +373,13 @@ export function useMode(): { mode: Mode; recheck: () => void } {
         if (!response.ok) throw new Error(String(response.status));
         const me = (await response.json()) as
           | { mode: 'demo' }
-          | { mode: 'family'; memberId: string };
-        return me.mode === 'family' ? { kind: 'family', memberId: me.memberId } : { kind: 'demo' };
+          | { mode: 'family'; memberId: string; pushKey?: string };
+        if (me.mode !== 'family') return { kind: 'demo' };
+        return {
+          kind: 'family',
+          memberId: me.memberId,
+          ...(typeof me.pushKey === 'string' ? { pushKey: me.pushKey } : {}),
+        };
       })
       .then((next) => {
         if (!cancelled) setMode(next);
@@ -385,5 +391,17 @@ export function useMode(): { mode: Mode; recheck: () => void } {
       cancelled = true;
     };
   }, [version]);
+  // 知らせから、前から開いていた画面に戻った：ログインが替わった後かもしれないので確かめ直す。
+  useEffect(() => {
+    const container = typeof navigator === 'undefined' ? undefined : navigator.serviceWorker;
+    if (!container) return;
+    const listen = (event: MessageEvent) => {
+      if ((event.data as { type?: unknown } | null)?.type === 'maniau:opened') {
+        setVersion((v) => v + 1);
+      }
+    };
+    container.addEventListener('message', listen);
+    return () => container.removeEventListener('message', listen);
+  }, []);
   return { mode, recheck: () => setVersion((v) => v + 1) };
 }
