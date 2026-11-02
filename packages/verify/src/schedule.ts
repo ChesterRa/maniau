@@ -223,7 +223,20 @@ export function checkSchedule(
   const placed: ScheduledTask[] = [];
   const tasksByKey = new Map(plan.tasks.map((task) => [task.key, task]));
   for (const task of plan.tasks) {
-    if (executionScope(task, plan, household, history) === 'inactive') continue;
+    if (task.handoff && (task.start || task.end || task.atPlaceId))
+      report.violation(
+        'handoff_scheduled',
+        task.key,
+        '受け渡しが未確認の作業に時刻または場所が置かれている。',
+      );
+    const scope = executionScope(task, plan, household, history);
+    if (scope === 'inactive') continue;
+    if (task.handoff && !task.start && !task.end && !task.atPlaceId && scope !== 'candidate')
+      report.undetermined(
+        'handoff_unverified',
+        task.key,
+        '別の担当への受け渡しの方法を確認できない。',
+      );
     if (task.start === undefined && task.end === undefined) {
       if (task.detour)
         report.violation('detour_time_missing', task.key, '時刻のない作業に寄り道がある。');

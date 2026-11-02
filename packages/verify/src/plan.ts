@@ -246,6 +246,48 @@ function checkStep(task: Task, household: Household, plan: PlanResult, report: C
   }
 
   const stepIndex = template.steps.findIndex((entry) => entry.id === step.id);
+  if (stepIndex >= 0 && task.live && task.basis.optionKey && task.basis.arrangementKey) {
+    // 案の中の連続した手順について、出力の印に頼らず担当を照らす。
+    // 前後の担当が違えば、その先も含めて一つの鎖として未配置にする。
+    const chain = template.steps.map((entry) =>
+      plan.tasks.find(
+        (candidate) =>
+          candidate.live &&
+          candidate.basis.optionKey === task.basis.optionKey &&
+          candidate.basis.arrangementKey === task.basis.arrangementKey &&
+          candidate.step?.templateId === template.id &&
+          candidate.step.stepId === entry.id,
+      ),
+    );
+    const differentAssignees = chain.some((current, index) => {
+      const previous = chain[index - 1];
+      return Boolean(
+        current?.assigneeId && previous?.assigneeId && current.assigneeId !== previous.assigneeId,
+      );
+    });
+    const completed = chain.some((entry) => entry?.commitment === 'done');
+    if (differentAssignees && completed) {
+      // 済んだ作業は実際に受け渡された可能性もあるので、違反ではなく未判定とする。
+      report.undetermined(
+        'step_handoff_unverified',
+        task.key,
+        '済んだ手順を含む鎖で、別の担当への受け渡しを確かめられない。',
+      );
+    } else if (differentAssignees) {
+      if (!task.handoff)
+        report.violation(
+          'step_handoff_unmarked',
+          task.key,
+          '別の担当への受け渡しが必要な手順に、未確認の印がない。',
+        );
+      if (task.start || task.end || task.atPlaceId)
+        report.violation(
+          'step_handoff_scheduled',
+          task.key,
+          '別の担当が続ける手順に、受け渡しの確認なしで時刻または場所が置かれている。',
+        );
+    }
+  }
   if (stepIndex > 0) {
     const previous = template.steps[stepIndex - 1];
     if (previous) {

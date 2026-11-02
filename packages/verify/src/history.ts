@@ -414,6 +414,29 @@ export function checkHistory(
     // 送った時の控えは、現在の作業より優先する。変更後の作業から、過去の相手や根拠を作り直さない。
     const task = tasks.get(request.taskKey);
     const original = sent?.snapshot;
+    if (original?.window && request.window) {
+      if (
+        instantMinute(original.window.start) !== instantMinute(request.window.start) ||
+        instantMinute(original.window.end) !== instantMinute(request.window.end)
+      )
+        report.violation(
+          'request_window_mismatch',
+          request.requestId,
+          '依頼の期間が送った時の控えと違う。',
+        );
+    } else if (request.window && sent) {
+      report.violation(
+        'request_window_without_snapshot',
+        request.requestId,
+        '送信の控えにない期間が依頼に置かれている。',
+      );
+    } else if (original?.window || request.window) {
+      report.undetermined(
+        'request_window_unverified',
+        request.requestId,
+        '依頼の期間を送った時の控えと照らせない。',
+      );
+    }
     if (original && (original.to !== request.to || original.kind !== request.kind)) {
       report.violation(
         'request_recipient_mismatch',
