@@ -13,6 +13,7 @@ type Title =
   | 'notify.decide'
   | 'notify.proposal'
   | 'notify.changed'
+  | 'notify.unowned'
   | 'notify.question';
 type Subject = {
   type: 'task' | 'request' | 'arrangement' | 'question';
@@ -37,6 +38,7 @@ const titles: Record<Title, string> = {
   'notify.decide': 'decisionApproaching',
   'notify.proposal': 'assignment',
   'notify.changed': 'assignment',
+  'notify.unowned': 'assignment',
   'notify.question': 'question',
 };
 
@@ -96,8 +98,9 @@ function expectedKey(intent: Intent): string | undefined {
       break;
     case 'notify.proposal':
     case 'notify.changed':
+    case 'notify.unowned':
       if (subject.type !== 'task') return undefined;
-      base = `${titleKey === 'notify.proposal' ? 'proposal' : 'changed'}:${subject.id}`;
+      base = `${titleKey.slice('notify.'.length)}:${subject.id}`;
       break;
     case 'notify.question':
       if (subject.type !== 'question') return undefined;
@@ -118,12 +121,21 @@ function activeTask(task: Task, plan: Plan): boolean {
   const arrangement = plan.arrangements.find((a) => a.key === arrangementKey);
   if (!arrangement?.live) return false;
   if (task.extra && arrangement.inUseOptionKey !== optionKey) return false;
+  if (arrangement.chosenOptionKey === optionKey) return true;
+  if (arrangement.backupOptionKeys.includes(optionKey)) {
+    const primary = arrangement.chosenOptionKey;
+    const primaryRequests = plan.requests.filter((r) => r.live && r.basis.optionKey === primary);
+    const primaryConfirmed =
+      primary !== undefined &&
+      arrangement.inUseOptionKey === primary &&
+      primaryRequests.some((r) => r.state === 'confirmed') &&
+      !primaryRequests.some((r) => r.state === 'awaitingReply');
+    return arrangement.inUseOptionKey === optionKey || !primaryConfirmed;
+  }
   return (
-    arrangement.chosenOptionKey === optionKey ||
-    arrangement.backupOptionKeys.includes(optionKey) ||
-    (arrangement.kind === 'purchase' &&
-      arrangement.status === 'decidable' &&
-      arrangement.recommendedOptionKey === optionKey)
+    arrangement.kind === 'purchase' &&
+    arrangement.status === 'decidable' &&
+    arrangement.recommendedOptionKey === optionKey
   );
 }
 
@@ -141,7 +153,9 @@ function checkTiming(
     return remaining > 0 && remaining <= 26 * 60;
   };
   if (
-    ['notify.decide', 'notify.backup', 'notify.question'].includes(intent.titleKey) &&
+    ['notify.decide', 'notify.backup', 'notify.question', 'notify.unowned'].includes(
+      intent.titleKey,
+    ) &&
     !inWindow(intent.until)
   ) {
     out.violation('notification_wrong_time', intent.key, '知らせる時機ではない。');
@@ -208,6 +222,33 @@ function checkSubject(intent: Intent, plan: Plan, out: Collector): undefined {
     )
       return wrong();
     checkTime(intent, task.start ?? task.deadline, undefined, out);
+    return;
+  }
+  if (titleKey === 'notify.unowned') {
+    if (subject.type !== 'task') return wrong();
+    const task = plan.tasks.find((entry) => entry.key === subject.id);
+    if (
+      !task?.live ||
+      task.cancels !== undefined ||
+      ['done', 'cancelled'].includes(task.commitment) ||
+      (task.assigneeId !== undefined && !['declined', 'withdrawn'].includes(task.commitment)) ||
+      !activeTask(task, plan)
+    )
+      return wrong();
+    const arrangement = plan.arrangements.find((entry) => entry.key === task.basis.arrangementKey);
+    const option = arrangement?.options.find((entry) => entry.key === task.basis.optionKey);
+    const started =
+      option !== undefined &&
+      (plan.tasks.some(
+        (entry) => entry.basis.optionKey === option.key && entry.commitment === 'done',
+      ) ||
+        plan.requests.some((entry) => entry.basis.optionKey === option.key));
+    if (option?.expired && !started) return wrong();
+    const deadline =
+      option && !option.expired && option.decisionDeadline
+        ? option.decisionDeadline
+        : task.deadline;
+    checkTime(intent, deadline, undefined, out);
     return;
   }
   if (titleKey === 'notify.question') {
@@ -376,6 +417,7 @@ const safeText: Record<'ja' | 'en', Record<Title | 'notify.app' | 'notify.many',
     'notify.decide': '決めることがあります。決め時が近づいています。',
     'notify.proposal': 'おねがいが届いています。引き受けられるか確かめてください。',
     'notify.changed': '引き受けたことの中身が変わりました。確かめてください。',
+    'notify.unowned': 'まだだれもやると決めていないことがあります。期限が近づいています。',
     'notify.question': '段取りについて、聞きたいことがあります。',
     'notify.many': '確かめてほしいことが {{count}} 件あります。',
   },
@@ -387,6 +429,7 @@ const safeText: Record<'ja' | 'en', Record<Title | 'notify.app' | 'notify.many',
     'notify.decide': 'Something needs deciding. The decision deadline is coming up.',
     'notify.proposal': "There's a request for you. Can you take it on?",
     'notify.changed': 'Something you took on has changed. Please check it.',
+    'notify.unowned': 'Something still has no one to do it, and its deadline is coming up.',
     'notify.question': "There's a question about your plans.",
     'notify.many': '{{count}} things need your attention.',
   },

@@ -38,7 +38,8 @@ export type NotificationTitle =
   | 'notify.decide'
   | 'notify.proposal'
   | 'notify.changed'
-  | 'notify.question';
+  | 'notify.question'
+  | 'notify.unowned';
 
 /** 知らせの元（検証器が、キーを読まずに計画の物と照らすため）。 */
 export type NotificationSubject =
@@ -76,6 +77,7 @@ export const NOTIFICATION_TEXT: Record<
     'notify.proposal': 'おねがいが届いています。引き受けられるか確かめてください。',
     'notify.changed': '引き受けたことの中身が変わりました。確かめてください。',
     'notify.question': '段取りについて、聞きたいことがあります。',
+    'notify.unowned': 'まだだれもやると決めていないことがあります。期限が近づいています。',
     'notify.many': '確かめてほしいことが {{count}} 件あります。',
   },
   en: {
@@ -87,6 +89,7 @@ export const NOTIFICATION_TEXT: Record<
     'notify.proposal': "There's a request for you. Can you take it on?",
     'notify.changed': 'Something you took on has changed. Please check it.',
     'notify.question': "There's a question about your plans.",
+    'notify.unowned': 'Something still has no one to do it, and its deadline is coming up.',
     'notify.many': '{{count}} things need your attention.',
   },
 };
@@ -223,6 +226,25 @@ function intentOf(
         kind: 'assignment',
         titleKey: changed ? 'notify.changed' : 'notify.proposal',
         ...(until ? { until } : {}),
+      };
+    }
+    case 'unowned': {
+      // だれも持っていない作業は、二人の「きょう」に出し続け、期限が近づいた時だけ二人に知らせる
+      // （届いた時は、画面で足りる）。期限は、案の手順なら案の決め時（過ぎて始めた案なら作業の締切）、
+      // それ以外は作業の締切（提出物は出す日）。
+      const { task } = card;
+      const option = card.arrangement?.options.find((o) => o.key === task.basis.optionKey);
+      const deadline =
+        option && !option.expired && option.decisionDeadline !== undefined
+          ? option.decisionDeadline
+          : task.deadline;
+      if (!urgent(deadline, now)) return undefined;
+      return {
+        key: `unowned:${task.key}`,
+        subject: { type: 'task', id: task.key },
+        kind: 'assignment',
+        titleKey: 'notify.unowned',
+        ...(deadline ? { until: deadline } : {}),
       };
     }
     case 'question':

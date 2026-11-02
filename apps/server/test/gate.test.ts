@@ -18,6 +18,7 @@ const kinds: Record<NotificationTitle, NotificationIntent['kind']> = {
   'notify.proposal': 'assignment',
   'notify.changed': 'assignment',
   'notify.question': 'question',
+  'notify.unowned': 'assignment',
 };
 const titles = Object.keys(kinds) as NotificationTitle[];
 
