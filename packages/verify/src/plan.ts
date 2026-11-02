@@ -1,0 +1,673 @@
+import {
+  type Arrangement,
+  type Basis,
+  type CareOptionTemplate,
+  type Household,
+  japaneseHolidayName,
+  type OptionPlan,
+  type PlanResult,
+  type Task,
+} from '@maniau/core';
+import type { FactState } from './facts';
+import type { History } from './history';
+import type { Collector } from './report';
+import { dateFromIndex, dateIndex, instantMinute, localMinute, weekday } from './time';
+
+function indexUnique<T>(
+  items: readonly T[],
+  key: (item: T) => string,
+  kind: string,
+  report: Collector,
+): Map<string, T> {
+  const result = new Map<string, T>();
+  for (const item of items) {
+    const id = key(item);
+    if (result.has(id)) report.violation('duplicate_key', id, `${kind}のキーが重複している。`);
+    else result.set(id, item);
+  }
+  return result;
+}
+
+function checkBasis(
+  basis: Basis,
+  subject: string,
+  live: boolean,
+  facts: FactState,
+  plan: PlanResult,
+  report: Collector,
+  exempt: boolean,
+): void {
+  if (!live || exempt) return;
+  if (basis.itemIds.length === 0 && !basis.requirementKey && !basis.arrangementKey) {
+    report.undetermined('basis_missing', subject, '生きている物の根拠をたどれない。');
+  }
+  for (const itemId of basis.itemIds) {
+    const item = facts.items.get(itemId);
+    const active = facts.active.get(itemId);
+    if (!item || active === undefined) {
+      report.undetermined('basis_item_missing', subject, '元の事項を事象から確認できない。');
+    } else if (active === false) {
+      report.violation(
+        'inactive_item_basis',
+        subject,
+        '適用されない元の事項から導いた物が残っている。',
+      );
+    } else if (active === 'unknown') {
+      report.undetermined(
+        'item_condition_unknown',
+        subject,
+        '元の事項の適用または証拠を確認できない。',
+      );
+    }
+  }
+  if (basis.requirementKey) {
+    const requirement = plan.requirements.find((entry) => entry.key === basis.requirementKey);
+    if (!requirement) report.violation('requirement_missing', subject, '根拠の要件がない。');
+    else if (!requirement.live)
+      report.violation(
+        'inactive_requirement_basis',
+        subject,
+        '不要な要件から導いた物が残っている。',
+      );
+  }
+  if (basis.arrangementKey) {
+    const arrangement = plan.arrangements.find((entry) => entry.key === basis.arrangementKey);
+    if (!arrangement) report.violation('arrangement_missing', subject, '根拠の手配がない。');
+    else if (!arrangement.live)
+      report.violation(
+        'inactive_arrangement_basis',
+        subject,
+        '不要な手配から導いた物が残っている。',
+      );
+    else if (
+      basis.optionKey &&
+      !arrangement.options.some((option) => option.key === basis.optionKey)
+    ) {
+      report.violation('basis_option_missing', subject, '根拠の案が手配の中にない。');
+    }
+  } else if (basis.optionKey) {
+    report.undetermined(
+      'option_arrangement_missing',
+      subject,
+      '案の属する手配を根拠からたどれない。',
+    );
+  }
+}
+
+function optionDeadline(
+  household: Household,
+  arrangement: Arrangement,
+  template: CareOptionTemplate,
+  report: Collector,
+): number | undefined {
+  const date = localMinute(instantMinute(arrangement.start), household.timeZone).date;
+  let day = dateIndex(date);
+  const rule = template.deadline;
+  if (rule.type === 'daysBefore') day -= rule.days * 24 * 60;
+  else if (rule.type === 'weekdayOfPreviousWeek') {
+    day -= (weekday(date) - 1 + 7 - (rule.weekday - 1)) * 24 * 60;
+  } else {
+    if (rule.days > 730) {
+      report.undetermined(
+        'deadline_range',
+        arrangement.key,
+        '営業日の締切を確認できる範囲を超える。',
+      );
+      return undefined;
+    }
+    let left = rule.days;
+    while (left > 0) {
+      day -= 24 * 60;
+      const candidate = dateFromIndex(day);
+      const dayOfWeek = weekday(candidate);
+      if (dayOfWeek === 6 || dayOfWeek === 7) continue;
+      try {
+        if (
+          japaneseHolidayName(candidate) !== undefined ||
+          household.closedDates.includes(candidate)
+        )
+          continue;
+      } catch {
+        report.undetermined(
+          'holiday_data_missing',
+          arrangement.key,
+          '営業日の祝日を確認できない。',
+        );
+        return undefined;
+      }
+      left -= 1;
+    }
+  }
+  // 対象の地域は Asia/Tokyo のみであり、この期間に夏時間はない。
+  return Date.parse(`${dateFromIndex(day)}T${rule.at}:00+09:00`) / 60_000;
+}
+
+function checkStep(task: Task, household: Household, plan: PlanResult, report: Collector): void {
+  if (task.commitment === 'done' && task.end && instantMinute(task.end) < instantMinute(plan.now)) {
+    if (task.step)
+      report.undetermined(
+        'historical_step_unverified',
+        task.key,
+        '完了時の家庭の決まりと今の決まりが同じか分からない。',
+      );
+    return;
+  }
+  if (!task.step) {
+    if (task.live && task.basis.optionKey && !task.cancels) {
+      report.undetermined('step_missing', task.key, '案の作業を家庭の手順と照らせない。');
+    }
+    return;
+  }
+  const template = household.careOptions.find((entry) => entry.id === task.step?.templateId);
+  if (!template) {
+    report.violation('step_template_missing', task.key, '元の取れる手がない。');
+    return;
+  }
+  const matches = [...template.steps, ...template.extraSteps].filter(
+    (step) => step.id === task.step?.stepId,
+  );
+  if (matches.length !== 1 || !matches[0]) {
+    report.violation('step_reference_invalid', task.key, '元の手順がない、または一意でない。');
+    return;
+  }
+  const step = matches[0];
+  if (
+    task.durationMin !== step.durationMin ||
+    task.segments.some((segment) => !step.segments.includes(segment))
+  ) {
+    report.violation(
+      'step_constraints_mismatch',
+      task.key,
+      '所要時間または置いてよい区間が家庭の決まりと違う。',
+    );
+  }
+  if (
+    (step.placeId && task.placeId !== step.placeId) ||
+    (step.placeKind && task.placeKind !== step.placeKind) ||
+    (step.goods && task.goods !== step.goods)
+  ) {
+    report.violation('step_place_mismatch', task.key, '場所または品物の条件が家庭の決まりと違う。');
+  }
+  if (
+    step.external &&
+    (!task.external ||
+      task.external.to !== step.external.to ||
+      task.external.kind !== step.external.kind)
+  ) {
+    report.violation('step_external_mismatch', task.key, '外の相手への依頼が家庭の手順と違う。');
+  }
+  if (step.assigneeId && task.assigneeId !== step.assigneeId) {
+    if (task.assigneeId)
+      report.violation('step_assignee_mismatch', task.key, '本人が決まった手順の担当が違う。');
+    else
+      report.undetermined(
+        'step_assignee_missing',
+        task.key,
+        '本人が決まった手順の担当がまだない。',
+      );
+  }
+  const arrangement = plan.arrangements.find((entry) => entry.key === task.basis.arrangementKey);
+  const option = arrangement?.options.find((entry) => entry.key === task.basis.optionKey);
+  if (option && option.templateId !== template.id)
+    report.violation('step_option_mismatch', task.key, '案と作業の取れる手が違う。');
+
+  const stepIndex = template.steps.findIndex((entry) => entry.id === step.id);
+  if (stepIndex > 0) {
+    const previous = template.steps[stepIndex - 1];
+    if (previous) {
+      const candidates = plan.tasks.filter(
+        (entry) =>
+          entry.live &&
+          entry.basis.optionKey === task.basis.optionKey &&
+          entry.step?.templateId === template.id &&
+          entry.step.stepId === previous.id,
+      );
+      if (candidates.length === 0) {
+        report.undetermined(
+          'step_predecessor_missing',
+          task.key,
+          '前の手順を計画から確認できない。',
+        );
+      } else if (candidates.length > 1) {
+        report.violation('step_predecessor_duplicate', task.key, '前の手順が複数ある。');
+      } else {
+        const predecessor = candidates[0];
+        const edge = task.after.find((entry) => entry.taskKey === predecessor?.key);
+        if (!edge || edge.waitMin < previous.waitAfterMin) {
+          report.violation(
+            'step_wait_missing',
+            task.key,
+            '前の手順と必要な待ち時間が含まれていない。',
+          );
+        }
+      }
+    }
+  }
+  const lastStep = template.steps.at(-1);
+  if (arrangement && option && lastStep?.id === step.id && task.end) {
+    const deadline = optionDeadline(household, arrangement, template, report);
+    if (deadline !== undefined && instantMinute(task.end) > deadline) {
+      report.violation(
+        'template_deadline_missed',
+        task.key,
+        '家庭の決まりの締切より後に最後の手順が終わる。',
+      );
+    }
+  }
+}
+
+function optionStarted(option: OptionPlan, arrangement: Arrangement, history: History): boolean {
+  if (
+    arrangement.chosenOptionKey !== option.key &&
+    !arrangement.backupOptionKeys.includes(option.key)
+  )
+    return false;
+  if (!option.decisionDeadline) return false;
+  const choice = history.events
+    .filter(
+      (entry) =>
+        entry.type === 'optionChosen' &&
+        entry.arrangementKey === arrangement.key &&
+        entry.optionKey === option.key,
+    )
+    .at(-1);
+  if (!choice) return false;
+  const deadline = instantMinute(option.decisionDeadline);
+  return history.events.some(
+    (entry) =>
+      entry.seq >= choice.seq &&
+      instantMinute(entry.occurredAt) <= deadline &&
+      ((entry.type === 'commitmentChanged' &&
+        entry.action === 'done' &&
+        option.taskKeys.includes(entry.taskKey)) ||
+        (entry.type === 'externalRequestSent' && option.taskKeys.includes(entry.taskKey))),
+  );
+}
+
+function checkReasons(
+  arrangement: Arrangement,
+  plan: PlanResult,
+  history: History,
+  report: Collector,
+): void {
+  if (arrangement.status !== 'decidable' && arrangement.reasons.length === 0) {
+    report.violation('reason_missing', arrangement.key, '判断できない理由がない。');
+  }
+  if (
+    arrangement.status === 'dependsOnReply' &&
+    !arrangement.reasons.some((reason) => reason.code === 'awaitingReply')
+  ) {
+    report.violation(
+      'waiting_status_without_reason',
+      arrangement.key,
+      '返事しだいの手配に、返事待ちの理由がない。',
+    );
+  }
+  if (
+    arrangement.status === 'askFirst' &&
+    !arrangement.reasons.some((reason) => reason.code === 'askFirst')
+  ) {
+    report.violation(
+      'question_status_without_reason',
+      arrangement.key,
+      '聞いてから決める手配に、問いの理由がない。',
+    );
+  }
+  for (const reason of arrangement.reasons) {
+    if (reason.code === 'awaitingReply') {
+      if (
+        reason.refs.length === 0 ||
+        reason.refs.some(
+          (id) =>
+            !plan.requests.some(
+              (request) => request.requestId === id && request.state === 'awaitingReply',
+            ),
+        )
+      ) {
+        report.violation(
+          'waiting_reason_invalid',
+          arrangement.key,
+          '返事待ちの理由が実際の依頼を指していない。',
+        );
+      }
+    } else if (reason.code === 'askFirst') {
+      if (
+        reason.refs.length === 0 ||
+        reason.refs.some((key) => !plan.questions.some((question) => question.key === key))
+      ) {
+        report.violation(
+          'question_reason_invalid',
+          arrangement.key,
+          '問いの理由が実際の問いを指していない。',
+        );
+      }
+    } else if (reason.code === 'noOptionLeft') {
+      const options = arrangement.options;
+      if (reason.refs.some((key) => !options.some((option) => option.key === key))) {
+        report.violation(
+          'reason_option_missing',
+          arrangement.key,
+          '理由が手配にない案を指している。',
+        );
+      }
+      if (
+        options.some((option) => !option.expired || optionStarted(option, arrangement, history))
+      ) {
+        report.undetermined(
+          'no_option_left_unverified',
+          arrangement.key,
+          '期限以外の条件も含め、使える案がないか確かめられない。',
+        );
+      }
+    } else {
+      report.undetermined(
+        'reason_not_independently_proved',
+        arrangement.key,
+        '探索・祝日・入力不足の理由を完全には検証できない。',
+      );
+    }
+  }
+  if (arrangement.status === 'infeasible') {
+    if (
+      arrangement.reasons.some((reason) =>
+        ['searchLimit', 'holidayDataMissing', 'inputMissing'].includes(reason.code),
+      )
+    ) {
+      report.violation(
+        'infeasible_without_proof',
+        arrangement.key,
+        '探索の不足や入力不足を、不可能と扱っている。',
+      );
+    }
+    if (
+      arrangement.options.some(
+        (option) => option.deadlineCertainty === 'undetermined' && !option.expired,
+      )
+    ) {
+      report.violation(
+        'infeasible_with_unknown_option',
+        arrangement.key,
+        '取れるか未判定の案を残したまま不可能としている。',
+      );
+    }
+    report.undetermined(
+      'infeasibility_not_proved',
+      arrangement.key,
+      'すべての実行可能な案を独立に探索していない。',
+    );
+  }
+}
+
+export function checkPlan(
+  household: Household,
+  plan: PlanResult,
+  facts: FactState,
+  history: History,
+  report: Collector,
+): void {
+  const requirements = indexUnique(plan.requirements, (entry) => entry.key, '要件', report);
+  indexUnique(household.careOptions, (entry) => entry.id, '取れる手', report);
+  const arrangements = indexUnique(plan.arrangements, (entry) => entry.key, '手配', report);
+  const tasks = indexUnique(plan.tasks, (entry) => entry.key, '作業', report);
+  indexUnique(plan.questions, (entry) => entry.key, '問い', report);
+  indexUnique(plan.requests, (entry) => entry.requestId, '依頼', report);
+  indexUnique(
+    plan.arrangements.flatMap((entry) => entry.options),
+    (entry) => entry.key,
+    '案',
+    report,
+  );
+  for (const requirement of plan.requirements) {
+    checkBasis(requirement.basis, requirement.key, requirement.live, facts, plan, report, false);
+    if (requirement.live && requirement.nature === 'required') {
+      if (
+        requirement.kind === 'childCare' &&
+        !plan.arrangements.some((entry) => entry.live && entry.requirementKey === requirement.key)
+      ) {
+        report.undetermined(
+          'required_arrangement_missing',
+          requirement.key,
+          '必須の子の居場所を満たす手配を確認できない。',
+        );
+      }
+      for (const id of requirement.basis.itemIds) {
+        const item = facts.items.get(id);
+        if (item && (item.evidence === 'inferred' || item.evidence === 'conflicting')) {
+          report.violation(
+            'unconfirmed_required_item',
+            requirement.key,
+            '未確認の推定・食い違いから必須の要件を作っている。',
+          );
+        }
+      }
+    }
+  }
+  for (const arrangement of plan.arrangements) {
+    const requirement = requirements.get(arrangement.requirementKey);
+    if (!requirement)
+      report.violation('arrangement_requirement_missing', arrangement.key, '手配の要件がない。');
+    else if (arrangement.live && !requirement.live)
+      report.violation(
+        'arrangement_requirement_inactive',
+        arrangement.key,
+        '不要な要件から手配が残っている。',
+      );
+    if (!arrangement.live) continue;
+    if (instantMinute(arrangement.end) < instantMinute(arrangement.start)) {
+      report.violation('arrangement_time_invalid', arrangement.key, '手配の終わりが始まりより前。');
+    }
+    checkReasons(arrangement, plan, history, report);
+    for (const option of arrangement.options) {
+      if (option.arrangementKey !== arrangement.key)
+        report.violation('option_arrangement_mismatch', option.key, '案が別の手配を指している。');
+      if (!household.careOptions.some((template) => template.id === option.templateId)) {
+        if (arrangement.kind === 'purchase') {
+          report.undetermined(
+            'purchase_template_unverified',
+            option.key,
+            '買い物の案を家庭の取れる手の雛形とは照らせない。',
+          );
+        } else {
+          report.violation('option_template_missing', option.key, '案の取れる手がない。');
+        }
+      }
+      if (
+        (option.deadlineCertainty === 'undetermined') !==
+        (option.decisionDeadline === undefined)
+      ) {
+        report.violation(
+          'decision_deadline_inconsistent',
+          option.key,
+          '決め時と確かさの状態が一致しない。',
+        );
+      }
+      for (const key of option.taskKeys)
+        if (!tasks.has(key))
+          report.violation('option_task_missing', option.key, '案が存在しない作業を指している。');
+      const template = household.careOptions.find((entry) => entry.id === option.templateId);
+      if (template && option.decisionDeadline) {
+        const deadline = optionDeadline(household, arrangement, template, report);
+        if (deadline !== undefined && instantMinute(option.decisionDeadline) > deadline) {
+          report.violation(
+            'decision_after_rule_deadline',
+            option.key,
+            '決め時が家庭の申込期限より後。',
+          );
+        }
+      }
+    }
+    if (
+      new Set(arrangement.backupOptionKeys).size !== arrangement.backupOptionKeys.length ||
+      (arrangement.chosenOptionKey &&
+        arrangement.backupOptionKeys.includes(arrangement.chosenOptionKey))
+    ) {
+      report.violation(
+        'duplicate_selected_option',
+        arrangement.key,
+        '本命と予備、または予備同士が重複している。',
+      );
+    }
+    for (const key of [
+      arrangement.recommendedOptionKey,
+      arrangement.chosenOptionKey,
+      ...arrangement.backupOptionKeys,
+    ]) {
+      if (key && !arrangement.options.some((option) => option.key === key))
+        report.violation(
+          'selected_option_missing',
+          arrangement.key,
+          '選択または推薦した案が手配の中にない。',
+        );
+    }
+    const recommended = arrangement.options.find(
+      (option) => option.key === arrangement.recommendedOptionKey,
+    );
+    if (recommended) {
+      if (recommended.decisionDeadline) {
+        report.undetermined(
+          'latest_deadline_unproved',
+          recommended.key,
+          '決め時が最も遅い時刻かは独立に証明していない。',
+        );
+      } else {
+        report.undetermined(
+          'decision_deadline_unknown',
+          recommended.key,
+          '推薦した案の決め時が分からない。',
+        );
+      }
+      const past =
+        recommended.decisionDeadline !== undefined &&
+        instantMinute(plan.now) > instantMinute(recommended.decisionDeadline);
+      if ((recommended.expired || past) && !optionStarted(recommended, arrangement, history)) {
+        if (
+          arrangement.chosenOptionKey === recommended.key ||
+          arrangement.backupOptionKeys.includes(recommended.key)
+        ) {
+          report.undetermined(
+            'started_option_unknown',
+            recommended.key,
+            '選択済みの案が期限内に実行され始めたか分からない。',
+          );
+        } else {
+          report.violation(
+            'expired_option_recommended',
+            recommended.key,
+            '決め時を過ぎた未選択の案を推薦している。',
+          );
+        }
+      }
+    }
+    const subjectOption = arrangement.options.find(
+      (option) => option.key === (arrangement.chosenOptionKey ?? arrangement.recommendedOptionKey),
+    );
+    if (
+      arrangement.status === 'decidable' &&
+      subjectOption &&
+      plan.requests.some(
+        (request) =>
+          subjectOption.taskKeys.includes(request.taskKey) &&
+          request.live &&
+          request.state === 'awaitingReply',
+      )
+    ) {
+      report.violation(
+        'decidable_waiting_reply',
+        arrangement.key,
+        '外の返事待ちがある案を条件なしで決めてよいとしている。',
+      );
+    }
+  }
+  for (const task of plan.tasks) {
+    checkBasis(
+      task.basis,
+      task.key,
+      task.live,
+      facts,
+      plan,
+      report,
+      task.commitment === 'done' || Boolean(task.cancels),
+    );
+    checkStep(task, household, plan, report);
+    if (task.live && !task.cancels && task.basis.optionKey && task.basis.arrangementKey) {
+      const arrangement = arrangements.get(task.basis.arrangementKey);
+      const active =
+        arrangement &&
+        (arrangement.chosenOptionKey === task.basis.optionKey ||
+          arrangement.backupOptionKeys.includes(task.basis.optionKey));
+      if (arrangement && !active && task.commitment === 'accepted') {
+        report.undetermined(
+          'unselected_option_assignment',
+          task.key,
+          '以前に選んだ案の引き受けが不要になったか確認できない。',
+        );
+      }
+    }
+    for (const dependency of task.after) {
+      if (!tasks.has(dependency.taskKey))
+        report.violation('dependency_missing', task.key, '先行する作業がない。');
+      if (dependency.taskKey === task.key)
+        report.violation('dependency_self', task.key, '作業が自分自身を待っている。');
+    }
+  }
+  const marks = new Map<string, 'visiting' | 'done'>();
+  const visit = (key: string): void => {
+    if (marks.get(key) === 'done') return;
+    if (marks.get(key) === 'visiting') {
+      report.violation('dependency_cycle', key, '作業の先後が循環している。');
+      return;
+    }
+    marks.set(key, 'visiting');
+    const task = tasks.get(key);
+    if (task?.live)
+      for (const dependency of task.after)
+        if (tasks.has(dependency.taskKey)) visit(dependency.taskKey);
+    marks.set(key, 'done');
+  };
+  for (const task of plan.tasks) if (task.live) visit(task.key);
+  for (const request of plan.requests) {
+    checkBasis(request.basis, request.requestId, request.live, facts, plan, report, false);
+  }
+  for (const question of plan.questions) {
+    if (!facts.unknowns.has(question.unknownId)) {
+      report.undetermined(
+        'question_unknown_not_declared',
+        question.key,
+        '問いの対象と答えの候補を事象から確認できない。',
+      );
+    }
+    for (const key of question.affects) {
+      const affected = arrangements.has(key)
+        ? [arrangements.get(key)].filter((entry): entry is Arrangement => Boolean(entry?.live))
+        : plan.arrangements.filter((entry) => entry.live && entry.requirementKey === key);
+      if (!arrangements.has(key) && !requirements.has(key)) {
+        report.violation(
+          'question_target_missing',
+          question.key,
+          '問いが存在しない手配または要件を指している。',
+        );
+      }
+      for (const arrangement of affected) {
+        const options = arrangement.options.filter((option) => !option.expired);
+        const expiredBeforeQuestion = options.filter(
+          (option) =>
+            option.decisionDeadline &&
+            instantMinute(question.askBy) > instantMinute(option.decisionDeadline),
+        );
+        if (options.length === 1 && expiredBeforeQuestion.length === 1) {
+          report.violation(
+            'question_after_decision',
+            question.key,
+            '問いの期限が、それで変わる案の決め時より後。',
+          );
+        } else if (expiredBeforeQuestion.length > 0) {
+          report.undetermined(
+            'question_option_scope_unknown',
+            question.key,
+            'どの案が回答で変わるか分からず、問いの期限を確かめられない。',
+          );
+        }
+      }
+    }
+  }
+}

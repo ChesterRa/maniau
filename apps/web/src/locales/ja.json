@@ -1,0 +1,39 @@
+{
+  "app": {
+    "name": "まにあう",
+    "tagline": "まだ選べるうちに、次の一手を。"
+  },
+  "nav": {
+    "week": "今週",
+    "overview": "全体",
+    "add": "取り込む",
+    "family": "家族"
+  },
+  "clock": {
+    "demo": "デモの時計 {{time}}"
+  },
+  "adult": {
+    "label": "使う人"
+  },
+  "language": {
+    "label": "言葉",
+    "ja": "日本語",
+    "en": "English"
+  },
+  "week": {
+    "nextDecision": "次の決め時",
+    "empty": "お知らせを取り込むと、ここに決める事が出ます。"
+  },
+  "family": {
+    "title": "家族",
+    "kind": {
+      "adult": "大人",
+      "child": "子",
+      "helper": "頼める人"
+    }
+  },
+  "error": {
+    "load": "読み込めませんでした。もう一度試してください。"
+  },
+  "loading": "読み込み中…"
+}

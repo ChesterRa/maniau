@@ -1,0 +1,39 @@
+{
+  "app": {
+    "name": "Maniau",
+    "tagline": "Decide while you still can."
+  },
+  "nav": {
+    "week": "This week",
+    "overview": "Overview",
+    "add": "Add",
+    "family": "Family"
+  },
+  "clock": {
+    "demo": "Demo clock {{time}}"
+  },
+  "adult": {
+    "label": "Viewing as"
+  },
+  "language": {
+    "label": "Language",
+    "ja": "日本語",
+    "en": "English"
+  },
+  "week": {
+    "nextDecision": "Next decision",
+    "empty": "Add a school notice to see what needs deciding."
+  },
+  "family": {
+    "title": "Family",
+    "kind": {
+      "adult": "Adult",
+      "child": "Child",
+      "helper": "Helper"
+    }
+  },
+  "error": {
+    "load": "Couldn't load. Please try again."
+  },
+  "loading": "Loading…"
+}

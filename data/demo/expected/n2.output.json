@@ -1,0 +1,83 @@
+{
+  "note": "手で書いた正しい読み取りの形（モデルの出力ではない）。録った応答が無い時に、デモと試験で代わりに使う。",
+  "output": {
+    "items": [
+      {
+        "id": "j1",
+        "sentenceIds": ["n2#5"],
+        "kind": "schoolEvent",
+        "written": "感染症の流行のため、学習発表会は12月8日(火)に行います。",
+        "date": "2026-12-08",
+        "writtenWeekday": "tue",
+        "startTime": null,
+        "endTime": null,
+        "what": "学習発表会",
+        "dayType": null,
+        "deadline": null,
+        "audience": null,
+        "conditionNodeId": null,
+        "inferred": false,
+        "effects": [
+          {
+            "type": "resolveUnknown",
+            "unknownId": "n1:u-date",
+            "value": "2026-12-08",
+            "itemId": null
+          }
+        ]
+      },
+      {
+        "id": "j2",
+        "sentenceIds": ["n2#6"],
+        "kind": "dayChange",
+        "written": "12月7日(月)は通常授業です。",
+        "date": "2026-12-07",
+        "writtenWeekday": "mon",
+        "startTime": null,
+        "endTime": null,
+        "what": null,
+        "dayType": "normalSchool",
+        "deadline": null,
+        "audience": null,
+        "conditionNodeId": null,
+        "inferred": false,
+        "effects": [
+          {
+            "type": "replace",
+            "unknownId": null,
+            "value": null,
+            "itemId": "n1:i6"
+          }
+        ]
+      },
+      {
+        "id": "j3",
+        "sentenceIds": ["n2#7"],
+        "kind": "belongings",
+        "written": "衣装は、先日のお知らせのとおりご用意ください。",
+        "date": null,
+        "writtenWeekday": "none",
+        "startTime": null,
+        "endTime": null,
+        "what": "白い長袖シャツ",
+        "dayType": null,
+        "deadline": null,
+        "audience": null,
+        "conditionNodeId": null,
+        "inferred": false,
+        "effects": [
+          {
+            "type": "replace",
+            "unknownId": null,
+            "value": null,
+            "itemId": "n1:i3"
+          }
+        ]
+      }
+    ],
+    "unknowns": [],
+    "conditions": [],
+    "irrelevantSentenceIds": ["n2#1", "n2#2", "n2#3", "n2#4"],
+    "ambiguities": []
+  }
+}

@@ -1,0 +1,152 @@
+{
+  "note": "手で書いた正しい読み取りの形（モデルの出力ではない）。録った応答が無い時に、デモと試験で代わりに使う。",
+  "output": {
+    "items": [
+      {
+        "id": "i1",
+        "sentenceIds": ["n1#6"],
+        "kind": "schoolEvent",
+        "written": "12月5日(土)に学習発表会を行います。",
+        "date": "2026-12-05",
+        "writtenWeekday": "sat",
+        "startTime": null,
+        "endTime": null,
+        "what": "学習発表会",
+        "dayType": null,
+        "deadline": null,
+        "audience": null,
+        "conditionNodeId": "c5",
+        "inferred": false,
+        "effects": []
+      },
+      {
+        "id": "i2",
+        "sentenceIds": ["n1#7"],
+        "kind": "schoolEvent",
+        "written": "1年生の発表は9時20分からです。",
+        "date": null,
+        "writtenWeekday": "none",
+        "startTime": "09:20",
+        "endTime": null,
+        "what": "学習発表会（1年生の発表）",
+        "dayType": null,
+        "deadline": null,
+        "audience": "1年生",
+        "conditionNodeId": null,
+        "inferred": false,
+        "effects": []
+      },
+      {
+        "id": "i3",
+        "sentenceIds": ["n1#8"],
+        "kind": "belongings",
+        "written": "衣装として、白い長袖シャツを用意してください。",
+        "date": null,
+        "writtenWeekday": "none",
+        "startTime": null,
+        "endTime": null,
+        "what": "白い長袖シャツ",
+        "dayType": null,
+        "deadline": null,
+        "audience": null,
+        "conditionNodeId": null,
+        "inferred": false,
+        "effects": []
+      },
+      {
+        "id": "i4",
+        "sentenceIds": ["n1#9"],
+        "kind": "dayChange",
+        "written": "5日(土)に行った場合、12月7日(月)は振替休業日です。",
+        "date": "2026-12-07",
+        "writtenWeekday": "mon",
+        "startTime": null,
+        "endTime": null,
+        "what": "振替休業日",
+        "dayType": "noSchool",
+        "deadline": null,
+        "audience": null,
+        "conditionNodeId": "c5",
+        "inferred": false,
+        "effects": []
+      },
+      {
+        "id": "i5",
+        "sentenceIds": ["n1#10"],
+        "kind": "schoolEvent",
+        "written": "感染症の流行状況により延期する場合は、12月8日(火)に行います。",
+        "date": "2026-12-08",
+        "writtenWeekday": "tue",
+        "startTime": null,
+        "endTime": null,
+        "what": "学習発表会",
+        "dayType": null,
+        "deadline": null,
+        "audience": null,
+        "conditionNodeId": "c8",
+        "inferred": false,
+        "effects": []
+      },
+      {
+        "id": "i6",
+        "sentenceIds": ["n1#11"],
+        "kind": "dayChange",
+        "written": "延期した場合、7日(月)は通常授業とします。",
+        "date": "2026-12-07",
+        "writtenWeekday": "mon",
+        "startTime": null,
+        "endTime": null,
+        "what": null,
+        "dayType": "normalSchool",
+        "deadline": null,
+        "audience": null,
+        "conditionNodeId": "c8",
+        "inferred": false,
+        "effects": []
+      },
+      {
+        "id": "i7",
+        "sentenceIds": ["n1#12"],
+        "kind": "contact",
+        "written": "ご不明な点は、担任までお問い合わせください。",
+        "date": null,
+        "writtenWeekday": "none",
+        "startTime": null,
+        "endTime": null,
+        "what": "担任",
+        "dayType": null,
+        "deadline": null,
+        "audience": null,
+        "conditionNodeId": null,
+        "inferred": false,
+        "effects": []
+      }
+    ],
+    "unknowns": [
+      {
+        "id": "u-date",
+        "label": "学習発表会の実施日",
+        "values": ["2026-12-05", "2026-12-08"],
+        "kind": "schedule"
+      }
+    ],
+    "conditions": [
+      {
+        "id": "c5",
+        "kind": "eq",
+        "unknownId": "u-date",
+        "value": "2026-12-05",
+        "childIds": []
+      },
+      {
+        "id": "c8",
+        "kind": "eq",
+        "unknownId": "u-date",
+        "value": "2026-12-08",
+        "childIds": []
+      }
+    ],
+    "irrelevantSentenceIds": ["n1#1", "n1#2", "n1#3", "n1#4", "n1#5"],
+    "ambiguities": []
+  }
+}

@@ -1,0 +1,10 @@
+packages:
+  - apps/*
+  - packages/*
+
+# 公開から7日たった版だけを入れる（出たばかりの版の差し替えに備える）。
+minimumReleaseAge: 10080
+
+# 入れる時に台本を走らせてよい物。
+allowBuilds:
+  esbuild: true

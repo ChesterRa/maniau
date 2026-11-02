@@ -1,0 +1,93 @@
+// お知らせの読み取り（docs/design/01-model.md §10）。Claude の構造化出力で型を固定し、
+// 日付・文 ID・参照・条件は、@maniau/core の toExtraction で確かめる。
+// 拒否（refusal）と打ち切り（max_tokens）の出力は、有効なデータとして扱わない。
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import type Anthropic from '@anthropic-ai/sdk';
+import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
+import { ExtractionOutput, type Item, type Source, type Unknown } from '@maniau/core';
+
+export const EXTRACT_PROMPT_VERSION = 'extract.v1';
+const PROMPT = readFileSync(new URL('./prompts/extract.v1.md', import.meta.url), 'utf8');
+
+export const DEFAULT_EXTRACT_MODEL = 'claude-opus-5-5';
+
+export interface ExtractRequest {
+  source: Source;
+  /** 学年度（例：2026）。日付の年を決めるのに使う。 */
+  schoolYear: string;
+  priorItems: readonly Item[];
+  priorUnknowns: readonly Unknown[];
+}
+
+export interface ExtractResult {
+  output: ExtractionOutput;
+  model: string;
+  promptVersion: string;
+  inputHash: string;
+  usage: { input_tokens: number; output_tokens: number };
+}
+
+export class ReadingError extends Error {
+  constructor(
+    readonly reason: 'refusal' | 'max_tokens' | 'unparsed',
+    readonly stopReason: string | null,
+  ) {
+    super(`読み取りの出力を使えない：${reason}`);
+  }
+}
+
+/** モデルに渡す入力。住所や家族の名前は渡さない（§10）。 */
+export function buildExtractInput(request: ExtractRequest): string {
+  return JSON.stringify({
+    receivedAt: request.source.receivedAt,
+    schoolYear: request.schoolYear,
+    sender: request.source.sender,
+    sentences: request.source.sentences,
+    priorItems: request.priorItems.map((i) => ({
+      id: i.id,
+      kind: i.kind,
+      written: i.written,
+      interpretation: i.interpretation,
+      conditionNodeId: i.conditionNodeId ?? null,
+    })),
+    priorUnknowns: request.priorUnknowns,
+  });
+}
+
+type MessagesClient = Pick<Anthropic, 'messages'>;
+
+export async function extractNotice(
+  client: MessagesClient,
+  request: ExtractRequest,
+  options: { model?: string; effort?: 'low' | 'medium' | 'high' } = {},
+): Promise<ExtractResult> {
+  const input = buildExtractInput(request);
+  const response = await client.messages.parse({
+    model: options.model ?? DEFAULT_EXTRACT_MODEL,
+    max_tokens: 16000,
+    system: PROMPT,
+    messages: [{ role: 'user', content: input }],
+    output_config: {
+      format: zodOutputFormat(ExtractionOutput),
+      // Opus 5.5 は思考を切れず、effort の初期値は medium。呼び出しごとに明示する（§10）。
+      effort: options.effort ?? 'medium',
+    },
+  });
+  if (response.stop_reason === 'refusal') throw new ReadingError('refusal', response.stop_reason);
+  if (response.stop_reason === 'max_tokens') {
+    throw new ReadingError('max_tokens', response.stop_reason);
+  }
+  const output = response.parsed_output;
+  if (!output) throw new ReadingError('unparsed', response.stop_reason);
+  return {
+    output,
+    model: response.model,
+    promptVersion: EXTRACT_PROMPT_VERSION,
+    inputHash: createHash('sha256').update(input).digest('hex'),
+    usage: {
+      input_tokens: response.usage.input_tokens,
+      output_tokens: response.usage.output_tokens,
+    },
+  };
+}
