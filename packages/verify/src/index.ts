@@ -1,6 +1,6 @@
 import { DomainEvent, Household, PlanResult, validateHousehold } from '@maniau/core';
 import { collectFacts } from './facts';
-import { checkHistory } from './history';
+import { checkHistory, checkRequestNeed } from './history';
 import { checkPlan } from './plan';
 import { Collector, type VerificationReport } from './report';
 import { checkSchedule } from './schedule';
@@ -68,6 +68,7 @@ export function verifyPlan(input: VerificationInput): VerificationReport {
     );
   }
   const facts = collectFacts(history.events, report);
+  checkRequestNeed(plan.data, history, facts, report);
   checkPlan(household.data, plan.data, facts, history, report);
   checkSchedule(household.data, plan.data, history, report);
   if (facts.items.size > 0) {

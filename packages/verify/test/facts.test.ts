@@ -175,4 +175,142 @@ describe('出典と条件', () => {
     expect(codes(report)).toContain('condition_graph_too_large');
     expect(report.status).toBe('undetermined');
   });
+
+  it('通知ごとの条件数が上限内なら、合計が 64 を超えても正しく評価する', () => {
+    const first = Array.from({ length: 40 }, (_, index) => ({
+      id: `a${index}`,
+      kind: 'eq',
+      unknownId: 'u1',
+      value: 'yes',
+    }));
+    const second = Array.from({ length: 40 }, (_, index) => ({
+      id: `b${index}`,
+      kind: 'eq',
+      unknownId: 'u2',
+      value: 'yes',
+    }));
+    const events = [
+      notice(1, 'n1', [{ id: 'n1-s1', text: '条件一' }]),
+      extraction(
+        2,
+        'n1',
+        extract('n1', [item('i1', 'n1', { conditionNodeId: 'a0' })], {
+          conditions: first,
+          unknowns: [{ id: 'u1', label: '一', values: ['yes', 'no'], kind: 'other' }],
+        }),
+      ),
+      notice(3, 'n2', [{ id: 'n2-s1', text: '条件二' }]),
+      extraction(
+        4,
+        'n2',
+        extract('n2', [item('i2', 'n2', { conditionNodeId: 'b0' })], {
+          conditions: second,
+          unknowns: [{ id: 'u2', label: '二', values: ['yes', 'no'], kind: 'other' }],
+        }),
+      ),
+      event(5, { type: 'answered', unknownId: 'u1', value: 'no' }),
+    ];
+    const report = verifyPlan({
+      household: household(),
+      plan: plan({ throughSeq: 5, requirements: [requirement({ basis: { itemIds: ['i1'] } })] }),
+      events,
+    });
+    expect(codes(report)).not.toContain('invalid_condition');
+    expect(codes(report)).toContain('inactive_item_basis');
+  });
+
+  it('同じ通知の再読では、最新の事項と条件だけを現在の読みとして使う', () => {
+    const events = [
+      notice(1, 'n1', [{ id: 'n1-s1', text: '条件つきの予定' }]),
+      extraction(
+        2,
+        'n1',
+        extract('n1', [item('i1', 'n1', { conditionNodeId: 'c' })], {
+          unknowns: [{ id: 'u', label: '条件', values: ['yes', 'no'], kind: 'other' }],
+          conditions: [{ id: 'c', kind: 'eq', unknownId: 'u', value: 'yes' }],
+        }),
+      ),
+      extraction(
+        3,
+        'n1',
+        extract('n1', [item('i1', 'n1', { conditionNodeId: 'c' })], {
+          unknowns: [{ id: 'u', label: '条件', values: ['yes', 'no'], kind: 'other' }],
+          conditions: [{ id: 'c', kind: 'eq', unknownId: 'u', value: 'no' }],
+        }),
+      ),
+      event(4, { type: 'answered', unknownId: 'u', value: 'yes' }),
+    ];
+    const report = verifyPlan({
+      household: household(),
+      plan: plan({ throughSeq: 4, requirements: [requirement({ basis: { itemIds: ['i1'] } })] }),
+      events,
+    });
+    expect(codes(report)).not.toContain('duplicate_item');
+    expect(codes(report)).not.toContain('duplicate_condition');
+    expect(codes(report)).toContain('inactive_item_basis');
+  });
+
+  it('再読の作用は通知の到着順で扱い、後から答えた家族の値を上書きしない', () => {
+    const reading = extract(
+      'n1',
+      [
+        item('answer', 'n1', {
+          effects: [{ type: 'resolveUnknown', unknownId: 'u', value: 'yes' }],
+        }),
+        item('conditional', 'n1', { conditionNodeId: 'c' }),
+      ],
+      {
+        unknowns: [{ id: 'u', label: '条件', values: ['yes', 'no'], kind: 'other' }],
+        conditions: [{ id: 'c', kind: 'eq', unknownId: 'u', value: 'yes' }],
+      },
+    );
+    const events = [
+      notice(1, 'n1', [{ id: 'n1-s1', text: '条件つきの予定' }]),
+      extraction(2, 'n1', reading),
+      event(3, { type: 'answered', unknownId: 'u', value: 'no' }),
+      extraction(4, 'n1', reading),
+    ];
+    const report = verifyPlan({
+      household: household(),
+      plan: plan({
+        throughSeq: 4,
+        requirements: [requirement({ basis: { itemIds: ['conditional'] } })],
+      }),
+      events,
+    });
+    expect(codes(report)).toContain('inactive_item_basis');
+  });
+
+  it('再読で消えた出典の作用を残さない', () => {
+    const withEffect = extract(
+      'n1',
+      [
+        item('answer', 'n1', {
+          effects: [{ type: 'resolveUnknown', unknownId: 'u', value: 'yes' }],
+        }),
+        item('conditional', 'n1', { conditionNodeId: 'c' }),
+      ],
+      {
+        unknowns: [{ id: 'u', label: '条件', values: ['yes', 'no'], kind: 'other' }],
+        conditions: [{ id: 'c', kind: 'eq', unknownId: 'u', value: 'yes' }],
+      },
+    );
+    const withoutEffect = extract('n1', [item('conditional', 'n1', { conditionNodeId: 'c' })], {
+      unknowns: [{ id: 'u', label: '条件', values: ['yes', 'no'], kind: 'other' }],
+      conditions: [{ id: 'c', kind: 'eq', unknownId: 'u', value: 'yes' }],
+    });
+    const report = verifyPlan({
+      household: household(),
+      plan: plan({
+        throughSeq: 3,
+        requirements: [requirement({ basis: { itemIds: ['conditional'] } })],
+      }),
+      events: [
+        notice(1, 'n1', [{ id: 'n1-s1', text: '予定' }]),
+        extraction(2, 'n1', withEffect),
+        extraction(3, 'n1', withoutEffect),
+      ],
+    });
+    expect(codes(report)).toContain('item_condition_unknown');
+  });
 });

@@ -190,6 +190,62 @@ describe('本命・予備と比較中の候補', () => {
     expect(codes(report)).not.toContain('option_selection_mismatch');
   });
 
+  it('選び替えで外れた案は、以前引き受けていても比較候補として扱う', () => {
+    const chosen = casePlan([]);
+    const old = chosen.tasks.find((entry) => entry.key === 'b-task');
+    if (!old) throw new Error('作業がない');
+    old.commitment = 'accepted';
+    const report = verifyPlan({ household: household(), plan: chosen, events: [selection] });
+    expect(codes(report)).not.toContain('task_overlap');
+  });
+
+  it('最後に残った案を取り下げた後の引き受けも同時実行しない', () => {
+    const dropped = event(2, {
+      type: 'optionDropped',
+      arrangementKey: 'arrangement',
+      optionKey: 'one',
+    });
+    const report = verifyPlan({
+      household: household(),
+      plan: plan({
+        throughSeq: 2,
+        requirements: [requirement()],
+        arrangements: [arrangement({ options: [option('one', { taskKeys: ['old'] })] })],
+        tasks: [
+          task('old', {
+            commitment: 'accepted',
+            basis: { itemIds: [], arrangementKey: 'arrangement', optionKey: 'one' },
+          }),
+          task('fixed'),
+        ],
+      }),
+      events: [selection, dropped],
+    });
+    expect(codes(report)).not.toContain('task_overlap');
+  });
+
+  it('本命が有効な間は、予備を使った場合だけの追加準備を同時実行しない', () => {
+    const family = household();
+    for (const template of family.careOptions) {
+      template.extraSteps.push({
+        id: 'lunch',
+        titleKey: 'task.lunch',
+        durationMin: 30,
+        segments: ['home'],
+        waitAfterMin: 0,
+        dayOffset: 0,
+      });
+    }
+    const selected = casePlan(['two']);
+    const first = selected.tasks.find((entry) => entry.key === 'a-task');
+    const second = selected.tasks.find((entry) => entry.key === 'b-task');
+    if (!first || !second) throw new Error('作業がない');
+    first.step = { templateId: 'one', stepId: 'lunch' };
+    second.step = { templateId: 'two', stepId: 'lunch' };
+    const report = verifyPlan({ household: family, plan: selected, events: [selection, backup] });
+    expect(codes(report)).not.toContain('task_overlap');
+  });
+
   it('同じ候補の二つの手順は、まだ選択前でも重ねない', () => {
     const basis = { itemIds: [], arrangementKey: 'arrangement', optionKey: 'one' };
     const report = verifyPlan({

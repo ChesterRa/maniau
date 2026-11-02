@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { verifyPlan } from '../src';
-import { event, household, plan, task } from './fixtures';
+import { arrangement, event, household, option, plan, requirement, task } from './fixtures';
 
 const codes = (report: ReturnType<typeof verifyPlan>) => report.issues.map((issue) => issue.code);
 
@@ -125,6 +125,36 @@ describe('帰り道の寄り道', () => {
     expect(codes(report)).toContain('detour_other_adult_absent');
   });
 
+  it('他の大人に推薦された同時刻の外出も、在宅と見なさない', () => {
+    const other = task('other', {
+      assigneeId: 'b',
+      durationMin: 10,
+      start: '2026-11-26T19:05+09:00',
+      end: '2026-11-26T19:15+09:00',
+      segments: ['away'],
+      placeId: 'store',
+      basis: { itemIds: [], arrangementKey: 'shopping', optionKey: 'buy' },
+    });
+    const report = verifyPlan({
+      household: commuteHousehold(),
+      plan: plan({
+        requirements: [requirement({ key: 'shopping-requirement', kind: 'belongings' })],
+        arrangements: [
+          arrangement({
+            key: 'shopping',
+            kind: 'purchase',
+            requirementKey: 'shopping-requirement',
+            recommendedOptionKey: 'buy',
+            options: [option('buy', { arrangementKey: 'shopping', taskKeys: ['other'] })],
+          }),
+        ],
+        tasks: [detour(), other],
+      }),
+      events: [],
+    });
+    expect(codes(report)).toContain('detour_other_adult_absent');
+  });
+
   it('他の大人の作業場所が不明なら、不在と断定せず未判定にする', () => {
     const other = task('other', {
       assigneeId: 'b',
@@ -204,6 +234,37 @@ describe('帰り道の寄り道', () => {
     });
     expect(codes(report)).not.toContain('detour_home_flexibility_unverified');
     expect(codes(report)).toContain('route_is_estimate');
+  });
+
+  it('本人以外の無効な操作は、本人が見て承諾した時刻を消さない', () => {
+    const events = [
+      event(1, { type: 'assignmentProposed', taskKey: 'shop', assigneeId: 'a' }),
+      event(2, {
+        type: 'commitmentChanged',
+        taskKey: 'shop',
+        assigneeId: 'a',
+        action: 'accept',
+        shown: {
+          start: '2026-11-26T18:55+09:00',
+          end: '2026-11-26T19:10+09:00',
+          delayedArrival: '2026-11-26T19:25+09:00',
+        },
+      }),
+      event(3, {
+        type: 'commitmentChanged',
+        taskKey: 'shop',
+        assigneeId: 'a',
+        actorId: 'b',
+        action: 'decline',
+      }),
+    ];
+    const report = verifyPlan({
+      household: commuteHousehold(),
+      plan: plan({ throughSeq: 3, tasks: [detour({ commitment: 'accepted' })] }),
+      events,
+    });
+    expect(codes(report)).toContain('commitment_actor_mismatch');
+    expect(codes(report)).not.toContain('detour_home_flexibility_unverified');
   });
 
   it('引き受け後に到家が変わったら、以前の確認を使わない', () => {

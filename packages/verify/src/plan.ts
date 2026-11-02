@@ -211,6 +211,21 @@ function checkStep(task: Task, household: Household, plan: PlanResult, report: C
   if (option && option.templateId !== template.id)
     report.violation('step_option_mismatch', task.key, '案と作業の取れる手が違う。');
 
+  const extra = template.extraSteps.find((entry) => entry.id === step.id);
+  if (extra && (!arrangement || !task.start || !task.end)) {
+    report.undetermined('extra_step_date_unverified', task.key, '追加の準備の日付を確認できない。');
+  } else if (extra && arrangement && task.start && task.end) {
+    const start = instantMinute(task.start);
+    const end = instantMinute(task.end);
+    const target =
+      dateIndex(localMinute(instantMinute(arrangement.start), household.timeZone).date) +
+      extra.dayOffset * 24 * 60;
+    const first = dateIndex(localMinute(start, household.timeZone).date);
+    const last = dateIndex(localMinute(Math.max(start, end - 1), household.timeZone).date);
+    if (first !== target || last !== target)
+      report.violation('extra_step_wrong_date', task.key, '追加の準備の日付が家庭の決まりと違う。');
+  }
+
   const stepIndex = template.steps.findIndex((entry) => entry.id === step.id);
   if (stepIndex > 0) {
     const previous = template.steps[stepIndex - 1];
@@ -256,7 +271,12 @@ function checkStep(task: Task, household: Household, plan: PlanResult, report: C
   }
 }
 
-function optionStarted(option: OptionPlan, arrangement: Arrangement, history: History): boolean {
+function optionStarted(
+  option: OptionPlan,
+  arrangement: Arrangement,
+  history: History,
+  byDeadline = false,
+): boolean {
   if (
     arrangement.chosenOptionKey !== option.key &&
     !arrangement.backupOptionKeys.includes(option.key)
@@ -273,15 +293,51 @@ function optionStarted(option: OptionPlan, arrangement: Arrangement, history: Hi
     .at(-1);
   if (!choice) return false;
   const deadline = instantMinute(option.decisionDeadline);
-  return history.events.some(
-    (entry) =>
-      entry.seq >= choice.seq &&
-      instantMinute(entry.occurredAt) <= deadline &&
-      ((entry.type === 'commitmentChanged' &&
-        entry.action === 'done' &&
-        option.taskKeys.includes(entry.taskKey)) ||
-        (entry.type === 'externalRequestSent' && option.taskKeys.includes(entry.taskKey))),
-  );
+  const assignments = new Map<string, string>();
+  for (const entry of history.events) {
+    if (entry.type === 'assignmentProposed') assignments.set(entry.taskKey, entry.assigneeId);
+    if (entry.seq < choice.seq) continue;
+    let taskKey: string | undefined;
+    if (
+      entry.type === 'commitmentChanged' &&
+      entry.action === 'done' &&
+      entry.actorId === entry.assigneeId &&
+      (assignments.get(entry.taskKey) ?? entry.assigneeId) === entry.assigneeId
+    )
+      taskKey = entry.taskKey;
+    else if (entry.type === 'externalRequestSent') taskKey = entry.taskKey;
+    if (!taskKey || !option.taskKeys.includes(taskKey)) continue;
+    if (!byDeadline) return true;
+    // 所要時間は計画の目安であり、実際に同じ時間がかかった証拠ではない。
+    if (instantMinute(entry.occurredAt) <= deadline) return true;
+  }
+  return false;
+}
+
+/** expired は計画の申告なので、現在時刻と決め時から求め直す。 */
+function isPastDecision(option: OptionPlan, plan: PlanResult): boolean | 'unknown' {
+  return option.decisionDeadline === undefined
+    ? 'unknown'
+    : instantMinute(plan.now) > instantMinute(option.decisionDeadline);
+}
+
+export function optionFailure(
+  option: OptionPlan,
+  arrangement: Arrangement,
+  plan: PlanResult,
+  history: History,
+): { code: 'turnedDown' | 'missedDeadline'; refs: string[] } | undefined {
+  const turnedDown = [...history.requests.entries()]
+    .filter(([, sent]) => option.taskKeys.includes(sent.taskKey) && sent.state === 'turnedDown')
+    .map(([id]) => id);
+  if (turnedDown.length) return { code: 'turnedDown', refs: turnedDown };
+  if (
+    history.complete &&
+    isPastDecision(option, plan) === true &&
+    !optionStarted(option, arrangement, history)
+  )
+    return { code: 'missedDeadline', refs: [option.key] };
+  return undefined;
 }
 
 function checkReasons(
@@ -351,7 +407,10 @@ function checkReasons(
         );
       }
       if (
-        options.some((option) => !option.expired || optionStarted(option, arrangement, history))
+        options.some(
+          (option) =>
+            isPastDecision(option, plan) !== true || optionStarted(option, arrangement, history),
+        )
       ) {
         report.undetermined(
           'no_option_left_unverified',
@@ -381,7 +440,8 @@ function checkReasons(
     }
     if (
       arrangement.options.some(
-        (option) => option.deadlineCertainty === 'undetermined' && !option.expired,
+        (option) =>
+          option.deadlineCertainty === 'undetermined' && isPastDecision(option, plan) !== true,
       )
     ) {
       report.violation(
@@ -481,6 +541,9 @@ export function checkPlan(
           '決め時と確かさの状態が一致しない。',
         );
       }
+      const past = isPastDecision(option, plan);
+      if (past !== 'unknown' && option.expired !== past)
+        report.violation('expired_state_mismatch', option.key, '決め時の経過と計画の状態が違う。');
       for (const key of option.taskKeys)
         if (!tasks.has(key))
           report.violation('option_task_missing', option.key, '案が存在しない作業を指している。');
@@ -536,10 +599,10 @@ export function checkPlan(
           '推薦した案の決め時が分からない。',
         );
       }
-      const past =
-        recommended.decisionDeadline !== undefined &&
-        instantMinute(plan.now) > instantMinute(recommended.decisionDeadline);
-      if ((recommended.expired || past) && !optionStarted(recommended, arrangement, history)) {
+      if (
+        isPastDecision(recommended, plan) === true &&
+        !optionStarted(recommended, arrangement, history)
+      ) {
         if (
           arrangement.chosenOptionKey === recommended.key ||
           arrangement.backupOptionKeys.includes(recommended.key)
@@ -558,24 +621,112 @@ export function checkPlan(
         }
       }
     }
-    const subjectOption = arrangement.options.find(
-      (option) => option.key === (arrangement.chosenOptionKey ?? arrangement.recommendedOptionKey),
+    const selection = history.selections.get(arrangement.key);
+    const selectedKeys = history.complete
+      ? [selection?.primary, ...(selection?.backups ?? [])].filter(
+          (key): key is string => key !== undefined,
+        )
+      : [arrangement.chosenOptionKey, ...arrangement.backupOptionKeys].filter(
+          (key): key is string => key !== undefined,
+        );
+    const selected = selectedKeys
+      .map((key) => arrangement.options.find((option) => option.key === key))
+      .filter((option): option is OptionPlan => option !== undefined);
+    const failures = new Map(
+      selected.map((option) => [option.key, optionFailure(option, arrangement, plan, history)]),
     );
+    for (const option of selected) {
+      if (
+        isPastDecision(option, plan) === true &&
+        optionStarted(option, arrangement, history) &&
+        !optionStarted(option, arrangement, history, true)
+      )
+        report.undetermined(
+          'option_start_time_unverified',
+          option.key,
+          '作業は進んでいるが、決め時までに始めたか確かめられない。',
+        );
+    }
+    if (history.complete) {
+      for (const option of selected) {
+        const failure = failures.get(option.key);
+        if (!failure) continue;
+        if (failure.code === 'missedDeadline')
+          report.undetermined(
+            'option_start_unverified',
+            option.key,
+            '済んだ・送った記録がなく、作業を始めたか分からない。',
+          );
+        const reported = arrangement.reasons.some(
+          (reason) =>
+            reason.code === failure.code && failure.refs.some((ref) => reason.refs.includes(ref)),
+        );
+        if (!reported && failure.code === 'turnedDown')
+          report.violation(
+            'rejected_option_unreported',
+            option.key,
+            '断られた案の理由が示されていない。',
+          );
+        else if (!reported)
+          report.undetermined(
+            'missed_deadline_unreported',
+            option.key,
+            '決め時後も進捗の記録がなく、手配の状態を確認できない。',
+          );
+      }
+    }
+    const usable = selected.find((option) => !failures.get(option.key));
+    const replacement =
+      recommended &&
+      !optionFailure(recommended, arrangement, plan, history) &&
+      isPastDecision(recommended, plan) === false
+        ? recommended
+        : undefined;
+    if (
+      history.complete &&
+      arrangement.status === 'decidable' &&
+      selected.length > 0 &&
+      !usable &&
+      !replacement
+    ) {
+      if (selected.some((option) => failures.get(option.key)?.code === 'missedDeadline'))
+        report.undetermined(
+          'failed_option_treated_as_valid',
+          arrangement.key,
+          '進捗の記録がない案で手配が成立するか分からない。',
+        );
+      else
+        report.violation(
+          'failed_option_treated_as_valid',
+          arrangement.key,
+          '使えなくなった本命・予備の代わりがないまま決めてよいとしている。',
+        );
+    }
+    const subjectOption =
+      usable ?? replacement ?? (selected.length === 0 ? recommended : undefined);
     if (
       arrangement.status === 'decidable' &&
       subjectOption &&
-      plan.requests.some(
+      [...history.requests.values()].some(
         (request) =>
-          subjectOption.taskKeys.includes(request.taskKey) &&
-          request.live &&
-          request.state === 'awaitingReply',
+          subjectOption.taskKeys.includes(request.taskKey) && request.state === 'awaitingReply',
       )
     ) {
-      report.violation(
-        'decidable_waiting_reply',
-        arrangement.key,
-        '外の返事待ちがある案を条件なしで決めてよいとしている。',
-      );
+      const priorUnknown = selected
+        .slice(0, selected.indexOf(subjectOption))
+        .some((option) => failures.get(option.key)?.code === 'missedDeadline');
+      if (priorUnknown)
+        report.undetermined(
+          'decidable_waiting_reply',
+          arrangement.key,
+          '進捗が不明な本命と返事待ちの予備を確認できない。',
+        );
+      else
+        report.violation(
+          'decidable_waiting_reply',
+          arrangement.key,
+          '外の返事待ちがある案を条件なしで決めてよいとしている。',
+        );
     }
   }
   for (const task of plan.tasks) {
@@ -648,7 +799,9 @@ export function checkPlan(
         );
       }
       for (const arrangement of affected) {
-        const options = arrangement.options.filter((option) => !option.expired);
+        const options = arrangement.options.filter(
+          (option) => isPastDecision(option, plan) !== true,
+        );
         const expiredBeforeQuestion = options.filter(
           (option) =>
             option.decisionDeadline &&

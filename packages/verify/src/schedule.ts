@@ -223,7 +223,7 @@ export function checkSchedule(
   const placed: ScheduledTask[] = [];
   const tasksByKey = new Map(plan.tasks.map((task) => [task.key, task]));
   for (const task of plan.tasks) {
-    if (executionScope(task, plan) === 'inactive') continue;
+    if (executionScope(task, plan, household, history) === 'inactive') continue;
     if (task.start === undefined && task.end === undefined) {
       if (task.detour)
         report.violation('detour_time_missing', task.key, '時刻のない作業に寄り道がある。');
@@ -286,8 +286,8 @@ export function checkSchedule(
         current.task.assigneeId === other.task.assigneeId &&
         overlaps(current.occupied, other.occupied)
       ) {
-        const currentScope = executionScope(current.task, plan);
-        const otherScope = executionScope(other.task, plan);
+        const currentScope = executionScope(current.task, plan, household, history);
+        const otherScope = executionScope(other.task, plan, household, history);
         const first = current.task.basis;
         const second = other.task.basis;
         const sameArrangement =

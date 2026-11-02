@@ -1,4 +1,5 @@
-import type { DomainEvent, Household, PlanResult } from '@maniau/core';
+import type { DomainEvent, Household, PlanResult, Truth } from '@maniau/core';
+import type { FactState } from './facts';
 import type { Collector } from './report';
 import { instantMinute } from './time';
 
@@ -11,10 +12,17 @@ interface SentRequest {
   state: RequestState;
 }
 
+interface Selection {
+  primary?: string;
+  backups: Set<string>;
+  dropped: Set<string>;
+}
+
 export interface History {
   events: DomainEvent[];
   complete: boolean;
   requests: Map<string, SentRequest>;
+  selections: Map<string, Selection>;
 }
 
 /** 計画に含めた通し番号までだけを使う。欠けた列は、無かった事の証明にしない。 */
@@ -60,13 +68,17 @@ export function checkHistory(
   const assignments = new Map<string, string>();
   const commitment = new Map<string, string>();
   const requests = new Map<string, SentRequest>();
-  const selections = new Map<string, { primary?: string; backups: Set<string> }>();
+  const selections = new Map<string, Selection>();
   for (const event of ordered) {
     if (event.householdId !== household.id) continue;
     if (event.type === 'optionChosen') {
       if (event.actorId === 'system')
         report.violation('system_chose_option', event.id, '家族が選ぶ案を仕組みが選んでいる。');
-      const selection = selections.get(event.arrangementKey) ?? { backups: new Set<string>() };
+      const selection = selections.get(event.arrangementKey) ?? {
+        backups: new Set<string>(),
+        dropped: new Set<string>(),
+      };
+      selection.dropped.delete(event.optionKey);
       if (event.role === 'primary') {
         selection.primary = event.optionKey;
         selection.backups.delete(event.optionKey);
@@ -84,6 +96,10 @@ export function checkHistory(
           event.id,
           'やめた案を選んだ事象を確認できない。',
         );
+        selections.set(event.arrangementKey, {
+          backups: new Set<string>(),
+          dropped: new Set([event.optionKey]),
+        });
       } else {
         if (selection.primary !== event.optionKey && !selection.backups.has(event.optionKey)) {
           if (complete)
@@ -101,6 +117,7 @@ export function checkHistory(
         }
         if (selection.primary === event.optionKey) selection.primary = undefined;
         selection.backups.delete(event.optionKey);
+        selection.dropped.add(event.optionKey);
       }
     } else if (event.type === 'assignmentProposed') {
       assignments.set(event.taskKey, event.assigneeId);
@@ -127,6 +144,10 @@ export function checkHistory(
           '操作時の担当と事象に書かれた担当が違う。',
         );
       }
+      // 本人でない操作は記録には残すが、状態を変えない。
+      if (event.actorId !== event.assigneeId || (assigned && assigned !== event.assigneeId))
+        continue;
+      assignments.set(event.taskKey, event.assigneeId);
       const states = {
         accept: 'accepted',
         decline: 'declined',
@@ -296,27 +317,19 @@ export function checkHistory(
         '依頼の相手または種類が作業と違う。',
       );
     }
-    if (!request.live && (request.state === 'awaitingReply' || request.state === 'confirmed')) {
-      const cancellations = plan.tasks.filter(
-        (task) =>
-          task.live &&
-          task.cancels === request.requestId &&
-          !['declined', 'withdrawn', 'cancelled'].includes(task.commitment),
+    if (
+      task &&
+      (task.basis.arrangementKey !== request.basis.arrangementKey ||
+        task.basis.optionKey !== request.basis.optionKey ||
+        task.basis.requirementKey !== request.basis.requirementKey ||
+        JSON.stringify([...task.basis.itemIds].sort()) !==
+          JSON.stringify([...request.basis.itemIds].sort()))
+    )
+      report.violation(
+        'request_basis_mismatch',
+        request.requestId,
+        '依頼の根拠が送った作業と違う。',
       );
-      if (cancellations.length === 0) {
-        report.violation(
-          'cancellation_missing',
-          request.requestId,
-          '不要になった依頼への取消しの連絡がない。',
-        );
-      } else if (cancellations.every((task) => task.commitment === 'done')) {
-        report.undetermined(
-          'cancellation_send_unverified',
-          request.requestId,
-          '取消し作業は済みだが、送った事象を確認できない。',
-        );
-      }
-    }
   }
   for (const [requestId, sent] of requests) {
     if (
@@ -335,5 +348,121 @@ export function checkHistory(
     events: ordered.filter((event) => event.householdId === household.id),
     complete,
     requests,
+    selections,
   };
+}
+
+/** 依頼の必要性を、事象による選択と元の事項から計画の live とは別に確かめる。 */
+export function checkRequestNeed(
+  plan: PlanResult,
+  history: History,
+  facts: FactState,
+  report: Collector,
+): void {
+  for (const request of plan.requests) {
+    const source = plan.tasks.find((task) => task.key === request.taskKey);
+    const basis = source?.basis ?? request.basis;
+    let optionNeeded: Truth = true;
+    if (basis.arrangementKey && basis.optionKey) {
+      if (!history.complete) optionNeeded = 'unknown';
+      else {
+        const selection = history.selections.get(basis.arrangementKey);
+        if (selection?.dropped.has(basis.optionKey)) optionNeeded = false;
+        else if (!selection?.primary && !selection?.backups.size) optionNeeded = true;
+        else if (selection.primary === basis.optionKey) optionNeeded = true;
+        else if (!selection.backups.has(basis.optionKey)) optionNeeded = false;
+        else if (selection.primary) {
+          const primaryTasks = new Set(
+            plan.tasks
+              .filter(
+                (task) =>
+                  task.basis.arrangementKey === basis.arrangementKey &&
+                  task.basis.optionKey === selection.primary,
+              )
+              .map((task) => task.key),
+          );
+          const primaryRequests = [...history.requests.values()].filter((sent) =>
+            primaryTasks.has(sent.taskKey),
+          );
+          if (
+            primaryRequests.length > 0 &&
+            primaryRequests.every((sent) => sent.state === 'confirmed')
+          )
+            optionNeeded = false;
+        }
+      }
+    } else if (basis.optionKey || basis.arrangementKey) optionNeeded = 'unknown';
+    let factsNeeded: Truth = basis.itemIds.length ? true : 'unknown';
+    for (const itemId of basis.itemIds) {
+      const active = facts.active.get(itemId);
+      if (active === false) {
+        factsNeeded = false;
+        break;
+      }
+      if (active === undefined || active === 'unknown') factsNeeded = 'unknown';
+    }
+    const needed: Truth =
+      optionNeeded === false || factsNeeded === false
+        ? false
+        : optionNeeded === true && factsNeeded === true
+          ? true
+          : 'unknown';
+    if (needed !== 'unknown' && needed !== request.live)
+      report.violation(
+        'request_liveness_mismatch',
+        request.requestId,
+        '依頼の必要性が選択または元の事項と違う。',
+      );
+
+    const cancellations = plan.tasks.filter(
+      (task) =>
+        task.live &&
+        task.cancels === request.requestId &&
+        !['declined', 'withdrawn', 'cancelled'].includes(task.commitment),
+    );
+    const sent = history.requests.get(request.requestId);
+    const state = sent?.state ?? request.state;
+    if (
+      (needed === false || (needed === 'unknown' && !request.live)) &&
+      (state === 'awaitingReply' || state === 'confirmed')
+    ) {
+      if (cancellations.length === 0)
+        report.violation(
+          'cancellation_missing',
+          request.requestId,
+          '不要になった依頼への取消しの連絡がない。',
+        );
+      else if (cancellations.every((task) => task.commitment === 'done'))
+        report.undetermined(
+          'cancellation_send_unverified',
+          request.requestId,
+          '取消し作業は済みだが、送った事象を確認できない。',
+        );
+    }
+    // 根拠が不明でも、計画が必要とする依頼と同時に取消しを置くのは矛盾。
+    if (
+      (needed === true || (needed === 'unknown' && optionNeeded === true && request.live)) &&
+      cancellations.length > 0
+    )
+      report.violation(
+        'unexpected_cancellation',
+        request.requestId,
+        'まだ必要な依頼に取消しの連絡がある。',
+      );
+    if (
+      (needed === true || (needed === 'unknown' && optionNeeded === true && request.live)) &&
+      state === 'cancelled'
+    )
+      report.violation(
+        'needed_request_cancelled',
+        request.requestId,
+        '必要な依頼が取り消されている。',
+      );
+    if (needed === 'unknown')
+      report.undetermined(
+        'request_need_unverified',
+        request.requestId,
+        '依頼の必要性を事象と元の事項から確定できない。',
+      );
+  }
 }

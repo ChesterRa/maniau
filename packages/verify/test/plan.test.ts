@@ -139,9 +139,150 @@ describe('入力と根拠', () => {
     });
     expect(codes(report)).toContain('step_constraints_mismatch');
   });
+
+  it('追加の準備は、手配の日を基準にした日付の決まりと照らす', () => {
+    const family = household();
+    family.careOptions[0]?.extraSteps.push({
+      id: 'lunch',
+      titleKey: 'task.lunch',
+      durationMin: 30,
+      segments: ['home'],
+      waitAfterMin: 0,
+      dayOffset: 0,
+    });
+    const base = {
+      step: { templateId: 'one', stepId: 'lunch' },
+      basis: { itemIds: [], arrangementKey: 'arrangement', optionKey: 'one' },
+    };
+    const check = (start: string, end: string) =>
+      verifyPlan({
+        household: family,
+        plan: plan({
+          requirements: [requirement()],
+          arrangements: [arrangement({ options: [option('one', { taskKeys: ['t'] })] })],
+          tasks: [task('t', { ...base, start, end })],
+        }),
+        events: [],
+      });
+    expect(codes(check('2026-12-07T10:00+09:00', '2026-12-07T10:30+09:00'))).not.toContain(
+      'extra_step_wrong_date',
+    );
+    expect(codes(check('2026-12-06T10:00+09:00', '2026-12-06T10:30+09:00'))).toContain(
+      'extra_step_wrong_date',
+    );
+    expect(codes(check('2026-12-07T23:45+09:00', '2026-12-08T00:15+09:00'))).toContain(
+      'extra_step_wrong_date',
+    );
+  });
 });
 
 describe('決め時', () => {
+  it('期限の真偽値が違っても、現在時刻と決め時から判定する', () => {
+    const candidate = option('one', {
+      decisionDeadline: '2026-12-02T18:00+09:00',
+      deadlineCertainty: 'checked',
+      expired: true,
+    });
+    const report = verifyPlan({
+      household: household(),
+      plan: plan({
+        now: '2026-12-01T09:00+09:00',
+        requirements: [requirement()],
+        arrangements: [
+          arrangement({
+            status: 'infeasible',
+            reasons: [{ code: 'noOptionLeft', refs: ['one'] }],
+            options: [candidate],
+          }),
+        ],
+      }),
+      events: [],
+    });
+    expect(codes(report)).toContain('expired_state_mismatch');
+    expect(codes(report)).toContain('no_option_left_unverified');
+  });
+
+  it('選んだ本命が未着手で決め時を過ぎた時、理由なしで成立としない', () => {
+    const candidate = option('one', {
+      decisionDeadline: '2026-12-02T18:00+09:00',
+      deadlineCertainty: 'checked',
+      expired: false,
+    });
+    const report = verifyPlan({
+      household: household(),
+      plan: plan({
+        now: '2026-12-03T09:00+09:00',
+        throughSeq: 1,
+        requirements: [requirement()],
+        arrangements: [arrangement({ chosenOptionKey: 'one', options: [candidate] })],
+      }),
+      events: [
+        event(1, {
+          type: 'optionChosen',
+          arrangementKey: 'arrangement',
+          optionKey: 'one',
+          role: 'primary',
+        }),
+      ],
+    });
+    expect(codes(report)).toContain('expired_state_mismatch');
+    expect(codes(report)).toContain('missed_deadline_unreported');
+    expect(codes(report)).toContain('failed_option_treated_as_valid');
+    expect(report.issues.find((issue) => issue.code === 'option_start_unverified')?.kind).toBe(
+      'undetermined',
+    );
+  });
+
+  it('本命を断られて予備も推薦もない時、手配を成立としない', () => {
+    const basis = { itemIds: [], arrangementKey: 'arrangement', optionKey: 'one' };
+    const events = [
+      event(1, {
+        type: 'optionChosen',
+        arrangementKey: 'arrangement',
+        optionKey: 'one',
+        role: 'primary',
+      }),
+      event(2, { type: 'assignmentProposed', taskKey: 't', assigneeId: 'a' }),
+      event(3, { type: 'externalRequestSent', taskKey: 't', requestId: 'r' }),
+      event(4, { type: 'externalReplyRecorded', requestId: 'r', reply: 'no' }),
+    ];
+    const report = verifyPlan({
+      household: household(),
+      plan: plan({
+        throughSeq: 4,
+        requirements: [requirement()],
+        arrangements: [
+          arrangement({ chosenOptionKey: 'one', options: [option('one', { taskKeys: ['t'] })] }),
+        ],
+        tasks: [
+          task('t', {
+            basis,
+            commitment: 'done',
+            external: { to: 'helper', kind: 'reply' },
+            start: undefined,
+            end: undefined,
+          }),
+        ],
+        requests: [
+          {
+            requestId: 'r',
+            taskKey: 't',
+            to: 'helper',
+            kind: 'reply',
+            sentAt: '2026-11-30T10:00+09:00',
+            sentBy: 'a',
+            state: 'turnedDown',
+            basis,
+            live: true,
+          },
+        ],
+      }),
+      events,
+    });
+    expect(codes(report)).toContain('rejected_option_unreported');
+    expect(codes(report)).toContain('failed_option_treated_as_valid');
+  });
+
   it('期限を過ぎた未選択の案を推薦しない', () => {
     const candidate = option('one', {
       decisionDeadline: '2026-12-02T18:00+09:00',

@@ -3,6 +3,7 @@ import {
   type DomainEvent,
   Extraction,
   type Item,
+  MAX_CONDITION_NODES,
   type Source,
   type Truth,
   type Unknown,
@@ -17,11 +18,11 @@ export interface FactState {
   unknowns: Map<string, Unknown>;
 }
 
-interface Extracted {
+interface Extracted extends Extraction {
   seq: number;
-  items: Item[];
-  unknowns: Unknown[];
-  conditions: ConditionNode[];
+  sourceSeq: number;
+  eventId: string;
+  source: Source | undefined;
 }
 
 function checkCoverage(
@@ -58,11 +59,11 @@ function checkCoverage(
 
 /** 提出された事象までを読み、作業の live とは別に事項の適用を組み立てる。 */
 export function collectFacts(events: readonly DomainEvent[], report: Collector): FactState {
-  const sources = new Map<string, Source>();
-  const extracted: Extracted[] = [];
-  const extractionByEvent = new Map<number, Extracted>();
+  const sources = new Map<string, { source: Source; seq: number }>();
+  const latestBySource = new Map<string, Extracted>();
   for (const event of events) {
-    if (event.type === 'noticeReceived') sources.set(event.source.id, event.source);
+    if (event.type === 'noticeReceived')
+      sources.set(event.source.id, { source: event.source, seq: event.seq });
     if (event.type !== 'modelOutputRecorded' || event.call !== 'extract') continue;
     const parsed = Extraction.safeParse(event.output);
     if (!parsed.success) {
@@ -73,10 +74,24 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
     if (event.sourceId && event.sourceId !== extraction.sourceId) {
       report.violation('extraction_source_mismatch', event.id, '事象と読み取り結果の出典が違う。');
     }
+    const received = sources.get(extraction.sourceId);
+    const entry = {
+      ...extraction,
+      seq: event.seq,
+      sourceSeq: received?.seq ?? event.seq,
+      eventId: event.id,
+      source: received?.source,
+    };
+    latestBySource.set(extraction.sourceId, entry);
+  }
+
+  const extracted = [...latestBySource.values()].sort((a, b) => a.sourceSeq - b.sourceSeq);
+  // 再読は通知を新しくしない。家族の後の答えを、再読しただけで上書きしない。
+  const extractionByEvent = new Map(extracted.map((entry) => [entry.sourceSeq, entry]));
+  for (const extraction of extracted) {
     for (const item of extraction.items) {
-      if (item.sourceId !== extraction.sourceId) {
+      if (item.sourceId !== extraction.sourceId)
         report.violation('item_source_mismatch', item.id, '事項の出典と読み取りの出典が違う。');
-      }
       const { date, writtenWeekday } = item.interpretation;
       if (writtenWeekday !== undefined && date === undefined) {
         report.undetermined('weekday_date_missing', item.id, '書かれた曜日と照らす日付がない。');
@@ -84,33 +99,32 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
         report.violation('weekday_mismatch', item.id, '原文に書かれた曜日と日付が合わない。');
       }
     }
-    const source = sources.get(extraction.sourceId);
-    if (source) checkCoverage(source, extraction, report);
-    else report.undetermined('source_missing', event.id, '原文の文と読み取り結果を照らせない。');
-    const entry = {
-      seq: event.seq,
-      items: extraction.items,
-      unknowns: extraction.unknowns,
-      conditions: extraction.conditions,
-    };
-    extracted.push(entry);
-    extractionByEvent.set(event.seq, entry);
+    if (extraction.source) checkCoverage(extraction.source, extraction, report);
+    else
+      report.undetermined(
+        'source_missing',
+        extraction.eventId,
+        '原文の文と読み取り結果を照らせない。',
+      );
   }
 
   const items = new Map<string, Item>();
   const itemSeq = new Map<string, number>();
   const nodes = new Map<string, ConditionNode>();
+  const invalidNodes = new Set<string>();
   const unknowns = new Map<string, Unknown>();
   for (const extraction of extracted) {
     for (const item of extraction.items) {
       if (items.has(item.id))
         report.violation('duplicate_item', item.id, '事項の ID が重複している。');
       items.set(item.id, item);
-      itemSeq.set(item.id, extraction.seq);
+      itemSeq.set(item.id, extraction.sourceSeq);
     }
     for (const node of extraction.conditions) {
-      if (nodes.has(node.id))
+      if (nodes.has(node.id)) {
         report.violation('duplicate_condition', node.id, '条件の ID が重複している。');
+        invalidNodes.add(node.id);
+      }
       nodes.set(node.id, node);
     }
     for (const unknown of extraction.unknowns) {
@@ -125,35 +139,38 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
       unknowns.set(unknown.id, unknown);
     }
   }
-  const conditionList = [...nodes.values()];
-  const edges = conditionList.reduce(
-    (count, node) =>
-      count +
-      (node.kind === 'and' || node.kind === 'or'
-        ? node.childIds.length
-        : node.kind === 'not'
-          ? 1
-          : 0),
-    0,
-  );
-  const tooLarge = conditionList.length > 500 || edges > 5000;
-  if (tooLarge)
-    report.undetermined(
-      'condition_graph_too_large',
-      'conditions',
-      '条件の式が検証できる大きさを超える。',
+  // 節点の上限は、複数のお知らせの合計ではなく一つの読み取りごと。
+  for (const extraction of extracted) {
+    const edges = extraction.conditions.reduce(
+      (count, node) =>
+        count +
+        (node.kind === 'and' || node.kind === 'or'
+          ? node.childIds.length
+          : node.kind === 'not'
+            ? 1
+            : 0),
+      0,
     );
-  const conditionProblems = tooLarge
-    ? []
-    : validateConditions(conditionList, [...unknowns.values()]);
-  for (const problem of conditionProblems) {
-    report.violation('invalid_condition', problem.nodeId, '条件の参照・値・循環が不正。');
+    if (extraction.conditions.length > MAX_CONDITION_NODES || edges > 5000) {
+      report.undetermined(
+        'condition_graph_too_large',
+        extraction.sourceId,
+        '条件の式が検証できる大きさを超える。',
+      );
+      for (const node of extraction.conditions) invalidNodes.add(node.id);
+      continue;
+    }
+    for (const problem of validateConditions(extraction.conditions, [...unknowns.values()])) {
+      invalidNodes.add(problem.nodeId);
+      report.violation('invalid_condition', problem.nodeId, '条件の参照・値・循環が不正。');
+    }
   }
   const assignments = new Map<string, string>();
   const memo = new Map<string, Truth>();
   const evaluate = (id: string): Truth => {
     const saved = memo.get(id);
     if (saved !== undefined) return saved;
+    if (invalidNodes.has(id)) return 'unknown';
     const node = nodes.get(id);
     if (!node) return 'unknown';
     let result: Truth = 'unknown';
@@ -172,10 +189,9 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
     memo.set(id, result);
     return result;
   };
-  const canEvaluate = !tooLarge && conditionProblems.length === 0;
   const conditionOf = (item: Item): Truth => {
     if (!item.conditionNodeId) return true;
-    if (!canEvaluate || !nodes.has(item.conditionNodeId)) return 'unknown';
+    if (!nodes.has(item.conditionNodeId)) return 'unknown';
     return evaluate(item.conditionNodeId);
   };
   for (const event of events) {
@@ -238,7 +254,10 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
       for (const effect of item.effects) {
         if (effect.type === 'resolveUnknown') continue;
         const target = items.get(effect.itemId);
-        if (!target || (itemSeq.get(effect.itemId) ?? Number.POSITIVE_INFINITY) > extraction.seq) {
+        if (
+          !target ||
+          (itemSeq.get(effect.itemId) ?? Number.POSITIVE_INFINITY) > extraction.sourceSeq
+        ) {
           report.undetermined(
             'effect_target_missing',
             item.id,

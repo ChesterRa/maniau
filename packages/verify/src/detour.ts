@@ -22,12 +22,10 @@ function acceptedCurrentTime(task: Task, history: History): boolean {
       assigned = event.assigneeId;
       accepted = undefined;
     } else if (event.type === 'commitmentChanged' && event.taskKey === task.key) {
-      if (
-        event.action === 'accept' &&
-        event.actorId === event.assigneeId &&
-        event.assigneeId === assigned &&
-        assigned === task.assigneeId
-      ) {
+      if (event.actorId !== event.assigneeId || (assigned && event.assigneeId !== assigned))
+        continue;
+      assigned = event.assigneeId;
+      if (event.action === 'accept' && assigned === task.assigneeId) {
         accepted = event.shown;
       } else {
         accepted = undefined;
@@ -48,6 +46,7 @@ function acceptedCurrentTime(task: Task, history: History): boolean {
 function checkOtherAdult(
   household: Household,
   plan: PlanResult,
+  history: History,
   task: Task,
   homeId: string,
   planned: number,
@@ -88,7 +87,7 @@ function checkOtherAdult(
     let taskUnknown = false;
     for (const other of plan.tasks) {
       if (other.assigneeId !== adult.id || other.key === task.key) continue;
-      const scope = executionScope(other, plan);
+      const scope = executionScope(other, plan, household, history);
       if (scope === 'inactive' || (scope === 'candidate' && !isRecommended(other, plan))) continue;
       const place = other.atPlaceId ?? other.placeId;
       const away = Boolean(other.detour) || (place !== undefined && place !== homeId);
@@ -115,16 +114,7 @@ function checkOtherAdult(
         ),
       };
       if (!overlaps({ start: planned, end: delayed }, occupied)) continue;
-      const arrangement = plan.arrangements.find(
-        (entry) => entry.key === other.basis.arrangementKey,
-      );
-      const chosen =
-        arrangement &&
-        other.basis.optionKey &&
-        (arrangement.chosenOptionKey === other.basis.optionKey ||
-          arrangement.backupOptionKeys.includes(other.basis.optionKey));
-      if (away && (other.commitment === 'accepted' || other.commitment === 'done' || chosen))
-        unavailable = true;
+      if (away && (scope === 'active' || isRecommended(other, plan))) unavailable = true;
       else taskUnknown = true;
     }
     if (!unavailable && !taskUnknown) return;
@@ -223,7 +213,7 @@ export function checkDetour(
     report.undetermined('detour_places_missing', task.key, '家と店を照らせない。');
     return [commute, next];
   }
-  checkOtherAdult(household, plan, task, home.id, planned, delayed, report);
+  checkOtherAdult(household, plan, history, task, home.id, planned, delayed, report);
   const station = commute.viaStationIds.at(-1);
   if (!station || !home.nearStationId || !store.nearStationId) {
     report.undetermined(
