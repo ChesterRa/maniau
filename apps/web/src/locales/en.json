@@ -188,6 +188,8 @@
     "share": "Send via LINE etc.",
     "copy": "Copy",
     "copied": "Copied",
+    "pasteToSend": "The message is copied. Paste it into LINE or another app to send it.",
+    "copyFailed": "Copying isn't available on this device. Press and hold the message above to select and copy it.",
     "sent": "I sent it",
     "nextLabel": "Next",
     "next1": "When they reply, tap “They said OK” here.",

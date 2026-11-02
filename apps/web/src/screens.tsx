@@ -885,7 +885,15 @@ function BackupCard(props: { ctx: Ctx; arrangement: Arrangement; option: OptionP
   );
 }
 
-function CancelCard({ ctx, task, request }: { ctx: Ctx; task: Task; request: ExternalRequest }) {
+export function CancelCard({
+  ctx,
+  task,
+  request,
+}: {
+  ctx: Ctx;
+  task: Task;
+  request: ExternalRequest;
+}) {
   const [open, setOpen] = useState(false);
   const draft = cancelDraft(ctx, request);
   return (
@@ -897,6 +905,7 @@ function CancelCard({ ctx, task, request }: { ctx: Ctx; task: Task; request: Ext
         <>
           <Quote>{draft}</Quote>
           {!request.window && <Text quiet>{ctx.t('card.cancel.checkDate')}</Text>}
+          <DraftActions ctx={ctx} draft={draft} />
         </>
       ) : (
         <MoreLink onClick={() => setOpen(true)}>{ctx.t('card.cancel.showDraft')}</MoreLink>
@@ -1148,28 +1157,57 @@ function OptionRow({
 
 // ── 頼む（外に出す文） ──────────────────────────────
 
+/** 外に出す文を、端末の共有（LINE など）かコピーで渡す。送るのは家族。 */
+function DraftActions({ ctx, draft }: { ctx: Ctx; draft: string }) {
+  // 何が起きたかは、その時の文と一緒に持つ（言葉の切り替え等で文が替わったら、前の結果を見せない。
+  // 遅れて終わった前の書き込みも、今の文の結果にしない）。
+  const [done, setDone] = useState<{ draft: string; result: 'copied' | 'paste' | 'failed' }>();
+  const result = done?.draft === draft ? done.result : undefined;
+  const write = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const share = async () => {
+    const text = draft;
+    if (navigator.share) {
+      try {
+        await navigator.share({ text });
+        return;
+      } catch (error) {
+        // 中断された時（家族がやめた、または送れる先が無い。規格では見分けられない）は、そのまま（隣の
+        // コピーは使える）。ほかの理由で共有が使えなかった時は、コピーに切り替える。
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+      }
+    }
+    setDone({ draft: text, result: (await write(text)) ? 'paste' : 'failed' });
+  };
+  const copy = async () => {
+    const text = draft;
+    setDone({ draft: text, result: (await write(text)) ? 'copied' : 'failed' });
+  };
+  return (
+    <>
+      <Row>
+        <Button onClick={share}>{ctx.t('ask.share')}</Button>
+        <Button kind="secondary" onClick={copy}>
+          {ctx.t(result === 'copied' || result === 'paste' ? 'ask.copied' : 'ask.copy')}
+        </Button>
+      </Row>
+      {result === 'paste' && <Text>{ctx.t('ask.pasteToSend')}</Text>}
+      {result === 'failed' && <Text>{ctx.t('ask.copyFailed')}</Text>}
+    </>
+  );
+}
+
 export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
   const task = ctx.plan.tasks.find((t) => t.key === taskKey);
-  const [copied, setCopied] = useState(false);
   if (!task) return <Missing ctx={ctx} />;
   const helper = helperOf(ctx, task);
   const draft = askDraft(ctx, task);
-  const share = async () => {
-    try {
-      if (navigator.share) await navigator.share({ text: draft });
-      else await navigator.clipboard.writeText(draft);
-    } catch {
-      // 共有をやめても、画面はそのまま。
-    }
-  };
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(draft);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-  };
   // 送ったと記録する。控え（相手・根拠・条件・時間）は、サーバーが今の計画から作る。
   const sent = async () => {
     const result = await ctx.send({
@@ -1196,12 +1234,7 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
           <p className="whitespace-pre-line text-base leading-relaxed">{draft}</p>
           <Text quiet>{ctx.t('ask.editable')}</Text>
         </Card>
-        <Row>
-          <Button onClick={share}>{ctx.t('ask.share')}</Button>
-          <Button kind="secondary" onClick={copy}>
-            {ctx.t(copied ? 'ask.copied' : 'ask.copy')}
-          </Button>
-        </Row>
+        <DraftActions ctx={ctx} draft={draft} />
         <Button kind="secondary" onClick={() => void sent()}>
           {ctx.t('ask.sent')}
         </Button>
