@@ -2,22 +2,12 @@
 // 画面とサーバーの返事の行き違い（遅れた返事・使う人の切り替え・通信の途切れ）を、偽の fetch で順に
 // 起こす。隔離したブラウザでの確かめで見つかった例を、ここで固定する。
 import type { Command } from '@maniau/core';
-import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type SendResult, type SessionView, useDemoSession } from '../src/family';
+import { type Call, installFetch, step, take as takeFrom } from './fake-fetch';
 
 type Demo = ReturnType<typeof useDemoSession>;
-
-interface Call {
-  url: string;
-  body: { operationId?: string } | undefined;
-  done: boolean;
-  /** 返事を返す。gate を渡すと、中身（json）を読み終えるのを gate まで遅らせる。 */
-  respond: (status: number, payload: unknown, gate?: Promise<void>) => void;
-  /** 通信が途切れた。 */
-  drop: () => void;
-}
 
 const COMMAND = { type: 'answer', unknownId: 'u', value: 'yes' } as Command;
 const view = (throughSeq: number) => ({ throughSeq }) as SessionView;
@@ -35,24 +25,12 @@ function Probe({ member }: { member: string }) {
   return null;
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
-async function step(fn: () => void = () => {}) {
-  await act(async () => {
-    fn();
-    await settle();
-  });
-}
 const render = (member: string) => step(() => root.render(<Probe member={member} />));
 
 const isSession = (c: Call) => c.url === '/api/demo/sessions';
 const isView = (member: string) => (c: Call) => c.url.endsWith(`/view?member=${member}`);
 const isCommand = (c: Call) => c.url.endsWith('/commands');
-/** まだ返事をしていない呼び出しのうち、合う物の最後（一つも無ければ投げる）。 */
-function take(match: (c: Call) => boolean): Call {
-  const found = calls.filter((c) => !c.done && match(c)).at(-1);
-  if (!found) throw new Error('待っている呼び出しが無い');
-  return found;
-}
+const take = (match: (c: Call) => boolean) => takeFrom(calls, match);
 function send(): { result: () => SendResult | undefined } {
   let result: SendResult | undefined;
   void demo?.send(COMMAND).then((r) => {
@@ -62,32 +40,7 @@ function send(): { result: () => SendResult | undefined } {
 }
 
 beforeEach(async () => {
-  calls = [];
-  globalThis.fetch = ((input: string, init?: RequestInit) =>
-    new Promise((resolve, reject) => {
-      const call: Call = {
-        url: String(input),
-        body: init?.body ? JSON.parse(String(init.body)) : undefined,
-        done: false,
-        respond: (status, payload, gate) => {
-          call.done = true;
-          resolve({
-            ok: status >= 200 && status < 300,
-            status,
-            json: async () => {
-              await gate;
-              return payload;
-            },
-          } as Response);
-        },
-        drop: () => {
-          call.done = true;
-          reject(new TypeError('Failed to fetch'));
-        },
-      };
-      calls.push(call);
-    })) as typeof fetch;
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  calls = installFetch();
   root = createRoot(document.createElement('div'));
   await render('a');
   await step(() =>

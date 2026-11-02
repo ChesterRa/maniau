@@ -1,5 +1,7 @@
-// デモの家族：見る人ごとのデモの家庭をサーバーに作り、その大人に見せる物を受け取る。画面の操作は
-// 命令で送る。計画はサーバーだけで作り、画面ではエンジンを動かさない（02-foundation §7.1・§7.2）。
+// 画面とサーバー：見せる物を受け取り、画面の操作を命令で送る。計画はサーバーだけで作り、画面では
+// エンジンを動かさない（02-foundation §7.1・§7.2）。家庭は二通り：見る人ごとのデモの家庭（ログイン
+// なし。段と使う人を選ぶ）と、家族の家庭（Access でログインした大人。使う人は身元で決まる）。
+// 返事の行き違い（遅れた返事・切り替え・途切れ）の扱いは、どちらも同じ（useServerView）。
 import type { Command, DateTime, Household, PlanResult, Source, TodayCard } from '@maniau/core';
 import type { LiveItem } from '@maniau/core/engine';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -52,11 +54,31 @@ export type Notice = 'changed' | 'refused' | 'expired' | 'uncertain';
  */
 interface Operation {
   epoch: number;
-  sessionId: string;
-  memberId: string;
+  where: Where;
   operationId: string;
   command: Command;
 }
+
+/** 見せる物を読み、命令を送る先。 */
+export type Where =
+  | { kind: 'demo'; sessionId: string; memberId: string }
+  | { kind: 'family'; memberId: string };
+
+// 家族の家庭では、画面が見ている大人（as）を添える。今の身元と違えば、サーバーは家庭の物を返さない
+// （別の画面でログインが替わった時、前の人の画面のまま次の人として読む・書くのを防ぐ）。
+const viewUrl = (w: Where) =>
+  w.kind === 'demo'
+    ? `/api/demo/sessions/${w.sessionId}/view?member=${encodeURIComponent(w.memberId)}`
+    : `/api/view?as=${encodeURIComponent(w.memberId)}`;
+const commandUrl = (w: Where) =>
+  w.kind === 'demo' ? `/api/demo/sessions/${w.sessionId}/commands` : '/api/commands';
+// 家族の家庭では、操作する人をサーバーが身元から決める。as は比べるためだけ（権限には使わない）。
+const commandBody = (w: Where, operationId: string, command: Command) =>
+  w.kind === 'demo'
+    ? { memberId: w.memberId, operationId, command }
+    : { as: w.memberId, operationId, command };
+/** 身元を確かめられない・家族の大人でない（家族の家庭だけ）。 */
+const DENIED = new Set(['unauthenticated', 'notAMember']);
 
 const json = { 'content-type': 'application/json' };
 /** 命令の返事を待つ長さ。過ぎたら「届いたか分からない」にする（同じ ID で送り直せる）。 */
@@ -82,57 +104,37 @@ interface Shown {
  * 別にする（名前が同じでも、替える前に送った物の返事を、今の画面に使わない）。
  */
 interface Current {
-  sessionId: string | undefined;
+  key: string | undefined;
   memberId: string | undefined;
   epoch: number;
 }
 
-export function useDemoSession(stage: string, memberId: string | undefined) {
-  const [session, setSession] = useState<Session>();
+/**
+ * 見せる物を読み、命令を送る（デモと家族の家庭で共通）。where が替わる（家庭・使う人）たびに代を
+ * 進め、前の代の返事を使わない。同じ代では、通し番号の古い見せる物で新しい物を上書きしない。
+ */
+export function useServerView(where: Where | undefined) {
   const [shown, setShown] = useState<Shown>();
   const [failed, setFailed] = useState(false);
+  const [denied, setDenied] = useState(false);
+  // ログインの身元が、画面の大人と替わった（家族の家庭だけ）。画面は身元を確かめ直す。
+  const [switched, setSwitched] = useState(false);
   const [notice, setNotice] = useState<Notice>();
-  const [generation, setGeneration] = useState(0);
   const [reload, setReload] = useState(0);
   // 返事を待っている操作の代（同じ代の二度押しを止める。替えた後の人の操作は止めない）。
   const busy = useRef<number | undefined>(undefined);
   // 届いたか分からない操作。新しい操作を送る前に、これを同じ ID で確かめる。
   const pending = useRef<Operation | undefined>(undefined);
-  const current = useRef<Current>({ sessionId: undefined, memberId: undefined, epoch: 0 });
+  const current = useRef<Current>({ key: undefined, memberId: undefined, epoch: 0 });
 
-  // 段を替えるか、やり直すと、新しいデモの家庭を作る。
-  useEffect(() => {
-    void generation;
-    let cancelled = false;
-    setFailed(false);
-    setNotice(undefined);
-    setSession(undefined);
-    setShown(undefined);
-    pending.current = undefined;
-    fetch('/api/demo/sessions', {
-      method: 'POST',
-      headers: json,
-      body: JSON.stringify({ stage }),
-    })
-      .then((response) => {
-        if (!response.ok) throw new Error(String(response.status));
-        return response.json() as Promise<Session>;
-      })
-      .then((made) => {
-        if (!cancelled) setSession(made);
-      })
-      .catch(() => {
-        if (!cancelled) setFailed(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [stage, generation]);
-
-  const sessionId = session?.sessionId;
+  // 効果の依存は文字だけにする（where の物は描画ごとに作り直される）。
+  const kind = where?.kind;
+  const sessionId = where?.kind === 'demo' ? where.sessionId : undefined;
+  const memberId = where?.memberId;
+  const key = kind === undefined ? undefined : `${kind}:${sessionId ?? ''}`;
   // 替わったら、すぐ（描画の中で）代を進める。遅れて届く返事は、どの await の後でも代で確かめる。
-  if (current.current.sessionId !== sessionId || current.current.memberId !== memberId) {
-    current.current = { sessionId, memberId, epoch: current.current.epoch + 1 };
+  if (current.current.key !== key || current.current.memberId !== memberId) {
+    current.current = { key, memberId, epoch: current.current.epoch + 1 };
   }
   const epoch = current.current.epoch;
   const isCurrent = useCallback((at: number) => current.current.epoch === at, []);
@@ -157,13 +159,24 @@ export function useDemoSession(stage: string, memberId: string | undefined) {
   // 使う人を替えたら（届いたか分からない時も）、その人の見せる物を読み直す。
   useEffect(() => {
     void reload;
-    if (!sessionId || !memberId) return;
+    if (!kind || !memberId) return;
+    if (kind === 'demo' && !sessionId) return;
+    const target: Where =
+      kind === 'demo' ? { kind, sessionId: sessionId ?? '', memberId } : { kind, memberId };
     const at = current.current.epoch;
     let cancelled = false;
     const usable = () => !cancelled && isCurrent(at);
-    fetch(`/api/demo/sessions/${sessionId}/view?member=${encodeURIComponent(memberId)}`)
+    fetch(viewUrl(target))
       .then(async (response) => {
-        if (response.status === 404) {
+        if (response.status === 401 || response.status === 403) {
+          if (usable()) setDenied(true);
+          return;
+        }
+        if (response.status === 409 && target.kind === 'family') {
+          if (usable()) setSwitched(true);
+          return;
+        }
+        if (response.status === 404 && target.kind === 'demo') {
           if (usable()) setNotice('expired');
           return;
         }
@@ -177,11 +190,11 @@ export function useDemoSession(stage: string, memberId: string | undefined) {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, memberId, reload, isCurrent, show]);
+  }, [kind, sessionId, memberId, reload, isCurrent, show]);
 
   const deliver = useCallback(
     async (operation: Operation): Promise<SendResult> => {
-      const { epoch: at, sessionId, memberId, operationId, command } = operation;
+      const { epoch: at, where: target, operationId, command } = operation;
       // 待つ間（中身を読む間も）に、段・やり直し・使う人が替わっていたら（替えて戻った時も）、この
       // 返事は使わず、前の画面の続き（移る等）もさせない。今の画面は読み直す。
       const stale = (): SendResult => {
@@ -192,13 +205,13 @@ export function useDemoSession(stage: string, memberId: string | undefined) {
       if (busy.current === at) return { status: 'failed', reason: 'busy' };
       busy.current = at;
       try {
-        const response = await fetch(`/api/demo/sessions/${sessionId}/commands`, {
+        const response = await fetch(commandUrl(target), {
           method: 'POST',
           headers: json,
-          body: JSON.stringify({ memberId, operationId, command }),
+          body: JSON.stringify(commandBody(target, operationId, command)),
           signal: AbortSignal.timeout(COMMAND_TIMEOUT_MS),
         });
-        if (response.status === 404) {
+        if (response.status === 404 && target.kind === 'demo') {
           if (pending.current?.operationId === operationId) pending.current = undefined;
           if (!isCurrent(at)) return stale();
           setNotice('expired');
@@ -211,7 +224,9 @@ export function useDemoSession(stage: string, memberId: string | undefined) {
         if (pending.current?.operationId === operationId) pending.current = undefined;
         if (!isCurrent(at)) return stale();
         if (!('result' in body)) {
-          setNotice('refused');
+          if (DENIED.has(body.error)) setDenied(true);
+          else if (body.error === 'identityChanged') setSwitched(true);
+          else setNotice('refused');
           return { status: 'invalid', reason: body.error };
         }
         // 断られても、返った新しい見せる物で見せ直す。
@@ -241,32 +256,33 @@ export function useDemoSession(stage: string, memberId: string | undefined) {
     (command: Command): Promise<SendResult> => {
       const now = current.current;
       // 前の描画の押下（今の人と違う人のまま）を、今の人の操作として送らない。
-      if (!sessionId || !memberId || now.sessionId !== sessionId || now.memberId !== memberId) {
+      if (!kind || !memberId || now.key !== key || now.memberId !== memberId) {
         return Promise.resolve({ status: 'failed', reason: 'stale' });
       }
+      if (kind === 'demo' && !sessionId) return Promise.resolve({ status: 'failed' });
       // 届いたか分からない操作が残っていれば、先にそれを確かめてもらう。
       if (pending.current) {
         setNotice('uncertain');
         return Promise.resolve({ status: 'failed', reason: 'uncertain' });
       }
-      return deliver({
-        epoch: now.epoch,
-        sessionId,
-        memberId,
-        operationId: operationId(),
-        command,
-      });
+      const target: Where =
+        kind === 'demo' ? { kind, sessionId: sessionId ?? '', memberId } : { kind, memberId };
+      return deliver({ epoch: now.epoch, where: target, operationId: operationId(), command });
     },
-    [deliver, sessionId, memberId],
+    [deliver, kind, key, sessionId, memberId],
   );
 
-  // 今の代の見せる物だけを返す（替えた直後は、読み終えるまで何も見せない）。
-  const view = shown && shown.epoch === epoch ? shown.view : undefined;
+  // 今の代の見せる物だけを返す（替えた直後は、読み終えるまで何も見せない）。家族の大人でなく
+  // なった（外された）と分かったら、前に読んだ物も見せない。
+  const view = shown && shown.epoch === epoch && !denied && !switched ? shown.view : undefined;
 
   return {
-    session,
     view,
     failed,
+    /** 身元を確かめられない・家族の大人でない（家族の家庭だけ）。 */
+    denied,
+    /** ログインの身元が、画面の大人と替わった（家族の家庭だけ。身元を確かめ直す）。 */
+    switched,
     notice,
     clearNotice: () => setNotice(undefined),
     send,
@@ -282,6 +298,92 @@ export function useDemoSession(stage: string, memberId: string | undefined) {
       pending.current = undefined;
       setNotice(undefined);
     },
+  };
+}
+
+export type ServerView = ReturnType<typeof useServerView>;
+
+/** デモの家庭：段を替えるか、やり直すと、新しいデモの家庭をサーバーに作る。 */
+export function useDemoSession(stage: string, memberId: string | undefined) {
+  const [session, setSession] = useState<Session>();
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [generation, setGeneration] = useState(0);
+
+  useEffect(() => {
+    void generation;
+    let cancelled = false;
+    setSessionFailed(false);
+    setSession(undefined);
+    fetch('/api/demo/sessions', {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ stage }),
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(String(response.status));
+        return response.json() as Promise<Session>;
+      })
+      .then((made) => {
+        if (!cancelled) setSession(made);
+      })
+      .catch(() => {
+        if (!cancelled) setSessionFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [stage, generation]);
+
+  const live = useServerView(
+    session && memberId ? { kind: 'demo', sessionId: session.sessionId, memberId } : undefined,
+  );
+  return {
+    ...live,
+    session,
+    failed: sessionFailed || live.failed,
     restart: () => setGeneration((g) => g + 1),
   };
+}
+
+/** 家族の家庭（ログインした大人。使う人は身元で決まり、替えない）。 */
+export function useFamilySession(memberId: string) {
+  return useServerView({ kind: 'family', memberId });
+}
+
+/** どちらの家庭を見せるか（サーバーに聞く）。家族の家庭の無いサーバーは、デモだけ。 */
+export type Mode =
+  | { kind: 'loading' }
+  | { kind: 'demo' }
+  | { kind: 'family'; memberId: string }
+  | { kind: 'denied' }
+  | { kind: 'failed' };
+
+/** どちらの家庭か。recheck で、ログインの身元を確かめ直す（替わった時）。 */
+export function useMode(): { mode: Mode; recheck: () => void } {
+  const [mode, setMode] = useState<Mode>({ kind: 'loading' });
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    void version;
+    let cancelled = false;
+    setMode({ kind: 'loading' });
+    fetch('/api/me')
+      .then(async (response): Promise<Mode> => {
+        if (response.status === 401 || response.status === 403) return { kind: 'denied' };
+        if (!response.ok) throw new Error(String(response.status));
+        const me = (await response.json()) as
+          | { mode: 'demo' }
+          | { mode: 'family'; memberId: string };
+        return me.mode === 'family' ? { kind: 'family', memberId: me.memberId } : { kind: 'demo' };
+      })
+      .then((next) => {
+        if (!cancelled) setMode(next);
+      })
+      .catch(() => {
+        if (!cancelled) setMode({ kind: 'failed' });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [version]);
+  return { mode, recheck: () => setVersion((v) => v + 1) };
 }

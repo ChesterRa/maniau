@@ -15,7 +15,8 @@
     "label": "Language"
   },
   "error": {
-    "load": "Couldn't load. Please try again."
+    "load": "Couldn't load. Please try again.",
+    "denied": "This account isn't registered as an adult in this family. Ask your family to invite you."
   },
   "loading": "Loading…",
   "demo": {

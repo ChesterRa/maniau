@@ -1,8 +1,17 @@
-// 画面の外枠：デモの操作（段・使う人・言葉・やり直す）、知らせ、画面の切り替え、下のタブ。
+// 画面の外枠：どちらの家庭か（デモ・家族）、知らせ、画面の切り替え、下のタブ。デモでは段・使う人・
+// 言葉・やり直すを選べる。家族の家庭では、使う人はログインの身元で決まり、言葉だけを選ぶ。
 // 計画と「きょう」の札はサーバーが作る。ここは受け取った見せる物を画面に渡し、命令を送るだけ。
+import type { Member } from '@maniau/core';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { type Notice, useDemoSession } from './family';
+import {
+  type Notice,
+  type Reading,
+  type ServerView,
+  useDemoSession,
+  useFamilySession,
+  useMode,
+} from './family';
 import { formatDayTime } from './format';
 import { isUiLanguage, rememberedLanguage, rememberLanguage, type UiLanguage } from './i18n';
 import {
@@ -17,9 +26,110 @@ import {
 import { TabBar } from './ui';
 
 const FIRST_STAGE = 'arrived';
+const FRAME = 'mx-auto flex min-h-dvh max-w-md flex-col';
 
 export function App() {
+  const { t } = useTranslation();
+  const { mode, recheck } = useMode();
+  if (mode.kind === 'demo') return <DemoApp />;
+  // 身元が替わったら確かめ直す。確かめる間は読み込み中で、前の人の画面は捨てる（作り直す）。
+  if (mode.kind === 'family') {
+    return <FamilyApp key={mode.memberId} memberId={mode.memberId} onSwitched={recheck} />;
+  }
+  const key =
+    mode.kind === 'loading' ? 'loading' : mode.kind === 'denied' ? 'error.denied' : 'error.load';
+  return (
+    <div className={FRAME}>
+      <p className={`px-5 py-4 ${mode.kind === 'loading' ? 'text-sub' : 'text-warn'}`}>{t(key)}</p>
+    </div>
+  );
+}
+
+/** 使う人が選んだ言葉にする（人ごとに覚える）。 */
+function useMemberLanguage(me: Member | undefined) {
+  const { i18n } = useTranslation();
+  useEffect(() => {
+    if (!me) return;
+    const fallback = isUiLanguage(me.uiLanguage) ? me.uiLanguage : 'ja';
+    void i18n.changeLanguage(rememberedLanguage(me.id, fallback));
+  }, [me, i18n]);
+  const lang: UiLanguage = isUiLanguage(i18n.language) ? i18n.language : 'ja';
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
+  const chooseLanguage = (next: UiLanguage) => {
+    if (me) rememberLanguage(me.id, next);
+    void i18n.changeLanguage(next);
+  };
+  return { lang, chooseLanguage };
+}
+
+/** 画面の本体（家庭の種類によらない）：知らせ、読み込みの状態、画面、下のタブ。 */
+function Body(props: {
+  live: ServerView;
+  me: Member | undefined;
+  readings: Reading[];
+  lang: UiLanguage;
+  route: Route;
+  onRoute: (route: Route) => void;
+  onRestart?: () => void;
+}) {
   const { t, i18n } = useTranslation();
+  const { live, me, lang, route } = props;
+  const { view } = live;
+  const go = (next: Route) => {
+    live.clearNotice();
+    props.onRoute(next);
+    window.scrollTo({ top: 0 });
+  };
+  const ctx: Ctx | undefined =
+    view && me
+      ? {
+          plan: view.plan,
+          household: view.household,
+          today: view.today,
+          items: view.items,
+          sources: new Map(view.sources.map((s) => [s.id, s])),
+          readings: props.readings,
+          me,
+          lang,
+          tz: view.household.timeZone,
+          now: view.now,
+          t,
+          outbound: (lng) => i18n.getFixedT(lng),
+          send: live.send,
+          go,
+        }
+      : undefined;
+  return (
+    <>
+      {live.notice && (
+        <NoticeBanner
+          notice={live.notice}
+          onClose={live.notice === 'uncertain' ? live.discard : live.clearNotice}
+          {...(props.onRestart ? { onRestart: props.onRestart } : {})}
+          onRetry={() => void live.retry()}
+        />
+      )}
+      {live.denied && <p className="px-5 py-4 text-warn">{t('error.denied')}</p>}
+      {live.failed && <p className="px-5 py-4 text-warn">{t('error.load')}</p>}
+      {!live.failed && !live.denied && !ctx && <p className="px-5 py-4 text-sub">{t('loading')}</p>}
+      {ctx && <Screen ctx={ctx} route={route} />}
+      {ctx && (
+        <TabBar
+          active={route.name === 'week' ? 'week' : 'today'}
+          labels={{ today: t('nav.today'), snap: t('nav.snap'), week: t('nav.week') }}
+          onToday={() => go({ name: 'today' })}
+          onSnap={() => go({ name: 'sources' })}
+          onWeek={() => go({ name: 'week' })}
+        />
+      )}
+    </>
+  );
+}
+
+/** デモ：見る人ごとのデモの家庭（架空の家族）。段・使う人・言葉を選び、やり直せる。 */
+function DemoApp() {
   const [stage, setStage] = useState(FIRST_STAGE);
   const [memberId, setMemberId] = useState<string>();
   const [route, setRoute] = useState<Route>({ name: 'today' });
@@ -42,93 +152,72 @@ export function App() {
     [household],
   );
   const me = adults.find((m) => m.id === memberId);
-
-  // 使う人を替えたら、その人が選んだ言葉にする。
-  useEffect(() => {
-    if (!me) return;
-    const fallback = isUiLanguage(me.uiLanguage) ? me.uiLanguage : 'ja';
-    void i18n.changeLanguage(rememberedLanguage(me.id, fallback));
-  }, [me, i18n]);
-  const lang: UiLanguage = isUiLanguage(i18n.language) ? i18n.language : 'ja';
-  useEffect(() => {
-    document.documentElement.lang = lang;
-  }, [lang]);
-
-  const chooseLanguage = (next: UiLanguage) => {
-    if (me) rememberLanguage(me.id, next);
-    void i18n.changeLanguage(next);
-  };
-  const go = (next: Route) => {
-    demo.clearNotice();
-    setRoute(next);
-    window.scrollTo({ top: 0 });
-  };
-  const switchStage = (next: string) => {
-    setStage(next);
+  const { lang, chooseLanguage } = useMemberLanguage(me);
+  const restart = () => {
+    demo.restart();
     setRoute({ name: 'today' });
   };
-  const switchMember = (next: string) => {
-    setMemberId(next);
-    setRoute({ name: 'today' });
-  };
-
-  const ctx: Ctx | undefined =
-    view && me && session
-      ? {
-          plan: view.plan,
-          household: view.household,
-          today: view.today,
-          items: view.items,
-          sources: new Map(view.sources.map((s) => [s.id, s])),
-          readings: session.readings,
-          me,
-          lang,
-          tz: view.household.timeZone,
-          now: view.now,
-          t,
-          outbound: (lng) => i18n.getFixedT(lng),
-          send: demo.send,
-          go,
-        }
-      : undefined;
 
   return (
-    <div className="mx-auto flex min-h-dvh max-w-md flex-col">
+    <div className={FRAME}>
       <DemoBar
         stages={session?.stages.map((s) => s.id) ?? [FIRST_STAGE]}
         stage={stage}
-        onStage={switchStage}
+        onStage={(next) => {
+          setStage(next);
+          setRoute({ name: 'today' });
+        }}
         adults={adults.map((m) => ({ value: m.id, label: m.name }))}
         member={memberId}
-        onMember={switchMember}
+        onMember={(next) => {
+          setMemberId(next);
+          setRoute({ name: 'today' });
+        }}
         lang={lang}
         onLang={chooseLanguage}
         clock={view ? formatDayTime(view.now, lang, view.household.timeZone) : undefined}
-        onRestart={() => {
-          demo.restart();
-          setRoute({ name: 'today' });
-        }}
+        onRestart={restart}
       />
-      {demo.notice && (
-        <NoticeBanner
-          notice={demo.notice}
-          onClose={demo.notice === 'uncertain' ? demo.discard : demo.clearNotice}
-          onRestart={demo.restart}
-          onRetry={() => void demo.retry()}
+      <Body
+        live={demo}
+        me={me}
+        readings={session?.readings ?? []}
+        lang={lang}
+        route={route}
+        onRoute={setRoute}
+        onRestart={restart}
+      />
+    </div>
+  );
+}
+
+/** 家族の家庭：ログインした大人の画面。使う人は替えず、言葉だけを選ぶ。 */
+function FamilyApp({ memberId, onSwitched }: { memberId: string; onSwitched: () => void }) {
+  const { t } = useTranslation();
+  const [route, setRoute] = useState<Route>({ name: 'today' });
+  const live = useFamilySession(memberId);
+  useEffect(() => {
+    if (live.switched) onSwitched();
+  }, [live.switched, onSwitched]);
+  const me = live.view?.household.members.find(
+    (m) => m.id === memberId && m.kind === 'adult' && m.active,
+  );
+  const { lang, chooseLanguage } = useMemberLanguage(me);
+  return (
+    <div className={FRAME}>
+      <div className="mx-3 mt-2 flex flex-wrap items-center justify-between gap-2 px-1 text-sm">
+        <span className="font-bold">{me?.name ?? ''}</span>
+        <Switcher
+          label={t('language.label')}
+          options={[
+            { value: 'ja', label: '日本語' },
+            { value: 'en', label: 'English' },
+          ]}
+          value={lang}
+          onChange={(v) => isUiLanguage(v) && chooseLanguage(v)}
         />
-      )}
-      {demo.failed && <p className="px-5 py-4 text-warn">{t('error.load')}</p>}
-      {!demo.failed && !ctx && <p className="px-5 py-4 text-sub">{t('loading')}</p>}
-      {ctx && <Screen ctx={ctx} route={route} />}
-      {ctx && (
-        <TabBar
-          active={route.name === 'week' ? 'week' : 'today'}
-          labels={{ today: t('nav.today'), snap: t('nav.snap'), week: t('nav.week') }}
-          onToday={() => go({ name: 'today' })}
-          onSnap={() => go({ name: 'sources' })}
-          onWeek={() => go({ name: 'week' })}
-        />
-      )}
+      </div>
+      <Body live={live} me={me} readings={[]} lang={lang} route={route} onRoute={setRoute} />
     </div>
   );
 }
@@ -158,7 +247,8 @@ function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {
 function NoticeBanner(props: {
   notice: Notice;
   onClose: () => void;
-  onRestart: () => void;
+  /** デモだけ（古くなったデモの家庭を作り直す）。 */
+  onRestart?: () => void;
   onRetry: () => void;
 }) {
   const { t } = useTranslation();
@@ -169,7 +259,7 @@ function NoticeBanner(props: {
       className="mx-4 mt-2 flex flex-wrap items-start gap-x-3 gap-y-1 rounded-2xl border border-bag-line bg-bag px-4 py-3"
     >
       <p className="min-w-0 flex-1 basis-60 text-base">{t(`notice.${props.notice}`)}</p>
-      {props.notice === 'expired' ? (
+      {props.notice === 'expired' && props.onRestart ? (
         <button type="button" onClick={props.onRestart} className={action}>
           {t('demo.restart')}
         </button>
