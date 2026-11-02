@@ -511,6 +511,34 @@ export function checkPlan(
       }
       for (const id of requirement.basis.itemIds) {
         const item = facts.items.get(id);
+        const correction = facts.corrections.get(id);
+        if (facts.staleItems.has(id) && requirement.conditional !== true) {
+          report.violation(
+            'stale_item_unmarked',
+            requirement.key,
+            '書き直し前の読み取りによる要件を、確かな物としている。',
+          );
+        }
+        if (
+          requirement.kind === 'belongings' &&
+          item?.kind === 'belongings' &&
+          correction?.what &&
+          requirement.what !== correction.what
+        ) {
+          if (facts.staleItems.has(id)) {
+            report.undetermined(
+              'corrected_requirement_stale',
+              requirement.key,
+              '書き直し前の訂正と現在の要件を照らせない。',
+            );
+          } else {
+            report.violation(
+              'corrected_requirement_mismatch',
+              requirement.key,
+              '家族が直した品名と要件が違う。',
+            );
+          }
+        }
         if (item && (item.evidence === 'inferred' || item.evidence === 'conflicting')) {
           report.violation(
             'unconfirmed_required_item',

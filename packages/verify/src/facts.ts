@@ -2,6 +2,7 @@ import {
   type ConditionNode,
   type DomainEvent,
   Extraction,
+  type Interpretation,
   type Item,
   MAX_CONDITION_NODES,
   type Source,
@@ -18,6 +19,8 @@ export interface FactState {
   unknowns: Map<string, Unknown>;
   conditions: Map<string, ConditionNode>;
   changes: Map<string, { kind: 'replace' | 'cancel'; itemId: string; active: Truth }[]>;
+  staleItems: Set<string>;
+  corrections: Map<string, Interpretation>;
 }
 
 /** 送信時の根拠は、確かな一対一の置き換えをたどる。競合や循環は決めつけない。 */
@@ -47,6 +50,7 @@ interface Extracted extends Extraction {
   sourceSeq: number;
   eventId: string;
   source: Source | undefined;
+  sourceVersion: number;
 }
 
 function checkCoverage(
@@ -85,36 +89,184 @@ function checkCoverage(
 export function collectFacts(events: readonly DomainEvent[], report: Collector): FactState {
   const sources = new Map<string, { source: Source; seq: number }>();
   const latestBySource = new Map<string, Extracted>();
+  const correctedSources = new Set<string>();
+  const withdrawnSources = new Set<string>();
+  const purgedSources = new Set<string>();
+  const declaredBySource = new Map<string, Set<string>>();
+  const seenItems = new Set<string>();
+  const invalidExtractions: { eventId: string; sourceId?: string }[] = [];
+  const corrections = new Map<string, Interpretation>();
+  const verdicts = new Map<string, 'confirmed' | 'dismissed'>();
   for (const event of events) {
-    if (event.type === 'noticeReceived')
+    if (event.type === 'noticeReceived') {
+      if (purgedSources.has(event.source.id)) {
+        report.violation(
+          'purged_source_id_reused',
+          event.id,
+          '中身を消した出典の ID を再び使っている。',
+        );
+        continue;
+      }
       sources.set(event.source.id, { source: event.source, seq: event.seq });
+      continue;
+    }
+    if (event.type === 'transcriptionCorrected') {
+      const entry = sources.get(event.sourceId);
+      if (!entry || purgedSources.has(event.sourceId)) {
+        report.undetermined(
+          'transcription_source_unverified',
+          event.id,
+          '直す出典を確認できない。',
+        );
+      } else if (event.sourceVersion <= entry.source.version) {
+        report.violation(
+          'transcription_version_invalid',
+          event.id,
+          '書き起こしの版が進んでいない。',
+        );
+      } else {
+        sources.set(event.sourceId, {
+          ...entry,
+          source: { ...entry.source, version: event.sourceVersion, sentences: event.sentences },
+        });
+        correctedSources.add(event.sourceId);
+      }
+      continue;
+    }
+    if (event.type === 'sourceWithdrawn') {
+      if (sources.has(event.sourceId)) withdrawnSources.add(event.sourceId);
+      else
+        report.undetermined('source_event_unverified', event.id, '取り下げる出典を確認できない。');
+      continue;
+    }
+    if (event.type === 'sourceContentPurged') {
+      if (event.actorId !== 'system') continue;
+      if (!sources.has(event.sourceId)) {
+        report.undetermined('source_event_unverified', event.id, '消す出典を確認できない。');
+      } else if (event.scope === 'all') {
+        purgedSources.add(event.sourceId);
+      }
+      continue;
+    }
+    if (
+      event.type === 'itemConfirmed' ||
+      event.type === 'itemCorrected' ||
+      event.type === 'itemDismissed'
+    ) {
+      if (!seenItems.has(event.itemId)) {
+        report.undetermined(
+          'item_action_target_unverified',
+          event.id,
+          '操作する事項を確認できない。',
+        );
+        continue;
+      }
+      if (event.type === 'itemCorrected') {
+        corrections.set(event.itemId, {
+          ...corrections.get(event.itemId),
+          ...event.interpretation,
+        });
+      }
+      verdicts.set(event.itemId, event.type === 'itemDismissed' ? 'dismissed' : 'confirmed');
+      continue;
+    }
     if (event.type !== 'modelOutputRecorded' || event.call !== 'extract') continue;
+    if (event.sourceId && purgedSources.has(event.sourceId)) {
+      report.undetermined(
+        'purged_source_reading_ignored',
+        event.id,
+        '消した出典の読み取りを使わない。',
+      );
+      continue;
+    }
     const parsed = Extraction.safeParse(event.output);
     if (!parsed.success) {
-      report.violation('invalid_extraction', event.id, '読み取り結果の型が不正。');
+      invalidExtractions.push({
+        eventId: event.id,
+        ...(event.sourceId ? { sourceId: event.sourceId } : {}),
+      });
       continue;
     }
     const extraction = parsed.data;
+    if (purgedSources.has(extraction.sourceId)) continue;
     if (event.sourceId && event.sourceId !== extraction.sourceId) {
       report.violation('extraction_source_mismatch', event.id, '事象と読み取り結果の出典が違う。');
+      continue;
+    }
+    const inconsistentItems = extraction.items.filter(
+      (item) => item.sourceId !== extraction.sourceId,
+    );
+    if (inconsistentItems.length > 0) {
+      for (const item of inconsistentItems)
+        report.violation('item_source_mismatch', item.id, '事項の出典と読み取りの出典が違う。');
+      continue;
     }
     const received = sources.get(extraction.sourceId);
+    if (!received) {
+      report.undetermined('source_missing', event.id, '読み取り時に届いていた出典を確認できない。');
+      continue;
+    }
+    if (event.sourceVersion === undefined && correctedSources.has(extraction.sourceId)) {
+      report.undetermined(
+        'extraction_version_unknown',
+        event.id,
+        '読み取った文の版を確認できない。',
+      );
+      continue;
+    }
+    const sourceVersion = event.sourceVersion ?? received?.source.version ?? 1;
+    if (received && sourceVersion > received.source.version) {
+      report.violation('extraction_version_future', event.id, 'まだ存在しない版の文を読んでいる。');
+      continue;
+    }
+    const previous = latestBySource.get(extraction.sourceId);
+    if (previous && sourceVersion < previous.sourceVersion) continue;
+    const declared = declaredBySource.get(extraction.sourceId) ?? new Set<string>();
+    for (const unknown of extraction.unknowns) declared.add(unknown.id);
+    declaredBySource.set(extraction.sourceId, declared);
+    for (const entry of extraction.items) seenItems.add(entry.id);
     const entry = {
       ...extraction,
       seq: event.seq,
       sourceSeq: received?.seq ?? event.seq,
       eventId: event.id,
       source: received?.source,
+      sourceVersion,
     };
     latestBySource.set(extraction.sourceId, entry);
   }
 
-  const extracted = [...latestBySource.values()].sort((a, b) => a.sourceSeq - b.sourceSeq);
+  for (const invalid of invalidExtractions) {
+    if (
+      (invalid.sourceId && purgedSources.has(invalid.sourceId)) ||
+      (!invalid.sourceId && purgedSources.size > 0)
+    ) {
+      report.undetermined(
+        'purged_extraction_unavailable',
+        invalid.eventId,
+        '消した出典の読み取り内容を検査できない。',
+      );
+    } else {
+      report.violation('invalid_extraction', invalid.eventId, '読み取り結果の型が不正。');
+    }
+  }
+  const retired = new Set<string>();
+  for (const sourceId of new Set([...withdrawnSources, ...purgedSources])) {
+    for (const id of declaredBySource.get(sourceId) ?? []) retired.add(id);
+  }
+  const extracted = [...latestBySource.values()]
+    .filter((entry) => !purgedSources.has(entry.sourceId))
+    .sort((a, b) => a.sourceSeq - b.sourceSeq);
+  const staleItems = new Set<string>();
+  for (const extraction of extracted) {
+    const currentVersion = sources.get(extraction.sourceId)?.source.version;
+    if (currentVersion !== undefined && extraction.sourceVersion < currentVersion) {
+      for (const entry of extraction.items) staleItems.add(entry.id);
+    }
+  }
   // 再読は通知を新しくしない。家族の後の答えを、再読しただけで上書きしない。
   for (const extraction of extracted) {
     for (const item of extraction.items) {
-      if (item.sourceId !== extraction.sourceId)
-        report.violation('item_source_mismatch', item.id, '事項の出典と読み取りの出典が違う。');
       const { date, writtenWeekday } = item.interpretation;
       if (writtenWeekday !== undefined && date === undefined) {
         report.undetermined('weekday_date_missing', item.id, '書かれた曜日と照らす日付がない。');
@@ -137,12 +289,19 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   const invalidNodes = new Set<string>();
   const unknowns = new Map<string, Unknown>();
   for (const extraction of extracted) {
-    for (const item of extraction.items) {
-      if (items.has(item.id))
-        report.violation('duplicate_item', item.id, '事項の ID が重複している。');
-      items.set(item.id, item);
-      itemSeq.set(item.id, extraction.sourceSeq);
+    for (const raw of extraction.items) {
+      if (items.has(raw.id))
+        report.violation('duplicate_item', raw.id, '事項の ID が重複している。');
+      const correction = corrections.get(raw.id);
+      const item: Item = {
+        ...raw,
+        ...(correction ? { interpretation: { ...raw.interpretation, ...correction } } : {}),
+        ...(verdicts.get(raw.id) === 'confirmed' ? { evidence: 'confirmed' } : {}),
+      };
+      items.set(raw.id, item);
+      itemSeq.set(raw.id, extraction.sourceSeq);
     }
+    if (withdrawnSources.has(extraction.sourceId)) continue;
     for (const node of extraction.conditions) {
       if (nodes.has(node.id)) {
         report.violation('duplicate_condition', node.id, '条件の ID が重複している。');
@@ -151,6 +310,7 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
       nodes.set(node.id, node);
     }
     for (const unknown of extraction.unknowns) {
+      if (retired.has(unknown.id)) continue;
       const old = unknowns.get(unknown.id);
       if (old && JSON.stringify(old.values) !== JSON.stringify(unknown.values)) {
         report.violation(
@@ -164,6 +324,7 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   }
   // 節点の上限は、複数のお知らせの合計ではなく一つの読み取りごと。
   for (const extraction of extracted) {
+    if (withdrawnSources.has(extraction.sourceId)) continue;
     const edges = extraction.conditions.reduce(
       (count, node) =>
         count +
@@ -185,7 +346,18 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
     }
     for (const problem of validateConditions(extraction.conditions, [...unknowns.values()])) {
       invalidNodes.add(problem.nodeId);
-      report.violation('invalid_condition', problem.nodeId, '条件の参照・値・循環が不正。');
+      if (
+        problem.problem === 'undeclaredUnknown' &&
+        (retired.has(problem.detail ?? '') || purgedSources.size > 0)
+      ) {
+        report.undetermined(
+          'condition_source_unavailable',
+          problem.nodeId,
+          '条件の出典を確認できない。',
+        );
+      } else {
+        report.violation('invalid_condition', problem.nodeId, '条件の参照・値・循環が不正。');
+      }
     }
   }
   // 未定値ごとに、最後に効く可能性のある答えを列挙する。条件が不明なら「効く」と「効かない」の両方を
@@ -200,11 +372,22 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   };
   for (const event of events) {
     if (event.type === 'answered') {
+      if (retired.has(event.unknownId)) continue;
+      if (purgedSources.size > 0 && !unknowns.has(event.unknownId)) {
+        report.undetermined(
+          'answer_source_unverified',
+          event.unknownId,
+          '答えの出典を確認できない。',
+        );
+        continue;
+      }
       addCandidate(event.unknownId, { value: event.value, seq: event.seq, order: order++ });
     }
   }
   for (const extraction of extracted) {
-    for (const item of extraction.items) {
+    for (const raw of extraction.items) {
+      const item = items.get(raw.id);
+      if (!item) continue;
       for (const effect of item.effects) {
         if (effect.type === 'resolveUnknown') {
           addCandidate(effect.unknownId, {
@@ -262,7 +445,9 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   };
   const changes = new Map<string, Item[]>();
   for (const extraction of extracted) {
-    for (const item of extraction.items) {
+    for (const raw of extraction.items) {
+      const item = items.get(raw.id);
+      if (!item) continue;
       for (const effect of item.effects) {
         if (effect.type === 'resolveUnknown') continue;
         if (
@@ -277,6 +462,8 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
     }
   }
   const baseActivity = (item: Item): Truth => {
+    if (withdrawnSources.has(item.sourceId) || verdicts.get(item.id) === 'dismissed') return false;
+    if (staleItems.has(item.id)) return 'unknown';
     const condition = conditionOf(item);
     if (condition === false) return false;
     return item.evidence === 'inferred' || item.evidence === 'conflicting' ? 'unknown' : condition;
@@ -381,7 +568,9 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   }
   const itemChanges: FactState['changes'] = new Map();
   for (const extraction of extracted) {
-    for (const item of extraction.items) {
+    for (const raw of extraction.items) {
+      const item = items.get(raw.id);
+      if (!item) continue;
       for (const effect of item.effects) {
         if (effect.type === 'resolveUnknown') continue;
         if (
@@ -416,5 +605,13 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
       }
     }
   }
-  return { items, active, unknowns, conditions: nodes, changes: itemChanges };
+  return {
+    items,
+    active,
+    unknowns,
+    conditions: nodes,
+    changes: itemChanges,
+    staleItems,
+    corrections,
+  };
 }

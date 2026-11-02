@@ -1,4 +1,4 @@
-import type { DomainEvent, Household, PlanResult, Truth } from '@maniau/core';
+import type { DomainEvent, Household, PlanResult, ProposalSnapshot, Truth } from '@maniau/core';
 import { collectFacts, type FactState, historicalItem } from './facts';
 import { Collector } from './report';
 import { instantMinute } from './time';
@@ -39,6 +39,8 @@ export interface History {
   complete: boolean;
   requests: Map<string, SentRequest>;
   selections: Map<string, Selection>;
+  approvals: Map<string, { assigneeId: string; shown?: ProposalSnapshot }>;
+  commitments: Map<string, string>;
 }
 
 /** 計画に含めた通し番号までだけを使う。欠けた列は、無かった事の証明にしない。 */
@@ -83,10 +85,56 @@ export function checkHistory(
 
   const assignments = new Map<string, string>();
   const commitment = new Map<string, string>();
+  const commitmentChanges: { taskKey: string; state: string; requestId?: string }[] = [];
+  const correctedRequests = new Set<string>();
+  const approvals = new Map<string, { assigneeId: string; shown?: ProposalSnapshot }>();
   const requests = new Map<string, SentRequest>();
+  const seenRequests = new Set<string>();
   const selections = new Map<string, Selection>();
+  const excluded = new Set<string>();
+  let householdAtTime: Household | undefined;
   for (const event of ordered) {
     if (event.householdId !== household.id) continue;
+    if (event.type === 'householdSet') householdAtTime = event.household;
+    if (
+      (event.type === 'notified' || event.type === 'sourceContentPurged') &&
+      event.actorId !== 'system'
+    ) {
+      report.violation('system_event_actor_invalid', event.id, '仕組みだけが記録できる事象。');
+      excluded.add(event.id);
+      continue;
+    }
+    if (
+      event.type === 'itemConfirmed' ||
+      event.type === 'itemCorrected' ||
+      event.type === 'itemDismissed' ||
+      event.type === 'sourceWithdrawn' ||
+      event.type === 'transcriptionCorrected' ||
+      event.type === 'requestRecordCorrected'
+    ) {
+      const member = householdAtTime?.members.find((entry) => entry.id === event.actorId);
+      if (
+        event.actorId === 'system' ||
+        (householdAtTime && (member?.kind !== 'adult' || !member.active))
+      ) {
+        report.violation(
+          'family_event_actor_invalid',
+          event.id,
+          '有効な大人だけが記録できる事象。',
+        );
+        excluded.add(event.id);
+        continue;
+      }
+      if (!householdAtTime) {
+        report.undetermined(
+          'family_event_actor_unverified',
+          event.id,
+          'その時の成員を確認できない。',
+        );
+        excluded.add(event.id);
+        continue;
+      }
+    }
     if (event.type === 'optionChosen') {
       if (event.actorId === 'system')
         report.violation('system_chose_option', event.id, '家族が選ぶ案を仕組みが選んでいる。');
@@ -137,7 +185,8 @@ export function checkHistory(
       }
     } else if (event.type === 'assignmentProposed') {
       assignments.set(event.taskKey, event.assigneeId);
-      commitment.set(event.taskKey, 'proposed');
+      commitmentChanges.push({ taskKey: event.taskKey, state: 'proposed' });
+      approvals.delete(event.taskKey);
     } else if (event.type === 'commitmentChanged') {
       if (event.actorId !== event.assigneeId) {
         report.violation(
@@ -164,18 +213,25 @@ export function checkHistory(
       if (event.actorId !== event.assigneeId || (assigned && assigned !== event.assigneeId))
         continue;
       assignments.set(event.taskKey, event.assigneeId);
+      if (event.action === 'accept') {
+        approvals.set(event.taskKey, {
+          assigneeId: event.assigneeId,
+          ...(event.shown ? { shown: event.shown } : {}),
+        });
+      } else approvals.delete(event.taskKey);
       const states = {
         accept: 'accepted',
         decline: 'declined',
         done: 'done',
         withdraw: 'withdrawn',
       } as const;
-      commitment.set(event.taskKey, states[event.action]);
+      commitmentChanges.push({ taskKey: event.taskKey, state: states[event.action] });
     } else if (event.type === 'externalRequestSent') {
-      if (requests.has(event.requestId)) {
+      if (seenRequests.has(event.requestId)) {
         report.violation('duplicate_request_sent', event.id, '同じ依頼 ID で複数回送っている。');
         continue;
       }
+      seenRequests.add(event.requestId);
       const assigned = assignments.get(event.taskKey);
       if (assigned === undefined) {
         report.undetermined(
@@ -198,7 +254,38 @@ export function checkHistory(
         state: 'awaitingReply',
         ...(event.snapshot ? { snapshot: event.snapshot } : {}),
       });
-      commitment.set(event.taskKey, 'done');
+      commitmentChanges.push({ taskKey: event.taskKey, state: 'done', requestId: event.requestId });
+    } else if (event.type === 'requestRecordCorrected') {
+      const request = requests.get(event.requestId);
+      if (!request) {
+        if (complete)
+          report.violation(
+            'request_correction_without_send',
+            event.id,
+            '訂正する依頼の送信記録がない。',
+          );
+        else
+          report.undetermined(
+            'request_send_missing',
+            event.id,
+            '訂正する依頼の送信記録を確認できない。',
+          );
+      } else if (request.sentBy !== event.actorId) {
+        report.violation(
+          'request_correction_actor_mismatch',
+          event.id,
+          '送ったと記録した本人ではない。',
+        );
+      } else if (request.state !== 'awaitingReply') {
+        report.violation(
+          'request_correction_not_allowed',
+          event.id,
+          '返事または取消しの後に、送っていない事にはできない。',
+        );
+      } else {
+        requests.delete(event.requestId);
+        correctedRequests.add(event.requestId);
+      }
     } else if (event.type === 'externalReplyRecorded' || event.type === 'cancellationSent') {
       const request = requests.get(event.requestId);
       if (!request) {
@@ -215,6 +302,13 @@ export function checkHistory(
         request.state = event.reply === 'yes' ? 'confirmed' : 'turnedDown';
       }
     }
+  }
+
+  // 誤記を直した送信だけを除いて、引き受けの変遷をもう一度たどる。
+  // 後の担当変更や別の送信を、誤記の直前の状態で上書きしない。
+  for (const change of commitmentChanges) {
+    if (change.requestId && correctedRequests.has(change.requestId)) continue;
+    commitment.set(change.taskKey, change.state);
   }
 
   for (const arrangement of plan.arrangements) {
@@ -365,10 +459,14 @@ export function checkHistory(
     }
   }
   return {
-    events: ordered.filter((event) => event.householdId === household.id),
+    events: ordered.filter(
+      (event) => event.householdId === household.id && !excluded.has(event.id),
+    ),
     complete,
     requests,
     selections,
+    approvals,
+    commitments: commitment,
   };
 }
 
@@ -484,6 +582,7 @@ export function checkRequestNeed(
       const missingOrUntrusted = currentItems.some(
         (item) => !item || item.evidence === 'inferred' || item.evidence === 'conflicting',
       );
+      const staleBasis = currentItems.some((item) => item && facts.staleItems.has(item.id));
       // 同じ節点 ID の再利用だけでは条件が同じとは限らない。送信前の読み取りを事象から作り直し、
       // 一つの未定値について別の値を指す条件に変わったケースだけ、意味の変更を確定する。
       let changedEquality = false;
@@ -535,7 +634,9 @@ export function checkRequestNeed(
         partiallyCancelled ||
         changedEquality ||
         (needed === 'unknown' &&
-          (missingOrUntrusted || (original.conditional === false && request.conditional === true)))
+          (missingOrUntrusted ||
+            staleBasis ||
+            (original.conditional === false && request.conditional === true)))
       ) {
         report.violation(
           'request_uncertainty_unmarked',

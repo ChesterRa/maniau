@@ -1,5 +1,6 @@
 import type { Household, PlanResult, RoutineSegment, Task } from '@maniau/core';
 import type { History } from './history';
+import { proposalMatches } from './proposal';
 import type { Collector } from './report';
 import { executionScope, isRecommended } from './scope';
 import { coveredBy, instantMinute, localMinute, overlaps, timeOfDay, weekday } from './time';
@@ -15,30 +16,11 @@ function acceptedCurrentTime(task: Task, history: History): boolean {
     !task.detour
   )
     return false;
-  let assigned: string | undefined;
-  let accepted: { start: string; end: string; delayedArrival?: string } | undefined;
-  for (const event of history.events) {
-    if (event.type === 'assignmentProposed' && event.taskKey === task.key) {
-      assigned = event.assigneeId;
-      accepted = undefined;
-    } else if (event.type === 'commitmentChanged' && event.taskKey === task.key) {
-      if (event.actorId !== event.assigneeId || (assigned && event.assigneeId !== assigned))
-        continue;
-      assigned = event.assigneeId;
-      if (event.action === 'accept' && assigned === task.assigneeId) {
-        accepted = event.shown;
-      } else {
-        accepted = undefined;
-      }
-    } else if (event.type === 'externalRequestSent' && event.taskKey === task.key) {
-      accepted = undefined;
-    }
-  }
-  return Boolean(
-    accepted?.delayedArrival &&
-      instantMinute(accepted.start) === instantMinute(task.start) &&
-      instantMinute(accepted.end) === instantMinute(task.end) &&
-      instantMinute(accepted.delayedArrival) === instantMinute(task.detour.delayedArrival),
+  const accepted = history.approvals.get(task.key);
+  return (
+    accepted?.assigneeId === task.assigneeId &&
+    accepted.shown !== undefined &&
+    proposalMatches(task, accepted.shown) === true
   );
 }
 

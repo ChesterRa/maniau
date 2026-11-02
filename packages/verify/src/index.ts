@@ -2,6 +2,7 @@ import { DomainEvent, Household, PlanResult, validateHousehold } from '@maniau/c
 import { collectFacts } from './facts';
 import { checkHistory, checkRequestNeed } from './history';
 import { checkPlan } from './plan';
+import { checkProposals } from './proposal';
 import { Collector, type VerificationReport } from './report';
 import { checkSchedule } from './schedule';
 
@@ -68,6 +69,7 @@ export function verifyPlan(input: VerificationInput): VerificationReport {
     );
   }
   const facts = collectFacts(history.events, report);
+  checkProposals(plan.data, history, report);
   checkRequestNeed(plan.data, history, facts, report);
   checkPlan(household.data, plan.data, facts, history, report);
   checkSchedule(household.data, plan.data, history, report);

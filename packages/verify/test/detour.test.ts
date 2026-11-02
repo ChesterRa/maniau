@@ -289,4 +289,26 @@ describe('帰り道の寄り道', () => {
     });
     expect(codes(report)).toContain('detour_home_flexibility_unverified');
   });
+
+  it('時刻が同じでも、見た店・移動が違えば、同じ提案を確認したとはしない', () => {
+    const events = [
+      event(1, { type: 'assignmentProposed', taskKey: 'shop', assigneeId: 'a' }),
+      event(2, {
+        type: 'commitmentChanged',
+        taskKey: 'shop',
+        assigneeId: 'a',
+        action: 'accept',
+        shown: shownDetour,
+      }),
+    ];
+    for (const change of [{ atPlaceId: 'home' }, { travelBeforeMin: 3 }]) {
+      const report = verifyPlan({
+        household: commuteHousehold(),
+        plan: plan({ throughSeq: 2, tasks: [detour({ ...change, commitment: 'accepted' })] }),
+        events,
+      });
+      expect(codes(report)).toContain('proposal_reconfirm_missing');
+      expect(codes(report)).toContain('detour_home_flexibility_unverified');
+    }
+  });
 });
