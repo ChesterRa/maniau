@@ -4,7 +4,23 @@ import { z } from 'zod';
 import { DateTime } from '../time';
 import { ProposalSnapshot } from './events';
 import { Id } from './household';
+import { CommitmentState, ExternalRequestState } from './plan';
 import { Interpretation } from './source';
+
+/**
+ * 画面が見せた作業の担当と状態。二人が同じ札を見る時に、もう一人が先に持った・引き受けた後の古い操作で、
+ * それを黙って替えないために付ける（替わっていれば、断って見せ直す）。
+ */
+export const TaskSeen = z.object({
+  taskKey: z.string().min(1),
+  assigneeId: Id.nullable(),
+  commitment: CommitmentState,
+});
+export type TaskSeen = z.infer<typeof TaskSeen>;
+
+/** 画面が見せた、外への依頼の状態（返事が来たか等で、案をやめた時の結果が変わる）。 */
+export const RequestSeen = z.object({ requestId: Id, state: ExternalRequestState });
+export type RequestSeen = z.infer<typeof RequestSeen>;
 
 export const Command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('answer'), unknownId: Id, value: z.string().min(1) }),
@@ -24,8 +40,19 @@ export const Command = z.discriminatedUnion('type', [
     type: z.literal('dropOption'),
     arrangementKey: z.string().min(1),
     optionKey: z.string().min(1),
+    /**
+     * 画面が見せた、その案の生きている作業と外への依頼の全部（付ければ、どれかが替わっていた時に断る。
+     * 返事が来た後にやめると、取り消しの連絡が要る等、結果が変わる）。
+     */
+    seen: z.object({ tasks: z.array(TaskSeen), requests: z.array(RequestSeen) }).optional(),
   }),
-  z.object({ type: z.literal('proposeAssignment'), taskKey: z.string().min(1), assigneeId: Id }),
+  z.object({
+    type: z.literal('proposeAssignment'),
+    taskKey: z.string().min(1),
+    assigneeId: Id,
+    /** 画面が見せた、その作業の担当と状態（付ければ、替わっていた時に断る）。 */
+    seen: TaskSeen.optional(),
+  }),
   /** 引き受ける。本人が見た提案の控えを付ける。今の提案と違えば断って見せ直す。 */
   z.object({ type: z.literal('accept'), taskKey: z.string().min(1), shown: ProposalSnapshot }),
   z.object({

@@ -31,6 +31,11 @@ export type TodayCard =
     }
   /** 自分に頼まれた作業（引き受けるか）。 */
   | { kind: 'proposal'; task: Task; arrangement?: Arrangement }
+  /**
+   * 担当がいない作業（02-foundation の不変 7「誰かが持つ」）：担当が付いていないか、担当の人が断った・
+   * できなくなった。大人の全員に出し、誰かが自分で持つか、頼むか、その案をやめるまで残す。
+   */
+  | { kind: 'unowned'; task: Task; arrangement?: Arrangement }
   /** 答えで段取りが変わる問い。 */
   | { kind: 'question'; question: Question; requirement?: Requirement }
   /** 自分が頼んで、返事を待っている。 */
@@ -50,11 +55,34 @@ export function isActiveTask(plan: PlanResult, task: Task): boolean {
   // 当日の準備は、今使う案の物だけ（本命が生きている間の予備の弁当は、まだ候補）。
   if (task.extra && arrangement.inUseOptionKey !== optionKey) return false;
   if (arrangement.chosenOptionKey === optionKey) return true;
-  if (arrangement.backupOptionKeys.includes(optionKey)) return true;
+  // 予備は、本命が「はい」で決まるまでと、予備を使う時（本命が決まったら、もう進めない。送った依頼の
+  // 取り消しは、別に出す）。返事を待っていないだけ（送っていなかった等）は、決まったとしない。
+  if (arrangement.backupOptionKeys.includes(optionKey)) {
+    return arrangement.inUseOptionKey === optionKey || !primaryConfirmed(plan, arrangement);
+  }
   return (
     arrangement.kind === 'purchase' &&
     arrangement.status === 'decidable' &&
     arrangement.recommendedOptionKey === optionKey
+  );
+}
+
+/** 本命の案が、外の相手の「はい」で決まった（返事を待つ依頼が無く、確定の依頼がある）。 */
+function primaryConfirmed(plan: PlanResult, arrangement: Arrangement): boolean {
+  const chosen = arrangement.chosenOptionKey;
+  if (chosen === undefined || arrangement.inUseOptionKey !== chosen) return false;
+  const requests = plan.requests.filter((r) => r.live && r.basis.optionKey === chosen);
+  return (
+    requests.some((r) => r.state === 'confirmed') &&
+    !requests.some((r) => r.state === 'awaitingReply')
+  );
+}
+
+/** 案を始めたか（手順を一つでも済ませた・依頼を送った）。手配の「決め時を過ぎても始めていない」と同じ見方。 */
+function started(plan: PlanResult, optionKey: string): boolean {
+  return (
+    plan.tasks.some((t) => t.basis.optionKey === optionKey && t.commitment === 'done') ||
+    plan.requests.some((r) => r.basis.optionKey === optionKey)
   );
 }
 
@@ -127,6 +155,22 @@ export function todayCards(
     }
   }
 
+  const unowned: TodayCard[] = [];
+  for (const task of plan.tasks) {
+    if (!task.live || task.cancels !== undefined || !isActiveTask(plan, task)) continue;
+    const nobody =
+      task.assigneeId === undefined ||
+      task.commitment === 'declined' ||
+      task.commitment === 'withdrawn';
+    if (!nobody) continue;
+    const arrangement = plan.arrangements.find((a) => a.key === task.basis.arrangementKey);
+    // 決め時を過ぎて、まだ始めていない案の作業は、もう持てない（手配の状態が、選び直しを出す）。始めた
+    // 案（手順を済ませた・依頼を送った）の残りの手順は、決め時の後も出す（手配もまだその案を使う）。
+    const option = arrangement?.options.find((o) => o.key === task.basis.optionKey);
+    if (option?.expired && !started(plan, option.key)) continue;
+    unowned.push({ kind: 'unowned', task, ...(arrangement ? { arrangement } : {}) });
+  }
+
   const proposal: TodayCard[] = [];
   const todo: TodayCard[] = [];
   for (const task of plan.tasks) {
@@ -157,7 +201,7 @@ export function todayCards(
     .map((request) => ({ kind: 'waiting', request }));
 
   return {
-    main: [...cancel, ...check, ...backup, ...decide, ...proposal, ...question],
+    main: [...cancel, ...check, ...backup, ...decide, ...unowned, ...proposal, ...question],
     quiet: [...waiting, ...todo],
   };
 }

@@ -79,7 +79,8 @@
         "reply": "{{to}}に頼み、返事を待ちます。",
         "approval": "{{to}}に出し、承認を待ちます。",
         "acceptance": "{{to}}に出し、受け付けを待ちます。"
-      }
+      },
+      "ask": "{{name}}さんに頼む"
     },
     "backup": {
       "label": "念のため",
@@ -121,6 +122,17 @@
       "done": "済み",
       "notYet": "まだ",
       "source": "お知らせの文を見る"
+    },
+    "unowned": {
+      "label": "だれがやるか、決まっていません",
+      "declined": "{{name}}さんは、できないと答えました。",
+      "withdrawn": "{{name}}さんが、できなくなりました。",
+      "deadline": "決め時は {{deadline}} ごろです（目安）。",
+      "self": "自分でやる",
+      "ask": "{{name}}さんに頼む",
+      "dropBackup": "この予備はやめる",
+      "dropPrimary": "この案はやめる",
+      "fixed": "この手順は、{{name}}さんしかできません。"
     }
   },
   "answer": {

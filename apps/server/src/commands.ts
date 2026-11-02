@@ -219,6 +219,22 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         arrangement?.chosenOptionKey === command.optionKey ||
         arrangement?.backupOptionKeys.includes(command.optionKey);
       if (!chosen) return { status: 'conflict', reason: 'notChosen' };
+      // 見せた後に、その案の作業の担当や状態が替わっていたら（もう一人が持った等）、やめずに見せ直す。
+      if (command.seen) {
+        const ofOption = (basis: { arrangementKey?: string; optionKey?: string }) =>
+          basis.arrangementKey === command.arrangementKey && basis.optionKey === command.optionKey;
+        const tasks = plan.tasks.filter((t) => t.live && ofOption(t.basis));
+        const requests = plan.requests.filter((r) => r.live && ofOption(r.basis));
+        const { tasks: seenTasks, requests: seenRequests } = command.seen;
+        const same =
+          tasks.length === seenTasks.length &&
+          tasks.every((t) => seenTasks.some((s) => s.taskKey === t.key && seenAs(t, s))) &&
+          requests.length === seenRequests.length &&
+          requests.every((r) =>
+            seenRequests.some((s) => s.requestId === r.requestId && s.state === r.state),
+          );
+        if (!same) return { status: 'conflict', reason: 'optionChanged' };
+      }
       return {
         bodies: [{ type: 'optionDropped', ...pick(command, ['arrangementKey', 'optionKey']) }],
       };
@@ -226,6 +242,10 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
     case 'proposeAssignment': {
       const task = taskOf(command.taskKey);
       if (!task?.live) return { status: 'conflict', reason: 'taskGone' };
+      // 見せた後に担当や状態が替わっていたら（もう一人が先に持った・引き受けた）、黙って替えない。
+      if (command.seen && !seenAs(task, command.seen)) {
+        return { status: 'conflict', reason: 'taskChanged' };
+      }
       if (!adultOf(state, command.assigneeId)) {
         return { status: 'invalid', reason: 'assigneeNotAnAdult' };
       }
@@ -365,6 +385,14 @@ function fixedAssigneeOf(
   return state.household?.careOptions
     .find((o) => o.id === templateId)
     ?.steps.find((s) => s.id === stepId)?.assigneeId;
+}
+
+/** 作業が、画面が見せた担当と状態のままか。 */
+function seenAs(
+  task: { assigneeId?: string | undefined; commitment: string },
+  seen: { assigneeId: string | null; commitment: string },
+): boolean {
+  return (task.assigneeId ?? null) === seen.assigneeId && task.commitment === seen.commitment;
 }
 
 function adultOf(state: EngineState, memberId: string): string | undefined {

@@ -102,6 +102,22 @@ function otherAdult(household: Household, me: string): Member | undefined {
   return household.members.find((m) => m.kind === 'adult' && m.active && m.id !== me);
 }
 
+/** 画面が見せた作業の担当と状態（古い札の操作で、もう一人の操作を黙って替えないために送る）。 */
+const seenOf = (task: Task) => ({
+  taskKey: task.key,
+  assigneeId: task.assigneeId ?? null,
+  commitment: task.commitment,
+});
+
+/** 本人しかできない手順の担当（家族の情報の案の手順で決まっている。例：自分の有休の申請）。 */
+function fixedAssignee(household: Household, task: Task): string | undefined {
+  const step = task.step;
+  if (!step) return undefined;
+  return household.careOptions
+    .find((o) => o.id === step.templateId)
+    ?.steps.find((s) => s.id === step.stepId)?.assigneeId;
+}
+
 function templateOf(household: Household, option: OptionPlan) {
   return household.careOptions.find((o) => o.id === option.templateId);
 }
@@ -374,6 +390,7 @@ function cardKey(card: TodayCard): string {
     case 'cancel':
     case 'proposal':
     case 'todo':
+    case 'unowned':
       return `${card.kind}:${card.task.key}`;
     case 'backup':
     case 'decide':
@@ -396,6 +413,8 @@ function CardView({ ctx, card }: { ctx: Ctx; card: TodayCard }) {
       return <DecideCard ctx={ctx} card={card} />;
     case 'proposal':
       return <ProposalCard ctx={ctx} task={card.task} />;
+    case 'unowned':
+      return <UnownedCard ctx={ctx} task={card.task} arrangement={card.arrangement} />;
     case 'question':
       return <QuestionCard ctx={ctx} card={card} />;
     case 'check':
@@ -480,6 +499,22 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
     if (shown) void ctx.send({ type: 'accept', taskKey: task.key, shown });
   };
   const decline = () => void ctx.send({ type: 'commitment', taskKey: task.key, action: 'decline' });
+  // 置ける時間が無い時は、その場でもう一人に頼めるようにする（断ってから探し直させない）。本人しか
+  // できない手順は頼めない。
+  const other =
+    fixedAssignee(ctx.household, task) === undefined
+      ? otherAdult(ctx.household, ctx.me.id)
+      : undefined;
+  const askOther = () => {
+    if (other) {
+      void ctx.send({
+        type: 'proposeAssignment',
+        taskKey: task.key,
+        assigneeId: other.id,
+        seen: seenOf(task),
+      });
+    }
+  };
   const store = task.atPlaceId
     ? ctx.household.places.find((p) => p.id === task.atPlaceId)
     : undefined;
@@ -533,10 +568,107 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
       )}
       <Row>
         {shown && <Button onClick={accept}>{ctx.t('card.proposal.accept')}</Button>}
+        {!shown && other && (
+          <Button onClick={askOther}>{ctx.t('card.proposal.ask', { name: other.name })}</Button>
+        )}
         <Button kind="secondary" onClick={decline}>
           {ctx.t('card.proposal.decline')}
         </Button>
       </Row>
+    </Card>
+  );
+}
+
+/**
+ * 担当のいない作業（断った・できなくなった・担当が付いていない）。大人の全員に出し、誰かが持つか、
+ * もう一人に頼むか、その案をやめるまで残す（02-foundation の不変 7「誰かが持つ」）。
+ */
+function UnownedCard({
+  ctx,
+  task,
+  arrangement,
+}: {
+  ctx: Ctx;
+  task: Task;
+  arrangement: Arrangement | undefined;
+}) {
+  const other = otherAdult(ctx.household, ctx.me.id);
+  const option = arrangement?.options.find((o) => o.key === task.basis.optionKey);
+  const why =
+    task.commitment === 'declined'
+      ? 'declined'
+      : task.commitment === 'withdrawn'
+        ? 'withdrawn'
+        : undefined;
+  // 二人が同じ札を見るので、見せた担当と状態を付ける（もう一人が先に持っていたら、断って見せ直す）。
+  const propose = (assigneeId: string) =>
+    void ctx.send({ type: 'proposeAssignment', taskKey: task.key, assigneeId, seen: seenOf(task) });
+  const ofOption = (basis: { arrangementKey?: string; optionKey?: string }) =>
+    basis.arrangementKey === arrangement?.key && basis.optionKey === option?.key;
+  // 本人しかできない手順は、その人だけが持てる（他の人には、案をやめるかだけを出す）。断った本人には
+  // 頼み直さない。断ったのが自分なら、まずもう一人に頼む。
+  const fixed = fixedAssignee(ctx.household, task);
+  const canSelf = fixed === undefined || fixed === ctx.me.id;
+  const askable = fixed === undefined && other !== undefined && other.id !== task.assigneeId;
+  const mine = task.assigneeId === ctx.me.id;
+  const self = canSelf && (
+    <Button kind={mine ? 'secondary' : 'primary'} onClick={() => propose(ctx.me.id)}>
+      {ctx.t('card.unowned.self')}
+    </Button>
+  );
+  const ask = askable && (
+    <Button kind={mine ? 'primary' : 'secondary'} onClick={() => propose(other.id)}>
+      {ctx.t('card.unowned.ask', { name: other.name })}
+    </Button>
+  );
+  return (
+    <Card tone="accent">
+      <Label tone="warn">{ctx.t('card.unowned.label')}</Label>
+      <Title>{taskTitle(ctx, task)}</Title>
+      {why && task.assigneeId && (
+        <Text>
+          {ctx.t(`card.unowned.${why}`, { name: nameOf(ctx.household, task.assigneeId) })}
+        </Text>
+      )}
+      {fixed !== undefined && fixed !== ctx.me.id && (
+        <Text>{ctx.t('card.unowned.fixed', { name: nameOf(ctx.household, fixed) })}</Text>
+      )}
+      {option?.decisionDeadline && (
+        <Text>
+          {ctx.t('card.unowned.deadline', { deadline: dayTime(ctx, option.decisionDeadline) })}
+        </Text>
+      )}
+      <Row>
+        {mine ? ask : self}
+        {mine ? self : ask}
+      </Row>
+      {/* やめられるのは、家族が選んだ案（本命・予備）だけ。勧めただけの案には出さない。 */}
+      {arrangement &&
+        option &&
+        (arrangement.chosenOptionKey === option.key ||
+          arrangement.backupOptionKeys.includes(option.key)) && (
+          <MoreLink
+            onClick={() =>
+              void ctx.send({
+                type: 'dropOption',
+                arrangementKey: arrangement.key,
+                optionKey: option.key,
+                seen: {
+                  tasks: ctx.plan.tasks.filter((t) => t.live && ofOption(t.basis)).map(seenOf),
+                  requests: ctx.plan.requests
+                    .filter((r) => r.live && ofOption(r.basis))
+                    .map((r) => ({ requestId: r.requestId, state: r.state })),
+                },
+              })
+            }
+          >
+            {ctx.t(
+              arrangement.backupOptionKeys.includes(option.key)
+                ? 'card.unowned.dropBackup'
+                : 'card.unowned.dropPrimary',
+            )}
+          </MoreLink>
+        )}
     </Card>
   );
 }

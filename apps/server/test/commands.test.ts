@@ -230,6 +230,97 @@ describe('命令', () => {
     ).toBe('ok');
   });
 
+  it('二人が見た札の古い操作（持つ・頼む・案をやめる）は、もう一人が先に持った後なら断る', async () => {
+    const { run, task, plan } = setup();
+    await run('b', {
+      type: 'chooseOption',
+      arrangementKey: CARE,
+      optionKey: GAKUDO,
+      role: 'primary',
+      assigneeId: 'b',
+    });
+    const write = `task:${GAKUDO}:write`;
+    await run('b', { type: 'commitment', taskKey: write, action: 'decline' });
+    // 二人とも「担当がいない」札を見た（その時の担当と状態、案の作業の全部）。
+    const seen = (t: { key: string; assigneeId?: string | undefined; commitment: string }) => ({
+      taskKey: t.key,
+      assigneeId: t.assigneeId ?? null,
+      commitment: t.commitment as 'declined',
+    });
+    const shownTask = seen(await task(write));
+    const shownOption = {
+      tasks: (await plan()).tasks.filter((t) => t.live && t.basis.optionKey === GAKUDO).map(seen),
+      requests: [],
+    };
+    // 健太が先に持つ。
+    expect(
+      (
+        await run('a', {
+          type: 'proposeAssignment',
+          taskKey: write,
+          assigneeId: 'a',
+          seen: shownTask,
+        })
+      ).status,
+    ).toBe('ok');
+    // 彩の古い札の「自分でやる」と「この案はやめる」は、黙って替えずに断る。
+    expect(
+      await run('b', {
+        type: 'proposeAssignment',
+        taskKey: write,
+        assigneeId: 'b',
+        seen: shownTask,
+      }),
+    ).toMatchObject({ status: 'conflict', reason: 'taskChanged' });
+    expect(
+      await run('b', {
+        type: 'dropOption',
+        arrangementKey: CARE,
+        optionKey: GAKUDO,
+        seen: shownOption,
+      }),
+    ).toMatchObject({ status: 'conflict', reason: 'optionChanged' });
+    expect((await task(write)).assigneeId).toBe('a');
+  });
+
+  it('案をやめる古い操作は、見せた後に外の依頼へ返事が来ていたら断る', async () => {
+    const { run, task, plan } = setup();
+    await run('b', {
+      type: 'chooseOption',
+      arrangementKey: CARE,
+      optionKey: GRANDMA,
+      role: 'primary',
+    });
+    await run('b', { type: 'proposeAssignment', taskKey: ASK, assigneeId: 'b' });
+    const shown = proposalSnapshot(await task(ASK));
+    if (!shown) throw new Error('置けていない');
+    await run('b', { type: 'accept', taskKey: ASK, shown });
+    await run('b', { type: 'recordSent', taskKey: ASK, requestId: 'r1' });
+    const now = await plan();
+    const seenOption = {
+      tasks: now.tasks
+        .filter((t) => t.live && t.basis.optionKey === GRANDMA)
+        .map((t) => ({
+          taskKey: t.key,
+          assigneeId: t.assigneeId ?? null,
+          commitment: t.commitment,
+        })),
+      requests: now.requests
+        .filter((r) => r.live && r.basis.optionKey === GRANDMA)
+        .map((r) => ({ requestId: r.requestId, state: r.state })),
+    };
+    expect(seenOption.requests).toEqual([{ requestId: 'r1', state: 'awaitingReply' }]);
+    await run('b', { type: 'recordReply', requestId: 'r1', reply: 'yes' });
+    expect(
+      await run('b', {
+        type: 'dropOption',
+        arrangementKey: CARE,
+        optionKey: GRANDMA,
+        seen: seenOption,
+      }),
+    ).toMatchObject({ status: 'conflict', reason: 'optionChanged' });
+  });
+
   it('要らなくなった手配・作業には、新しく決める命令を断る（済んだ等の記録は受け付ける）', async () => {
     const store = memoryStore(new Map([['h', demoEvents('postponed')]]));
     const at = '2026-12-04T18:10+09:00';

@@ -79,7 +79,8 @@
         "reply": "Ask {{to}} and wait for their reply.",
         "approval": "Hand it to {{to}} and wait for approval.",
         "acceptance": "Hand it to {{to}} and wait for them to accept it."
-      }
+      },
+      "ask": "Ask {{name}}"
     },
     "backup": {
       "label": "Just in case",
@@ -121,6 +122,17 @@
       "done": "Done",
       "notYet": "Not yet",
       "source": "See the notice"
+    },
+    "unowned": {
+      "label": "No one is doing this yet",
+      "declined": "{{name}} said they can't.",
+      "withdrawn": "{{name}} can no longer do it.",
+      "deadline": "Decide by about {{deadline}} (estimate).",
+      "self": "I'll do it",
+      "ask": "Ask {{name}}",
+      "dropBackup": "Drop this backup",
+      "dropPrimary": "Drop this option",
+      "fixed": "Only {{name}} can do this step."
     }
   },
   "answer": {
