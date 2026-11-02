@@ -1,9 +1,15 @@
 // 事象の列を、計算に使う状態にたたむ（docs/design/01-model.md §2）。同じ列からは、いつも同じ状態になる。
 import { evaluateCondition } from '../schema/condition';
-import type { DomainEvent, RequestSnapshot } from '../schema/events';
+import type { DomainEvent, ProposalSnapshot, RequestSnapshot } from '../schema/events';
 import type { Household } from '../schema/household';
 import type { CommitmentState, ExternalRequestState } from '../schema/plan';
-import { type ConditionNode, Extraction, type Item, type Source } from '../schema/source';
+import {
+  type ConditionNode,
+  Extraction,
+  type Interpretation,
+  type Item,
+  type Source,
+} from '../schema/source';
 import { type DateTime, toEpochMinutes } from '../time';
 
 export interface RequestRecord {
@@ -56,13 +62,39 @@ export interface EngineState {
   seenItemIds: Set<string>;
   /** 出典が届いた時の seq（出典の ID → seq）。 */
   sourceSeq: Map<string, number>;
+  /** 出典ごとの、今の読み取りが読んだ文の版。出典の版より古ければ、書き起こしを直す前の読み取り。 */
+  extractionVersion: Map<string, number>;
+  /** 家族が直した解釈（事項の ID → 直した欄を重ねた物）。 */
+  corrections: Map<string, Interpretation>;
+  /** 家族の確かめ（事項の ID → 最後の言明）。confirmed は「家族が確認」、dismissed は「関係ない」。 */
+  verdicts: Map<string, 'confirmed' | 'dismissed'>;
+  /** 家族が取り下げた出典。 */
+  withdrawnSources: Set<string>;
+  /** 書き起こしを直した事のある出典（読んだ版の無い読み取りは、もう使わない）。 */
+  correctedSources: Set<string>;
+  /**
+   * 出典ごとに、これまでの読み取りが一度でも出した未定の値の ID（ID だけを覚え、中身は持たない）。
+   * 取り下げ・削除の時は、最後の読み取りに無い物も含めて、全部の答えを使わない。
+   */
+  declaredUnknowns: Map<string, Set<string>>;
+  /** 中身を消した出典（photo：写真だけ、all：お知らせごと）。 */
+  purgedSources: Map<string, 'photo' | 'all'>;
+  /** 引き受けた時に見た提案の控え（作業の key → 控え）。 */
+  shown: Map<string, ProposalSnapshot>;
   primary: Map<string, string>;
   backups: Map<string, Set<string>>;
   /** 家族が取り下げた案（手配の key → 案の key）。頼んだ後なら、取り消しの連絡が要る。 */
   dropped: Map<string, Set<string>>;
   assignees: Map<string, string>;
   commitments: Map<string, CommitmentState>;
+  /**
+   * 作業ごとの、引き受けの変遷（担当の提案・本人の操作・送った）。「送った」の押し間違いを直したら、
+   * その送ったを除いてたどり直す（後の担当替え・済んだ・別の依頼は、そのまま残る）。
+   */
+  commitmentLog: Map<string, { state: CommitmentState; requestId?: string }[]>;
   requests: Map<string, RequestRecord>;
+  /** これまでに使った依頼の ID（押し間違いを直して消した物も含む。同じ ID は二度使わない）。 */
+  sentRequestIds: Set<string>;
   notified: Set<string>;
   /** 時計（試験とデモで進めた時刻）。無ければ、呼ぶ側の now を使う。 */
   clock?: number;
@@ -81,12 +113,22 @@ export function emptyState(): EngineState {
     doubted: new Set(),
     seenItemIds: new Set(),
     sourceSeq: new Map(),
+    extractionVersion: new Map(),
+    corrections: new Map(),
+    verdicts: new Map(),
+    withdrawnSources: new Set(),
+    correctedSources: new Set(),
+    declaredUnknowns: new Map(),
+    purgedSources: new Map(),
+    shown: new Map(),
     primary: new Map(),
     backups: new Map(),
     dropped: new Map(),
     assignees: new Map(),
     commitments: new Map(),
+    commitmentLog: new Map(),
     requests: new Map(),
+    sentRequestIds: new Set(),
     notified: new Set(),
     lastSeq: 0,
     rejected: [],
@@ -101,13 +143,35 @@ export function foldEvents(events: readonly DomainEvent[]): EngineState {
   return state;
 }
 
+/** 家族の言明（確かめ・直し・取り下げ・書き起こしの直し・「送った」の直し）は、その時の有効な大人だけ。 */
+const FAMILY_ONLY = new Set<DomainEvent['type']>([
+  'itemConfirmed',
+  'itemCorrected',
+  'itemDismissed',
+  'sourceWithdrawn',
+  'transcriptionCorrected',
+  'requestRecordCorrected',
+]);
+
 function apply(state: EngineState, event: DomainEvent): void {
   state.lastSeq = Math.max(state.lastSeq, event.seq);
+  if (FAMILY_ONLY.has(event.type)) {
+    const member = state.household?.members.find((m) => m.id === event.actorId);
+    if (member?.kind !== 'adult' || !member.active) {
+      state.rejected.push({ seq: event.seq, reason: '有効な大人でない人の言明' });
+      return;
+    }
+  }
   switch (event.type) {
     case 'householdSet':
       state.household = event.household;
       return;
     case 'noticeReceived':
+      // 中身を消した出典の ID は、もう使わない（消した中身を、同じ ID で戻さない）。
+      if (state.purgedSources.get(event.source.id) === 'all') {
+        state.rejected.push({ seq: event.seq, reason: '中身を消した出典と同じ ID のお知らせ' });
+        return;
+      }
       state.sources.set(event.source.id, event.source);
       state.sourceSeq.set(event.source.id, event.seq);
       return;
@@ -119,7 +183,45 @@ function apply(state: EngineState, event: DomainEvent): void {
         return;
       }
       const sourceId = parsed.data.sourceId;
+      // 記録の出典、読み取りの出典、各事項の出典は一つに揃う。揃わない読み取りは、別の出典を
+      // 汚さないように使わない（非同期の読み取りの取り違えや、壊れた記録）。
+      if (
+        (event.sourceId !== undefined && event.sourceId !== sourceId) ||
+        parsed.data.items.some((i) => i.sourceId !== sourceId)
+      ) {
+        state.rejected.push({ seq: event.seq, reason: '出典の揃わない読み取り' });
+        return;
+      }
+      if (state.purgedSources.get(sourceId) === 'all') {
+        state.rejected.push({ seq: event.seq, reason: '中身を消した出典の読み取り' });
+        return;
+      }
+      if (!state.sources.has(sourceId)) {
+        state.rejected.push({ seq: event.seq, reason: '届いていない出典の読み取り' });
+        return;
+      }
+      // 読み取りは非同期なので、書き起こしを直す前の版を読んだ物が後で届くことがある。
+      // 読んだ版の分からない読み取りは、直した事の無い出典でだけ使う（直した後なら、どの版か示せない）。
+      // 今の読み取りより古い版の読み取りでは置き換えない。
+      const current = state.sources.get(sourceId)?.version ?? 1;
+      if (event.sourceVersion === undefined && state.correctedSources.has(sourceId)) {
+        state.rejected.push({ seq: event.seq, reason: '読んだ文の版の分からない読み取り' });
+        return;
+      }
+      if (event.sourceVersion !== undefined && event.sourceVersion > current) {
+        state.rejected.push({ seq: event.seq, reason: 'まだ無い版の文を読んだ読み取り' });
+        return;
+      }
+      const version = event.sourceVersion ?? current;
+      if (version < (state.extractionVersion.get(sourceId) ?? 0)) {
+        state.rejected.push({ seq: event.seq, reason: '前の版の文を読んだ読み取り' });
+        return;
+      }
+      state.extractionVersion.set(sourceId, version);
       state.extractions.set(sourceId, parsed.data);
+      const declared = state.declaredUnknowns.get(sourceId) ?? new Set<string>();
+      for (const unknown of parsed.data.unknowns) declared.add(unknown.id);
+      state.declaredUnknowns.set(sourceId, declared);
       const seq = state.sourceSeq.get(sourceId) ?? event.seq;
       state.answers = state.answers.filter((a) => !(a.by === 'source' && a.sourceId === sourceId));
       for (const item of parsed.data.items) {
@@ -148,9 +250,16 @@ function apply(state: EngineState, event: DomainEvent): void {
       });
       return;
     case 'optionChosen':
+      // 一つの案は、本命か予備のどちらか。予備を本命にしたら予備から外す。本命を予備に選ぶのは使わない。
+      if (event.role === 'backup' && state.primary.get(event.arrangementKey) === event.optionKey) {
+        state.rejected.push({ seq: event.seq, reason: '本命の案を予備にも選ぶ' });
+        return;
+      }
       state.dropped.get(event.arrangementKey)?.delete(event.optionKey);
-      if (event.role === 'primary') state.primary.set(event.arrangementKey, event.optionKey);
-      else {
+      if (event.role === 'primary') {
+        state.primary.set(event.arrangementKey, event.optionKey);
+        state.backups.get(event.arrangementKey)?.delete(event.optionKey);
+      } else {
         const set = state.backups.get(event.arrangementKey) ?? new Set<string>();
         set.add(event.optionKey);
         state.backups.set(event.arrangementKey, set);
@@ -168,9 +277,87 @@ function apply(state: EngineState, event: DomainEvent): void {
       }
       return;
     case 'assignmentProposed':
+      // 担当を決め直したら、前の引き受けの控えは使わない（前の担当の同意を、次の担当に引き継がない）。
       state.assignees.set(event.taskKey, event.assigneeId);
-      state.commitments.set(event.taskKey, 'proposed');
+      setCommitment(state, event.taskKey, 'proposed');
+      state.shown.delete(event.taskKey);
       return;
+    case 'itemConfirmed':
+    case 'itemCorrected':
+    case 'itemDismissed': {
+      if (!state.seenItemIds.has(event.itemId)) {
+        state.rejected.push({ seq: event.seq, reason: '読み取りに無い事項への確かめ' });
+        return;
+      }
+      if (event.type === 'itemCorrected') {
+        const before = state.corrections.get(event.itemId) ?? {};
+        state.corrections.set(event.itemId, { ...before, ...event.interpretation });
+      }
+      state.verdicts.set(event.itemId, event.type === 'itemDismissed' ? 'dismissed' : 'confirmed');
+      return;
+    }
+    case 'sourceWithdrawn':
+      if (!state.sources.has(event.sourceId)) {
+        state.rejected.push({ seq: event.seq, reason: '届いていない出典の取り下げ' });
+        return;
+      }
+      state.withdrawnSources.add(event.sourceId);
+      return;
+    case 'sourceContentPurged':
+      if (event.actorId !== 'system' || !state.sources.has(event.sourceId)) {
+        state.rejected.push({ seq: event.seq, reason: '仕組みでない人の削除か、届いていない出典' });
+        return;
+      }
+      if (event.scope === 'all') {
+        // 事項・答え・作用を使わない。事項は「見つからない」になり、頼る依頼は要確認になる。
+        // 原文も状態から外す（見せる物に出さない。事象の列の中身を消すのは置き場所の仕事）。
+        state.purgedSources.set(event.sourceId, 'all');
+        state.sources.delete(event.sourceId);
+        state.extractions.delete(event.sourceId);
+        state.answers = state.answers.filter(
+          (a) => !(a.by === 'source' && a.sourceId === event.sourceId),
+        );
+      } else if (state.purgedSources.get(event.sourceId) !== 'all') {
+        state.purgedSources.set(event.sourceId, 'photo');
+      }
+      return;
+    case 'transcriptionCorrected': {
+      const source = state.sources.get(event.sourceId);
+      if (
+        !source ||
+        state.purgedSources.get(event.sourceId) === 'all' ||
+        event.sourceVersion <= source.version
+      ) {
+        state.rejected.push({ seq: event.seq, reason: '書き起こしの版が進まない直し' });
+        return;
+      }
+      state.sources.set(event.sourceId, {
+        ...source,
+        version: event.sourceVersion,
+        sentences: event.sentences,
+      });
+      state.correctedSources.add(event.sourceId);
+      return;
+    }
+    case 'requestRecordCorrected': {
+      const request = state.requests.get(event.requestId);
+      // 送ったと記録した本人だけが、返事も取り消しもまだ無い間に使える（02-foundation §5.6）。
+      if (!request || request.sentBy !== event.actorId || request.state !== 'awaitingReply') {
+        state.rejected.push({ seq: event.seq, reason: '使えない「送った」の取り消し' });
+        return;
+      }
+      state.requests.delete(event.requestId);
+      // その送ったを除いて、作業の引き受けの変遷をたどり直す。後の担当替え・本人の「済んだ」・
+      // 同じ作業の別の依頼は残り、引き受けていない人の作業を「引き受けた」にもしない。
+      const changes = (state.commitmentLog.get(request.taskKey) ?? []).filter(
+        (c) => c.requestId !== event.requestId,
+      );
+      state.commitmentLog.set(request.taskKey, changes);
+      const last = changes.at(-1);
+      if (last === undefined) state.commitments.delete(request.taskKey);
+      else state.commitments.set(request.taskKey, last.state);
+      return;
+    }
     case 'commitmentChanged': {
       // 本人だけが変えられる（§7）。本人でない操作は記録に残るが、状態は変えない。
       const assignee = state.assignees.get(event.taskKey) ?? event.assigneeId;
@@ -179,16 +366,25 @@ function apply(state: EngineState, event: DomainEvent): void {
         return;
       }
       state.assignees.set(event.taskKey, event.assigneeId);
+      if (event.action === 'accept') {
+        if (event.shown) state.shown.set(event.taskKey, event.shown);
+        else state.shown.delete(event.taskKey);
+      }
       const next: Record<typeof event.action, CommitmentState> = {
         accept: 'accepted',
         decline: 'declined',
         done: 'done',
         withdraw: 'withdrawn',
       };
-      state.commitments.set(event.taskKey, next[event.action]);
+      setCommitment(state, event.taskKey, next[event.action]);
       return;
     }
-    case 'externalRequestSent':
+    case 'externalRequestSent': {
+      if (state.sentRequestIds.has(event.requestId)) {
+        state.rejected.push({ seq: event.seq, reason: '前に使った依頼の ID' });
+        return;
+      }
+      state.sentRequestIds.add(event.requestId);
       state.requests.set(event.requestId, {
         requestId: event.requestId,
         taskKey: event.taskKey,
@@ -197,8 +393,9 @@ function apply(state: EngineState, event: DomainEvent): void {
         state: 'awaitingReply',
         ...(event.snapshot ? { snapshot: event.snapshot } : {}),
       });
-      state.commitments.set(event.taskKey, 'done');
+      setCommitment(state, event.taskKey, 'done', event.requestId);
       return;
+    }
     case 'externalReplyRecorded': {
       const request = state.requests.get(event.requestId);
       // 返事待ちから確定・断られたへ。相手の都合が変わった時（確定の後の「いいえ」、断った後の「はい」）も
@@ -214,12 +411,29 @@ function apply(state: EngineState, event: DomainEvent): void {
       return;
     }
     case 'notified':
+      // 事業者が受け付けた時に、仕組みだけが書く（02-foundation §5.7）。
+      if (event.actorId !== 'system') {
+        state.rejected.push({ seq: event.seq, reason: '仕組みでない人の「知らせた」' });
+        return;
+      }
       state.notified.add(event.notificationKey);
       return;
     case 'clockAdvanced':
       state.clock = toEpochMinutes(event.to);
       return;
   }
+}
+
+function setCommitment(
+  state: EngineState,
+  taskKey: string,
+  value: CommitmentState,
+  requestId?: string,
+): void {
+  const changes = state.commitmentLog.get(taskKey) ?? [];
+  changes.push(requestId === undefined ? { state: value } : { state: value, requestId });
+  state.commitmentLog.set(taskKey, changes);
+  state.commitments.set(taskKey, value);
 }
 
 /** 未定の値ごとに、順の最も後の答えを今の答えにする（同じ順なら、後に記録した物）。 */
@@ -235,6 +449,40 @@ function latestAnswers(answers: EngineState['answers']): EngineState['resolved']
 }
 
 const isTrusted = (item: Item) => item.evidence === 'stated' || item.evidence === 'confirmed';
+
+/** 読み取りの事項に、家族の直しと確かめを重ねた物（確かめた・直した事項は「家族が確認」）。 */
+export function itemsOf(state: EngineState): Item[] {
+  return [...state.extractions.values()].flatMap((e) =>
+    e.items.map((item) => {
+      const correction = state.corrections.get(item.id);
+      const verdict = state.verdicts.get(item.id);
+      const interpretation = correction
+        ? { ...item.interpretation, ...correction }
+        : item.interpretation;
+      return verdict === 'confirmed'
+        ? { ...item, interpretation, evidence: 'confirmed' as const }
+        : { ...item, interpretation };
+    }),
+  );
+}
+
+/**
+ * 家族の言明で外れた事項（「関係ない」と取り下げた出典の事項）と、書き起こしを直す前の版から
+ * 読んだ事項（読み直すまで確かとしない）。
+ */
+function familyOverrides(state: EngineState, all: readonly Item[]) {
+  const excluded = new Set<string>();
+  const stale = new Set<string>();
+  for (const item of all) {
+    if (state.verdicts.get(item.id) === 'dismissed' || state.withdrawnSources.has(item.sourceId)) {
+      excluded.add(item.id);
+    }
+    const version = state.sources.get(item.sourceId)?.version;
+    const read = state.extractionVersion.get(item.sourceId);
+    if (version !== undefined && read !== undefined && read < version) stale.add(item.id);
+  }
+  return { excluded, stale };
+}
 
 function activityOf(
   item: Item,
@@ -261,6 +509,20 @@ function activityOf(
 }
 
 /**
+ * 取り下げた・消した出典が出した未定の値。家族の答えも含めて答えを使わない（他の出典の事項が
+ * その値を条件にしていれば、条件しだいに残る。02-foundation §5.1・§5.3）。
+ */
+export function retiredUnknowns(state: EngineState): Set<string> {
+  const retired = new Set<string>();
+  for (const [sourceId, declared] of state.declaredUnknowns) {
+    if (state.withdrawnSources.has(sourceId) || state.purgedSources.get(sourceId) === 'all') {
+      for (const id of declared) retired.add(id);
+    }
+  }
+  return retired;
+}
+
+/**
  * 作用が効くかを決め、今の答えを作る（02-foundation §5.2）。家族の答えだけから始め、効く作用の答えを
  * 足しては決め直す。たたむ度に決め直すので、後で家族が答えれば、前の作用の効き方も変わる。
  * 作用と条件が互いを頼って回り続ける時は、回っている事項を unknown に固め、収まるまで解き直す
@@ -268,10 +530,13 @@ function activityOf(
  * 事項の数で必ず止まる。
  */
 function settle(state: EngineState): void {
-  const items = [...state.extractions.values()].flatMap((e) => e.items);
+  const items = itemsOf(state);
+  const overrides = familyOverrides(state, items);
+  const retired = retiredUnknowns(state);
+  const usable = state.answers.filter((a) => !retired.has(a.unknownId));
   const nodes = [...state.extractions.values()].flatMap((e) => e.conditions);
   const counted = (activity: ReadonlyMap<string, EffectActivity>) =>
-    state.answers.filter(
+    usable.filter(
       (a) => a.by === 'family' || (a.itemId !== undefined && activity.get(a.itemId) === 'on'),
     );
   const settled = (activity: ReadonlyMap<string, EffectActivity>) => {
@@ -284,7 +549,7 @@ function settle(state: EngineState): void {
       if (tied.some((a) => a.value !== current.value)) doubted.add(unknownId);
     }
     // 効くか分からない作用が、今の答えより後で、別の値を言っていれば、その値は確かでない。
-    for (const a of state.answers) {
+    for (const a of usable) {
       if (a.itemId === undefined || activity.get(a.itemId) !== 'unknown') continue;
       const current = resolved.get(a.unknownId);
       if (current !== undefined && a.seq >= current.seq && a.value !== current.value) {
@@ -300,7 +565,7 @@ function settle(state: EngineState): void {
     let activity = new Map<string, EffectActivity>();
     for (let round = 0; round < 2 * window; round++) {
       const assignment = new Map([...settled(activity).resolved].map(([id, r]) => [id, r.value]));
-      const graph = graphOf(items, activity);
+      const graph = graphOf(items, activity, overrides);
       const next = new Map<string, EffectActivity>(
         items.map((item) => [
           item.id,
@@ -349,11 +614,16 @@ interface EffectGraph {
   rootOf: (id: string) => string;
 }
 
-function graphOf(all: readonly Item[], activity: ReadonlyMap<string, EffectActivity>): EffectGraph {
+function graphOf(
+  all: readonly Item[],
+  activity: ReadonlyMap<string, EffectActivity>,
+  overrides: { excluded: ReadonlySet<string>; stale: ReadonlySet<string> },
+): EffectGraph {
   const byId = new Map(all.map((i) => [i.id, i]));
   const replacers = new Map<string, Map<string, EffectActivity>>();
-  const cancelled = new Set<string>();
-  const maybe = new Set<string>();
+  // 家族が外した事項は、取り消されたのと同じに扱う。直す前の版から読んだ事項は、確かとしない。
+  const cancelled = new Set<string>(overrides.excluded);
+  const maybe = new Set<string>(overrides.stale);
   for (const item of all) {
     const active = activity.get(item.id) ?? 'off';
     if (active === 'off') continue;
@@ -396,10 +666,8 @@ function graphOf(all: readonly Item[], activity: ReadonlyMap<string, EffectActiv
 }
 
 function effectGraph(state: EngineState): EffectGraph {
-  return graphOf(
-    [...state.extractions.values()].flatMap((e) => e.items),
-    state.effects,
-  );
+  const all = itemsOf(state);
+  return graphOf(all, state.effects, familyOverrides(state, all));
 }
 
 /**

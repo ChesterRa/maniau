@@ -8,6 +8,7 @@ import {
   type Extraction,
   ExtractionOutput,
   Household,
+  proposalSnapshot,
   type ReadingIssue,
   type Source,
   splitSentences,
@@ -146,6 +147,20 @@ export function demoEvents(stage: DemoStageId): DomainEvent[] {
       snapshot: requestSnapshot(events, at, taskKey),
     });
   };
+  // 本人が引き受ける。見せた提案の控えは、その時の計画の作業から取る（02-foundation §5.5）。
+  const accept = (at: string, assigneeId: string, taskKey: string) => {
+    const task = computePlan(events, at).tasks.find((t) => t.key === taskKey);
+    if (!task) throw new Error(`デモの作業が無い：${taskKey}`);
+    const shown = proposalSnapshot(task);
+    if (!shown) throw new Error(`デモの作業が置けていない：${taskKey}`);
+    add(at, assigneeId, {
+      type: 'commitmentChanged',
+      taskKey,
+      assigneeId,
+      action: 'accept',
+      shown,
+    });
+  };
   const notice = (index: number, at: string) => {
     const source = data.sources[index];
     const output = data.outputs[index];
@@ -191,25 +206,10 @@ export function demoEvents(stage: DemoStageId): DomainEvent[] {
       taskKey: keys.task(grandma, 'ask'),
       assigneeId: 'b',
     });
-    add('2026-11-25T19:37+09:00', 'b', {
-      type: 'commitmentChanged',
-      taskKey: keys.task(grandma, 'ask'),
-      assigneeId: 'b',
-      action: 'accept',
-    });
+    accept('2026-11-25T19:37+09:00', 'b', keys.task(grandma, 'ask'));
     sent('2026-11-25T19:40+09:00', 'b', keys.task(grandma, 'ask'), 'r-grandma');
     // 健太が、帰りの買い物（11/26 18:55–19:10、家に着くのは 19:25）を見て引き受ける。
-    add('2026-11-26T12:12+09:00', 'a', {
-      type: 'commitmentChanged',
-      taskKey: buy,
-      assigneeId: 'a',
-      action: 'accept',
-      shown: {
-        start: '2026-11-26T18:55+09:00',
-        end: '2026-11-26T19:10+09:00',
-        delayedArrival: '2026-11-26T19:25+09:00',
-      },
-    });
+    accept('2026-11-26T12:12+09:00', 'a', buy);
   }
   if (upTo >= 2) {
     add('2026-11-26T19:12+09:00', 'a', {
@@ -234,18 +234,8 @@ export function demoEvents(stage: DemoStageId): DomainEvent[] {
       taskKey: keys.task(gakudo, 'submit'),
       assigneeId: 'a',
     });
-    add('2026-11-29T21:02+09:00', 'a', {
-      type: 'commitmentChanged',
-      taskKey: keys.task(gakudo, 'write'),
-      assigneeId: 'a',
-      action: 'accept',
-    });
-    add('2026-11-29T21:02+09:00', 'a', {
-      type: 'commitmentChanged',
-      taskKey: keys.task(gakudo, 'submit'),
-      assigneeId: 'a',
-      action: 'accept',
-    });
+    accept('2026-11-29T21:02+09:00', 'a', keys.task(gakudo, 'write'));
+    accept('2026-11-29T21:02+09:00', 'a', keys.task(gakudo, 'submit'));
   }
   if (upTo >= 3) {
     add('2026-11-30T17:30+09:00', 'a', {

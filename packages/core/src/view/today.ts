@@ -133,7 +133,8 @@ export function todayCards(
     if (!task.live || task.assigneeId !== memberId || task.cancels !== undefined) continue;
     if (!isActiveTask(plan, task)) continue;
     const arrangement = plan.arrangements.find((a) => a.key === task.basis.arrangementKey);
-    if (task.commitment === 'proposed') {
+    // 引き受けた後に中身が変わった作業は、提案として見せ直す（引き受け直してもらう）。
+    if (task.commitment === 'proposed' || (task.commitment === 'accepted' && task.reconfirm)) {
       proposal.push({ kind: 'proposal', task, ...(arrangement ? { arrangement } : {}) });
     } else if (task.commitment === 'accepted') {
       todo.push({ kind: 'todo', task });

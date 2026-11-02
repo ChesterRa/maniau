@@ -230,6 +230,11 @@ export const Task = z.object({
   /** 取り消しの連絡の作業なら、取り消す依頼の requestId。 */
   cancels: z.string().optional(),
   /**
+   * 引き受けた時の提案の控えと、今の提案が違う（控えの無い古い形も含む）。引き受けは今の中身を
+   * 確かめたことにならないので、本人に見せ直す（02-foundation §5.5）。accepted の時だけ付く。
+   */
+  reconfirm: z.boolean().optional(),
+  /**
    * 案を実際に使う時だけ要る当日の準備（家庭の決まりの extraSteps。例：学童の日の弁当）。
    * その案が今使う案（手配の inUseOptionKey）でない間は候補で、引き受けを求めない。
    */

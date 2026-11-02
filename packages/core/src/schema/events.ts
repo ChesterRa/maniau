@@ -1,9 +1,9 @@
 // 事象（状態の正本）。追記だけの列で、今の状態はいつでも事象から作り直せる（docs/design/01-model.md §2）。
 import { z } from 'zod';
-import { DateTime } from '../time';
+import { DateTime, toEpochMinutes } from '../time';
 import { ExternalKind, Household, Id } from './household';
-import { Basis } from './plan';
-import { Source } from './source';
+import { Basis, type Task } from './plan';
+import { Interpretation, Sentence, Source } from './source';
 
 /** 事象の共通の欄。 */
 const envelope = {
@@ -39,6 +39,63 @@ export const RequestSnapshot = z.object({
 });
 export type RequestSnapshot = z.infer<typeof RequestSnapshot>;
 
+/**
+ * 引き受けた時に本人が見た提案の控え（02-foundation §5.5）。命令は accept に必ず付ける。控えの無い
+ * accept は古い形で、今の作業を確かめたことにはしない。今の提案と違えば、確かめ直しが要る。
+ */
+export const ProposalSnapshot = z.object({
+  start: DateTime,
+  end: DateTime,
+  /** 寄り道で遅れる到家の時刻（帰り道の寄り道の時だけ）。 */
+  delayedArrival: DateTime.optional(),
+  /** 用件（画面の文言のキーと値）。 */
+  titleKey: z.string().min(1),
+  titleParams: z.record(z.string(), z.string()),
+  /** 場所（店など）。無ければ場所を問わない作業。 */
+  atPlaceId: Id.optional(),
+  travelBeforeMin: z.number().int().nonnegative(),
+  travelAfterMin: z.number().int().nonnegative(),
+  /** 外の相手に頼む作業なら、相手と返事の種類。 */
+  external: z.object({ to: Id, kind: ExternalKind }).optional(),
+});
+export type ProposalSnapshot = z.infer<typeof ProposalSnapshot>;
+
+/** 二つの提案の控えが同じ中身か（時刻は同じ瞬間なら同じ。用件の値は並びによらない）。 */
+export function sameProposal(a: ProposalSnapshot, b: ProposalSnapshot): boolean {
+  const key = (p: ProposalSnapshot) =>
+    JSON.stringify([
+      toEpochMinutes(p.start),
+      toEpochMinutes(p.end),
+      p.delayedArrival === undefined ? null : toEpochMinutes(p.delayedArrival),
+      p.titleKey,
+      Object.entries(p.titleParams).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)),
+      p.atPlaceId ?? null,
+      p.travelBeforeMin,
+      p.travelAfterMin,
+      p.external ? [p.external.to, p.external.kind] : null,
+    ]);
+  return key(a) === key(b);
+}
+
+/**
+ * 引き受けの時に見せる提案の控え（02-foundation §5.5）。置けていない作業（時刻が無い）には作れない。
+ * 画面はこの控えを見せ、引き受けの命令はこれを付ける。
+ */
+export function proposalSnapshot(task: Task): ProposalSnapshot | undefined {
+  if (task.start === undefined || task.end === undefined) return undefined;
+  return {
+    start: task.start,
+    end: task.end,
+    ...(task.detour ? { delayedArrival: task.detour.delayedArrival } : {}),
+    titleKey: task.titleKey,
+    titleParams: task.titleParams,
+    ...(task.atPlaceId === undefined ? {} : { atPlaceId: task.atPlaceId }),
+    travelBeforeMin: task.travelBeforeMin,
+    travelAfterMin: task.travelAfterMin,
+    ...(task.external ? { external: task.external } : {}),
+  };
+}
+
 /** モデルの呼び出しの種類（§10）。 */
 export const ModelCall = z.enum([
   'extract',
@@ -68,6 +125,11 @@ export const DomainEvent = z.discriminatedUnion('type', [
     promptVersion: z.string().min(1),
     inputHash: z.string().min(1),
     sourceId: Id.optional(),
+    /**
+     * 読んだ出典の文の版（書き起こしを直すと上がる）。読み取りは非同期で、直す前に始めた読み取りが
+     * 後で終わることがあるので、記録した順ではなく、この版で古い読み取りを見分ける。無いのは古い形。
+     */
+    sourceVersion: z.number().int().positive().optional(),
     /** 呼び出しの種類ごとの型で、使う時に検査する。 */
     output: z.unknown(),
   }),
@@ -102,13 +164,8 @@ export const DomainEvent = z.discriminatedUnion('type', [
     taskKey: z.string().min(1),
     assigneeId: Id,
     action: z.enum(['accept', 'decline', 'done', 'withdraw']),
-    /**
-     * 引き受けた時に画面で見せた時刻（accept の時だけ）。後で時刻が変われば、引き受けは新しい時刻を
-     * 確かめたことにならない（寄り道で遅れる到着も含む）。
-     */
-    shown: z
-      .object({ start: DateTime, end: DateTime, delayedArrival: DateTime.optional() })
-      .optional(),
+    /** 引き受けた時に見た提案の控え（accept の時だけ）。 */
+    shown: ProposalSnapshot.optional(),
   }),
   /** 外の相手に頼んだ・届けを出した。依頼の一件が始まる（作業は済みになる）。 */
   z.object({
@@ -135,13 +192,76 @@ export const DomainEvent = z.discriminatedUnion('type', [
     type: z.literal('cancellationSent'),
     requestId: Id,
   }),
-  /** 知らせた。同じ知らせを繰り返さず、追いかけた回数を数えるため。 */
+  /**
+   * 知らせを、送り出しの事業者が受け付けた（仕組み＝system だけが書く。02-foundation §5.7）。
+   * 本人に届いた・読んだ証拠ではない。失敗・結果不明は運用の表に残し、この事象にしない。
+   */
   z.object({
     ...envelope,
     type: z.literal('notified'),
     notificationKey: z.string().min(1),
     toMemberId: Id,
+    channel: z.enum(['webPush']),
+    result: z.literal('accepted'),
+    kind: z.enum(['decisionApproaching', 'question', 'cancellation', 'assignment']),
+    /** 送った中身の控え（文言のキーと値）。 */
+    content: z.object({ titleKey: z.string().min(1), params: z.record(z.string(), z.string()) }),
+    appVersion: z.string().min(1),
   }),
+  /** 家族が、推定・食い違いの事項を確かめた（「家族が確認」。要件と作用が効く。§5.2）。 */
+  z.object({ ...envelope, type: z.literal('itemConfirmed'), itemId: Id }),
+  /**
+   * 家族が、事項の解釈の一部を直した。直した欄だけを持ち、解釈を置き換えて「家族が確認」にする。
+   * 事項の ID は変わらない。原文は変えない（書かれた事と、家族の解釈を分けて残す）。
+   */
+  z.object({
+    ...envelope,
+    type: z.literal('itemCorrected'),
+    itemId: Id,
+    interpretation: Interpretation.refine((value) => Object.keys(value).length > 0, {
+      message: '直す欄が無い',
+    }),
+  }),
+  /** 家族が「関係ない」とした（うちの子に関係ない、読み違い）。要件も作用も起こさない。itemConfirmed で戻せる。 */
+  z.object({
+    ...envelope,
+    type: z.literal('itemDismissed'),
+    itemId: Id,
+    reason: z.enum(['notOurs', 'misread', 'other']),
+  }),
+  /**
+   * 家族が「このお知らせはもう当てはまらない」と言った（取り下げ）。事項は全て生きていない扱いになり、
+   * 頼んだ後なら取り消しの連絡が要る。削除（sourceContentPurged）とは分ける（§5.1）。
+   */
+  z.object({ ...envelope, type: z.literal('sourceWithdrawn'), sourceId: Id }),
+  /**
+   * 削除の仕事が、出典の中身を消した（仕組み＝system が書く）。photo は写真だけで、計画は変わらない。
+   * all はお知らせごとで、事項・答え・作用を使わない。行事が中止になったとは推し量らず、それに頼る
+   * 依頼と引き受けは要確認にする（§5.1・§6.4）。
+   */
+  z.object({
+    ...envelope,
+    type: z.literal('sourceContentPurged'),
+    sourceId: Id,
+    scope: z.enum(['photo', 'all']),
+  }),
+  /**
+   * 家族が、写真の書き起こしを直した。文を置き換え、版を上げる。読み直しが続く（§4.1）。読み直しが
+   * 終わるまで、前の版から読んだ事項は確かとしない（条件しだい）。
+   */
+  z.object({
+    ...envelope,
+    type: z.literal('transcriptionCorrected'),
+    sourceId: Id,
+    /** 直した後の文の版（出典の版。事象の形の版 version とは別）。 */
+    sourceVersion: z.number().int().positive(),
+    sentences: z.array(Sentence).min(1),
+  }),
+  /**
+   * 「送った」の押し間違い（実際には何も送っていない）。送ったと記録した本人だけが、返事も取り消しも
+   * まだ無い間に使える。元の事象は消さず、依頼を無かった事にする。取り消しを送ったことにはならない（§5.6）。
+   */
+  z.object({ ...envelope, type: z.literal('requestRecordCorrected'), requestId: Id }),
   /** 時計を進めた。試験とデモだけ。 */
   z.object({ ...envelope, type: z.literal('clockAdvanced'), to: DateTime }),
 ]);

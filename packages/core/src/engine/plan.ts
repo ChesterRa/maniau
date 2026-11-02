@@ -2,7 +2,12 @@
 // v0：要件 → 手配 → 案と決め時（逆算の目安）→ 問い → 買い物の置き場所 → 取り消しの連絡。
 // 計画全体を解いての決め時の確かめ（§5 の2）と、最小の組み直し（§8）は、まだ無い。
 import { conditionShape, evaluateCondition } from '../schema/condition';
-import type { DomainEvent, RequestSnapshot } from '../schema/events';
+import {
+  type DomainEvent,
+  proposalSnapshot,
+  type RequestSnapshot,
+  sameProposal,
+} from '../schema/events';
 import type { CareOptionTemplate, Cost, Household } from '../schema/household';
 import type {
   Arrangement,
@@ -324,7 +329,7 @@ function task(
     Partial<Pick<Task, 'travelBeforeMin' | 'travelAfterMin' | 'travelSource'>>,
 ): Task {
   const assignee = ctx.state.assignees.get(key);
-  return {
+  const built: Task = {
     key,
     travelBeforeMin: 0,
     travelAfterMin: 0,
@@ -333,6 +338,13 @@ function task(
     ...(assignee === undefined ? {} : { assigneeId: assignee }),
     commitment: ctx.state.commitments.get(key) ?? 'proposed',
   };
+  if (built.commitment !== 'accepted') return built;
+  // 引き受けた時に見た提案と、今の提案が同じでなければ、見せ直す（控えの無い古い形も同じ）。
+  const shown = ctx.state.shown.get(key);
+  const now = proposalSnapshot(built);
+  return shown !== undefined && now !== undefined && sameProposal(shown, now)
+    ? built
+    : { ...built, reconfirm: true };
 }
 
 /** 選んだ案が使えなくなったか：依頼が断られた、または決め時を過ぎても始めていない。 */

@@ -47,6 +47,18 @@ function detour(overrides: Record<string, unknown> = {}) {
   });
 }
 
+// 引き受け時に本人が見た内容。作業から関数で写さず、独立した期待値として置く。
+const shownDetour = {
+  start: '2026-11-26T18:55+09:00',
+  end: '2026-11-26T19:10+09:00',
+  delayedArrival: '2026-11-26T19:25+09:00',
+  titleKey: 'task.shop',
+  titleParams: {},
+  atPlaceId: 'store',
+  travelBeforeMin: 5,
+  travelAfterMin: 5,
+};
+
 describe('帰り道の寄り道', () => {
   it('元の到家から到駅を逆算し、遅れた到家までを照らす', () => {
     const report = verifyPlan({
@@ -220,11 +232,7 @@ describe('帰り道の寄り道', () => {
         taskKey: 'shop',
         assigneeId: 'a',
         action: 'accept',
-        shown: {
-          start: '2026-11-26T18:55+09:00',
-          end: '2026-11-26T19:10+09:00',
-          delayedArrival: '2026-11-26T19:25+09:00',
-        },
+        shown: shownDetour,
       }),
     ];
     const report = verifyPlan({
@@ -244,11 +252,7 @@ describe('帰り道の寄り道', () => {
         taskKey: 'shop',
         assigneeId: 'a',
         action: 'accept',
-        shown: {
-          start: '2026-11-26T18:55+09:00',
-          end: '2026-11-26T19:10+09:00',
-          delayedArrival: '2026-11-26T19:25+09:00',
-        },
+        shown: shownDetour,
       }),
       event(3, {
         type: 'commitmentChanged',
@@ -275,11 +279,7 @@ describe('帰り道の寄り道', () => {
         taskKey: 'shop',
         assigneeId: 'a',
         action: 'accept',
-        shown: {
-          start: '2026-11-26T18:55+09:00',
-          end: '2026-11-26T19:10+09:00',
-          delayedArrival: '2026-11-26T19:20+09:00',
-        },
+        shown: { ...shownDetour, delayedArrival: '2026-11-26T19:20+09:00' },
       }),
     ];
     const report = verifyPlan({
