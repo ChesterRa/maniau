@@ -1,0 +1,71 @@
+# 用語（日本語と英語）
+
+画面、英語の README、コードの名前で、同じ言葉を使う。新しい言葉は、使う前にここへ足す。英語は短く平易にし、日本の制度の言葉は説明を添える。
+
+## 状態と操作
+
+| 日本語 | English | 意味・注意 | コードの名前 |
+|---|---|---|---|
+| 決め時 | decision deadline | ある案を選べる最後の時。過ぎるとその案は取れない。外の締切（期限）とは別の物で、締切・返事にかかる時間・営業時間・勤務から逆算する | `decisionDeadline` |
+| 期限・締切 | deadline | 外で決まっている締切（届けの提出、申請） | `deadline` |
+| 引き受ける | take on | 本人が担当を受けること。本人だけが押せる | `accept` |
+| 引き受け待ち | waiting to be taken on | 提案されたが、本人がまだ受けていない | `proposed` |
+| 返事待ち | awaiting a reply | 引き受けた後、外の相手（祖母、学童、勤務先）の返事・承認・受理を待っている。確定ではない | `awaitingReply` |
+| 確定 | confirmed | 要る条件がそろった | `confirmed` |
+| 済み | done | 本人が済んだと記録した | `done` |
+| 断る | decline | 本人が引き受けない | `declined` |
+| 断られた | turned down | 外の相手が「いいえ」と返した | `turnedDown` |
+| できなくなった | can no longer do | 引き受けた後に、本人ができなくなった | `withdrawn` |
+| 取り消し | cancellation | 前提が消えた準備を外すこと。頼んだ後なら、取り消しの連絡になる | `cancel` |
+| 取り消しの連絡 | cancellation message | 頼んだ相手に「要らなくなった」と伝える文。下書きまで作り、送るのは家族 | `cancellationMessage` |
+| 頼み事 | request | 外の相手への依頼 | `request` |
+| 下書き | draft | 送る前の文。まにあうは自分では送らない | `draft` |
+| 予備の案 | backup option | 本命の返事を待つ間に押さえておく案。要らなくなれば取り消す | `backup` |
+| 代案 | alternative | 同じ必要を満たす別の案 | `alternative` |
+| 問い | question | 答えで計画が変わる時だけ出す | `question` |
+| まだ判断できない | can't tell yet | 計算が限られた時間で終わらない時、または候補が足りない時。「無理」とは言わない | `undetermined` |
+| 要確認 | check needed | 地図や営業時間のデータが未来の日に当てはまるか分からない時など | `needsCheck` |
+
+## 出典と事実
+
+| 日本語 | English | 意味・注意 | コードの名前 |
+|---|---|---|---|
+| お知らせ・おたより | school notice | 学校・園・学童から届く文。原文はいつも残す | `notice` |
+| 元の文・原文 | original text | 事実の出典の文。訳を出すなら訳と示す | `sourceSentence` |
+| 記載 | stated | 元の文に書いてある事 | `stated` |
+| 推定 | inferred | 書かれていない準備などを Claude が推定した事。家族が確かめるまで計画に入れない | `inferred` |
+| 条件 | condition | 「5日に行った場合は」のように、事実が成り立つ条件 | `condition` |
+| 変更 | change | 前の事実を置き換える知らせ | `change` |
+
+## 家族と暮らし
+
+| 日本語 | English | 意味・注意 | コードの名前 |
+|---|---|---|---|
+| 家庭 | household | データを分ける単位 | `household` |
+| 成員 | member | 大人・子・頼める人 | `member` |
+| 頼める人 | helper | 祖父母など、家族が頼める外の人 | `helper` |
+| ふだんの週 | usual week | 勤務・通勤・お迎えの担当の決まった形 | `routine` |
+| お迎え | pickup | 学童・園への迎え | `pickup` |
+| 帰り道 | way home | 職場から家まで、お迎えを含む | `commuteHome` |
+| 寄り道 | detour | 帰り道に店へ寄ること。区間ごとに確かめる | `detour` |
+| 学童 | after-school care (gakudō) | 放課後の預かり。決まりは場所ごとに違い、家族が登録する | `afterSchoolCare` |
+| 一日利用 | full-day care | 学校が休みの日に、学童を朝から使うこと | `fullDayCare` |
+| 振替休業日 | make-up school holiday | 土日の行事の代わりに学校が休む日。国の祝日ではなく、その学校だけ | `makeUpHoliday` |
+| 有休 | paid leave | 年次有給休暇。申請の締切は勤務先の決まり | `paidLeave` |
+| 時間休 | hourly leave | 時間単位の休み | `hourlyLeave` |
+| 行事 | school event | 学習発表会など。記録の「事象」とは別 | `schoolEvent` |
+| 事象 | log entry | 記録の一件（取り込み、引き受け、時計の進み等）。画面には出さない | `DomainEvent` |
+
+## 画面
+
+| 日本語 | English | 意味・注意 |
+|---|---|---|
+| 今週 | This week | 首の画面。上に次の決め時と今日、下に7日 |
+| 全体 | Overview | 4週間の見通しと、行事ごとの準備の鎖 |
+| 取り込む | Add | お知らせを文・写真で入れる |
+| 家族 | Family | 成員、場所、ふだんの週、決まり |
+| 初めの設定 | Setup | 家・学校と学童・職場・通勤・お迎えの担当 |
+| 次の決め時 | Next decision | 首の画面の一番上 |
+| 変わったこと | What changed | 変更の差分 |
+| もしも | What if | 条件を一つ変えて計算し直す |
+| デモの時計 | Demo clock | 試験とデモで進められる時計。進めたことを画面に示す |
