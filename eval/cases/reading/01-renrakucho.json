@@ -1,0 +1,219 @@
+{
+  "id": "reading-dev-01",
+  "title": "小1の連絡帳（書き起こし）",
+  "synthetic": true,
+  "task": "extraction",
+  "source": {
+    "id": "diary-dev-01",
+    "version": 1,
+    "receivedAt": "2026-11-26T18:00+09:00",
+    "sender": "school",
+    "language": "ja",
+    "medium": "text",
+    "sentences": [
+      {
+        "id": "diary-dev-01#1",
+        "text": "いえのひとへ。"
+      },
+      {
+        "id": "diary-dev-01#2",
+        "text": "あした、たいいくで つかう たおるを もってきます。"
+      },
+      {
+        "id": "diary-dev-01#3",
+        "text": "こくごの ほんを よんで、おんどくかあどに おうちのひとの はんこを もらいます。"
+      },
+      {
+        "id": "diary-dev-01#4",
+        "text": "12がつ2にち（水）に かんじの てすとを します。"
+      },
+      {
+        "id": "diary-dev-01#5",
+        "text": "こうさくで つかう あきばこを 1こ、12がつ4にち（金）までに もってきてください。"
+      },
+      {
+        "id": "diary-dev-01#6",
+        "text": "おてがみを 1まい いれました。"
+      }
+    ]
+  },
+  "context": {
+    "priorItems": [],
+    "priorUnknowns": [],
+    "timeZone": "Asia/Tokyo"
+  },
+  "expected": {
+    "referenceOutput": {
+      "items": [
+        {
+          "id": "towel",
+          "sentenceIds": [
+            "diary-dev-01#2"
+          ],
+          "kind": "belongings",
+          "written": "あした、たいいくで つかう たおるを もってきます。",
+          "date": null,
+          "writtenWeekday": "none",
+          "startTime": null,
+          "endTime": null,
+          "what": "たおる",
+          "dayType": null,
+          "deadline": null,
+          "audience": null,
+          "place": null,
+          "relativeDay": "tomorrow",
+          "conditionNodeId": null,
+          "inferred": false,
+          "effects": []
+        },
+        {
+          "id": "reading",
+          "sentenceIds": [
+            "diary-dev-01#3"
+          ],
+          "kind": "homework",
+          "written": "こくごの ほんを よんで、おんどくかあどに おうちのひとの はんこを もらいます。",
+          "date": null,
+          "writtenWeekday": "none",
+          "startTime": null,
+          "endTime": null,
+          "what": "こくごの ほんを よむ",
+          "dayType": null,
+          "deadline": null,
+          "audience": null,
+          "place": null,
+          "relativeDay": "none",
+          "conditionNodeId": null,
+          "inferred": false,
+          "effects": []
+        },
+        {
+          "id": "signature",
+          "sentenceIds": [
+            "diary-dev-01#3"
+          ],
+          "kind": "homework",
+          "written": "こくごの ほんを よんで、おんどくかあどに おうちのひとの はんこを もらいます。",
+          "date": null,
+          "writtenWeekday": "none",
+          "startTime": null,
+          "endTime": null,
+          "what": "おんどくかあどに おうちのひとの はんこ",
+          "dayType": null,
+          "deadline": null,
+          "audience": null,
+          "place": null,
+          "relativeDay": "none",
+          "conditionNodeId": null,
+          "inferred": false,
+          "effects": []
+        },
+        {
+          "id": "test",
+          "sentenceIds": [
+            "diary-dev-01#4"
+          ],
+          "kind": "test",
+          "written": "12がつ2にち（水）に かんじの てすとを します。",
+          "date": "2026-12-02",
+          "writtenWeekday": "wed",
+          "startTime": null,
+          "endTime": null,
+          "what": "かんじの てすと",
+          "dayType": null,
+          "deadline": null,
+          "audience": null,
+          "place": null,
+          "relativeDay": "none",
+          "conditionNodeId": null,
+          "inferred": false,
+          "effects": []
+        },
+        {
+          "id": "box",
+          "sentenceIds": [
+            "diary-dev-01#5"
+          ],
+          "kind": "belongings",
+          "written": "こうさくで つかう あきばこを 1こ、12がつ4にち（金）までに もってきてください。",
+          "date": "2026-12-04",
+          "writtenWeekday": "fri",
+          "startTime": null,
+          "endTime": null,
+          "what": "こうさくの あきばこ 1こ",
+          "dayType": null,
+          "deadline": null,
+          "audience": null,
+          "place": null,
+          "relativeDay": "none",
+          "conditionNodeId": null,
+          "inferred": false,
+          "effects": []
+        },
+        {
+          "id": "paper",
+          "sentenceIds": [
+            "diary-dev-01#6"
+          ],
+          "kind": "handout",
+          "written": "おてがみを 1まい いれました。",
+          "date": null,
+          "writtenWeekday": "none",
+          "startTime": null,
+          "endTime": null,
+          "what": "おてがみ 1まい",
+          "dayType": null,
+          "deadline": null,
+          "audience": null,
+          "place": null,
+          "relativeDay": "none",
+          "conditionNodeId": null,
+          "inferred": false,
+          "effects": []
+        }
+      ],
+      "unknowns": [],
+      "conditions": [],
+      "irrelevantSentenceIds": [
+        "diary-dev-01#1"
+      ],
+      "ambiguities": []
+    },
+    "checks": [
+      {
+        "id": "N1",
+        "critical": true,
+        "check": "あしたの体育用タオルを読み、相対日 tomorrow を保つ。11月26日受信なら11月27日。"
+      },
+      {
+        "id": "N2",
+        "critical": true,
+        "check": "音読と音読カードへの家族の印をどちらも残す。無い提出時刻を作らない。"
+      },
+      {
+        "id": "N3",
+        "critical": true,
+        "check": "漢字テストを12月2日（水）と読む。事前の練習日数は書かれていない。"
+      },
+      {
+        "id": "N4",
+        "critical": true,
+        "check": "空き箱1個を12月4日までに持ってくる事を残す。締切の時刻を作らない。"
+      },
+      {
+        "id": "N5",
+        "critical": false,
+        "check": "配布物は1枚と読み、何の手紙か、サインが必要かを勝手に作らない。"
+      },
+      {
+        "id": "N6",
+        "critical": true,
+        "check": "全ての文を事項または関係なしに分け、文IDから根拠に戻れる。"
+      }
+    ],
+    "limits": [
+      "手書き写真そのものは含まない。書き起こしからの読み取りだけを試す。",
+      "日付のみの「までに」は時刻つき deadline に勝手に変えない。期限の日付と対象日を型だけで区別しにくい。"
+    ]
+  }
+}

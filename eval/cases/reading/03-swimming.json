@@ -1,0 +1,244 @@
+{
+  "id": "reading-dev-03",
+  "title": "水泳の欠席と振替の決まり",
+  "synthetic": true,
+  "task": "extraction",
+  "source": {
+    "id": "swim-dev-01",
+    "version": 1,
+    "receivedAt": "2026-11-29T19:00+09:00",
+    "sender": "club",
+    "language": "ja",
+    "medium": "text",
+    "sentences": [
+      {
+        "id": "swim-dev-01#1",
+        "text": "12月3日（木）17時の水泳を休む場合は、12月2日（水）18時までにアプリで欠席連絡をしてください。"
+      },
+      {
+        "id": "swim-dev-01#2",
+        "text": "期限までに連絡した人は、12月28日（月）18時までにアプリで1回だけ振替を申し込めます。"
+      },
+      {
+        "id": "swim-dev-01#3",
+        "text": "振替は空きのあるクラスに限ります。"
+      },
+      {
+        "id": "swim-dev-01#4",
+        "text": "申込を送っただけでは確定ではなく、受付完了を確認してください。"
+      },
+      {
+        "id": "swim-dev-01#5",
+        "text": "期限後の欠席連絡では振替はできません。"
+      }
+    ]
+  },
+  "context": {
+    "priorItems": [],
+    "priorUnknowns": [],
+    "timeZone": "Asia/Tokyo"
+  },
+  "expected": {
+    "referenceOutput": {
+      "items": [
+        {
+          "id": "absence",
+          "sentenceIds": [
+            "swim-dev-01#1"
+          ],
+          "kind": "submission",
+          "written": "12月3日（木）17時の水泳を休む場合は、12月2日（水）18時までにアプリで欠席連絡をしてください。",
+          "date": "2026-12-03",
+          "writtenWeekday": "thu",
+          "startTime": "17:00",
+          "endTime": null,
+          "what": "アプリで欠席連絡",
+          "dayType": null,
+          "deadline": "2026-12-02T18:00+09:00",
+          "audience": null,
+          "place": null,
+          "relativeDay": "none",
+          "conditionNodeId": "absent-yes",
+          "inferred": false,
+          "effects": []
+        },
+        {
+          "id": "makeup",
+          "sentenceIds": [
+            "swim-dev-01#1",
+            "swim-dev-01#2",
+            "swim-dev-01#3",
+            "swim-dev-01#5"
+          ],
+          "kind": "submission",
+          "written": "期限までに連絡した人は、12月28日（月）18時までにアプリで1回だけ振替を申し込めます。",
+          "date": "2026-12-28",
+          "writtenWeekday": "mon",
+          "startTime": null,
+          "endTime": null,
+          "what": "アプリで振替の申込（1回）",
+          "dayType": null,
+          "deadline": "2026-12-28T18:00+09:00",
+          "audience": null,
+          "place": null,
+          "relativeDay": "none",
+          "conditionNodeId": "eligible",
+          "inferred": false,
+          "effects": []
+        },
+        {
+          "id": "acceptance",
+          "sentenceIds": [
+            "swim-dev-01#1",
+            "swim-dev-01#2",
+            "swim-dev-01#3",
+            "swim-dev-01#4"
+          ],
+          "kind": "submission",
+          "written": "申込を送っただけでは確定ではなく、受付完了を確認してください。",
+          "date": null,
+          "writtenWeekday": "none",
+          "startTime": null,
+          "endTime": null,
+          "what": "申込の受付完了を確認",
+          "dayType": null,
+          "deadline": null,
+          "audience": null,
+          "place": null,
+          "relativeDay": "none",
+          "conditionNodeId": "check-acceptance",
+          "inferred": false,
+          "effects": []
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "absent",
+          "label": "12月3日を欠席する",
+          "values": [
+            "はい",
+            "いいえ"
+          ],
+          "kind": "family"
+        },
+        {
+          "id": "ontime",
+          "label": "欠席連絡が期限内",
+          "values": [
+            "はい",
+            "いいえ"
+          ],
+          "kind": "other"
+        },
+        {
+          "id": "vacancy",
+          "label": "振替先に空きがある",
+          "values": [
+            "はい",
+            "いいえ"
+          ],
+          "kind": "other"
+        },
+        {
+          "id": "applied",
+          "label": "振替を申し込んだ",
+          "values": [
+            "はい",
+            "いいえ"
+          ],
+          "kind": "family"
+        }
+      ],
+      "conditions": [
+        {
+          "id": "absent-yes",
+          "kind": "eq",
+          "unknownId": "absent",
+          "value": "はい",
+          "childIds": []
+        },
+        {
+          "id": "notice-yes",
+          "kind": "eq",
+          "unknownId": "ontime",
+          "value": "はい",
+          "childIds": []
+        },
+        {
+          "id": "vacancy-yes",
+          "kind": "eq",
+          "unknownId": "vacancy",
+          "value": "はい",
+          "childIds": []
+        },
+        {
+          "id": "eligible",
+          "kind": "and",
+          "unknownId": null,
+          "value": null,
+          "childIds": [
+            "absent-yes",
+            "notice-yes",
+            "vacancy-yes"
+          ]
+        },
+        {
+          "id": "applied-yes",
+          "kind": "eq",
+          "unknownId": "applied",
+          "value": "はい",
+          "childIds": []
+        },
+        {
+          "id": "check-acceptance",
+          "kind": "and",
+          "unknownId": null,
+          "value": null,
+          "childIds": [
+            "eligible",
+            "applied-yes"
+          ]
+        }
+      ],
+      "irrelevantSentenceIds": [],
+      "ambiguities": []
+    },
+    "checks": [
+      {
+        "id": "S1",
+        "critical": true,
+        "check": "12月3日17時の水泳を欠席する場合のみ、12月2日18時までの欠席連絡が要る。"
+      },
+      {
+        "id": "S2",
+        "critical": true,
+        "check": "期限内の欠席連絡が振替の条件。期限後は振替できない。"
+      },
+      {
+        "id": "S3",
+        "critical": true,
+        "check": "振替申込は12月28日18時まで、1回、空きのあるクラスに限る。"
+      },
+      {
+        "id": "S4",
+        "critical": true,
+        "check": "欠席・期限内の連絡・空き・申込・受理を、実際に起きた確定事実として作らない。"
+      },
+      {
+        "id": "S5",
+        "critical": false,
+        "check": "アプリで連絡・申込することと、受付完了の確認を区別する。"
+      },
+      {
+        "id": "S6",
+        "critical": true,
+        "check": "制約を出典の文IDへ戻せ、情報がない取消期限や追加料金を作らない。"
+      }
+    ],
+    "limits": [
+      "参照の条件は一つの表現例。1回の上限や規則全体を専用の型で保証する形はまだない。",
+      "申込可能な条件と、申込が実際に受理された事実は区別する。",
+      "受付確認は実際に申し込んだ後に必要。申込資格だけから確認作業を確定しない。"
+    ]
+  }
+}

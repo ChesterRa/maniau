@@ -1,0 +1,258 @@
+{
+  "id": "reading-dev-02",
+  "title": "サッカーの連絡（LINE文面）",
+  "synthetic": true,
+  "task": "extraction",
+  "source": {
+    "id": "football-dev-01",
+    "version": 1,
+    "receivedAt": "2026-11-27T18:00+09:00",
+    "sender": "club",
+    "language": "ja",
+    "medium": "text",
+    "sentences": [
+      {
+        "id": "football-dev-01#1",
+        "text": "あした（土）はサッカーの練習試合です。"
+      },
+      {
+        "id": "football-dev-01#2",
+        "text": "集合は9時10分、解散は12時、場所はみどり公園グラウンドです。"
+      },
+      {
+        "id": "football-dev-01#3",
+        "text": "雨でグラウンドが使えない場合だけ中止し、それ以外は行います。"
+      },
+      {
+        "id": "football-dev-01#4",
+        "text": "実施か中止かは、あした7時までにこのグループで知らせます。"
+      },
+      {
+        "id": "football-dev-01#5",
+        "text": "開催する場合、持ち物は水筒とタオルです。"
+      },
+      {
+        "id": "football-dev-01#6",
+        "text": "開催する場合、お茶当番は1年生の保護者です。"
+      }
+    ]
+  },
+  "context": {
+    "priorItems": [],
+    "priorUnknowns": [],
+    "timeZone": "Asia/Tokyo"
+  },
+  "expected": {
+    "referenceOutput": {
+      "items": [
+        {
+          "id": "match",
+          "sentenceIds": [
+            "football-dev-01#1",
+            "football-dev-01#2",
+            "football-dev-01#3"
+          ],
+          "kind": "event",
+          "written": "あした（土）はサッカーの練習試合です。",
+          "date": null,
+          "writtenWeekday": "sat",
+          "startTime": "09:10",
+          "endTime": "12:00",
+          "what": "サッカーの練習試合",
+          "dayType": null,
+          "deadline": null,
+          "audience": null,
+          "place": "みどり公園グラウンド",
+          "relativeDay": "tomorrow",
+          "conditionNodeId": "play",
+          "inferred": false,
+          "effects": []
+        },
+        {
+          "id": "notice",
+          "sentenceIds": [
+            "football-dev-01#4"
+          ],
+          "kind": "deadline",
+          "written": "実施か中止かは、あした7時までにこのグループで知らせます。",
+          "date": null,
+          "writtenWeekday": "none",
+          "startTime": null,
+          "endTime": null,
+          "what": "あした7時までの実施か中止の連絡予定",
+          "dayType": null,
+          "deadline": null,
+          "audience": null,
+          "place": null,
+          "relativeDay": "tomorrow",
+          "conditionNodeId": null,
+          "inferred": false,
+          "effects": []
+        },
+        {
+          "id": "bottle",
+          "sentenceIds": [
+            "football-dev-01#1",
+            "football-dev-01#3",
+            "football-dev-01#5"
+          ],
+          "kind": "belongings",
+          "written": "開催する場合、持ち物は水筒とタオルです。",
+          "date": null,
+          "writtenWeekday": "none",
+          "startTime": null,
+          "endTime": null,
+          "what": "水筒",
+          "dayType": null,
+          "deadline": null,
+          "audience": null,
+          "place": null,
+          "relativeDay": "tomorrow",
+          "conditionNodeId": "play",
+          "inferred": false,
+          "effects": []
+        },
+        {
+          "id": "towel",
+          "sentenceIds": [
+            "football-dev-01#1",
+            "football-dev-01#3",
+            "football-dev-01#5"
+          ],
+          "kind": "belongings",
+          "written": "開催する場合、持ち物は水筒とタオルです。",
+          "date": null,
+          "writtenWeekday": "none",
+          "startTime": null,
+          "endTime": null,
+          "what": "タオル",
+          "dayType": null,
+          "deadline": null,
+          "audience": null,
+          "place": null,
+          "relativeDay": "tomorrow",
+          "conditionNodeId": "play",
+          "inferred": false,
+          "effects": []
+        },
+        {
+          "id": "duty",
+          "sentenceIds": [
+            "football-dev-01#1",
+            "football-dev-01#3",
+            "football-dev-01#6"
+          ],
+          "kind": "duty",
+          "written": "開催する場合、お茶当番は1年生の保護者です。",
+          "date": null,
+          "writtenWeekday": "none",
+          "startTime": null,
+          "endTime": null,
+          "what": "お茶当番",
+          "dayType": null,
+          "deadline": null,
+          "audience": "1年生の保護者",
+          "place": null,
+          "relativeDay": "tomorrow",
+          "conditionNodeId": "play",
+          "inferred": false,
+          "effects": []
+        }
+      ],
+      "unknowns": [
+        {
+          "id": "rain",
+          "label": "雨かどうか",
+          "values": [
+            "はい",
+            "いいえ"
+          ],
+          "kind": "other"
+        },
+        {
+          "id": "field",
+          "label": "グラウンドが使えないか",
+          "values": [
+            "はい",
+            "いいえ"
+          ],
+          "kind": "other"
+        }
+      ],
+      "conditions": [
+        {
+          "id": "rain-yes",
+          "kind": "eq",
+          "unknownId": "rain",
+          "value": "はい",
+          "childIds": []
+        },
+        {
+          "id": "field-no",
+          "kind": "eq",
+          "unknownId": "field",
+          "value": "はい",
+          "childIds": []
+        },
+        {
+          "id": "cancel",
+          "kind": "and",
+          "unknownId": null,
+          "value": null,
+          "childIds": [
+            "rain-yes",
+            "field-no"
+          ]
+        },
+        {
+          "id": "play",
+          "kind": "not",
+          "unknownId": null,
+          "value": null,
+          "childIds": [
+            "cancel"
+          ]
+        }
+      ],
+      "irrelevantSentenceIds": [],
+      "ambiguities": []
+    },
+    "checks": [
+      {
+        "id": "F1",
+        "critical": true,
+        "check": "金曜受信の「あした（土）」を11月28日（土）とし、週末を飛ばさない。"
+      },
+      {
+        "id": "F2",
+        "critical": true,
+        "check": "集合9:10、解散12:00、場所を試合に結びつける。"
+      },
+      {
+        "id": "F3",
+        "critical": true,
+        "check": "雨かつグラウンド使用不可なら中止であり、雨だけで必ず中止と決めない。実施可否は未確定。"
+      },
+      {
+        "id": "F4",
+        "critical": true,
+        "check": "翌朝7時までの実施・中止の連絡は主催側の予定で、保護者が送る締切と取り違えない。"
+      },
+      {
+        "id": "F5",
+        "critical": false,
+        "check": "水筒、タオル、お茶当番と対象を残し、主催者の誰かを勝手に担当として確定しない。"
+      },
+      {
+        "id": "F6",
+        "critical": true,
+        "check": "全ての文IDを事項の根拠または関係なしに含める。"
+      }
+    ],
+    "limits": [
+      "天候と施設の状態が未判明のため、条件を確定事実として扱わない。",
+      "主催側が知らせる時刻と、家族が実施する作業の期限は別である。",
+      "相対日と時刻だけの「までに」を、根拠のない開始時刻として扱わない。主催者側の連絡期限は原文に残す。"
+    ]
+  }
+}
