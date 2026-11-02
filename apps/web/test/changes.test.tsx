@@ -15,7 +15,8 @@ describe('変わったこと', () => {
     expect(aya).toMatch(/12\/7.*の振替休業日の預け先は、要らなくなりました/);
     expect(aya).toMatch(/に取り消しを伝える：あなた\s*まだ/);
     expect(aya).toMatch(/に取り消しを伝える：健太\s*まだ/);
-    expect(aya).toMatch(/白い長袖シャツ：12\/5.* → 12\/8.*まで/);
+    // 日だけの締切に、書かれていない時刻（仕組みが置く朝の 8:00）を付けない。
+    expect(aya).toContain('白い長袖シャツ：12/5（土） → 12/8（火）まで');
     expect(aya).toContain('（用意はできています）');
     const kenta = text(renderToStaticMarkup(<TodayScreen ctx={ctxFor('postponed', 'a', 'en')} />));
     expect(kenta).toContain('What changed');

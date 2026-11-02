@@ -1,6 +1,6 @@
 // 事象の列を、計算に使う状態にたたむ（docs/design/01-model.md §2）。同じ列からは、いつも同じ状態になる。
 import { evaluateCondition } from '../schema/condition';
-import type { DomainEvent, ProposalSnapshot, RequestSnapshot } from '../schema/events';
+import type { DomainEvent, ProposalSnapshot, RequestSnapshot, TaskContent } from '../schema/events';
 import type { Household } from '../schema/household';
 import type { CommitmentState, ExternalRequestState } from '../schema/plan';
 import {
@@ -83,6 +83,8 @@ export interface EngineState {
   purgedSources: Map<string, 'photo' | 'all'>;
   /** 引き受けた時に見た提案の控え（作業の key → 控え）。 */
   shown: Map<string, ProposalSnapshot>;
+  /** 済んだと記録した時に見せた用件（作業の key → 用件）。無いのは古い事象の済み。 */
+  doneContent: Map<string, TaskContent>;
   primary: Map<string, string>;
   backups: Map<string, Set<string>>;
   /** 家族が取り下げた案（手配の key → 案の key）。頼んだ後なら、取り消しの連絡が要る。 */
@@ -123,6 +125,7 @@ export function emptyState(): EngineState {
     declaredUnknowns: new Map(),
     purgedSources: new Map(),
     shown: new Map(),
+    doneContent: new Map(),
     primary: new Map(),
     backups: new Map(),
     dropped: new Map(),
@@ -373,6 +376,9 @@ function apply(state: EngineState, event: DomainEvent): void {
         if (event.shown) state.shown.set(event.taskKey, event.shown);
         else state.shown.delete(event.taskKey);
       }
+      if (event.action === 'done' && event.content)
+        state.doneContent.set(event.taskKey, event.content);
+      else state.doneContent.delete(event.taskKey);
       const next: Record<typeof event.action, CommitmentState> = {
         accept: 'accepted',
         decline: 'declined',

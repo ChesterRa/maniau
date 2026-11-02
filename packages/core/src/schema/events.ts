@@ -85,6 +85,27 @@ export function sameProposal(a: ProposalSnapshot, b: ProposalSnapshot): boolean 
 }
 
 /**
+ * 作業の用件（画面の文言のキーと値）。済んだと記録する時に、札で見せた用件を控える。読み直し・直し・
+ * 置き換えで作業のキーは同じまま用件だけが替わる（白い長袖シャツが赤い帽子になる）ので、前の物を
+ * 済ませた記録を、別の物に当てないために使う。
+ */
+export const TaskContent = z.object({
+  titleKey: z.string().min(1),
+  titleParams: z.record(z.string(), z.string()),
+});
+export type TaskContent = z.infer<typeof TaskContent>;
+
+/** 二つの用件が同じか（用件の値は並びによらない）。 */
+export function sameContent(a: TaskContent, b: TaskContent): boolean {
+  const key = (c: TaskContent) =>
+    JSON.stringify([
+      c.titleKey,
+      Object.entries(c.titleParams).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)),
+    ]);
+  return key(a) === key(b);
+}
+
+/**
  * 引き受けの時に見せる提案の控え（02-foundation §5.5）。置けていない作業（時刻が無い）には作れない。
  * 画面はこの控えを見せ、引き受けの命令はこれを付ける。
  */
@@ -184,6 +205,11 @@ export const DomainEvent = z.discriminatedUnion('type', [
     action: z.enum(['accept', 'decline', 'done', 'withdraw']),
     /** 引き受けた時に見た提案の控え（accept の時だけ）。 */
     shown: ProposalSnapshot.optional(),
+    /**
+     * 済んだと記録した時に見せた用件（done の時だけ）。今の作業の用件と違えば、この済みは今の作業に
+     * 当てない（直されて別の物になった）。無いのは古い事象。
+     */
+    content: TaskContent.optional(),
   }),
   /** 外の相手に頼んだ・届けを出した。依頼の一件が始まる（作業は済みになる）。 */
   z.object({

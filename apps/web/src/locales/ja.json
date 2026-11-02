@@ -261,6 +261,7 @@
     }
   },
   "task": {
+    "forDate": "{{title}}（{{date}}の分）",
     "helper": {
       "ask": "{{name}}に頼む"
     },

@@ -168,6 +168,150 @@ describe('事項への家族の言明', () => {
     expect(codes(corrected, 'violation')).not.toContain('corrected_requirement_mismatch');
   });
 
+  it('一つの事項に対応する品物・提出物の要件は、その事項の今の名前と照らす', () => {
+    for (const kind of ['belongings', 'submission'] as const) {
+      const events = [
+        event(1, { type: 'householdSet', household: household() }),
+        event(2, { type: 'noticeReceived', source: source('n1') }),
+        event(3, reading('n1', extraction('n1', [item('i', 'n1', { kind })]), 1)),
+        event(4, { type: 'noticeReceived', source: source('n2') }),
+        event(
+          5,
+          reading(
+            'n2',
+            extraction('n2', [
+              item('j', 'n2', {
+                kind,
+                interpretation: { what: '赤い帽子' },
+                effects: [{ type: 'replace', itemId: 'i' }],
+              }),
+            ]),
+            1,
+          ),
+        ),
+      ];
+      const check = (what: string) =>
+        verifyPlan({
+          household: household(),
+          events,
+          plan: plan({
+            throughSeq: 5,
+            requirements: [
+              requirement({
+                kind,
+                what,
+                basis: { itemIds: ['j'] },
+              }),
+            ],
+          }),
+        });
+      expect(codes(check('白いシャツ'), 'violation')).toContain('requirement_content_mismatch');
+      expect(codes(check('赤い帽子'), 'violation')).not.toContain('requirement_content_mismatch');
+    }
+  });
+
+  it('一つの休業事項に対応する子の居場所は、今の事項の日と照らす', () => {
+    const events = [
+      event(1, { type: 'householdSet', household: household() }),
+      event(2, { type: 'noticeReceived', source: source('n1') }),
+      event(
+        3,
+        reading(
+          'n1',
+          extraction('n1', [
+            item('i', 'n1', {
+              kind: 'dayChange',
+              interpretation: { what: '振替休業日', dayType: 'noSchool', date: '2026-12-14' },
+            }),
+          ]),
+          1,
+        ),
+      ),
+    ];
+    const check = (date: string) =>
+      verifyPlan({
+        household: household(),
+        events,
+        plan: plan({
+          throughSeq: 3,
+          requirements: [
+            requirement({
+              what: '振替休業日',
+              date,
+              basis: { itemIds: ['i'] },
+            }),
+          ],
+        }),
+      });
+    expect(codes(check('2026-12-07'), 'violation')).toContain('requirement_date_mismatch');
+    expect(codes(check('2026-12-14'), 'violation')).not.toContain('requirement_date_mismatch');
+  });
+
+  it('条件が未定か書き直し前の読み取りなら、用件や日を食い違いと断定しない', () => {
+    const conditional = [
+      event(1, { type: 'householdSet', household: household() }),
+      event(2, { type: 'noticeReceived', source: source('n1') }),
+      event(
+        3,
+        reading(
+          'n1',
+          extraction('n1', [item('i', 'n1', { conditionNodeId: 'c' })], {
+            unknowns: [{ id: 'u', label: '天気', values: ['rain', 'sun'], kind: 'other' }],
+            conditions: [{ id: 'c', kind: 'eq', unknownId: 'u', value: 'rain' }],
+          }),
+          1,
+        ),
+      ),
+    ];
+    const uncertain = verifyPlan({
+      household: household(),
+      events: conditional,
+      plan: plan({ throughSeq: 3, requirements: [req('赤い帽子', { conditional: true })] }),
+    });
+    expect(codes(uncertain, 'violation')).not.toContain('requirement_content_mismatch');
+    expect(codes(uncertain, 'undetermined')).toContain('requirement_content_unverified');
+
+    const stale = [
+      event(1, { type: 'householdSet', household: household() }),
+      event(2, { type: 'noticeReceived', source: source('n1') }),
+      event(
+        3,
+        reading(
+          'n1',
+          extraction('n1', [
+            item('i', 'n1', {
+              kind: 'dayChange',
+              interpretation: { what: '振替休業日', dayType: 'noSchool', date: '2026-12-14' },
+            }),
+          ]),
+          1,
+        ),
+      ),
+      event(4, {
+        type: 'transcriptionCorrected',
+        sourceId: 'n1',
+        sourceVersion: 2,
+        sentences: [{ id: 'n1-s1', text: '書き直した文' }],
+      }),
+    ];
+    const staleReport = verifyPlan({
+      household: household(),
+      events: stale,
+      plan: plan({
+        throughSeq: 4,
+        requirements: [
+          requirement({
+            date: '2026-12-07',
+            conditional: true,
+            basis: { itemIds: ['i'] },
+          }),
+        ],
+      }),
+    });
+    expect(codes(staleReport, 'violation')).not.toContain('requirement_date_mismatch');
+    expect(codes(staleReport, 'undetermined')).toContain('requirement_date_unverified');
+  });
+
   it('本文が書き直された後は、旧い読み取りの訂正と現在の品名の一致を断定しない', () => {
     const events = [
       ...base(),

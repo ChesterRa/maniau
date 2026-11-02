@@ -262,6 +262,7 @@
     }
   },
   "task": {
+    "forDate": "{{title}} (for {{date}})",
     "helper": {
       "ask": "Ask {{name}}"
     },

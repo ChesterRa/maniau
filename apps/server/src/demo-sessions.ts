@@ -12,6 +12,7 @@ import {
   type SourceSender,
   seenOf,
   splitSentences,
+  type Task,
   toExtraction,
   toUtteranceReply,
   type UnsupportedReason,
@@ -352,18 +353,31 @@ export function demoSessions(
       .catch((): NoticeResult => ({ status: 'failed', reason: 'error' }));
   }
 
+  /**
+   * 済んだの候補には、前提に載せた作業の今の用件を付ける（命令は見せた用件を必ず持つ。押すまでに
+   * 直されて別の物になっていれば、サーバーが断る）。
+   */
+  const withContent = (command: Command, tasks: readonly Task[]): Command => {
+    if (command.type !== 'commitment' || command.action !== 'done') return command;
+    const task = tasks.find((t) => t.key === command.taskKey);
+    return task
+      ? { ...command, seen: { titleKey: task.titleKey, titleParams: task.titleParams } }
+      : command;
+  };
+
   /** 候補を控えに置き、画面に返す形にする（控えの状態は返さない）。 */
   const show = (
     session: Session,
     reply: UtteranceReply,
     memberId: string,
     context: UtteranceContext,
+    tasks: readonly Task[],
   ): ShownReply => {
     if (reply.kind === 'question' || reply.kind === 'unsupported') return reply;
     const proposals = reply.proposals.map((p): ShownProposal => {
       const id = randomUUID();
-      session.proposals.set(id, { memberId, command: p.command, seen: p.seen });
-      const command = p.command;
+      const command = withContent(p.command, tasks);
+      session.proposals.set(id, { memberId, command, seen: p.seen });
       const label =
         command.type === 'answer'
           ? context.unknowns.find((u) => u.id === command.unknownId)?.label
@@ -411,7 +425,7 @@ export function demoSessions(
         const now = utteranceContext(log.events(), memberId, session.now, input.text);
         if (!now || JSON.stringify(now) !== JSON.stringify(context)) return { status: 'stale' };
         const view = viewFor(log.events(), memberId, session.now);
-        const shown = show(session, reply, memberId, context);
+        const shown = show(session, reply, memberId, context, view.plan.tasks);
         session.utteranceOperations.set(input.operationId, {
           digest,
           state: 'done',

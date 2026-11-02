@@ -12,11 +12,12 @@ function primaryConfirmed(
   primary: string,
   plan: PlanResult,
   history: History,
+  timeZone: string,
 ): boolean | undefined {
   if (!history.complete || !arrangement.live) return undefined;
   const option = arrangement.options.find((entry) => entry.key === primary);
   if (!option) return undefined;
-  if (optionFailure(option, arrangement, plan, history)) return false;
+  if (optionFailure(option, arrangement, plan, history, timeZone)) return false;
 
   const primaryRequests = [...history.requests.entries()].filter(([, sent]) => {
     if (sent.snapshot) {
@@ -88,7 +89,7 @@ export function executionScope(
       for (const key of selected) {
         const option = arrangement.options.find((entry) => entry.key === key);
         if (!option) continue;
-        const failure = optionFailure(option, arrangement, plan, history);
+        const failure = optionFailure(option, arrangement, plan, history, household.timeZone);
         if (failure?.code === 'missedDeadline') return 'unknown';
         if (!failure) {
           inUse = key;
@@ -102,7 +103,7 @@ export function executionScope(
       task.basis.optionKey !== primary &&
       backups.includes(task.basis.optionKey)
     ) {
-      const confirmed = primaryConfirmed(arrangement, primary, plan, history);
+      const confirmed = primaryConfirmed(arrangement, primary, plan, history, household.timeZone);
       if (confirmed === undefined) return 'unknown';
       if (confirmed) return 'inactive';
     }

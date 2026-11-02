@@ -9,7 +9,7 @@ import {
   type Task,
 } from '@maniau/core';
 import { type FactState, historicalItem } from './facts';
-import type { History } from './history';
+import { doneContentMatches, type History } from './history';
 import type { Collector } from './report';
 import { dateFromIndex, dateIndex, instantMinute, localMinute, weekday } from './time';
 
@@ -335,7 +335,9 @@ function checkStep(task: Task, household: Household, plan: PlanResult, report: C
 function optionStarted(
   option: OptionPlan,
   arrangement: Arrangement,
+  plan: PlanResult,
   history: History,
+  timeZone: string,
   byDeadline = false,
 ): boolean {
   if (
@@ -364,9 +366,33 @@ function optionStarted(
       entry.action === 'done' &&
       entry.actorId === entry.assigneeId &&
       (assignments.get(entry.taskKey) ?? entry.assigneeId) === entry.assigneeId
-    )
+    ) {
+      // 今の状態が本人の「済んだ」でないなら、以前の済みを今の進捗にしない（送信による済みは依頼の日で見る）。
+      if (
+        history.commitments.get(entry.taskKey) !== 'done' ||
+        history.requestBasedDone.has(entry.taskKey)
+      )
+        continue;
+      // 用件が今と違う「済んだ」は、今の案の進捗の証拠にしない。作業が見つからず照らせない時も同様。
+      if (entry.content) {
+        const current = plan.tasks.find((task) => task.key === entry.taskKey);
+        if (!current || !doneContentMatches(current, entry.content)) continue;
+      }
       taskKey = entry.taskKey;
-    else if (entry.type === 'externalRequestSent') taskKey = entry.taskKey;
+    } else if (entry.type === 'externalRequestSent') {
+      // 訂正で消えた送信は進捗にしない。控えの日が違う依頼も、現在の日を始めた証拠にはならない。
+      // 日の控えが無い旧い依頼は、これまでどおり扱う。
+      const sent = history.requests.get(entry.requestId);
+      if (!sent || sent.seq !== entry.seq) continue;
+      const window = sent.snapshot?.window;
+      if (
+        window &&
+        localMinute(instantMinute(window.start), timeZone).date !==
+          localMinute(instantMinute(arrangement.start), timeZone).date
+      )
+        continue;
+      taskKey = entry.taskKey;
+    }
     if (!taskKey || !option.taskKeys.includes(taskKey)) continue;
     if (!byDeadline) return true;
     // 所要時間は計画の目安であり、実際に同じ時間がかかった証拠ではない。
@@ -387,6 +413,7 @@ export function optionFailure(
   arrangement: Arrangement,
   plan: PlanResult,
   history: History,
+  timeZone: string,
 ): { code: 'turnedDown' | 'missedDeadline'; refs: string[] } | undefined {
   const turnedDown = [...history.requests.entries()]
     .filter(([, sent]) => option.taskKeys.includes(sent.taskKey) && sent.state === 'turnedDown')
@@ -395,7 +422,7 @@ export function optionFailure(
   if (
     history.complete &&
     isPastDecision(option, plan) === true &&
-    !optionStarted(option, arrangement, history)
+    !optionStarted(option, arrangement, plan, history, timeZone)
   )
     return { code: 'missedDeadline', refs: [option.key] };
   return undefined;
@@ -406,6 +433,7 @@ function checkReasons(
   plan: PlanResult,
   history: History,
   report: Collector,
+  timeZone: string,
 ): void {
   if (arrangement.status !== 'decidable' && arrangement.reasons.length === 0) {
     report.violation('reason_missing', arrangement.key, '判断できない理由がない。');
@@ -470,7 +498,8 @@ function checkReasons(
       if (
         options.some(
           (option) =>
-            isPastDecision(option, plan) !== true || optionStarted(option, arrangement, history),
+            isPastDecision(option, plan) !== true ||
+            optionStarted(option, arrangement, plan, history, timeZone),
         )
       ) {
         report.undetermined(
@@ -561,6 +590,49 @@ export function checkPlan(
             '書き直し前の読み取りによる要件を、確かな物としている。',
           );
         }
+        // 一つの事項に対応する品物・提出物なら、現在の読み取り（家族の直しを含む）と要件の名前を照らせる。
+        // 置き換えで両方とも旧い名前のままになれば、作業と要件の相互比較だけでは気づけない。
+        if (
+          requirement.basis.itemIds.length === 1 &&
+          item &&
+          ((requirement.kind === 'belongings' && item.kind === 'belongings') ||
+            (requirement.kind === 'submission' && item.kind === 'submission')) &&
+          requirement.what !== (item.interpretation.what ?? item.written)
+        ) {
+          if (facts.staleItems.has(id) || facts.active.get(id) !== true)
+            report.undetermined(
+              'requirement_content_unverified',
+              requirement.key,
+              '元の事項の適用や読み取りを確かめられず、現在の用件を照らせない。',
+            );
+          else
+            report.violation(
+              'requirement_content_mismatch',
+              requirement.key,
+              '要件の用件が、元の事項の今の用件と違う。',
+            );
+        }
+        if (
+          requirement.basis.itemIds.length === 1 &&
+          requirement.kind === 'childCare' &&
+          requirement.date &&
+          item?.kind === 'dayChange' &&
+          item.interpretation.date &&
+          requirement.date !== item.interpretation.date
+        ) {
+          if (facts.staleItems.has(id) || facts.active.get(id) !== true)
+            report.undetermined(
+              'requirement_date_unverified',
+              requirement.key,
+              '元の事項の適用や読み取りを確かめられず、子の居場所の日を照らせない。',
+            );
+          else
+            report.violation(
+              'requirement_date_mismatch',
+              requirement.key,
+              '子の居場所の日が、元の事項の今の日と違う。',
+            );
+        }
         if (
           requirement.kind === 'belongings' &&
           item?.kind === 'belongings' &&
@@ -602,10 +674,21 @@ export function checkPlan(
         '不要な要件から手配が残っている。',
       );
     if (!arrangement.live) continue;
+    if (
+      arrangement.kind === 'childCare' &&
+      requirement?.kind === 'childCare' &&
+      requirement.date &&
+      localMinute(instantMinute(arrangement.start), household.timeZone).date !== requirement.date
+    )
+      report.violation(
+        'arrangement_requirement_date_mismatch',
+        arrangement.key,
+        '子の居場所の手配の日が、要件の日と違う。',
+      );
     if (instantMinute(arrangement.end) < instantMinute(arrangement.start)) {
       report.violation('arrangement_time_invalid', arrangement.key, '手配の終わりが始まりより前。');
     }
-    checkReasons(arrangement, plan, history, report);
+    checkReasons(arrangement, plan, history, report, household.timeZone);
     for (const option of arrangement.options) {
       if (option.arrangementKey !== arrangement.key)
         report.violation('option_arrangement_mismatch', option.key, '案が別の手配を指している。');
@@ -690,7 +773,7 @@ export function checkPlan(
       }
       if (
         isPastDecision(recommended, plan) === true &&
-        !optionStarted(recommended, arrangement, history)
+        !optionStarted(recommended, arrangement, plan, history, household.timeZone)
       ) {
         if (
           arrangement.chosenOptionKey === recommended.key ||
@@ -722,13 +805,16 @@ export function checkPlan(
       .map((key) => arrangement.options.find((option) => option.key === key))
       .filter((option): option is OptionPlan => option !== undefined);
     const failures = new Map(
-      selected.map((option) => [option.key, optionFailure(option, arrangement, plan, history)]),
+      selected.map((option) => [
+        option.key,
+        optionFailure(option, arrangement, plan, history, household.timeZone),
+      ]),
     );
     for (const option of selected) {
       if (
         isPastDecision(option, plan) === true &&
-        optionStarted(option, arrangement, history) &&
-        !optionStarted(option, arrangement, history, true)
+        optionStarted(option, arrangement, plan, history, household.timeZone) &&
+        !optionStarted(option, arrangement, plan, history, household.timeZone, true)
       )
         report.undetermined(
           'option_start_time_unverified',
@@ -767,7 +853,7 @@ export function checkPlan(
     const usable = selected.find((option) => !failures.get(option.key));
     const replacement =
       recommended &&
-      !optionFailure(recommended, arrangement, plan, history) &&
+      !optionFailure(recommended, arrangement, plan, history, household.timeZone) &&
       isPastDecision(recommended, plan) === false
         ? recommended
         : undefined;
@@ -819,6 +905,37 @@ export function checkPlan(
     }
   }
   for (const task of plan.tasks) {
+    // 買う物・用意して出す物の作業名は、今の要件と同じ物を指す。済んだ時の控えと作業だけが
+    // 同じ古い品名であっても、要件と食い違っていれば前の物の済みを当てられない。
+    const requirement = task.basis.requirementKey
+      ? requirements.get(task.basis.requirementKey)
+      : undefined;
+    if (
+      task.live &&
+      requirement?.live &&
+      ((task.titleKey === 'task.buy' && requirement.kind === 'belongings') ||
+        (task.titleKey === 'task.submit' && requirement.kind === 'submission')) &&
+      task.titleParams.what !== requirement.what
+    ) {
+      report.violation(
+        'task_requirement_content_mismatch',
+        task.key,
+        '作業の用件が、今の要件に書かれた物と違う。',
+      );
+    }
+    if (
+      task.live &&
+      task.step &&
+      requirement?.live &&
+      requirement.kind === 'childCare' &&
+      requirement.date &&
+      task.titleParams.date !== requirement.date
+    )
+      report.violation(
+        'task_requirement_date_mismatch',
+        task.key,
+        '手配の手順の用件の日が、今の要件の日と違う。',
+      );
     checkBasis(
       task.basis,
       task.key,

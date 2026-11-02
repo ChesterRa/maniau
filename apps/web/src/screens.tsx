@@ -167,6 +167,14 @@ function optionNote(ctx: Ctx, option: OptionPlan): string {
 }
 
 export function taskTitle(ctx: Ctx, task: Task): string {
+  const title = baseTitle(ctx, task);
+  // 手配の手順は、どの日の分かを題に書く（引き受け・済んだの控えはその日を含む。同じ名前の手順が二つの
+  // 日にあっても見分けられ、押す前に分かる）。
+  const date = task.titleParams.date;
+  return date ? ctx.t('task.forDate', { title, date: day(ctx, date) }) : title;
+}
+
+function baseTitle(ctx: Ctx, task: Task): string {
   if (task.titleKey === 'task.helper.ask') {
     const option = ctx.plan.arrangements
       .flatMap((a) => a.options)
@@ -375,8 +383,8 @@ function ChangeCard({ ctx, change }: { ctx: Ctx; change: ChangeSummary }) {
       after?.by && before.by
         ? ctx.t('card.change.moved.by', {
             what: before.what,
-            before: dayTime(ctx, before.by),
-            after: dayTime(ctx, after.by),
+            before: due(ctx, before.by, before.basis.itemIds),
+            after: due(ctx, after.by, after.basis.itemIds),
           })
         : ctx.t('card.change.moved.date', {
             what: before.what,
@@ -599,6 +607,17 @@ export function StuckCard({
   );
 }
 
+/**
+ * 済んだと記録する命令。この札で見せている用件を付ける（直されて別の物になった後の古い札で、別の物を
+ * 済みにしない。違えば、サーバーが断って見せ直す）。
+ */
+const doneCommand = (task: Task): Command => ({
+  type: 'commitment',
+  taskKey: task.key,
+  action: 'done',
+  seen: { titleKey: task.titleKey, titleParams: task.titleParams },
+});
+
 function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
   // 引き受けには、この札で見せている提案の控えを付ける。今の提案と違えば、サーバーが断って見せ直す。
   const shown = proposalSnapshot(task);
@@ -610,7 +629,7 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
   // ようにする（時刻の無い物を、時刻のある提案として引き受けさせない）。
   const standalone =
     task.basis.optionKey === undefined && task.external === undefined && task.cancels === undefined;
-  const done = () => void ctx.send({ type: 'commitment', taskKey: task.key, action: 'done' });
+  const done = () => void ctx.send(doneCommand(task));
   // 置ける時間が無い時は、その場でもう一人に頼めるようにする（断ってから探し直させない）。本人しか
   // できない手順は頼めない。
   const other =
@@ -909,7 +928,7 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
         ? ctx.go({ name: 'ask', taskKey: task.key })
         : external
           ? void ctx.send({ type: 'recordSent', taskKey: task.key, requestId: requestId() })
-          : void ctx.send({ type: 'commitment', taskKey: task.key, action: 'done' });
+          : void ctx.send(doneCommand(task));
     return (
       <div className={`flex items-center gap-3 py-2.5 ${border}`}>
         <span className="flex min-w-0 flex-1 flex-col">
@@ -1534,7 +1553,8 @@ function requestFor(ctx: Ctx, request: ExternalRequest): string {
   );
   if (!twin) return base;
   const task = ctx.plan.tasks.find((t) => t.key === request.taskKey);
-  const step = task ? taskTitle(ctx, task) : ctx.t('say.unknownRequest');
+  // 頼んだ日は base（送った時の控え）が持つので、題には今の手配の日を重ねない。
+  const step = task ? baseTitle(ctx, task) : ctx.t('say.unknownRequest');
   return ctx.t('say.requestStep', { step, what: base });
 }
 
@@ -1594,7 +1614,8 @@ function proposalLabel(ctx: Ctx, proposal: ShownProposal): string {
     case 'commitment':
     case 'recordSent': {
       const task = ctx.plan.tasks.find((t) => t.key === command.taskKey);
-      const what = task ? taskTitle(ctx, task) : '';
+      // 要る日は dated が添えるので、題には日を重ねない。
+      const what = task ? baseTitle(ctx, task) : '';
       const action = command.type === 'recordSent' ? 'sent' : command.action;
       return dated(ctx, `say.do.${action}`, { what }, task && needDay(ctx, task.basis));
     }
@@ -1677,7 +1698,8 @@ function SayAnswer({
               ctx,
               'say.task',
               {
-                what: taskTitle(ctx, task),
+                // 要る日は dated が添えるので、題には日を重ねない。
+                what: baseTitle(ctx, task),
                 who: task.assigneeId
                   ? nameOf(ctx.household, task.assigneeId)
                   : ctx.t('say.unassigned'),

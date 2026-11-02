@@ -7,6 +7,7 @@ import {
   formatDateTime,
   type PlanResult,
   proposalSnapshot,
+  sameContent,
   sameProposal,
   toEpochMinutes,
 } from '@maniau/core';
@@ -14,6 +15,7 @@ import {
   type EngineState,
   foldEvents,
   itemsOf,
+  optionStarted,
   planFromState,
   requestSnapshot,
   retiredUnknowns,
@@ -170,15 +172,15 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
     case 'chooseOption': {
       const arrangement = plan.arrangements.find((a) => a.key === command.arrangementKey);
       const option = arrangement?.options.find((o) => o.key === command.optionKey);
-      if (!arrangement || !option) return { status: 'conflict', reason: 'optionGone' };
+      const household = state.household;
+      if (!arrangement || !option || !household)
+        return { status: 'conflict', reason: 'optionGone' };
       // 新しく決める命令（選ぶ・担当を提案する・引き受ける）は、今も要る手配・作業にだけ。
       // 既に起きた事の記録（済んだ・送った・返事）は、要らなくなった後でも受け付ける。
       if (!arrangement.live) return { status: 'conflict', reason: 'arrangementGone' };
-      // 決め時を過ぎた案は、もう選べない。既に動き出した案（依頼を出した・済んだ作業がある）は、
-      // 本命と予備の入れ替えのために選び直してよい。
-      const started =
-        [...state.requests.values()].some((r) => option.taskKeys.includes(r.taskKey)) ||
-        option.taskKeys.some((k) => state.commitments.get(k) === 'done');
+      // 決め時を過ぎた案は、もう選べない。既に動き出した案（今の日の分の依頼を出した・今の用件に
+      // 当たる済んだ手順がある）は、本命と予備の入れ替えのために選び直してよい（エンジンと同じ判断）。
+      const started = optionStarted(state, arrangement, option, plan.tasks, household.timeZone);
       if (option.expired && !started) return { status: 'conflict', reason: 'optionExpired' };
       // 一つの案は、本命か予備のどちらか（予備を本命にするのはよい。本命を予備にはしない）。
       if (command.role === 'backup' && arrangement.chosenOptionKey === option.key) {
@@ -327,9 +329,33 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       const task = taskOf(command.taskKey);
       if (!task) return { status: 'conflict', reason: 'taskGone' };
       if (task.assigneeId !== me) return { status: 'forbidden', reason: 'notTheAssignee' };
+      if (command.action !== 'done') {
+        return {
+          bodies: [
+            {
+              type: 'commitmentChanged',
+              taskKey: task.key,
+              assigneeId: me,
+              action: command.action,
+            },
+          ],
+        };
+      }
+      // 済んだのは、札で見せた用件。今の用件と違えば（直されて別の物になった後の古い札）、断って
+      // 見せ直す。記録には見せた用件を残し、後で用件が替わっても、前の物の済みを当てない。
+      if (command.seen === undefined) return { status: 'invalid', reason: 'seenRequired' };
+      const content = { titleKey: task.titleKey, titleParams: task.titleParams };
+      if (!sameContent(command.seen, content))
+        return { status: 'conflict', reason: 'proposalChanged' };
       return {
         bodies: [
-          { type: 'commitmentChanged', taskKey: task.key, assigneeId: me, action: command.action },
+          {
+            type: 'commitmentChanged',
+            taskKey: task.key,
+            assigneeId: me,
+            action: 'done',
+            content: command.seen,
+          },
         ],
       };
     }

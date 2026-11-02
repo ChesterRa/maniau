@@ -2,7 +2,7 @@
 // 画面とサーバーの間の約束なので core に置く（画面はエンジンを読み込まずに使える）。
 import { z } from 'zod';
 import { DateTime } from '../time';
-import { ProposalSnapshot } from './events';
+import { ProposalSnapshot, TaskContent } from './events';
 import { Id } from './household';
 import { CommitmentState, ExternalRequestState } from './plan';
 import { Interpretation } from './source';
@@ -68,6 +68,8 @@ export const Command = z.discriminatedUnion('type', [
     type: z.literal('commitment'),
     taskKey: z.string().min(1),
     action: z.enum(['decline', 'done', 'withdraw']),
+    /** 札で見せた用件（済んだと記録する時は必ず付ける）。今の用件と違えば断って見せ直す。 */
+    seen: TaskContent.optional(),
   }),
   /** 外の相手に頼んだと記録する。控えはサーバーが今の計画から作る。 */
   z.object({ type: z.literal('recordSent'), taskKey: z.string().min(1), requestId: Id }),

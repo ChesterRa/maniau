@@ -6,12 +6,15 @@ import {
   type DomainEvent,
   proposalSnapshot,
   type RequestSnapshot,
+  sameContent,
   sameProposal,
+  type TaskContent,
 } from '../schema/events';
 import type { CareOptionTemplate, Cost, Household } from '../schema/household';
 import type {
   Arrangement,
   Basis,
+  CommitmentState,
   ExternalRequest,
   OptionPlan,
   PlanResult,
@@ -28,6 +31,7 @@ import {
   type EpochMinutes,
   formatDateTime,
   type LocalDate,
+  localDateOf,
   toEpochMinutes,
   zonedToEpochMinutes,
 } from '../time';
@@ -35,7 +39,14 @@ import { isActiveTask } from '../view/today';
 import { noAdultAtHome } from './availability';
 import { type Busy, optionDeadline, placeStep } from './deadline';
 import { purchaseOpportunities } from './purchase';
-import { currentItems, currentReadings, type EngineState, foldEvents, itemFate } from './state';
+import {
+  currentItems,
+  currentReadings,
+  type EngineState,
+  foldEvents,
+  itemFate,
+  type RequestRecord,
+} from './state';
 
 /** 代償の重みの初期値（家族が変えられる。§8）。安い案ほど小さい。 */
 export const DEFAULT_COST_WEIGHTS = {
@@ -314,7 +325,9 @@ function careOption(
       task(ctx, key, {
         step: { templateId: template.id, stepId: step.id },
         titleKey: step.titleKey,
-        titleParams: {},
+        // 用件に、その手配の日を入れる（日が直されたら別の用件。前の日の申込書を書いた済みや、前の日の
+        // 引き受けを、新しい日に当てない）。
+        titleParams: { date: needDate },
         basis,
         durationMin: step.durationMin,
         deadline: ctx.fmt(result.ruleDeadline),
@@ -345,7 +358,7 @@ function careOption(
       task(ctx, key, {
         step: { templateId: template.id, stepId: extra.id },
         titleKey: extra.titleKey,
-        titleParams: {},
+        titleParams: { date: needDate },
         basis,
         durationMin: extra.durationMin,
         earliestStart: ctx.fmt(zonedToEpochMinutes(day, '00:00', ctx.tz)),
@@ -373,6 +386,17 @@ function careOption(
   };
 }
 
+/**
+ * 作業の引き受けの状態。済んだ記録が、今と違う用件を済ませた物なら（直されて別の物になった）、今の
+ * 作業は済みとせず、引き受けた所に戻す（見た控えとも違うので、見せ直して確かめてもらう）。
+ */
+function commitmentOf(ctx: Context, key: string, content: TaskContent): CommitmentState {
+  const state = ctx.state.commitments.get(key) ?? 'proposed';
+  if (state !== 'done') return state;
+  const done = ctx.state.doneContent.get(key);
+  return done === undefined || sameContent(done, content) ? 'done' : 'accepted';
+}
+
 function task(
   ctx: Context,
   key: string,
@@ -389,7 +413,7 @@ function task(
     ...fields,
     ...(condition === undefined ? {} : { condition }),
     ...(assignee === undefined ? {} : { assigneeId: assignee }),
-    commitment: ctx.state.commitments.get(key) ?? 'proposed',
+    commitment: commitmentOf(ctx, key, fields),
   };
   if (built.commitment !== 'accepted') return built;
   // 引き受けた時に見た提案と、今の提案が同じでなければ、見せ直す（控えの無い古い形も同じ）。
@@ -400,16 +424,63 @@ function task(
     : { ...built, reconfirm: true };
 }
 
-/** 選んだ案が使えなくなったか：依頼が断られた、または決め時を過ぎても始めていない。 */
-function failure(ctx: Context, option: OptionPlan): Reason | undefined {
-  const requests = [...ctx.state.requests.values()].filter((r) =>
-    option.taskKeys.includes(r.taskKey),
+/**
+ * 案の依頼のうち、今の手配の日の分。控えの頼んだ日（区間の始まりの日）が今の日と同じ物だけ。控えに時間の
+ * 無い古い依頼は当たるとする（控えに無い物からは決めない。§5.6）。日が直されて前の日の分になった依頼で、
+ * 今の日の手配を始めたことにはしない（送った後の疑いとして、頼んだ本人に確かめてもらう）。
+ */
+function optionRequests(
+  state: EngineState,
+  arrangement: Pick<Arrangement, 'start'>,
+  option: Pick<OptionPlan, 'taskKeys'>,
+  timeZone: string,
+): RequestRecord[] {
+  const day = (value: DateTime) => localDateOf(toEpochMinutes(value), timeZone);
+  return [...state.requests.values()].filter(
+    (r) =>
+      option.taskKeys.includes(r.taskKey) &&
+      (r.snapshot?.window === undefined || day(r.snapshot.window.start) === day(arrangement.start)),
   );
-  const turned = requests.filter((r) => r.state === 'turnedDown');
+}
+
+/**
+ * 案を始めたか：今の日の分の依頼を送ったか、本人が「済んだ」とした手順が今の用件（その日）に当たる。
+ * 依頼を送って済みになった手順は、依頼の日で見る（前の日の依頼の済みで、今の日を始めたことにしない）。
+ * 決め時を過ぎた案でも、始めていれば使い続け、本命と予備の入れ替えに選び直せる（サーバーも同じ判断）。
+ */
+export function optionStarted(
+  state: EngineState,
+  arrangement: Pick<Arrangement, 'start'>,
+  option: Pick<OptionPlan, 'taskKeys'>,
+  tasks: readonly Task[],
+  timeZone: string,
+): boolean {
+  if (optionRequests(state, arrangement, option, timeZone).length > 0) return true;
+  return tasks.some(
+    (t) =>
+      option.taskKeys.includes(t.key) &&
+      t.commitment === 'done' &&
+      state.commitmentLog.get(t.key)?.at(-1)?.requestId === undefined,
+  );
+}
+
+/**
+ * 選んだ案が使えなくなったか：依頼が断られた、または決め時を過ぎても始めていない。断られたのは、頼んだ日に
+ * よらず使えないとする（前の日の分の断りでも、今の日を頼み直すまでは決まっていない。勝手に使える側へ
+ * 倒さない）。始めたかは、今の日の分だけで見る（optionStarted）。
+ */
+function failure(
+  ctx: Context,
+  arrangement: Arrangement,
+  option: OptionPlan,
+  tasks: readonly Task[],
+): Reason | undefined {
+  const turned = [...ctx.state.requests.values()].filter(
+    (r) => option.taskKeys.includes(r.taskKey) && r.state === 'turnedDown',
+  );
   if (turned.length > 0) return { code: 'turnedDown', refs: turned.map((r) => r.requestId) };
-  const started =
-    requests.length > 0 || option.taskKeys.some((k) => ctx.state.commitments.get(k) === 'done');
-  if (option.expired && !started) return { code: 'missedDeadline', refs: [option.key] };
+  if (option.expired && !optionStarted(ctx.state, arrangement, option, tasks, ctx.tz))
+    return { code: 'missedDeadline', refs: [option.key] };
   return undefined;
 }
 
@@ -419,7 +490,6 @@ function failure(ctx: Context, option: OptionPlan): Reason | undefined {
  */
 function withStatus(ctx: Context, arrangement: Arrangement, tasks: Task[]): Arrangement {
   if (!arrangement.live) return arrangement;
-  void tasks;
   const byKey = new Map(arrangement.options.map((o) => [o.key, o]));
   const chosenKeys = [arrangement.chosenOptionKey, ...arrangement.backupOptionKeys].filter(
     (k): k is string => k !== undefined && byKey.has(k),
@@ -428,7 +498,7 @@ function withStatus(ctx: Context, arrangement: Arrangement, tasks: Task[]): Arra
   const failed = new Set<string>();
   for (const key of chosenKeys) {
     const option = byKey.get(key);
-    const reason = option && failure(ctx, option);
+    const reason = option && failure(ctx, arrangement, option, tasks);
     if (reason) {
       failed.add(key);
       reasons.push(reason);
@@ -582,7 +652,7 @@ function submission(
   if (by === undefined) return;
   const key = keys.submissionTask(rootId);
   const assignee = ctx.state.assignees.get(key);
-  const commitment = ctx.state.commitments.get(key) ?? 'proposed';
+  const commitment = commitmentOf(ctx, key, { titleKey: 'task.submit', titleParams: { what } });
   const placed =
     assignee === undefined || !live || NOT_DOING.has(commitment) || commitment === 'done'
       ? undefined
@@ -674,7 +744,7 @@ function purchase(
     // 誰かが引き受けた・頼まれた買い物は、その人の機会から選ぶ（別の人に勝手に移さない）。
     // 済んだ買い物は、置き直さない。
     const assignee = ctx.state.assignees.get(key);
-    const done = ctx.state.commitments.get(key) === 'done';
+    const done = commitmentOf(ctx, key, { titleKey: 'task.buy', titleParams: { what } }) === 'done';
     const all = purchaseOpportunities(ctx.household, goods, PURCHASE_MINUTES, ctx.now, by);
     const chances = assignee === undefined ? all : all.filter((c) => c.memberId === assignee);
     const first = chances[0];

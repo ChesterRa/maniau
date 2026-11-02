@@ -1,4 +1,12 @@
-import type { DomainEvent, Household, PlanResult, ProposalSnapshot, Truth } from '@maniau/core';
+import type {
+  DomainEvent,
+  Household,
+  PlanResult,
+  ProposalSnapshot,
+  Task,
+  TaskContent,
+  Truth,
+} from '@maniau/core';
 import { collectFacts, type FactState, historicalItem } from './facts';
 import { Collector } from './report';
 import { instantMinute } from './time';
@@ -15,6 +23,20 @@ interface SentRequest {
 }
 
 type RequestBasis = Extract<DomainEvent, { type: 'externalRequestSent' }>['snapshot'];
+
+/** 済ませた用件と現在の用件を照らす。欄の順番は意味に含めない。 */
+export function doneContentMatches(task: Task, content: TaskContent): boolean {
+  const keys = Object.keys(task.titleParams);
+  return (
+    task.titleKey === content.titleKey &&
+    keys.length === Object.keys(content.titleParams).length &&
+    keys.every(
+      (key) =>
+        Object.hasOwn(content.titleParams, key) &&
+        task.titleParams[key] === content.titleParams[key],
+    )
+  );
+}
 
 function sameBasis(
   a: NonNullable<RequestBasis>['basis'],
@@ -41,6 +63,8 @@ export interface History {
   selections: Map<string, Selection>;
   approvals: Map<string, { assigneeId: string; shown?: ProposalSnapshot }>;
   commitments: Map<string, string>;
+  /** 最後の有効な状態が、送信による済みになった作業。 */
+  requestBasedDone: Set<string>;
 }
 
 /** 計画に含めた通し番号までだけを使う。欠けた列は、無かった事の証明にしない。 */
@@ -85,6 +109,8 @@ export function checkHistory(
 
   const assignments = new Map<string, string>();
   const commitment = new Map<string, string>();
+  const requestBasedDone = new Set<string>();
+  const doneContents = new Map<string, TaskContent>();
   const commitmentChanges: { taskKey: string; state: string; requestId?: string }[] = [];
   const correctedRequests = new Set<string>();
   const approvals = new Map<string, { assigneeId: string; shown?: ProposalSnapshot }>();
@@ -213,6 +239,8 @@ export function checkHistory(
       if (event.actorId !== event.assigneeId || (assigned && assigned !== event.assigneeId))
         continue;
       assignments.set(event.taskKey, event.assigneeId);
+      if (event.action === 'done' && event.content) doneContents.set(event.taskKey, event.content);
+      else doneContents.delete(event.taskKey);
       if (event.action === 'accept') {
         approvals.set(event.taskKey, {
           assigneeId: event.assigneeId,
@@ -309,6 +337,8 @@ export function checkHistory(
   for (const change of commitmentChanges) {
     if (change.requestId && correctedRequests.has(change.requestId)) continue;
     commitment.set(change.taskKey, change.state);
+    if (change.requestId) requestBasedDone.add(change.taskKey);
+    else requestBasedDone.delete(change.taskKey);
   }
 
   for (const arrangement of plan.arrangements) {
@@ -338,6 +368,11 @@ export function checkHistory(
 
   const tasks = new Map(plan.tasks.map((task) => [task.key, task]));
   for (const task of plan.tasks) {
+    const completed = doneContents.get(task.key);
+    if (commitment.get(task.key) === 'done' && completed && !doneContentMatches(task, completed)) {
+      // 前の用件を済ませた記録は、今の用件の済みではない。再確認の必要も後で検査する。
+      commitment.set(task.key, 'accepted');
+    }
     const expected = commitment.get(task.key);
     if (!expected && task.commitment !== 'proposed' && task.commitment !== 'cancelled') {
       report.undetermined(
@@ -490,6 +525,7 @@ export function checkHistory(
     selections,
     approvals,
     commitments: commitment,
+    requestBasedDone,
   };
 }
 
