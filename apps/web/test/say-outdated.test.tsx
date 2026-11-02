@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 // ひとこと：答えは読んだ時の計画の版と一緒に持ち、計画が先へ進んだら閉じる（古い答えを今も有効な物と
-// して残さない）。記録が届いたか分からない時も答えを閉じ、送り直しは上の知らせに任せる。
+// して残さない）。記録が届いたか分からない時も答えを閉じ、送り直しは画面の上の表示に任せる。
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { ConfirmResult, HearResult } from '../src/family';
@@ -84,7 +84,7 @@ it('答えを出した後に計画が先へ進んだら、その答えを閉じ�
   expect(host.textContent).toContain('計画が変わったので、前の答えを閉じました。');
 });
 
-it('記録が届いたか分からない時は、答えを閉じ、確かめるのは上の知らせに任せる', async () => {
+it('記録が届いたか分からない時は、答えを閉じ、確かめるのは画面の上の表示に任せる', async () => {
   await say(
     ctxAt(5),
     {
@@ -106,7 +106,7 @@ it('記録が届いたか分からない時は、答えを閉じ、確かめる�
   expect(host.textContent).toContain('これを記録しますか？');
   await step(() => button('記録する')?.click());
   expect(button('記録する')).toBeUndefined();
-  // 送り直しと手放しは上の知らせだけで行う（片付いた後に、この欄に古い「分からない」を残さない）。
+  // 送り直しと手放しは画面の上の表示だけで行う（片付いた後に、この欄に古い「分からない」を残さない）。
   expect(host.textContent).not.toContain('分かりません');
   expect(host.textContent).not.toContain('返事が届きませんでした');
 });

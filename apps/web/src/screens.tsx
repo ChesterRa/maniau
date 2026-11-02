@@ -1683,9 +1683,9 @@ export function SayCard({
     setState('recording');
     const result = await confirm(proposal.id, operationId());
     if (result.status === 'uncertain') {
-      // 記録したか分からない。送り直し（同じ ID）と手放しは上の知らせだけで行い、それまでほかの書き込み
-      // も止まる。古い答えから別の操作として押させないよう、答えを閉じる（この欄には知らせを残さない。
-      // 上の知らせで片付いた後に、古い「分からない」が残らないように）。
+      // 記録したか分からない。送り直し（同じ ID）と手放しは画面の上の表示だけで行い、それまでほかの
+      // 書き込みも止まる。古い答えから別の操作として押させないよう、答えを閉じる（この欄には何も残さ
+      // ない。画面の上の表示で片付いた後に、古い「分からない」が残らないように）。
       setHeard(undefined);
       setState('idle');
       return;

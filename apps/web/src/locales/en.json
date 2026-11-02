@@ -377,7 +377,7 @@
     "stale": "The plan changed while reading. Tap Send again.",
     "inferred": "inferred",
     "unconfirmed": "check needed",
-    "pending": "An earlier action may not have arrived. Check it in the notice above, then tap again.",
+    "pending": "An earlier action may not have arrived. Check the message at the top of the screen, then tap again.",
     "noLongerNeeded": "no longer needed (send a cancellation)",
     "needsCheck": "check whether it is still needed",
     "outdated": "The plan changed, so the earlier answer was closed. Please send your update again."

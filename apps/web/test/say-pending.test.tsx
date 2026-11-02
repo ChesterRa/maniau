@@ -66,7 +66,7 @@ it('一言の記録が届いたか分からない間は、ほかの命令も新�
   });
   expect(calls.filter((c) => c.url.endsWith('/commands'))).toHaveLength(0);
   expect(calls.filter((c) => c.url.endsWith('/proposals/p2'))).toHaveLength(0);
-  // 上の知らせの「もう一度送る」は、同じ候補を同じ操作 ID で送り直す。
+  // 画面の上の表示の「もう一度送る」は、同じ候補を同じ操作 ID で送り直す。
   await step(() => {
     void demo?.retry();
   });
