@@ -1,42 +1,32 @@
-// API。デモの家族（段の事象、見る人ごとのデモの家庭と命令）。身元の確かめ（Cloudflare Access の JWT）と
-// Postgres の置き場所は、この後に足す。
-import { readFileSync } from 'node:fs';
-import { Command, Household, validateHousehold } from '@maniau/core';
+// API。見る人ごとのデモの家庭（架空の家族。ログインなし）と、その命令。画面には見せる物だけを渡し、
+// 事象の列は渡さない（02-foundation §7.1）。身元の確かめ（Cloudflare Access の JWT）と Postgres の
+// 置き場所は、この後に足す。
+import { Command } from '@maniau/core';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { demoStage, isDemoStage } from './demo';
+import { DEMO_STAGES, isDemoStage, loadDemoData } from './demo';
 import { demoSessions } from './demo-sessions';
 
-const DEMO_HOUSEHOLD_URL = new URL('../../../data/demo/household.json', import.meta.url);
-
-export function loadDemoHousehold(): Household {
-  const household = Household.parse(JSON.parse(readFileSync(DEMO_HOUSEHOLD_URL, 'utf8')));
-  const issues = validateHousehold(household);
-  if (issues.length > 0) {
-    throw new Error(`デモの家族の情報に誤りがある：${JSON.stringify(issues)}`);
-  }
-  return household;
-}
-
 export function createApp(): Hono {
-  const demoHousehold = loadDemoHousehold();
+  // 起きる時に、デモの家族とお知らせを読み、型と家族の決まりを確かめる（誤りなら起きない）。
+  loadDemoData();
   const sessions = demoSessions();
   const app = new Hono();
   app.get('/api/health', (c) => c.json({ ok: true }));
-  app.get('/api/demo/household', (c) => c.json(demoHousehold));
-  // デモの段（架空の家族の事象の列と時刻）。ログインなし。実在の家族の物は別の置き場所に置く。
-  app.get('/api/demo/stage/:id', (c) => {
-    const id = c.req.param('id');
-    if (!isDemoStage(id)) return c.json({ error: 'unknownStage' }, 404);
-    return c.json(demoStage(id));
-  });
   // デモの家庭を、見る人ごとにサーバーに作る。計画はサーバーで作り、画面は見せる物を受け取る（§7.1）。
   app.post('/api/demo/sessions', async (c) => {
     const body = z.object({ stage: z.string() }).safeParse(await c.req.json().catch(() => ({})));
     if (!body.success || !isDemoStage(body.data.stage)) {
       return c.json({ error: 'unknownStage' }, 400);
     }
-    return c.json({ sessionId: sessions.create(body.data.stage) });
+    // 家族（使う人を選ぶため）、読み取りの出どころ（録った応答か、手で書いた形か）、段の一覧も返す。
+    const data = loadDemoData();
+    return c.json({
+      sessionId: sessions.create(body.data.stage),
+      household: data.household,
+      readings: data.readings.map(({ sourceId, origin, model }) => ({ sourceId, origin, model })),
+      stages: DEMO_STAGES.map((s) => ({ id: s.id, now: s.now, viewer: s.viewer })),
+    });
   });
   app.get('/api/demo/sessions/:sid/view', async (c) => {
     const member = c.req.query('member');

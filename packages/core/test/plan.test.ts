@@ -380,3 +380,80 @@ describe('買い物の担当', () => {
     expect(buy?.start).toBeUndefined();
   });
 });
+
+describe('案の作業の担当', () => {
+  const write = `task:${opt('opt-gakudo')}:write`;
+  const placedFor = (assigneeId: string) => {
+    const log = noticeArrived()
+      .add('optionChosen', '2026-11-25T19:36+09:00', 'b', {
+        arrangementKey: CARE,
+        optionKey: opt('opt-gakudo'),
+        role: 'primary',
+      })
+      .add('assignmentProposed', '2026-11-25T19:36+09:00', 'b', { taskKey: write, assigneeId });
+    return computePlan(log.events, '2026-11-25T19:40+09:00').tasks.find((t) => t.key === write);
+  };
+
+  const submit = `task:${opt('opt-gakudo')}:submit`;
+  const splitBetween = (writer: string, submitter: string) =>
+    noticeArrived()
+      .add('optionChosen', '2026-11-25T19:36+09:00', 'b', {
+        arrangementKey: CARE,
+        optionKey: opt('opt-gakudo'),
+        role: 'primary',
+      })
+      .add('assignmentProposed', '2026-11-25T19:36+09:00', 'b', {
+        taskKey: write,
+        assigneeId: writer,
+      })
+      .add('assignmentProposed', '2026-11-25T19:36+09:00', 'b', {
+        taskKey: submit,
+        assigneeId: submitter,
+      });
+
+  it('手順の担当が前後で別の人なら、紙の受け渡しが分からないので、どの手順にも時刻を置かない', () => {
+    for (const [writer, submitter] of [
+      ['a', 'b'],
+      ['b', 'a'],
+    ] as const) {
+      const log = splitBetween(writer, submitter);
+      const plan = computePlan(log.events, '2026-11-25T19:40+09:00');
+      for (const [key, who] of [
+        [write, writer],
+        [submit, submitter],
+      ] as const) {
+        const task = plan.tasks.find((t) => t.key === key);
+        expect(task?.assigneeId).toBe(who);
+        expect(task?.handoff).toBe(true);
+        expect(task?.start).toBeUndefined();
+        expect(task?.end).toBeUndefined();
+      }
+      // 案の決め時は、一人で続けてする置き方で求めたまま残す（誰かが間に合うか）。
+      const option = plan.arrangements
+        .flatMap((a) => a.options)
+        .find((o) => o.key === opt('opt-gakudo'));
+      expect(option?.decisionDeadline).toBeDefined();
+    }
+  });
+
+  it('同じ人が続けてするなら、受け渡しの印を付けず、その人の時間に置く', () => {
+    const plan = computePlan(splitBetween('a', 'a').events, '2026-11-25T19:40+09:00');
+    for (const key of [write, submit]) {
+      const task = plan.tasks.find((t) => t.key === key);
+      expect(task?.assigneeId).toBe('a');
+      expect(task?.handoff).toBeUndefined();
+      expect(task?.start).toBeDefined();
+      expect(task?.atPlaceId).not.toBe('work-b');
+    }
+  });
+
+  it('担当の決まった作業は、その人のふだんの時間と場所に置く（別の大人の職場に置かない）', () => {
+    for (const who of ['a', 'b']) {
+      const task = placedFor(who);
+      expect(task?.assigneeId).toBe(who);
+      expect(task?.start).toBeDefined();
+      const other = who === 'a' ? 'work-b' : 'work-a';
+      expect(task?.atPlaceId).not.toBe(other);
+    }
+  });
+});

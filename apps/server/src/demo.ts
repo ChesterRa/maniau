@@ -104,13 +104,14 @@ export function loadDemoData(): DemoData {
   return cached;
 }
 
+// viewer：その段で画面を見ている大人（デモで最初に開く人。画面で替えられる）。
 export const DEMO_STAGES = [
-  { id: 'arrived', now: '2026-11-25T19:31+09:00' },
-  { id: 'asked', now: '2026-11-26T12:10+09:00' },
-  { id: 'chase', now: '2026-11-29T21:00+09:00' },
-  { id: 'backup', now: '2026-11-30T18:10+09:00' },
-  { id: 'postponed', now: '2026-12-04T18:10+09:00' },
-] as const satisfies readonly { id: string; now: DateTime }[];
+  { id: 'arrived', now: '2026-11-25T19:31+09:00', viewer: 'b' },
+  { id: 'asked', now: '2026-11-26T12:10+09:00', viewer: 'a' },
+  { id: 'chase', now: '2026-11-29T21:00+09:00', viewer: 'b' },
+  { id: 'backup', now: '2026-11-30T18:10+09:00', viewer: 'b' },
+  { id: 'postponed', now: '2026-12-04T18:10+09:00', viewer: 'b' },
+] as const satisfies readonly { id: string; now: DateTime; viewer: string }[];
 export type DemoStageId = (typeof DEMO_STAGES)[number]['id'];
 
 export function isDemoStage(value: unknown): value is DemoStageId {
@@ -208,16 +209,19 @@ export function demoEvents(stage: DemoStageId): DomainEvent[] {
     });
     accept('2026-11-25T19:37+09:00', 'b', keys.task(grandma, 'ask'));
     sent('2026-11-25T19:40+09:00', 'b', keys.task(grandma, 'ask'), 'r-grandma');
-    // 健太が、帰りの買い物（11/26 18:55–19:10、家に着くのは 19:25）を見て引き受ける。
-    accept('2026-11-26T12:12+09:00', 'a', buy);
   }
   if (upTo >= 2) {
+    // 健太が、帰りの買い物（11/26 18:55–19:10、家に着くのは 19:25）を見て引き受け、買う。
+    accept('2026-11-26T12:12+09:00', 'a', buy);
     add('2026-11-26T19:12+09:00', 'a', {
       type: 'commitmentChanged',
       taskKey: buy,
       assigneeId: 'a',
       action: 'done',
     });
+  }
+  if (upTo >= 3) {
+    // 彩が、おばあちゃんの返事を待つ間に、学童を予備に押さえ、健太に頼む。健太が引き受け、書いて出す。
     add('2026-11-29T21:00+09:00', 'b', {
       type: 'optionChosen',
       arrangementKey: care,
@@ -236,8 +240,6 @@ export function demoEvents(stage: DemoStageId): DomainEvent[] {
     });
     accept('2026-11-29T21:02+09:00', 'a', keys.task(gakudo, 'write'));
     accept('2026-11-29T21:02+09:00', 'a', keys.task(gakudo, 'submit'));
-  }
-  if (upTo >= 3) {
     add('2026-11-30T17:30+09:00', 'a', {
       type: 'commitmentChanged',
       taskKey: keys.task(gakudo, 'write'),
@@ -267,20 +269,5 @@ export function demoPlan(stage: DemoStageId) {
     sources: data.sources,
     readings: data.readings,
     plan,
-  };
-}
-
-/** デモの段の材料：家族、事象の列、その時の時刻、読み取りの出どころ。計画は画面が同じエンジンで計算する。 */
-export function demoStage(stage: DemoStageId) {
-  const data = loadDemoData();
-  const now = DEMO_STAGES.find((s) => s.id === stage)?.now;
-  if (!now) throw new Error(`デモの段が無い：${stage}`);
-  return {
-    stage,
-    now,
-    stages: DEMO_STAGES.map((s) => ({ id: s.id, now: s.now })),
-    household: data.household,
-    readings: data.readings,
-    events: demoEvents(stage),
   };
 }

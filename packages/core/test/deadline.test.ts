@@ -57,6 +57,33 @@ describe('決め時（手順の逆算）', () => {
     expect(show(result.decisionDeadline)).toBe('2026-12-04T20:55+09:00');
   });
 
+  it('手順の担当が前後で別の人に決まった案は、置かない（紙を零分で手渡せるとは言わない）', () => {
+    const base = template('opt-gakudo');
+    const [write, submit] = base.steps;
+    if (!write || !submit) throw new Error('学童の手順が無い');
+    const split = {
+      ...base,
+      steps: [
+        { ...write, assigneeId: 'b' },
+        { ...submit, assigneeId: 'a' },
+      ],
+    };
+    const result = optionDeadline(split, NEED_DATE, household, NOTICE_ARRIVED);
+    expect(result.decisionDeadline).toBeUndefined();
+    expect(result.steps).toEqual([]);
+    // 同じ人に決まっていれば置ける。
+    const same = {
+      ...base,
+      steps: [
+        { ...write, assigneeId: 'a' },
+        { ...submit, assigneeId: 'a' },
+      ],
+    };
+    expect(show(optionDeadline(same, NEED_DATE, household, NOTICE_ARRIVED).decisionDeadline)).toBe(
+      '2026-11-30T17:20+09:00',
+    );
+  });
+
   it('決め時を過ぎたら、もう選べない', () => {
     const later = at('2026-12-01T09:00+09:00');
     expect(optionDeadline(template('opt-gakudo'), NEED_DATE, household, later).expired).toBe(true);

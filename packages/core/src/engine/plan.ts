@@ -253,10 +253,41 @@ function careOption(
 ): OptionPlan {
   const optionKey = keys.option(arrangementKey, template.id);
   const result = optionDeadline(template, needDate, ctx.household, ctx.now);
+  // 決め時は、大人の誰かが間に合うかで決める。作業の置き場所は、担当が決まっていれば、手順ごとに
+  // その人のふだんの時間に、先後を守って置き直す（担当の無い手順は、最初の担当の人がする）。
+  // 置けた人が担当と違う手順は、時刻の無い提案にする（別の人の時間を、担当の時間に見せない）。
+  // 手順の担当が前後で別の人なら、受け渡しが分からないので、鎖のどの手順にも時刻を置かない。
+  const assigned = template.steps.map((s) => ctx.state.assignees.get(keys.task(optionKey, s.id)));
+  const lead = assigned.find((a) => a !== undefined);
+  const doers = template.steps.map((s, i) => s.assigneeId ?? assigned[i] ?? lead);
+  const handoff = doers.some(
+    (who, i) => i > 0 && who !== undefined && doers[i - 1] !== undefined && who !== doers[i - 1],
+  );
+  const placedSteps =
+    lead === undefined
+      ? result.steps
+      : optionDeadline(
+          {
+            ...template,
+            steps: template.steps.map((s, i) => {
+              const who = assigned[i];
+              return who !== undefined && s.assigneeId === undefined
+                ? { ...s, assigneeId: who }
+                : s;
+            }),
+          },
+          needDate,
+          ctx.household,
+          ctx.now,
+          lead,
+        ).steps;
   const basis = { itemIds: [item.id], requirementKey, arrangementKey, optionKey };
   const taskKeys: string[] = [];
   template.steps.forEach((step, index) => {
-    const placed = result.steps[index];
+    const candidate = placedSteps[index];
+    const owner = assigned[index];
+    const placed =
+      candidate && (owner === undefined || candidate.memberId === owner) ? candidate : undefined;
     const key = keys.task(optionKey, step.id);
     taskKeys.push(key);
     const previous = template.steps[index - 1];
@@ -274,7 +305,8 @@ function careOption(
         segments: step.segments,
         ...(step.placeId === undefined ? {} : { placeId: step.placeId }),
         ...(step.external === undefined ? {} : { external: step.external }),
-        ...(placed
+        ...(handoff ? { handoff: true } : {}),
+        ...(placed && !handoff
           ? {
               assigneeId: placed.memberId,
               start: ctx.fmt(placed.start),
@@ -752,6 +784,7 @@ function externalRequests(
       sentBy: request.sentBy,
       state: request.state,
       basis: snapshot.basis,
+      ...('window' in snapshot && snapshot.window ? { window: snapshot.window } : {}),
       live,
       ...(needsCheck ? { needsCheck } : {}),
       ...(conditional ? { conditional } : {}),

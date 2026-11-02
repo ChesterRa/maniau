@@ -73,7 +73,8 @@ function slotFits(step: StepTemplate, slot: Slot): boolean {
 
 /**
  * 一人の担当で、手順の鎖を後ろから置く。置けた時は、最初の手順の開始が最も遅い置き方を返す。
- * 外に頼む前に物を手渡す手間を避けるため、決まった担当の無い手順は、同じ人がする。
+ * 決まった担当の無い手順は、同じ人がする。手順の担当が前後で別の人になる鎖は置かない：書いた紙を
+ * 次の人へ渡す時間と方法が分からず、零分で手渡せるとは言えないから（家族が受け渡しを決める）。
  */
 function placeChain(
   steps: readonly StepTemplate[],
@@ -87,6 +88,7 @@ function placeChain(
     const step = steps[i];
     if (!step) return undefined;
     const who = step.assigneeId ?? memberId;
+    if (placed[0] && placed[0].memberId !== who) return undefined;
     const slots = slotsByMember.get(who) ?? [];
     let best: PlacedStep | undefined;
     for (const slot of slots) {
@@ -108,13 +110,15 @@ function placeChain(
 
 /**
  * 案の決め時を、手順の逆算で求める（一つの案だけを見た目安。計画全体との重なりは §5 の2で確かめる）。
- * 探すのは now の日から締切の日まで。
+ * 探すのは now の日から締切の日まで。only を渡すと、その大人だけで手順を置く（担当の決まった作業を、
+ * 担当の人のふだんの時間に置くため）。
  */
 export function optionDeadline(
   template: CareOptionTemplate,
   needDate: LocalDate,
   household: Household,
   now: EpochMinutes,
+  only?: string,
 ): OptionDeadline {
   const deadline = ruleDeadline(template.deadline, needDate, household);
   const tz = household.timeZone;
@@ -122,11 +126,16 @@ export function optionDeadline(
   const lastDate = localDateOf(deadline, tz);
   const adults = activeAdultIds(household);
   const fixed = template.steps.map((s) => s.assigneeId).filter((id) => id !== undefined);
-  const members = [...new Set([...adults, ...fixed])];
+  const members = [...new Set([...adults, ...fixed, ...(only === undefined ? [] : [only])])];
   const slotsByMember = new Map(
     members.map((id) => [id, slotsBetweenDates(household, id, firstDate, lastDate)]),
   );
-  const candidates = fixed.length === template.steps.length ? [fixed[0] ?? ''] : adults;
+  const candidates =
+    only !== undefined
+      ? [only]
+      : fixed.length === template.steps.length
+        ? [fixed[0] ?? '']
+        : adults;
 
   let best: PlacedStep[] | undefined;
   for (const memberId of candidates) {

@@ -132,15 +132,25 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       if (command.role === 'backup' && arrangement.chosenOptionKey === option.key) {
         return { status: 'conflict', reason: 'alreadyPrimary' };
       }
-      const chosen: EventBody = {
-        type: 'optionChosen',
-        arrangementKey: arrangement.key,
-        optionKey: option.key,
-        role: command.role,
-      };
+      // 既に同じ役で選んでいれば、選び直しの事象は足さない（別の操作として送り直されても、
+      // 後の人の引き受けを戻さない）。
+      const already =
+        command.role === 'primary'
+          ? arrangement.chosenOptionKey === option.key
+          : arrangement.backupOptionKeys.includes(option.key);
+      const chosen: EventBody[] = already
+        ? []
+        : [
+            {
+              type: 'optionChosen',
+              arrangementKey: arrangement.key,
+              optionKey: option.key,
+              role: command.role,
+            },
+          ];
       if (command.assigneeId === undefined) {
         return command.shown === undefined
-          ? { bodies: [chosen] }
+          ? { bodies: chosen }
           : { status: 'invalid', reason: 'shownWithoutAssignee' };
       }
       const assignee = adultOf(state, command.assigneeId);
@@ -148,13 +158,22 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       const steps = option.taskKeys
         .map((key) => taskOf(key))
         .filter((t): t is NonNullable<typeof t> => t !== undefined && !t.extra);
+      // 同じ人が担当で、提案中・引き受け済み・済みの作業は、提案し直さない（引き受けを提案に戻さない）。
+      // 断った・できなくなった作業は、もう一度頼む意味があるので提案する。
+      const active = new Set(['proposed', 'accepted', 'done']);
       const bodies: EventBody[] = [
-        chosen,
-        ...steps.map((t) => ({
-          type: 'assignmentProposed' as const,
-          taskKey: t.key,
-          assigneeId: assignee,
-        })),
+        ...chosen,
+        ...steps
+          .filter(
+            (t) =>
+              state.assignees.get(t.key) !== assignee ||
+              !active.has(state.commitments.get(t.key) ?? ''),
+          )
+          .map((t) => ({
+            type: 'assignmentProposed' as const,
+            taskKey: t.key,
+            assigneeId: assignee,
+          })),
       ];
       // 自分が担当なら、本人が画面で見た提案の控え（作業ごと）が今の提案と同じ作業だけを引き受ける。
       // 控えを付けない作業は提案のまま残す。控えが今の提案と違えば、何も足さずに見せ直す（§5.5）。

@@ -720,6 +720,22 @@ describe('送った後に、頼んだ時の条件や時間が替わったら、�
     expect(plan.arrangements.find((a) => a.key === CARE)?.start).toContain('2026-12-14');
     expect(grandma(plan)).toMatchObject({ live: true, needsCheck: true });
     expect(plan.tasks.some((t) => t.cancels === 'r-grandma')).toBe(false);
+    // 依頼は、頼んだ時の時間（12/7）を持ち続ける。取り消し・確かめの文は、相手が頼まれた日で書く。
+    const sent = log.events.find((e) => e.type === 'externalRequestSent');
+    expect(grandma(plan)?.window).toEqual(
+      sent?.type === 'externalRequestSent' ? sent.snapshot?.window : 'no-snapshot',
+    );
+    expect(grandma(plan)?.window?.start).toContain('2026-12-07');
+  });
+
+  it('控えの無い古い依頼は、頼んだ時間を今の手配から補わない', () => {
+    const log = grandmaAsked((snapshot) => {
+      const { window: _, ...rest } = snapshot;
+      return rest;
+    });
+    const request = grandma(computePlan(log.events, '2026-11-25T19:41+09:00'));
+    expect(request).toBeDefined();
+    expect(request?.window).toBeUndefined();
   });
 
   // v0 のエンジンが作る根拠は一つの事項だが、型は複数を許すので、二つの根拠の控えを合成する。

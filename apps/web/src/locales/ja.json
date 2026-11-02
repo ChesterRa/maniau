@@ -4,36 +4,218 @@
     "tagline": "まだ選べるうちに、次の一手を。"
   },
   "nav": {
-    "week": "今週",
-    "overview": "全体",
-    "add": "取り込む",
-    "family": "家族"
-  },
-  "clock": {
-    "demo": "デモの時計 {{time}}"
+    "today": "きょう",
+    "snap": "撮る",
+    "week": "よてい"
   },
   "adult": {
     "label": "使う人"
   },
   "language": {
-    "label": "言葉",
-    "ja": "日本語",
-    "en": "English"
-  },
-  "week": {
-    "nextDecision": "次の決め時",
-    "empty": "お知らせを取り込むと、ここに決める事が出ます。"
-  },
-  "family": {
-    "title": "家族",
-    "kind": {
-      "adult": "大人",
-      "child": "子",
-      "helper": "頼める人"
-    }
+    "label": "言葉"
   },
   "error": {
     "load": "読み込めませんでした。もう一度試してください。"
   },
-  "loading": "読み込み中…"
+  "loading": "読み込み中…",
+  "demo": {
+    "label": "デモ",
+    "clock": "デモの時計 {{time}}",
+    "restart": "やり直す",
+    "stage": "場面",
+    "stages": {
+      "arrived": "11/25 お知らせが届いた",
+      "asked": "11/26 帰りの買い物",
+      "chase": "11/29 返事がまだ",
+      "backup": "11/30 学童にも申し込んだ",
+      "postponed": "12/4 延期のお知らせ"
+    }
+  },
+  "notice": {
+    "changed": "内容が変わりました。新しい内容を確かめてください。",
+    "refused": "この操作はできませんでした。画面を新しくしました。",
+    "expired": "デモの時間が切れました。やり直してください。",
+    "close": "閉じる",
+    "uncertain": "送れたかどうか確かめられませんでした（通信が途切れました）。「もう一度送る」は、同じ操作として確かめます。",
+    "retry": "もう一度送る"
+  },
+  "today": {
+    "title": "きょう",
+    "titleEvening": "今夜やること",
+    "nothing": "いま決めることはありません",
+    "nothingBody": "お知らせが届いたら、ここに出します。",
+    "more": "ほかに {{count}} 件あります（見る）",
+    "more_other": "ほかに {{count}} 件あります（見る）",
+    "quiet": "待っていること・やること"
+  },
+  "card": {
+    "decide": {
+      "label": "決めること",
+      "title": "{{date}}は{{what}}",
+      "body": "{{child}}をどうするか。「{{option}}」にするなら、{{deadline}}ごろまでに決めてください（目安）。",
+      "action": "決める",
+      "conditional": "お知らせの条件しだいで要ります（まだ決まっていません）。",
+      "turnedDown": "頼んだ相手に断られました。ほかの手を選んでください。"
+    },
+    "question": {
+      "label": "教えてください",
+      "atHome": "{{what}}はありますか？",
+      "body": "{{by}}までに要ります。"
+    },
+    "proposal": {
+      "label": "おねがい",
+      "when": "{{day}} {{from}}–{{to}}",
+      "where": "{{place}}・駅から歩いて約{{walk}}分（目安）",
+      "home": "家に着くのは {{time}}（いつもより{{late}}分おそく）",
+      "accept": "やります",
+      "decline": "きょうは無理",
+      "changed": "引き受けた後に、内容が変わりました。もう一度確かめてください。",
+      "at": "{{place}}",
+      "back": "戻るのに約{{min}}分（目安）",
+      "unplaced": "あなたのふだんの予定では、決め時までに置ける時間がありません。無理なら、ほかの人に頼んでください。",
+      "handoff": "前後の手順を別の人がするので、書類の受け渡しの時間が分かりません。時刻は決めていません。同じ人が続けてするか、受け渡しを家族で決めてください。",
+      "external": {
+        "reply": "{{to}}に頼み、返事を待ちます。",
+        "approval": "{{to}}に出し、承認を待ちます。",
+        "acceptance": "{{to}}に出し、受け付けを待ちます。"
+      }
+    },
+    "backup": {
+      "label": "念のため",
+      "title": "予備に「{{option}}」も押さえますか？",
+      "body": "申し込みの決め時は {{deadline}} ごろです（目安）。",
+      "ask": "{{name}}さんに頼む",
+      "self": "自分でやる",
+      "note": "頼んだ人の画面に出ます。やるかどうかは、その人が決めます。"
+    },
+    "cancel": {
+      "label": "もう要らないこと",
+      "body": "予定が変わりました。取り消しを伝えてください。",
+      "showDraft": "伝える文を見る",
+      "checkDate": "頼んだ日の控えがありません。日付を確かめてから送ってください。",
+      "done": "取り消しを伝えた"
+    },
+    "check": {
+      "label": "確かめてください",
+      "title": "{{to}}へのお願いは、まだ要りますか？",
+      "body": "頼んだ時の前提が変わりました（お知らせが変わったか、消えました）。取り消すかどうかは、あなたが決めてください。",
+      "action": "くわしく見る"
+    }
+  },
+  "answer": {
+    "yes": "ある",
+    "no": "ない"
+  },
+  "quiet": {
+    "waiting": "{{to}}の返事待ち（{{sent}}に送った）",
+    "replyYes": "OK だった",
+    "replyNo": "断られた",
+    "notSent": "まだ送っていなかった（押し間違い）",
+    "send": "送る",
+    "done": "済んだ"
+  },
+  "decide": {
+    "eyebrow": "{{date}} {{what}}",
+    "title": "{{child}}をどうしますか？",
+    "context": "{{names}}は、仕事の日です。",
+    "source": "いつ・なぜ を、元の文で見る",
+    "by": "{{deadline}}ごろまで（目安）",
+    "daysLeft": "あと{{count}}日",
+    "daysLeft_other": "あと{{count}}日",
+    "expired": "決め時を過ぎました",
+    "unknownDeadline": "決め時がまだ分かりません",
+    "tipLabel": "迷ったら",
+    "tip": "まず、{{helper}}に聞いてみましょう。{{night}}の夜までに返事をもらえれば、断られても「{{fallback}}」の決め時（目安）の前に選び直せます。",
+    "tipSoon": "まず、{{helper}}に聞いてみましょう。「{{fallback}}」の決め時（目安）が{{deadline}}なので、できるだけ早く返事をもらってください。",
+    "person": "{{name}}さん"
+  },
+  "ask": {
+    "title": "この文を送ります",
+    "body": "LINE などで送ってください。{{name}}は、このアプリを使わなくて大丈夫です。",
+    "draft": "下書き",
+    "editable": "送る前に、文は直せます。",
+    "share": "LINE などで送る",
+    "copy": "コピー",
+    "copied": "コピーしました",
+    "sent": "送った",
+    "nextLabel": "このあと",
+    "next1": "返事が来たら、ここで「OK だった」を押してください。",
+    "next2": "返事がなければ、予備の案の決め時のおよそ1日前から、きょうの画面にその案を出します。"
+  },
+  "draft": {
+    "ask": "{{address}}、お願いがあります。\n{{date}}は、{{child}}の学校がお休みです。{{from}}から{{to}}ごろまで、{{child}}を見てもらえませんか？",
+    "conditional": "予定が変わったら、この日は学校があるので、お願いはなしになります。",
+    "replyBy": "{{date}}の夜までにお返事をもらえると助かります。",
+    "cancelHelper": "{{address}}、{{date}}のお願いは、予定が変わったので大丈夫になりました。ありがとう。",
+    "cancelHelperUndated": "{{address}}、前にお願いした件は、予定が変わったので大丈夫になりました。ありがとう。",
+    "cancelPlace": "{{date}}の{{child}}の利用を取り消します。",
+    "cancelPlaceUndated": "{{child}}の利用の申し込みを取り消します。",
+    "replySoon": "できるだけ早くお返事をもらえると助かります。"
+  },
+  "sources": {
+    "eyebrow": "取り込んだお知らせ",
+    "title": "お知らせ",
+    "snapLabel": "撮る",
+    "snapBody": "学校のプリントや連絡帳を撮ると、ここに入ります（デモでは、届いたお知らせを見られます）。",
+    "received": "{{at}} に届いた",
+    "untitled": "（題名なし）",
+    "recorded": "Claude（{{model}}）が読みました",
+    "handWritten": "読み取りは、手で書いた正しい形を使っています",
+    "gone": "このお知らせは消しました。"
+  },
+  "week": {
+    "title": "よてい",
+    "today": "きょう",
+    "none": "なし",
+    "next": "来週",
+    "task": "{{name}}：{{what}} {{time}}",
+    "deadline": "{{option}}の決め時",
+    "conditional": "{{what}}（条件しだい）",
+    "unconfirmed": "{{what}}（未確認）",
+    "taskReconfirm": "{{name}}：{{what}} {{time}}（確かめ直し）"
+  },
+  "missing": {
+    "title": "見つかりません",
+    "body": "この項目は、もうありません。きょうの画面に戻ってください。"
+  },
+  "cost": {
+    "leave": "有休を{{days}}日使います",
+    "helper": "人に頼みます",
+    "bento": "お弁当を持たせます"
+  },
+  "list": {
+    "separator": "・"
+  },
+  "option": {
+    "afterSchoolFullDay": {
+      "title": "学童に預ける"
+    },
+    "paidLeave": {
+      "title": "{{name}}さんが休む"
+    },
+    "askHelper": {
+      "title": "{{name}}に頼む"
+    },
+    "buy": {
+      "title": "買う"
+    }
+  },
+  "task": {
+    "helper": {
+      "ask": "{{name}}に頼む"
+    },
+    "cancelRequest": "{{to}}に取り消しを伝える",
+    "buy": "{{what}}を買う",
+    "gakudoForm": {
+      "write": "学童の申込書を書く",
+      "submit": "学童に申込書を出す"
+    },
+    "leave": {
+      "apply": "会社に休みを伝える"
+    },
+    "bento": {
+      "shop": "お弁当の材料を買う",
+      "make": "お弁当を作る"
+    }
+  }
 }

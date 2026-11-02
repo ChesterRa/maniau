@@ -4,36 +4,218 @@
     "tagline": "Decide while you still can."
   },
   "nav": {
-    "week": "This week",
-    "overview": "Overview",
-    "add": "Add",
-    "family": "Family"
-  },
-  "clock": {
-    "demo": "Demo clock {{time}}"
+    "today": "Today",
+    "snap": "Snap",
+    "week": "Schedule"
   },
   "adult": {
     "label": "Viewing as"
   },
   "language": {
-    "label": "Language",
-    "ja": "日本語",
-    "en": "English"
-  },
-  "week": {
-    "nextDecision": "Next decision",
-    "empty": "Add a school notice to see what needs deciding."
-  },
-  "family": {
-    "title": "Family",
-    "kind": {
-      "adult": "Adult",
-      "child": "Child",
-      "helper": "Helper"
-    }
+    "label": "Language"
   },
   "error": {
     "load": "Couldn't load. Please try again."
   },
-  "loading": "Loading…"
+  "loading": "Loading…",
+  "demo": {
+    "label": "Demo",
+    "clock": "Demo clock {{time}}",
+    "restart": "Restart",
+    "stage": "Scene",
+    "stages": {
+      "arrived": "11/25 Notice arrives",
+      "asked": "11/26 Errand on the way home",
+      "chase": "11/29 No reply yet",
+      "backup": "11/30 Backup booked",
+      "postponed": "12/4 Postponed"
+    }
+  },
+  "notice": {
+    "changed": "Something changed. Please check the new details.",
+    "refused": "That couldn't be done. The screen has been refreshed.",
+    "expired": "The demo session expired. Please restart.",
+    "close": "Close",
+    "uncertain": "We couldn't confirm whether it was sent (the connection dropped). “Send again” checks it as the same action.",
+    "retry": "Send again"
+  },
+  "today": {
+    "title": "Today",
+    "titleEvening": "Tonight",
+    "nothing": "Nothing to decide right now",
+    "nothingBody": "When a notice arrives, it shows up here.",
+    "more_one": "Show {{count}} more",
+    "more_other": "Show {{count}} more",
+    "quiet": "Waiting and to do"
+  },
+  "card": {
+    "decide": {
+      "label": "To decide",
+      "title": "{{date}}: {{what}}",
+      "body": "What about {{child}}? To go with “{{option}}”, decide by about {{deadline}} (estimate).",
+      "action": "Decide",
+      "conditional": "Needed only if the notice's condition holds (not settled yet).",
+      "turnedDown": "The person you asked said no. Please pick another option."
+    },
+    "question": {
+      "label": "Please tell us",
+      "atHome": "Do you have {{what}} at home?",
+      "body": "Needed by {{by}}."
+    },
+    "proposal": {
+      "label": "A request for you",
+      "when": "{{day}} {{from}}–{{to}}",
+      "where": "{{place}} · about {{walk}} min walk from the station (estimate)",
+      "home": "Home at {{time}} ({{late}} min later than usual)",
+      "accept": "I'll do it",
+      "decline": "Not today",
+      "changed": "This changed after you accepted. Please check it again.",
+      "at": "{{place}}",
+      "back": "About {{min}} min to get back (estimate)",
+      "unplaced": "Your usual schedule has no time for this before the deadline. If you can't do it, please ask someone else.",
+      "handoff": "Someone else does the step before or after this one, so we can't tell when the papers change hands. No time is set. Have one person do both steps, or agree on the handoff together.",
+      "external": {
+        "reply": "Ask {{to}} and wait for their reply.",
+        "approval": "Hand it to {{to}} and wait for approval.",
+        "acceptance": "Hand it to {{to}} and wait for them to accept it."
+      }
+    },
+    "backup": {
+      "label": "Just in case",
+      "title": "Also hold “{{option}}” as a backup?",
+      "body": "The deadline to sign up is about {{deadline}} (estimate).",
+      "ask": "Ask {{name}}",
+      "self": "I'll do it",
+      "note": "It shows up on their screen. They decide whether to take it."
+    },
+    "cancel": {
+      "label": "No longer needed",
+      "body": "Plans changed. Please tell them it's cancelled.",
+      "showDraft": "See the message",
+      "checkDate": "There's no record of the date you asked for. Please check the date before sending.",
+      "done": "I told them"
+    },
+    "check": {
+      "label": "Please check",
+      "title": "Is your request to {{to}} still needed?",
+      "body": "Something it relied on has changed (the notice changed or was deleted). You decide whether to cancel.",
+      "action": "See details"
+    }
+  },
+  "answer": {
+    "yes": "Yes",
+    "no": "No"
+  },
+  "quiet": {
+    "waiting": "Waiting for {{to}} (sent {{sent}})",
+    "replyYes": "They said OK",
+    "replyNo": "They said no",
+    "notSent": "I didn't actually send it",
+    "send": "Send",
+    "done": "Done"
+  },
+  "decide": {
+    "eyebrow": "{{date}} {{what}}",
+    "title": "What about {{child}}?",
+    "context": "{{names}} are working that day.",
+    "source": "See when and why in the original text",
+    "by": "By about {{deadline}} (estimate)",
+    "daysLeft_one": "{{count}} day left",
+    "daysLeft_other": "{{count}} days left",
+    "expired": "Too late to choose",
+    "unknownDeadline": "Deadline not known yet",
+    "tipLabel": "Not sure?",
+    "tip": "Ask {{helper}} first. If you hear back by the evening of {{night}}, you can still switch before the deadline for “{{fallback}}” (estimate) if they say no.",
+    "tipSoon": "Ask {{helper}} first. The deadline for “{{fallback}}” is around {{deadline}} (estimate), so try to hear back as soon as you can.",
+    "person": "{{name}}"
+  },
+  "ask": {
+    "title": "Send this message",
+    "body": "Send it by LINE or similar. {{name}} doesn't need this app.",
+    "draft": "Draft",
+    "editable": "You can edit it before sending.",
+    "share": "Send via LINE etc.",
+    "copy": "Copy",
+    "copied": "Copied",
+    "sent": "I sent it",
+    "nextLabel": "Next",
+    "next1": "When they reply, tap “They said OK” here.",
+    "next2": "If there's no reply, the backup option shows on Today about a day before its deadline."
+  },
+  "draft": {
+    "ask": "Hi {{address}}, could you help?\nOn {{date}}, {{child}} has no school. Could you look after {{child}} from {{from}} to about {{to}}?",
+    "conditional": "If the plans change, there will be school that day and we won't need help.",
+    "replyBy": "It would help to hear back by the evening of {{date}}.",
+    "cancelHelper": "Hi {{address}}, plans changed, so we no longer need help on {{date}}. Thank you!",
+    "cancelHelperUndated": "Hi {{address}}, plans changed, so we no longer need the help we asked for. Thank you!",
+    "cancelPlace": "Cancel {{child}}'s booking on {{date}}.",
+    "cancelPlaceUndated": "Cancel {{child}}'s booking.",
+    "replySoon": "It would help to hear back as soon as you can."
+  },
+  "sources": {
+    "eyebrow": "Imported notices",
+    "title": "Notices",
+    "snapLabel": "Snap",
+    "snapBody": "Photograph school handouts or the contact notebook and they appear here (in the demo, you can see the notices that arrived).",
+    "received": "Arrived {{at}}",
+    "untitled": "(Untitled)",
+    "recorded": "Read by Claude ({{model}})",
+    "handWritten": "Using a hand-written correct reading",
+    "gone": "This notice was deleted."
+  },
+  "week": {
+    "title": "Schedule",
+    "today": "Today",
+    "none": "—",
+    "next": "Next week",
+    "task": "{{name}}: {{what}} {{time}}",
+    "deadline": "Deadline: {{option}}",
+    "conditional": "{{what}} (depends)",
+    "unconfirmed": "{{what}} (unconfirmed)",
+    "taskReconfirm": "{{name}}: {{what}} {{time}} (check again)"
+  },
+  "missing": {
+    "title": "Not found",
+    "body": "This item no longer exists. Please go back to Today."
+  },
+  "cost": {
+    "leave": "Paid leave: {{days}} day(s)",
+    "helper": "Asks someone for help",
+    "bento": "Needs a packed lunch"
+  },
+  "list": {
+    "separator": " · "
+  },
+  "option": {
+    "afterSchoolFullDay": {
+      "title": "After-school care"
+    },
+    "paidLeave": {
+      "title": "{{name}} takes the day off"
+    },
+    "askHelper": {
+      "title": "Ask {{name}}"
+    },
+    "buy": {
+      "title": "Buy it"
+    }
+  },
+  "task": {
+    "helper": {
+      "ask": "Ask {{name}}"
+    },
+    "cancelRequest": "Tell {{to}} it's cancelled",
+    "buy": "Buy {{what}}",
+    "gakudoForm": {
+      "write": "Fill in the after-school care form",
+      "submit": "Hand in the after-school care form"
+    },
+    "leave": {
+      "apply": "Tell work you're taking leave"
+    },
+    "bento": {
+      "shop": "Shop for the packed lunch",
+      "make": "Make the packed lunch"
+    }
+  }
 }

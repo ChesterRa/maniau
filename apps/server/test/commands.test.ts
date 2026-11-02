@@ -122,6 +122,30 @@ describe('命令', () => {
     expect((await task(ASK)).reconfirm).toBeUndefined();
   });
 
+  it('同じ案を同じ担当で選び直しても、別の人の引き受けを提案に戻さない', async () => {
+    const { run, events, task } = setup();
+    const choose: Command = {
+      type: 'chooseOption',
+      arrangementKey: CARE,
+      optionKey: GRANDMA,
+      role: 'primary',
+      assigneeId: 'a',
+    };
+    expect((await run('b', choose)).status).toBe('ok');
+    const shown = proposalSnapshot(await task(ASK));
+    if (!shown) throw new Error('置けていない');
+    expect((await run('a', { type: 'accept', taskKey: ASK, shown })).status).toBe('ok');
+    const count = (await events()).length;
+    // 応答が届かず、別の操作 ID で送り直された選び直し。
+    expect((await run('b', choose)).status).toBe('noop');
+    expect((await events()).length).toBe(count);
+    expect(await task(ASK)).toMatchObject({ assigneeId: 'a', commitment: 'accepted' });
+    // 断った後なら、もう一度頼む。
+    await run('a', { type: 'commitment', taskKey: ASK, action: 'decline' });
+    expect((await run('b', choose)).status).toBe('ok');
+    expect(await task(ASK)).toMatchObject({ assigneeId: 'a', commitment: 'proposed' });
+  });
+
   it('控えを付けずに自分を担当にした時は、提案するだけで引き受けない', async () => {
     const { run, events, task } = setup();
     await run('b', {
@@ -369,7 +393,15 @@ describe('デモの家庭（見る人ごと）', () => {
         headers: { 'content-type': 'application/json' },
       });
       expect(response.status).toBe(200);
-      return ((await response.json()) as { sessionId: string }).sessionId;
+      const made = (await response.json()) as {
+        sessionId: string;
+        household: { id: string };
+        readings: { sourceId: string; origin: string }[];
+        stages: { id: string }[];
+      };
+      expect(made.readings.map((r) => r.sourceId)).toEqual(['n1', 'n2']);
+      expect(made.stages.map((s) => s.id)).toContain('postponed');
+      return made.sessionId;
     };
     const mine = await make();
     const theirs = await make();

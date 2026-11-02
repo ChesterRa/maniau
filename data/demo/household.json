@@ -24,8 +24,9 @@
     {
       "id": "g",
       "kind": "helper",
-      "name": "祖母",
-      "outboundLanguage": "ja"
+      "name": "おばあちゃん",
+      "outboundLanguage": "ja",
+      "addressAs": "お母さん"
     }
   ],
   "places": [

@@ -1,17 +1,43 @@
 @import "tailwindcss";
 
+/* やさしい画面：大きな字、少ないボタン、黒板の緑と、一年生のランドセルカバーの黄色。 */
 @theme {
-  --font-sans: system-ui, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif;
-  --color-ink: #1f2933;
-  --color-muted: #5b6470;
-  --color-paper: #f4f6f8;
-  --color-line: #e3e7ec;
-  --color-accent: #1d4ed8;
-  --color-urgent: #8a3c08;
-  --color-urgent-soft: #fdf3e7;
+  --font-sans:
+    "Hiragino Sans", "BIZ UDPGothic", "Noto Sans JP", "Yu Gothic UI", system-ui, sans-serif;
+  --font-round:
+    "Hiragino Maru Gothic ProN", "Zen Maru Gothic", "BIZ UDPGothic", "Hiragino Sans", system-ui,
+    sans-serif;
+  --color-paper: #f3f5f0;
+  --color-card: #ffffff;
+  --color-ink: #1b2420;
+  --color-sub: #55625c;
+  --color-line: #dce3da;
+  --color-accent: #1e6b55;
+  --color-accent-dark: #14493a;
+  --color-accent-soft: #e2efe7;
+  --color-accent-line: #afcfbf;
+  --color-bag: #fff3c4;
+  --color-bag-line: #e3c55a;
+  --color-bag-ink: #6e5200;
+  --color-warn: #9a4114;
+  --color-warn-soft: #fbe9da;
+  --color-btn-line: #c3cdc6;
+  --color-quote: #ecefea;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  color-scheme: light;
 }
 
 body {
   background: var(--color-paper);
   color: var(--color-ink);
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 2px;
 }

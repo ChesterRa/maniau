@@ -118,6 +118,11 @@ export const ExternalRequest = z.object({
   sentBy: Id,
   state: ExternalRequestState,
   basis: Basis,
+  /**
+   * 頼んだ時間（送った時の控え）。取り消しの文は、今の手配の日ではなく、これで書く（置き換えで
+   * 手配の日が替わっても、相手が覚えているのは頼まれた日）。無いのは古い事象か、時間で頼まない依頼。
+   */
+  window: z.object({ start: DateTime, end: DateTime }).optional(),
   /** 根拠が今の事実で成り立つか。成り立たず、取り消していなければ、取り消しの連絡が要る。 */
   live: z.boolean(),
   /**
@@ -239,6 +244,11 @@ export const Task = z.object({
    * その案が今使う案（手配の inUseOptionKey）でない間は候補で、引き受けを求めない。
    */
   extra: z.boolean().optional(),
+  /**
+   * 案の手順の担当が、前後で別の人になっている。紙の受け渡しなどの時間と方法が分からないので、
+   * 時刻を置かない（零分で手渡せるとは言わない）。同じ人が続けてするか、家族が受け渡しを決める。
+   */
+  handoff: z.boolean().optional(),
 });
 export type Task = z.infer<typeof Task>;
 
