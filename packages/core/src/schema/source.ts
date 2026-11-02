@@ -8,6 +8,8 @@ export const SourceSender = z.enum([
   'school',
   'nursery',
   'afterSchoolCare',
+  /** 習い事・塾・スポーツのクラブ。 */
+  'club',
   'workplace',
   'family',
   'other',
@@ -31,6 +33,8 @@ export const Source = z.object({
   /** 原文の言葉。 */
   language: Language,
   title: z.string().optional(),
+  /** 届いた形。photo なら、文は写真から書き起こした物（家族が写真と並べて確かめる）。 */
+  medium: z.enum(['text', 'photo']).default('text'),
   sentences: z.array(Sentence).min(1),
   /** 訂正なら、元の出典。 */
   correctsSourceId: Id.optional(),
@@ -42,8 +46,8 @@ export const EvidenceState = z.enum(['stated', 'confirmed', 'inferred', 'conflic
 export type EvidenceState = z.infer<typeof EvidenceState>;
 
 export const ItemKind = z.enum([
-  /** 行事（学習発表会）。 */
-  'schoolEvent',
+  /** 行事・試合・発表会（学習発表会、サッカーの練習試合）。 */
+  'event',
   /** 持ち物・用意する物（白い長袖シャツ）。 */
   'belongings',
   /** 提出物。 */
@@ -54,6 +58,14 @@ export const ItemKind = z.enum([
   'deadline',
   /** 問い合わせ先。 */
   'contact',
+  /** テスト・小テスト・検定（漢字テスト）。 */
+  'test',
+  /** 宿題と、家の人のサイン（音読カード）。 */
+  'homework',
+  /** 当番（お茶当番、配車、係）。 */
+  'duty',
+  /** 配られたプリント（「おてがみ 1まい」のように、枚数だけ書かれた物）。 */
+  'handout',
 ]);
 export type ItemKind = z.infer<typeof ItemKind>;
 
@@ -71,8 +83,12 @@ export const Interpretation = z.object({
   what: z.string().optional(),
   dayType: DayType.optional(),
   deadline: DateTime.optional(),
-  /** 対象（例：1年生）。 */
+  /** 対象（例：1年生、陽菜さん・ゆいさんのおうち）。 */
   audience: z.string().optional(),
+  /** 書かれた場所（例：若洲のグラウンド）。 */
+  place: z.string().optional(),
+  /** 「あした」「きょう」のように書かれていた時。日付はコードが、出典の日から決める。 */
+  relativeDay: z.enum(['today', 'tomorrow']).optional(),
 });
 export type Interpretation = z.infer<typeof Interpretation>;
 

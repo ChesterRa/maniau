@@ -18,8 +18,22 @@ export interface EngineState {
   sources: Map<string, Source>;
   /** 出典ごとの、検査を通った読み取り（後の物が前の物を置き換える）。 */
   extractions: Map<string, Extraction>;
-  /** 未定の値の答え（家族の答えと、出典の作用）。後の物が勝つ。 */
+  /** 未定の値の答え（家族の答えと、出典の作用）。後の物が勝つ。answers から作る。 */
   resolved: Map<string, { value: string; seq: number; by: 'family' | 'source' }>;
+  /**
+   * 答えの記録。出典の作用の順は、その出典が届いた時（noticeReceived の seq）とする。読み直しは
+   * お知らせを新しくしないので、読み直しの前に来た家族の答えに勝たない。同じ出典を読み直したら、
+   * 前の読み取りの作用は外す（新しい読み取りに無い作用を残さない）。
+   */
+  answers: {
+    unknownId: string;
+    value: string;
+    seq: number;
+    by: 'family' | 'source';
+    sourceId?: string;
+  }[];
+  /** 出典が届いた時の seq（出典の ID → seq）。 */
+  sourceSeq: Map<string, number>;
   primary: Map<string, string>;
   backups: Map<string, Set<string>>;
   /** 家族が取り下げた案（手配の key → 案の key）。頼んだ後なら、取り消しの連絡が要る。 */
@@ -40,6 +54,8 @@ export function emptyState(): EngineState {
     sources: new Map(),
     extractions: new Map(),
     resolved: new Map(),
+    answers: [],
+    sourceSeq: new Map(),
     primary: new Map(),
     backups: new Map(),
     dropped: new Map(),
@@ -67,6 +83,7 @@ function apply(state: EngineState, event: DomainEvent): void {
       return;
     case 'noticeReceived':
       state.sources.set(event.source.id, event.source);
+      state.sourceSeq.set(event.source.id, event.seq);
       return;
     case 'modelOutputRecorded': {
       if (event.call !== 'extract') return;
@@ -75,22 +92,34 @@ function apply(state: EngineState, event: DomainEvent): void {
         state.rejected.push({ seq: event.seq, reason: '読み取りの出力が型に合わない' });
         return;
       }
-      state.extractions.set(parsed.data.sourceId, parsed.data);
+      const sourceId = parsed.data.sourceId;
+      state.extractions.set(sourceId, parsed.data);
+      const seq = state.sourceSeq.get(sourceId) ?? event.seq;
+      state.answers = state.answers.filter((a) => !(a.by === 'source' && a.sourceId === sourceId));
       for (const item of parsed.data.items) {
         for (const effect of item.effects) {
           if (effect.type === 'resolveUnknown') {
-            state.resolved.set(effect.unknownId, {
+            state.answers.push({
+              unknownId: effect.unknownId,
               value: effect.value,
-              seq: event.seq,
+              seq,
               by: 'source',
+              sourceId,
             });
           }
         }
       }
+      resolveAnswers(state);
       return;
     }
     case 'answered':
-      state.resolved.set(event.unknownId, { value: event.value, seq: event.seq, by: 'family' });
+      state.answers.push({
+        unknownId: event.unknownId,
+        value: event.value,
+        seq: event.seq,
+        by: 'family',
+      });
+      resolveAnswers(state);
       return;
     case 'optionChosen':
       state.dropped.get(event.arrangementKey)?.delete(event.optionKey);
@@ -166,9 +195,23 @@ function apply(state: EngineState, event: DomainEvent): void {
   }
 }
 
-/** 今の事項（置き換え・取り消しされていない物）と、置き換えをたどった元の事項の ID。 */
-export function currentItems(state: EngineState): { item: Item; rootId: string }[] {
+/** 未定の値ごとに、順の最も後の答えを今の答えにする（同じ順なら、後に記録した物）。 */
+function resolveAnswers(state: EngineState): void {
+  state.resolved = new Map();
+  for (const answer of state.answers) {
+    const current = state.resolved.get(answer.unknownId);
+    if (current === undefined || answer.seq >= current.seq) {
+      state.resolved.set(answer.unknownId, { value: answer.value, seq: answer.seq, by: answer.by });
+    }
+  }
+}
+
+/** 今の事項（置き換え・取り消しされていない物）と、置き換えをたどった元の事項の ID と、その出典。 */
+export function currentItems(
+  state: EngineState,
+): { item: Item; rootId: string; rootSourceId: string }[] {
   const all = [...state.extractions.values()].flatMap((e) => e.items);
+  const byId = new Map(all.map((i) => [i.id, i]));
   const replacedBy = new Map<string, string>();
   const cancelled = new Set<string>();
   for (const item of all) {
@@ -190,5 +233,8 @@ export function currentItems(state: EngineState): { item: Item; rootId: string }
   };
   return all
     .filter((item) => !replacedBy.has(item.id) && !cancelled.has(item.id))
-    .map((item) => ({ item, rootId: rootOf(item.id) }));
+    .map((item) => {
+      const rootId = rootOf(item.id);
+      return { item, rootId, rootSourceId: byId.get(rootId)?.sourceId ?? item.sourceId };
+    });
 }

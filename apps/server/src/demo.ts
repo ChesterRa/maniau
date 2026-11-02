@@ -70,6 +70,7 @@ export function loadDemoData(): DemoData {
       sender: 'school',
       senderPlaceId: 'school',
       language: 'ja',
+      medium: 'text',
       title: notice.title,
       sentences: splitSentences(read(`data/demo/notices/${notice.file}`), notice.id),
     };
@@ -154,6 +155,10 @@ export function demoEvents(stage: DemoStageId): DomainEvent[] {
   const dayOff = data.extractions[0]?.items.find((i) => i.interpretation.dayType === 'noSchool');
   const shirt = data.extractions[0]?.items.find((i) => i.kind === 'belongings');
   const care = keys.childCareArrangement(dayOff?.id ?? 'missing', 'c');
+  const buy = keys.task(
+    keys.option(keys.purchaseArrangement(shirt?.id ?? 'missing'), 'buy'),
+    'buy',
+  );
   const grandma = keys.option(care, 'opt-grandma');
   const gakudo = keys.option(care, 'opt-gakudo');
 
@@ -187,8 +192,26 @@ export function demoEvents(stage: DemoStageId): DomainEvent[] {
       taskKey: keys.task(grandma, 'ask'),
       requestId: 'r-grandma',
     });
+    // 健太が、帰りの買い物（11/26 18:55–19:10、家に着くのは 19:25）を見て引き受ける。
+    add('2026-11-26T12:12+09:00', 'a', {
+      type: 'commitmentChanged',
+      taskKey: buy,
+      assigneeId: 'a',
+      action: 'accept',
+      shown: {
+        start: '2026-11-26T18:55+09:00',
+        end: '2026-11-26T19:10+09:00',
+        delayedArrival: '2026-11-26T19:25+09:00',
+      },
+    });
   }
   if (upTo >= 2) {
+    add('2026-11-26T19:12+09:00', 'a', {
+      type: 'commitmentChanged',
+      taskKey: buy,
+      assigneeId: 'a',
+      action: 'done',
+    });
     add('2026-11-29T21:00+09:00', 'b', {
       type: 'optionChosen',
       arrangementKey: care,
@@ -252,5 +275,20 @@ export function demoPlan(stage: DemoStageId) {
     sources: data.sources,
     readings: data.readings,
     plan,
+  };
+}
+
+/** デモの段の材料：家族、事象の列、その時の時刻、読み取りの出どころ。計画は画面が同じエンジンで計算する。 */
+export function demoStage(stage: DemoStageId) {
+  const data = loadDemoData();
+  const now = DEMO_STAGES.find((s) => s.id === stage)?.now;
+  if (!now) throw new Error(`デモの段が無い：${stage}`);
+  return {
+    stage,
+    now,
+    stages: DEMO_STAGES.map((s) => ({ id: s.id, now: s.now })),
+    household: data.household,
+    readings: data.readings,
+    events: demoEvents(stage),
   };
 }

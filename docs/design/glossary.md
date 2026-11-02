@@ -53,7 +53,13 @@
 | 振替休業日 | make-up school holiday | 土日の行事の代わりに学校が休む日。国の祝日ではなく、その学校だけ | `makeUpHoliday` |
 | 有休 | paid leave | 年次有給休暇。申請の締切は勤務先の決まり | `paidLeave` |
 | 時間休 | hourly leave | 時間単位の休み | `hourlyLeave` |
-| 行事 | school event | 学習発表会など。記録の「事象」とは別 | `schoolEvent` |
+| 行事 | event | 学習発表会、習い事の試合など。記録の「事象」とは別 | `event` |
+| 連絡帳 | contact notebook (renrakuchō) | 学校と家の間で毎日やりとりする帳面。持ち物・宿題・連絡を書く | `renrakucho` |
+| 習い事 | lesson / club activity | 学校の外の教室・クラブ（スイミング、そろばん、サッカー、塾） | `club` |
+| 当番 | duty | 家庭が順番に受け持つ役（お茶当番、配車） | `duty` |
+| おてがみ（配られたプリント） | handout | 学校で配られた紙。連絡帳には枚数だけ書かれることがある | `handout` |
+| テスト | test | 漢字テスト、検定など。何日前に知らせるかは家族が決める | `test` |
+| 宿題・サイン | homework / parent signature | 音読カードのサインのように、家の人がする物を含む | `homework` |
 | 事象 | log entry | 記録の一件（取り込み、引き受け、時計の進み等）。画面には出さない | `DomainEvent` |
 
 ## 画面

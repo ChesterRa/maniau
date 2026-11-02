@@ -5,7 +5,7 @@
       {
         "id": "i1",
         "sentenceIds": ["n1#6"],
-        "kind": "schoolEvent",
+        "kind": "event",
         "written": "12月5日(土)に学習発表会を行います。",
         "date": "2026-12-05",
         "writtenWeekday": "sat",
@@ -17,12 +17,14 @@
         "audience": null,
         "conditionNodeId": "c5",
         "inferred": false,
-        "effects": []
+        "effects": [],
+        "place": null,
+        "relativeDay": "none"
       },
       {
         "id": "i2",
         "sentenceIds": ["n1#7"],
-        "kind": "schoolEvent",
+        "kind": "event",
         "written": "1年生の発表は9時20分からです。",
         "date": null,
         "writtenWeekday": "none",
@@ -34,7 +36,9 @@
         "audience": "1年生",
         "conditionNodeId": null,
         "inferred": false,
-        "effects": []
+        "effects": [],
+        "place": null,
+        "relativeDay": "none"
       },
       {
         "id": "i3",
@@ -51,7 +55,9 @@
         "audience": null,
         "conditionNodeId": null,
         "inferred": false,
-        "effects": []
+        "effects": [],
+        "place": null,
+        "relativeDay": "none"
       },
       {
         "id": "i4",
@@ -68,12 +74,14 @@
         "audience": null,
         "conditionNodeId": "c5",
         "inferred": false,
-        "effects": []
+        "effects": [],
+        "place": null,
+        "relativeDay": "none"
       },
       {
         "id": "i5",
         "sentenceIds": ["n1#10"],
-        "kind": "schoolEvent",
+        "kind": "event",
         "written": "感染症の流行状況により延期する場合は、12月8日(火)に行います。",
         "date": "2026-12-08",
         "writtenWeekday": "tue",
@@ -85,7 +93,9 @@
         "audience": null,
         "conditionNodeId": "c8",
         "inferred": false,
-        "effects": []
+        "effects": [],
+        "place": null,
+        "relativeDay": "none"
       },
       {
         "id": "i6",
@@ -102,7 +112,9 @@
         "audience": null,
         "conditionNodeId": "c8",
         "inferred": false,
-        "effects": []
+        "effects": [],
+        "place": null,
+        "relativeDay": "none"
       },
       {
         "id": "i7",
@@ -119,7 +131,9 @@
         "audience": null,
         "conditionNodeId": null,
         "inferred": false,
-        "effects": []
+        "effects": [],
+        "place": null,
+        "relativeDay": "none"
       }
     ],
     "unknowns": [

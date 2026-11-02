@@ -13,7 +13,14 @@ import {
   type Source,
   type Unknown,
 } from '../schema/source';
-import { isValidDateTime, isValidLocalDate, weekdayOf } from '../time';
+import {
+  addBusinessDays,
+  isValidDateTime,
+  isValidLocalDate,
+  localDateOf,
+  toEpochMinutes,
+  weekdayOf,
+} from '../time';
 
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 
@@ -33,6 +40,10 @@ export const ExtractionOutput = z.object({
       dayType: DayType.nullable(),
       deadline: z.string().nullable().describe('締切。YYYY-MM-DDTHH:MM+09:00'),
       audience: z.string().nullable(),
+      place: z.string().nullable().describe('書かれた場所。無ければ null'),
+      relativeDay: z
+        .enum(['none', 'today', 'tomorrow'])
+        .describe('「あした」「きょう」と書かれ、日付が無い時。日付はコードが決める'),
       conditionNodeId: z.string().nullable().describe('適用の条件の根の節点の ID'),
       inferred: z.boolean().describe('原文に書かれておらず推定した事なら true'),
       effects: z.array(
@@ -86,6 +97,8 @@ export interface ReadingContext {
   priorItems: readonly Item[];
   /** 前の出典で宣言された未定の値。 */
   priorUnknowns: readonly Unknown[];
+  /** 家族の時区（「あした」を日付にする時の、届いた日を決める）。無ければ Asia/Tokyo。 */
+  timeZone?: string;
 }
 
 /**
@@ -187,14 +200,23 @@ export function toExtraction(
       issues.push({ problem: 'badTime', ref: id, detail: times.join(',') });
       continue;
     }
+    // 「あした」は、出典が届いた日の次の登校日（土日・祝日を飛ばす）。「きょう」は届いた日。
+    const relativeDay = raw.relativeDay === 'none' ? undefined : raw.relativeDay;
+    const receivedOn = localDateOf(
+      toEpochMinutes(source.receivedAt),
+      context.timeZone ?? 'Asia/Tokyo',
+    );
+    const date =
+      raw.date ??
+      (relativeDay === 'tomorrow'
+        ? addBusinessDays(receivedOn, 1)
+        : relativeDay === 'today'
+          ? receivedOn
+          : null);
     const writtenWeekday =
       raw.writtenWeekday === 'none' ? undefined : WEEKDAYS.indexOf(raw.writtenWeekday) + 1;
-    if (
-      raw.date !== null &&
-      writtenWeekday !== undefined &&
-      weekdayOf(raw.date) !== writtenWeekday
-    ) {
-      issues.push({ problem: 'weekdayMismatch', ref: id, detail: raw.date });
+    if (date !== null && writtenWeekday !== undefined && weekdayOf(date) !== writtenWeekday) {
+      issues.push({ problem: 'weekdayMismatch', ref: id, detail: date });
       evidence = 'conflicting';
     }
     const condition = raw.conditionNodeId === null ? undefined : local(raw.conditionNodeId);
@@ -235,7 +257,7 @@ export function toExtraction(
       kind: raw.kind,
       written: raw.written,
       interpretation: {
-        ...(raw.date === null ? {} : { date: raw.date }),
+        ...(date === null ? {} : { date }),
         ...(writtenWeekday === undefined ? {} : { writtenWeekday }),
         ...(raw.startTime === null ? {} : { startTime: raw.startTime }),
         ...(raw.endTime === null ? {} : { endTime: raw.endTime }),
@@ -243,6 +265,8 @@ export function toExtraction(
         ...(raw.dayType === null ? {} : { dayType: raw.dayType }),
         ...(raw.deadline === null ? {} : { deadline: raw.deadline }),
         ...(raw.audience === null ? {} : { audience: raw.audience }),
+        ...(raw.place === null ? {} : { place: raw.place }),
+        ...(relativeDay === undefined ? {} : { relativeDay }),
       },
       ...(condition === undefined ? {} : { conditionNodeId: condition }),
       evidence,

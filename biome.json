@@ -13,7 +13,8 @@
       "*.json",
       "!**/dist",
       "!**/node_modules",
-      "!**/*.gen.ts"
+      "!**/*.gen.ts",
+      "!data/demo/recorded"
     ]
   },
   "formatter": {

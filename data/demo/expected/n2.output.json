@@ -5,7 +5,7 @@
       {
         "id": "j1",
         "sentenceIds": ["n2#5"],
-        "kind": "schoolEvent",
+        "kind": "event",
         "written": "感染症の流行のため、学習発表会は12月8日(火)に行います。",
         "date": "2026-12-08",
         "writtenWeekday": "tue",
@@ -24,7 +24,9 @@
             "value": "2026-12-08",
             "itemId": null
           }
-        ]
+        ],
+        "place": null,
+        "relativeDay": "none"
       },
       {
         "id": "j2",
@@ -48,7 +50,9 @@
             "value": null,
             "itemId": "n1:i6"
           }
-        ]
+        ],
+        "place": null,
+        "relativeDay": "none"
       },
       {
         "id": "j3",
@@ -72,7 +76,9 @@
             "value": null,
             "itemId": "n1:i3"
           }
-        ]
+        ],
+        "place": null,
+        "relativeDay": "none"
       }
     ],
     "unknowns": [],

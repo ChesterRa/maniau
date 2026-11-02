@@ -89,11 +89,11 @@ export function computePlan(events: readonly DomainEvent[], now?: DateTime): Pla
 
   const nodes: ConditionNode[] = [...state.extractions.values()].flatMap((e) => e.conditions);
   const assignment = new Map([...state.resolved].map(([id, r]) => [id, r.value]));
-  const items = currentItems(state).map(({ item, rootId }) => {
+  const items = currentItems(state).map(({ item, rootId, rootSourceId }) => {
     const truth = item.conditionNodeId
       ? evaluateCondition(item.conditionNodeId, nodes, assignment)
       : true;
-    return { item, rootId, live: truth !== false };
+    return { item, rootId, rootSourceId, live: truth !== false };
   });
 
   const requirements: Requirement[] = [];
@@ -101,12 +101,12 @@ export function computePlan(events: readonly DomainEvent[], now?: DateTime): Pla
   const tasks: Task[] = [];
   const questions: Question[] = [];
 
-  for (const { item, rootId, live } of items) {
+  for (const { item, rootId, rootSourceId, live } of items) {
     if (item.kind === 'dayChange' && item.interpretation.dayType === 'noSchool') {
       childCare(ctx, item, rootId, live, requirements, arrangements, tasks);
     }
     if (item.kind === 'belongings') {
-      const by = belongingsDeadline(ctx, items);
+      const by = belongingsDeadline(ctx, item, rootSourceId, items);
       purchase(
         ctx,
         item,
@@ -361,14 +361,29 @@ function withStatus(ctx: Context, arrangement: Arrangement, tasks: Task[]): Arra
   };
 }
 
-/** 持ち物の期限：生きている行事の最も早い日の朝 8:00（間に合わなくならない側）。 */
+/**
+ * 持ち物の期限。書かれた締切か日付があれば、それ（日付なら朝 8:00）。無ければ、同じお知らせ
+ * （置き換えをたどった元の出典）の、生きている行事の最も早い日の朝 8:00（間に合わなくならない側）。
+ * 別のお知らせの行事には結ばない。
+ */
 function belongingsDeadline(
   ctx: Context,
-  items: { item: Item; live: boolean }[],
+  item: Item,
+  rootSourceId: string,
+  items: { item: Item; rootSourceId: string; live: boolean }[],
 ): EpochMinutes | undefined {
+  if (item.interpretation.deadline) return toEpochMinutes(item.interpretation.deadline);
+  if (item.interpretation.date)
+    return zonedToEpochMinutes(item.interpretation.date, '08:00', ctx.tz);
   const dates = items
-    .filter(({ item, live }) => live && item.kind === 'schoolEvent' && item.interpretation.date)
-    .map(({ item }) => item.interpretation.date as LocalDate)
+    .filter(
+      (e) =>
+        e.live &&
+        e.rootSourceId === rootSourceId &&
+        e.item.kind === 'event' &&
+        e.item.interpretation.date,
+    )
+    .map((e) => e.item.interpretation.date as LocalDate)
     .sort();
   const first = dates[0];
   return first === undefined ? undefined : zonedToEpochMinutes(first, '08:00', ctx.tz);
@@ -421,17 +436,39 @@ function purchase(
     status = 'undetermined';
     reasons.push({ code: 'inputMissing', refs: ['storeKind'] });
   } else {
-    const chances = purchaseOpportunities(ctx.household, goods, PURCHASE_MINUTES, ctx.now, by);
+    const key = keys.task(optionKey, 'buy');
+    // 誰かが引き受けた・頼まれた買い物は、その人の機会から選ぶ（別の人に勝手に移さない）。
+    // 済んだ買い物は、置き直さない。
+    const assignee = ctx.state.assignees.get(key);
+    const done = ctx.state.commitments.get(key) === 'done';
+    const all = purchaseOpportunities(ctx.household, goods, PURCHASE_MINUTES, ctx.now, by);
+    const chances = assignee === undefined ? all : all.filter((c) => c.memberId === assignee);
     const first = chances[0];
     const last = chances.at(-1);
-    if (!first || !last) {
+    if (done) {
+      option.deadlineCertainty = 'undetermined';
+      option.taskKeys.push(key);
+      tasks.push(
+        task(ctx, key, {
+          titleKey: 'task.buy',
+          titleParams: { what },
+          basis: { ...basis, arrangementKey, optionKey },
+          durationMin: PURCHASE_MINUTES,
+          deadline: ctx.fmt(by),
+          after: [],
+          segments: ['commute', 'away'],
+          placeKind: 'store',
+          goods,
+          live,
+        }),
+      );
+    } else if (!first || !last) {
       status = 'infeasible';
       option.expired = true;
       reasons.push({ code: 'noOptionLeft', refs: [optionKey] });
     } else {
       option.decisionDeadline = ctx.fmt(last.start);
       option.deadlineCertainty = 'estimate';
-      const key = keys.task(optionKey, 'buy');
       option.taskKeys.push(key);
       tasks.push(
         task(ctx, key, {

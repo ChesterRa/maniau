@@ -46,6 +46,7 @@ for (const notice of notices) {
     sender: 'school',
     senderPlaceId: 'school',
     language: 'ja',
+    medium: 'text',
     title: notice.title,
     sentences: splitSentences(text, notice.id),
   };

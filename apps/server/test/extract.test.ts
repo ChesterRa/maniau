@@ -15,6 +15,7 @@ const source = {
   receivedAt: '2026-11-25T19:30+09:00',
   sender: 'school' as const,
   language: 'ja' as const,
+  medium: 'text' as const,
   sentences: [{ id: 'n1#1', text: '12月5日(土)に学習発表会を行います。' }],
 };
 const request = { source, schoolYear: '2026', priorItems: [], priorUnknowns: [] };

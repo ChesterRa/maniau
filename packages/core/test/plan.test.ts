@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PlanResult } from '../src';
-import { computePlan } from '../src/engine';
+import { computePlan, foldEvents } from '../src/engine';
 import { extraction2, notice1, notice2, noticeArrived } from './fixtures/demo';
 
 const CARE = 'arr:childCare:i4:c';
@@ -303,5 +303,80 @@ describe('選んだ案が使えなくなった時・要らなくなった時（�
     expect(plan.arrangements.find((a) => a.key === SHIRT)?.recommendedOptionKey).toBe(
       `opt:${SHIRT}:buy`,
     );
+  });
+});
+
+describe('同じお知らせを読み直した時', () => {
+  const reading = (output: typeof extraction2, hash: string) => ({
+    call: 'extract' as const,
+    model: 'hand-written',
+    promptVersion: 'fixture',
+    inputHash: hash,
+    sourceId: 'n2',
+    output,
+  });
+  const withChange = () =>
+    noticeArrived()
+      .add('noticeReceived', '2026-12-04T17:52+09:00', 'b', { source: notice2 })
+      .add('modelOutputRecorded', '2026-12-04T17:52+09:00', 'system', reading(extraction2, 'n2-a'));
+
+  it('読み直しに無い作用は、前の読み取りから残さない', () => {
+    const withoutEffect = {
+      ...extraction2,
+      items: extraction2.items.map((i) => ({
+        ...i,
+        effects: i.effects.filter((e) => e.type !== 'resolveUnknown'),
+      })),
+    };
+    expect(foldEvents(withChange().events).resolved.get('u-date')?.value).toBe('2026-12-08');
+    const log = withChange().add(
+      'modelOutputRecorded',
+      '2026-12-04T18:05+09:00',
+      'system',
+      reading(withoutEffect, 'n2-b'),
+    );
+    expect(foldEvents(log.events).resolved.has('u-date')).toBe(false);
+  });
+
+  it('読み直しは、お知らせを新しくしない：その前に来た家族の答えに勝たない', () => {
+    const log = withChange()
+      .add('answered', '2026-12-04T18:00+09:00', 'b', { unknownId: 'u-date', value: '2026-12-05' })
+      .add('modelOutputRecorded', '2026-12-04T18:05+09:00', 'system', reading(extraction2, 'n2-c'));
+    expect(foldEvents(log.events).resolved.get('u-date')).toMatchObject({
+      value: '2026-12-05',
+      by: 'family',
+    });
+  });
+});
+
+describe('買い物の担当', () => {
+  const buyKey = `task:opt:${SHIRT}:buy:buy`;
+  const asked = () =>
+    noticeArrived()
+      .add('answered', '2026-11-25T19:35+09:00', 'b', { unknownId: 'u-atHome:i3', value: 'no' })
+      .add('assignmentProposed', '2026-11-25T19:40+09:00', 'b', {
+        taskKey: buyKey,
+        assigneeId: 'b',
+      });
+
+  it('頼まれた人の機会から選び、別の人に勝手に移さない', () => {
+    const plan = computePlan(asked().events, '2026-11-25T19:45+09:00');
+    const buy = plan.tasks.find((t) => t.key === buyKey);
+    expect(buy?.assigneeId).toBe('b');
+    expect(buy?.start).toBeDefined();
+    expect(buy?.start).not.toBe('2026-11-26T18:55+09:00');
+  });
+
+  it('済んだ買い物は、置き直さない', () => {
+    const log = asked().add('commitmentChanged', '2026-11-27T19:30+09:00', 'b', {
+      taskKey: buyKey,
+      assigneeId: 'b',
+      action: 'done',
+    });
+    const buy = computePlan(log.events, '2026-11-29T21:00+09:00').tasks.find(
+      (t) => t.key === buyKey,
+    );
+    expect(buy).toMatchObject({ commitment: 'done', assigneeId: 'b' });
+    expect(buy?.start).toBeUndefined();
   });
 });

@@ -21,6 +21,8 @@ export const Member = z.object({
   uiLanguage: Language.optional(),
   /** 頼める人（祖母など）に出す文の言葉。分からなければ家族に聞く。 */
   outboundLanguage: Language.optional(),
+  /** 外に出す文で、その人を呼ぶ言い方（例：お母さん）。無ければ name。 */
+  addressAs: z.string().optional(),
   /** 子の学年（例：小1）。 */
   grade: z.string().optional(),
   /** 止めた成員は、権限を持たない（§2.1）。 */

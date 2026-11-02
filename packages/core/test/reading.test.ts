@@ -7,7 +7,7 @@ const item = (
   over: Partial<ExtractionOutput['items'][number]> & Pick<ExtractionOutput['items'][number], 'id'>,
 ): ExtractionOutput['items'][number] => ({
   sentenceIds: [],
-  kind: 'schoolEvent',
+  kind: 'event',
   written: '',
   date: null,
   writtenWeekday: 'none',
@@ -17,6 +17,8 @@ const item = (
   dayType: null,
   deadline: null,
   audience: null,
+  place: null,
+  relativeDay: 'none',
   conditionNodeId: null,
   inferred: false,
   effects: [],
