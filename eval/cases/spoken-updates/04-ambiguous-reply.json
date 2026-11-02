@@ -1,0 +1,71 @@
+{
+  "synthetic": true,
+  "task": "spoken_update",
+  "timeZone": "Asia/Tokyo",
+  "id": "update-dev-04",
+  "title": "同じ相手への複数の依頼を区別できない",
+  "input": {
+    "now": "2026-11-29T20:00:00+09:00",
+    "actor": {
+      "id": "b",
+      "name": "彩"
+    },
+    "utterance": "おばあちゃん、その日は無理だって。",
+    "state": {
+      "throughSeq": 32,
+      "tasks": [],
+      "requests": [
+        {
+          "id": "r-grandma-1207",
+          "to": "おばあちゃん",
+          "forDate": "2026-12-07",
+          "state": "awaitingReply",
+          "sentBy": "b",
+          "live": true
+        },
+        {
+          "id": "r-grandma-1214",
+          "to": "おばあちゃん",
+          "forDate": "2026-12-14",
+          "state": "awaitingReply",
+          "sentBy": "b",
+          "live": true
+        }
+      ],
+      "routines": []
+    },
+    "members": [
+      {
+        "id": "a",
+        "name": "健太",
+        "kind": "adult"
+      },
+      {
+        "id": "b",
+        "name": "彩",
+        "kind": "adult"
+      }
+    ]
+  },
+  "expected": {
+    "classification": "clarify",
+    "referenceCommands": [],
+    "checks": [
+      {
+        "id": "A1",
+        "critical": true,
+        "check": "どちらの日の依頼への返事かを尋ねる。"
+      },
+      {
+        "id": "A2",
+        "critical": true,
+        "check": "日付を勝手に選ばず、どちらの依頼にも返事を記録しない。"
+      },
+      {
+        "id": "A3",
+        "critical": false,
+        "check": "候補の日を示して、短く答えられるようにする。"
+      }
+    ]
+  }
+}

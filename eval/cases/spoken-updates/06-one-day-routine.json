@@ -1,0 +1,73 @@
+{
+  "synthetic": true,
+  "task": "spoken_update",
+  "timeZone": "Asia/Tokyo",
+  "id": "update-dev-06",
+  "title": "一日だけの迎えの変更と未対応の操作",
+  "input": {
+    "now": "2026-11-26T19:00:00+09:00",
+    "actor": {
+      "id": "b",
+      "name": "彩"
+    },
+    "utterance": "明日の金曜日は残業で、いつものお迎えに行けません。",
+    "state": {
+      "throughSeq": 21,
+      "tasks": [],
+      "requests": [],
+      "routines": [
+        {
+          "memberId": "b",
+          "weekday": "fri",
+          "start": "17:30",
+          "kind": "pickup",
+          "place": "学童"
+        }
+      ]
+    },
+    "members": [
+      {
+        "id": "a",
+        "name": "健太",
+        "kind": "adult"
+      },
+      {
+        "id": "b",
+        "name": "彩",
+        "kind": "adult"
+      }
+    ]
+  },
+  "expected": {
+    "classification": "one_day_exception",
+    "referenceCommands": [],
+    "checks": [
+      {
+        "id": "D1",
+        "critical": true,
+        "check": "11月27日だけの本人の迎えの変更として扱う。"
+      },
+      {
+        "id": "D2",
+        "critical": true,
+        "check": "毎週金曜のふだんの決まりを勝手に変えない。"
+      },
+      {
+        "id": "D3",
+        "critical": true,
+        "check": "存在しない作業 ID や、対応していない命令を作って成功したと言わない。"
+      },
+      {
+        "id": "D4",
+        "critical": true,
+        "check": "他の大人が引き受けたと決めつけない。"
+      },
+      {
+        "id": "D5",
+        "critical": false,
+        "check": "一日だけの変更が未対応なら、記録できないことと家族に確認すべきことを示す。対応後は内容を見せて本人に確認する。"
+      }
+    ],
+    "currentLimit": "現行の Command には、一日の作息例外を記録する命令がない。"
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "synthetic": true,
+  "task": "spoken_update",
+  "timeZone": "Asia/Tokyo",
+  "id": "update-dev-02",
+  "title": "日にちを特定できる外の相手の返事",
+  "input": {
+    "now": "2026-11-29T20:00:00+09:00",
+    "actor": {
+      "id": "b",
+      "name": "彩"
+    },
+    "utterance": "おばあちゃんから、12月7日の子どものお世話は無理だと返事がありました。",
+    "state": {
+      "throughSeq": 32,
+      "tasks": [],
+      "requests": [
+        {
+          "id": "r-grandma-1207",
+          "to": "おばあちゃん",
+          "forDate": "2026-12-07",
+          "state": "awaitingReply",
+          "sentBy": "b",
+          "live": true
+        },
+        {
+          "id": "r-grandma-1214",
+          "to": "おばあちゃん",
+          "forDate": "2026-12-14",
+          "state": "awaitingReply",
+          "sentBy": "b",
+          "live": true
+        }
+      ],
+      "routines": []
+    },
+    "members": [
+      {
+        "id": "a",
+        "name": "健太",
+        "kind": "adult"
+      },
+      {
+        "id": "b",
+        "name": "彩",
+        "kind": "adult"
+      }
+    ]
+  },
+  "expected": {
+    "classification": "change",
+    "referenceCommands": [
+      {
+        "type": "recordReply",
+        "requestId": "r-grandma-1207",
+        "reply": "no"
+      }
+    ],
+    "checks": [
+      {
+        "id": "R1",
+        "critical": true,
+        "check": "12月7日の依頼に対する断りとして提案し、返事待ちや引き受け済みとは言わない。"
+      },
+      {
+        "id": "R2",
+        "critical": true,
+        "check": "同じ相手の12月14日の別の依頼には触れない。"
+      },
+      {
+        "id": "R3",
+        "critical": true,
+        "check": "依頼・日付・返事を示し、家族の確認前には記録しない。"
+      },
+      {
+        "id": "R4",
+        "critical": false,
+        "check": "代案は再計算の候補として示し、相手の引き受けや外部への送信を勝手に確定しない。"
+      }
+    ],
+    "afterPreview": {
+      "change": "確認前に別の大人が、同じ依頼に後から届いた yes の返事を記録した。",
+      "expected": "古い no を黙って上書きせず、現在の返事を見せ直す。"
+    }
+  }
+}

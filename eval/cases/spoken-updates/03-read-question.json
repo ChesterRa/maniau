@@ -1,0 +1,82 @@
+{
+  "synthetic": true,
+  "task": "spoken_update",
+  "timeZone": "Asia/Tokyo",
+  "id": "update-dev-03",
+  "title": "予定を変えない質問",
+  "input": {
+    "now": "2026-12-02T18:00:00+09:00",
+    "actor": {
+      "id": "a",
+      "name": "健太"
+    },
+    "utterance": "明日の持ち物は何？",
+    "state": {
+      "throughSeq": 15,
+      "tasks": [],
+      "requests": [],
+      "routines": [],
+      "notices": [
+        {
+          "id": "notice-book",
+          "title": "学校のお知らせ",
+          "items": [
+            {
+              "id": "i-book",
+              "what": "図書の本",
+              "date": "2026-12-03",
+              "evidence": "stated",
+              "condition": "always"
+            },
+            {
+              "id": "i-towel",
+              "what": "タオル",
+              "date": "2026-12-03",
+              "evidence": "stated",
+              "condition": "水泳が行われる場合",
+              "conditionState": "unknown"
+            }
+          ]
+        }
+      ]
+    },
+    "members": [
+      {
+        "id": "a",
+        "name": "健太",
+        "kind": "adult"
+      },
+      {
+        "id": "b",
+        "name": "彩",
+        "kind": "adult"
+      }
+    ]
+  },
+  "expected": {
+    "classification": "question",
+    "referenceCommands": [],
+    "checks": [
+      {
+        "id": "Q1",
+        "critical": true,
+        "check": "質問として扱い、予定・引き受け・確認状態を書き換えない。"
+      },
+      {
+        "id": "Q2",
+        "critical": true,
+        "check": "明日は12月3日で、確かな持ち物の図書の本を示す。"
+      },
+      {
+        "id": "Q3",
+        "critical": true,
+        "check": "タオルを示す場合、条件が未定であることを併せて示し、確実に必要とは言わない。"
+      },
+      {
+        "id": "Q4",
+        "critical": false,
+        "check": "お知らせに戻れる根拠を示し、知らない持ち物を作らない。"
+      }
+    ]
+  }
+}

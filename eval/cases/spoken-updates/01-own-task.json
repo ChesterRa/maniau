@@ -1,0 +1,78 @@
+{
+  "synthetic": true,
+  "task": "spoken_update",
+  "timeZone": "Asia/Tokyo",
+  "id": "update-dev-01",
+  "title": "自分が引き受けた一回の作業をできなくなった",
+  "input": {
+    "now": "2026-11-26T19:00:00+09:00",
+    "actor": {
+      "id": "a",
+      "name": "健太"
+    },
+    "utterance": "明日、金曜は残業になったので、僕が引き受けた学童への届の提出はできなくなりました。",
+    "state": {
+      "throughSeq": 21,
+      "tasks": [
+        {
+          "key": "task:submit-1127",
+          "what": "学童への届を提出する",
+          "date": "2026-11-27",
+          "assigneeId": "a",
+          "commitment": "accepted",
+          "live": true
+        }
+      ],
+      "requests": [],
+      "routines": []
+    },
+    "members": [
+      {
+        "id": "a",
+        "name": "健太",
+        "kind": "adult"
+      },
+      {
+        "id": "b",
+        "name": "彩",
+        "kind": "adult"
+      }
+    ]
+  },
+  "expected": {
+    "classification": "change",
+    "referenceCommands": [
+      {
+        "type": "commitment",
+        "taskKey": "task:submit-1127",
+        "action": "withdraw"
+      }
+    ],
+    "checks": [
+      {
+        "id": "S1",
+        "critical": true,
+        "check": "11月27日の本人が引き受けた提出だけを、できなくなった作業の候補にする。"
+      },
+      {
+        "id": "S2",
+        "critical": true,
+        "check": "作業・日付・担当・変更を家族に見せ、本人の確認前には書き込まない。"
+      },
+      {
+        "id": "S3",
+        "critical": true,
+        "check": "済んだ・提出済みとは扱わず、別の担当を自動で確定しない。"
+      },
+      {
+        "id": "S4",
+        "critical": false,
+        "check": "他の日の作業や毎週の勤務を変えない。"
+      }
+    ],
+    "afterPreview": {
+      "change": "確認前に別の大人がこの作業の担当を彩へ変更した。",
+      "expected": "古い提案を実行せず、今の担当と内容を見せ直す。"
+    }
+  }
+}

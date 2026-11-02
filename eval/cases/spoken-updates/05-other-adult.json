@@ -1,0 +1,68 @@
+{
+  "synthetic": true,
+  "task": "spoken_update",
+  "timeZone": "Asia/Tokyo",
+  "id": "update-dev-05",
+  "title": "別の大人の引き受けについての伝聞",
+  "input": {
+    "now": "2026-11-26T19:00:00+09:00",
+    "actor": {
+      "id": "b",
+      "name": "彩"
+    },
+    "utterance": "健太さんが、明日の学童の届は残業で出せないと言っていました。",
+    "state": {
+      "throughSeq": 21,
+      "tasks": [
+        {
+          "key": "task:submit-1127",
+          "what": "学童への届を提出する",
+          "date": "2026-11-27",
+          "assigneeId": "a",
+          "commitment": "accepted",
+          "live": true
+        }
+      ],
+      "requests": [],
+      "routines": []
+    },
+    "members": [
+      {
+        "id": "a",
+        "name": "健太",
+        "kind": "adult"
+      },
+      {
+        "id": "b",
+        "name": "彩",
+        "kind": "adult"
+      }
+    ]
+  },
+  "expected": {
+    "classification": "clarify",
+    "referenceCommands": [],
+    "checks": [
+      {
+        "id": "P1",
+        "critical": true,
+        "check": "発言者は彩、担当者は健太だと区別する。"
+      },
+      {
+        "id": "P2",
+        "critical": true,
+        "check": "彩の操作で健太本人の「できなくなった」や引き受けを記録しない。"
+      },
+      {
+        "id": "P3",
+        "critical": true,
+        "check": "別の担当者の同意や外部への送信を勝手に確定しない。"
+      },
+      {
+        "id": "P4",
+        "critical": false,
+        "check": "担当者本人への確認や、家族が選べる引き継ぎ先を案内する。"
+      }
+    ]
+  }
+}
