@@ -25,3 +25,27 @@
 | `08-reply-yes.json` | 日付を特定できる引き受けの返事を、別の日と混同せずに提案する |
 
 場面の形と参照先は `node --test eval/test/spoken-update-cases.test.mjs` で確認する。通過は、モデルの理解・音声認識・実機の操作が正しいことを示さない。
+
+## 実行器
+
+初めは架空の場面を指定し、通信と鍵の読み込みをしない準備確認を行う。`kind` や依頼の `what` など、元の場面にない欄は空にし、欠けた情報を記録する。入力にないことを正解から補わない。事項の根拠の確かさや出典の題名など、製品の読み取り入力にない情報も記録する。不要になった依頼でも、取り消しを伝える有効な作業があれば `needed: false` を付けて残す。一日だけの作息変更は製品の命令がないため、API を呼ばず未実施とする。
+
+```sh
+node --test eval/test/*.test.mjs
+pnpm --filter @maniau/server exec tsx --test ../../eval/test/utterance-product.test.ts
+node eval/run-utterance.mjs --case eval/cases/spoken-updates/01-own-task.json
+```
+
+製品の一言の読み取りが利用できる時、架空の材料だけで実際に呼ぶには次のようにする。`.env` の鍵を使う。読み取り・変換とも製品の関数を呼び、モデル・プロンプト・出力上限はその時の製品の設定に従う。
+
+```sh
+pnpm --filter @maniau/server exec tsx ../../eval/run-utterance.mjs --case eval/cases/spoken-updates/01-own-task.json --execute
+```
+
+単価を記録する場合は、実行時に公式料金を確認し、`--pricing-model`、`--input-usd-per-million`、`--output-usd-per-million`、`--pricing-url`、`--pricing-checked` をすべて付ける。モデルが一致せず、推論地域が global・速度が standard と確認できず、またはキャッシュ料金がある場合、費用は不明とする。読み取り開始と応答・使用量を一件ずつ台帳に残す。応答を得られない時の費用は 0 とせず不明にする。自動再試行はしない。
+
+読み取り、検査、プロンプト、依存の固定のハッシュを試行前後に記録する。試行中に変わった場合は、その結果を比較不能とする。記録したハッシュはファイル全体の再現可能性を高めるものであり、実行環境のすべてを固定した証拠ではない。
+
+分類と参照命令の照合は補助的な診断であり、各確認点の合否ではない。画面の文や、確認前・確認後の実際の書き込みはこの実行器からは分からないため、各 `checks` と `afterPreview` は未判定または未実施のまま残す。画面と操作ができた後、別に確かめて採点する。
+
+開発用の記録は Git 対象外の `eval/runs/` に置く。保留場面を実行した場合は、入力と生の出力を開発用の記録に混ぜず、保留場面のディレクトリ内に置く。保留場面は製品の調整担当に見せない。
