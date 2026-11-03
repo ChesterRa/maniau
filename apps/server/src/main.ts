@@ -2,7 +2,6 @@
 // 家族の家庭は、置き場所の設定（DATABASE_URL と Access）がそろった時だけ開く。一部だけの設定は、
 // デモに落とさずに止める（設定の誤りを、門の無いサーバーとして黙って動かさない）。知らせ（VAPID）も
 // 同じく、全部そろった時だけ動かす。
-import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
 import { serve } from '@hono/node-server';
@@ -19,9 +18,9 @@ import { extractNotice, ReadingError } from './reading/extract';
 import { PhotoTooLarge, transcribePhoto } from './reading/transcribe';
 import { readUtterance } from './reading/utterance';
 
-// 手元では、リポジトリの .env を読む（Claude の鍵。値は表示しない）。本番は置き場所の設定から。
-const envFile = fileURLToPath(new URL('../../../.env', import.meta.url));
-if (existsSync(envFile)) process.loadEnvFile(envFile);
+// 設定は環境変数だけから読む。手元の .env は、起動の命令（package.json の dev・start の
+// --env-file-if-exists）が読む。入口そのものは .env を読まない（試験で起こす入口が、手元の鍵や DB の
+// 設定を拾わないように）。本番は置き場所の設定から。
 
 /** 全部あるか、全部無いか。一部だけなら止める。 */
 function allOrNone<K extends string>(
@@ -37,14 +36,13 @@ function allOrNone<K extends string>(
   return Object.fromEntries(keys.map((k) => [k, env[k] as string])) as Record<K, string>;
 }
 
+/** 家族の家庭の置き場所の設定（四つそろった時だけ開く）。 */
+const FAMILY_KEYS = ['DATABASE_URL', 'ACCESS_TEAM_DOMAIN', 'ACCESS_AUD', 'APP_ORIGIN'] as const;
+
 async function familyBackend(
   env: NodeJS.ProcessEnv,
 ): Promise<{ family: FamilyBackend; jobs?: Notifier } | undefined> {
-  const config = allOrNone(
-    env,
-    ['DATABASE_URL', 'ACCESS_TEAM_DOMAIN', 'ACCESS_AUD', 'APP_ORIGIN'],
-    '家族の家庭',
-  );
+  const config = allOrNone(env, FAMILY_KEYS, '家族の家庭');
   if (!config) return undefined;
   const vapid = allOrNone(
     env,
@@ -86,6 +84,17 @@ async function familyBackend(
   };
 }
 
+// デモだけのサーバーを Access の後ろに置く時の入口（Access のチームと、デモのアプリの AUD）。二つそろえば、
+// デモの API も要求ごとにトークンを確かめる（一つだけなら止める）。家族の家庭の設定と同じサーバーには
+// 置かない（どちらの門で守るかを曖昧にしない）。家族の家庭の DB につなぐ前に確かめる。
+const demoGate = allOrNone(
+  process.env,
+  ['DEMO_ACCESS_TEAM_DOMAIN', 'DEMO_ACCESS_AUD'],
+  'デモの入口',
+);
+if (demoGate && FAMILY_KEYS.some((k) => process.env[k])) {
+  throw new Error('デモの入口（DEMO_ACCESS_*）と家族の家庭の設定は、同じサーバーで同時にしない');
+}
 const backend = await familyBackend(process.env);
 const family = backend?.family;
 // Claude の鍵があれば、デモにお知らせの文を入れて読める（使った量は種類と数だけ記録する）。
@@ -149,6 +158,14 @@ const transcriber = anthropic
 // 家族の家庭を出すサーバーでは、デモの読み取りは開かない（createApp が外す）。
 const app = createApp({
   ...(family ? { family } : {}),
+  ...(demoGate
+    ? {
+        demoAccess: accessVerifier({
+          teamDomain: demoGate.DEMO_ACCESS_TEAM_DOMAIN,
+          audience: demoGate.DEMO_ACCESS_AUD,
+        }),
+      }
+    : {}),
   ...(reader ? { reader } : {}),
   ...(listener ? { listener } : {}),
   ...(transcriber ? { transcriber } : {}),
@@ -159,7 +176,7 @@ app.get('/*', serveStatic({ root: webDist, path: 'index.html' }));
 
 const port = Number(process.env.PORT ?? 8787);
 serve({ fetch: app.fetch, port }, (info) => {
-  const mode = `${family ? `家族の家庭とデモ、知らせ${backend?.jobs ? 'あり' : 'なし'}` : 'デモだけ'}、読み取り${reader && !family ? 'あり' : 'なし'}`;
+  const mode = `${family ? `家族の家庭とデモ、知らせ${backend?.jobs ? 'あり' : 'なし'}` : `デモだけ${demoGate ? '（入口で身元を確かめる）' : ''}`}、読み取り${reader && !family ? 'あり' : 'なし'}`;
   console.log(`まにあう：http://localhost:${info.port}（${mode}）`);
   backend?.jobs?.start();
 });

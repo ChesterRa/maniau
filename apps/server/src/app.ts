@@ -57,12 +57,22 @@ export function createApp(
     listener?: UtteranceReader;
     /** お知らせの写真・PDF を Claude で書き起こす口（同じく鍵がある時だけ）。 */
     transcriber?: PhotoReader;
+    /**
+     * デモだけのサーバーを Access の後ろに置く時の、身元の確かめ。あれば、/api/* の要求ごとに Access の
+     * トークンを確かめ、確かめられなければ断る（Access を通らずに届いた要求も、ここで止まる）。
+     * /api/health（中身の無い生存の確かめ。置き場所の healthcheck はトークンを持たない）だけは除く。
+     * 家族の家庭とは一緒に使わない（家族の口は、成員ごとに自分で確かめる）。
+     */
+    demoAccess?: AccessVerifier;
   } = {},
 ): Hono {
   // 起きる時に、デモの家族とお知らせを読み、型と家族の決まりを確かめる（誤りなら起きない）。
   loadDemoData();
   const sessions = demoSessions();
-  const { family } = options;
+  const { family, demoAccess } = options;
+  if (family && demoAccess) {
+    throw new Error('デモの入口の確かめと家族の家庭は、同じサーバーで同時に使わない');
+  }
   // 家族の家庭を出すアプリでは、デモの読み取りを開けない（ログインの無いデモの道で、Claude の費用を
   // 使わせない）。読み取りを試すのは、デモだけのサーバー。
   const reader = family ? undefined : options.reader;
@@ -76,6 +86,14 @@ export function createApp(
     await next();
     c.header('Cache-Control', 'no-store');
   });
+  if (demoAccess) {
+    app.use('/api/*', async (c, next) => {
+      if (c.req.path === '/api/health') return next();
+      const identity = await demoAccess(c.req.header(ACCESS_HEADER));
+      if (!identity) return c.json({ error: 'unauthenticated' }, 401);
+      return next();
+    });
+  }
   // 要求の中身は、読む前に大きさで断る（JSON を読み終えてから形を確かめるのでは、大きな中身を先に抱える）。
   // 写真の口だけを大きくし、他の口は文の上限（お知らせ 4,000 字）を UTF-8 で送っても収まる大きさにする。
   const jsonLimit = bodyLimit({
