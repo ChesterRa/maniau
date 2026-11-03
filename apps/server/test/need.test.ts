@@ -338,7 +338,9 @@ describe('家族の言明の「すること」', () => {
     expect(reserve?.deadline && toEpochMinutes(reserve.deadline)).toBeLessThanOrEqual(
       toEpochMinutes('2026-11-25T21:00+09:00'),
     );
-    // 返事を待つ間も、手配の札（予備・行き詰まり・決める）は子の居場所の文なので出さない（作業の札は出す）。
+    // 返事を待つ間：決める札・行き詰まりは出さない。窓（あすの朝）が近いので、まだ確かめられない時間の札は二人に
+    // 出す。予備の勧めは、頼んだ本人に、次のやり方の決め時（祖母：前の日の 21:00）が近いので出す（選び直す所は
+    // 「すること」の画面）。
     const { arrangement, task } = await app.need();
     const sent = task('way-sick-care', 'reserve');
     if (!sent || !arrangement) throw new Error('予約の作業が無い');
@@ -354,8 +356,12 @@ describe('家族の言明の「すること」', () => {
         (c) => 'arrangement' in c && c.arrangement?.kind === 'need',
       );
       expect(
-        cards.map((c) => c.kind).filter((k) => ['backup', 'stuck', 'decide'].includes(k)),
-      ).toEqual([]);
+        cards.map((c) => c.kind).filter((k) => ['backup', 'stuck', 'decide', 'need'].includes(k)),
+      ).toEqual(member === 'b' ? ['backup', 'need'] : ['need']);
+      const backup = cards.find((c) => c.kind === 'backup');
+      expect(backup?.kind === 'backup' && backup.option.templateId).toBe(
+        member === 'b' ? 'way-grandma' : false,
+      );
     }
     expect(
       await app.run({ type: 'recordReply', requestId: 'req-sick', reply: 'yes' }),
@@ -365,6 +371,61 @@ describe('家族の言明の「すること」', () => {
       [at('08:00'), at('08:30')],
       [at('17:30'), at('18:00')],
     ]);
+  });
+
+  it('きょうの「すること」の札：決めることがある時だけ二人に出し、返事待ちの間は窓が近づくまで出さず、「はい」の後も残る時間があれば出す', async () => {
+    const app = await setup();
+    const needCards = async (member: string) =>
+      todayCards((await app.need()).plan, member).main.filter((c) => c.kind === 'need');
+    // 三日後の窓（返事待ちの間に、窓が近づく前と後を見る）。
+    const later = { ...NEED, date: '2026-11-28' };
+    // 言っただけ（やり方を選んでいない）：二人に出す。
+    expect(
+      await app.previewed({ type: 'stateNeed', text: TEXT, interpretation: later }),
+    ).toMatchObject({ status: 'ok' });
+    for (const member of ['a', 'b']) expect(await needCards(member)).toHaveLength(1);
+    const itemId = (await app.need()).requirement?.basis.itemIds[0] ?? '';
+    // やり方を選んだが、本命を選んでいない：出す。
+    expect(
+      await app.previewed({
+        type: 'setNeedWays',
+        itemId,
+        wayIds: ['way-grandma', 'way-sick-care'],
+      }),
+    ).toMatchObject({ status: 'ok' });
+    expect(await needCards('a')).toHaveLength(1);
+    // 本命を選んだ：予約の作業の札が出すので、この札は出さない。送って返事を待つ間も出さない。
+    await app.choose('way-sick-care');
+    expect(await needCards('a')).toEqual([]);
+    const reserve = (await app.need()).task('way-sick-care', 'reserve');
+    const { arrangement } = await app.need();
+    if (!reserve || !arrangement) throw new Error('予約の作業が無い');
+    await app.run({
+      type: 'recordSent',
+      taskKey: reserve.key,
+      requestId: 'req-today',
+      window: { start: arrangement.start, end: arrangement.end },
+    });
+    expect(await needCards('a')).toEqual([]);
+    // 窓の前の晩（26 時間前から）は、返事待ちのままでも二人に出す（まだ確かめられない時間がある）。
+    const eve = computePlan(await app.events(), '2026-11-27T07:00+09:00');
+    for (const member of ['a', 'b']) {
+      expect(todayCards(eve, member).main.filter((c) => c.kind === 'need')).toHaveLength(1);
+    }
+    // 「はい」の後も、預かる時間の外が残る：二人に出す（残る時間は手配の理由にある）。
+    await app.run({ type: 'recordReply', requestId: 'req-today', reply: 'yes' });
+    for (const member of ['a', 'b']) {
+      const [card] = await needCards(member);
+      expect(card?.kind === 'need' && card.arrangement.reasons.map((r) => r.code)).toContain(
+        'notCovered',
+      );
+    }
+    // 祖母を本命にして「はい」：窓の全部を覆うので、出さない。
+    await app.choose('way-grandma');
+    const ask = (await app.need()).task('way-grandma', 'ask');
+    await app.askAndReply(ask, 'req-today-g', 'yes');
+    expect((await app.need()).gaps).toEqual([]);
+    expect(await needCards('a')).toEqual([]);
   });
 
   it('中身を直すと選んだやり方は選び直しになり、引き受けを当てない。元に戻せば選び直さずに戻るが、引き受けは本人にもう一度頼む', async () => {
@@ -564,6 +625,120 @@ describe('家族の言明の「すること」', () => {
       await app.choose('way-there', 'a');
       expect((await app.need()).task('way-there', 'stay')?.start !== undefined).toBe(placed);
     }
+  });
+
+  it('場所の書かれた「すること」は、家族の受け持ちを引き受けても覆ったと言わない（その場所にいると示せない）', async () => {
+    const home: Way = {
+      id: 'way-a-home',
+      name: '健太が家で受け取る',
+      steps: [
+        {
+          id: 'stay',
+          name: '家で受け取る',
+          durationMin: 0,
+          segments: ['home'],
+          waitAfterMin: 0,
+          placeId: 'home',
+          assigneeId: 'a',
+          cover: true,
+        },
+      ],
+      cost: { leaveMinutes: 0, helperRequests: 0, yen: 0, extraTasks: 0 },
+      cancellable: true,
+    };
+    const app = await setup([home]);
+    await app.stated(['way-a-home'], {
+      what: '子ども会の打ち合わせに出る',
+      shape: 'window',
+      date: '2026-11-28',
+      startTime: '13:00',
+      endTime: '14:00',
+      place: '地区センター',
+    });
+    await app.choose('way-a-home', 'a');
+    expect(await app.accept((await app.need()).task('way-a-home', 'stay'), 'a')).toMatchObject({
+      status: 'ok',
+    });
+    const sat = (time: string) => toEpochMinutes(`2026-11-28T${time}+09:00`);
+    expect((await app.need()).gaps.map(span)).toEqual([[sat('13:00'), sat('14:00')]]);
+  });
+
+  it('やり方で担当の決まった手順は、本命に選ぶ時もほかの大人に付け替えない（頼み直しも断る）', async () => {
+    const fixedWay: Way = {
+      id: 'way-a-home',
+      name: '健太が家で受け取る',
+      steps: [
+        {
+          id: 'stay',
+          name: '家で受け取る',
+          durationMin: 0,
+          segments: ['home'],
+          waitAfterMin: 0,
+          assigneeId: 'a',
+          cover: true,
+        },
+      ],
+      cost: { leaveMinutes: 0, helperRequests: 0, yen: 0, extraTasks: 0 },
+      cancellable: true,
+    };
+    const app = await setup([fixedWay]);
+    await app.stated(['way-a-home'], {
+      what: '荷物を家で受け取る',
+      shape: 'window',
+      date: '2026-11-28',
+      startTime: '13:00',
+      endTime: '15:00',
+    });
+    // 彩が自分を担当にして選んでも、受け持ちは決まった健太に頼む。
+    expect(await app.choose('way-a-home', 'b')).toMatchObject({ status: 'ok' });
+    const stay = (await app.need()).task('way-a-home', 'stay');
+    expect(stay?.assigneeId).toBe('a');
+    expect(stay?.start).toBeDefined();
+    if (!stay) throw new Error('受け持ちが無い');
+    expect(
+      await app.run({ type: 'proposeAssignment', taskKey: stay.key, assigneeId: 'b' }),
+    ).toMatchObject({ status: 'invalid', reason: 'fixedAssignee' });
+  });
+
+  it('やり方と取れる手の ID が同じでも、担当の決まりは手配の種類の物だけを当てる（取り違えない）', async () => {
+    // 取れる手 opt-leave-a の apply は健太（a）に決まっている。同じ ID のやり方の apply は彩（b）に決める。
+    const same: Way = {
+      id: 'opt-leave-a',
+      name: '彩が家で受け取る',
+      steps: [
+        {
+          id: 'apply',
+          name: '家で受け取る',
+          durationMin: 0,
+          segments: ['home'],
+          waitAfterMin: 0,
+          assigneeId: 'b',
+          cover: true,
+        },
+      ],
+      cost: { leaveMinutes: 0, helperRequests: 0, yen: 0, extraTasks: 0 },
+      cancellable: true,
+    };
+    const app = await setup([same]);
+    await app.stated(['opt-leave-a'], {
+      what: '荷物を家で受け取る',
+      shape: 'window',
+      date: '2026-11-28',
+      startTime: '13:00',
+      endTime: '15:00',
+    });
+    expect(await app.choose('opt-leave-a', 'b')).toMatchObject({ status: 'ok' });
+    const step = (await app.need()).task('opt-leave-a', 'apply');
+    expect(step?.assigneeId).toBe('b');
+    if (!step) throw new Error('受け持ちの作業が無い');
+    expect(
+      await app.run({
+        type: 'proposeAssignment',
+        taskKey: step.key,
+        assigneeId: 'a',
+        seen: { taskKey: step.key, assigneeId: 'b', commitment: step.commitment },
+      }),
+    ).toMatchObject({ status: 'invalid', reason: 'fixedAssignee' });
   });
 
   it('同じやり方の受け持ちを同じ人に二つ置かない（後の方は時刻なし）', async () => {

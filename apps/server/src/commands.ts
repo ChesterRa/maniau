@@ -9,6 +9,7 @@ import {
   type Household,
   type Interpretation,
   isActiveTask,
+  isNeedArrangementKey,
   type NeedInterpretation,
   type PlanResult,
   proposalSnapshot,
@@ -1070,17 +1071,25 @@ function releaseFor(
     : [];
 }
 
-/** 担当にできるのは、今有効な大人だけ。 */
-/** 家庭の決まりで、その手順をする本人が決まっていれば、その人（自分の有休の申請など）。 */
+/**
+ * 家庭の決まりで、その手順をする本人が決まっていれば、その人（自分の有休の申請、やり方の受け持ちの担当など）。
+ * 取れる手（子の居場所）とやり方（通用の「すること」）の両方を見る。
+ */
 function fixedAssigneeOf(
   state: EngineState,
-  task: { step?: { templateId: string; stepId: string } | undefined },
+  task: {
+    step?: { templateId: string; stepId: string } | undefined;
+    basis: { arrangementKey?: string | undefined };
+  },
 ): string | undefined {
   if (!task.step) return undefined;
   const { templateId, stepId } = task.step;
-  return state.household?.careOptions
-    .find((o) => o.id === templateId)
-    ?.steps.find((s) => s.id === stepId)?.assigneeId;
+  // 作業の手配の種類で、取れる手かやり方かを決める（ID が二つの集まりで同じでも、別の型の手順を当てない）。
+  const templates = isNeedArrangementKey(task.basis.arrangementKey)
+    ? state.household?.ways
+    : state.household?.careOptions;
+  return templates?.find((o) => o.id === templateId)?.steps.find((s) => s.id === stepId)
+    ?.assigneeId;
 }
 
 /** 作業が、画面が見せた担当と状態のままか。 */

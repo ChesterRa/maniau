@@ -48,6 +48,12 @@ export type TodayCard =
    * 探した範囲で見つからなかっただけで、実際にできないとは言わない。
    */
   | { kind: 'stuck'; arrangement: Arrangement; requirement?: Requirement }
+  /**
+   * 通用の「すること」で、家族が決めることが残っている（needOpen：やり方を選ぶ・選び直す、本命を選ぶ、間に合う
+   * やり方が見つからない、やり方の約束がそろった後も受け持ちを確かめられない時間が残る）。大人の全員に出し、
+   * 「すること」の画面で決める。
+   */
+  | { kind: 'need'; arrangement: Arrangement; requirement?: Requirement }
   /** 答えで段取りが変わる問い。 */
   | { kind: 'question'; question: Question; requirement?: Requirement }
   /** 自分が頼んで、返事を待っている。 */
@@ -77,6 +83,12 @@ export function atHomeAnswerable(requirement: Requirement, now: DateTime): boole
 /** 予備を勧め始める時：次の案の決め時のこの時間前から（前の晩に知らせる）。 */
 export const BACKUP_LEAD_MIN = 26 * 60;
 
+/**
+ * 窓の「すること」で、受け持ちを確かめられない時間が残る時、返事待ち・作業の途中でも札を出し始める時：窓の
+ * 始まりのこの時間前から（前の晩。返事を待つだけで、間際まで「決めることは無い」と見せない）。
+ */
+export const NEED_LEAD_MIN = 26 * 60;
+
 /** その作業が、家族が選んだ（または勧められた買い物の）案の物か。比べるための候補の作業は出さない。 */
 export function isActiveTask(
   plan: Pick<PlanResult, 'arrangements' | 'requests'>,
@@ -99,6 +111,45 @@ export function isActiveTask(
     arrangement.status === 'decidable' &&
     arrangement.recommendedOptionKey === optionKey
   );
+}
+
+/**
+ * 通用の「すること」の手配で、家族が決めることが残っているか。やり方を選ぶ（選び直す）、本命を選ぶ（勧めがある時も）、
+ * 間に合うやり方が見つからない、そして窓の「すること」で、今使うやり方の約束を進め終えた後も受け持ちを確かめ
+ * られない時間が残る時。返事待ち・作業の途中は、その返事と作業の札が出すので、窓の始まりが近づくまで（NEED_LEAD_MIN）
+ * は出さない（同じ事を二度言わない）。近づいたら、まだ確かめられない時間を二人に出す（返事を待つだけで、間際まで
+ * 「決めることは無い」と見せない）。聞いてから決める手配は、問いの札が先。
+ */
+export function needOpen(
+  plan: Pick<PlanResult, 'tasks' | 'requests' | 'arrangements' | 'now'>,
+  arrangement: Arrangement,
+): boolean {
+  if (arrangement.kind !== 'need' || arrangement.status === 'askFirst') return false;
+  if (arrangement.status === 'undetermined' || arrangement.status === 'infeasible') return true;
+  if (arrangement.reasons.some((r) => r.code === 'noOptionLeft')) return true;
+  if (arrangement.options.length > 0 && arrangement.chosenOptionKey === undefined) return true;
+  if (arrangement.recommendedOptionKey !== undefined) return true;
+  if (!arrangement.reasons.some((r) => r.code === 'notCovered')) return false;
+  const inUse = arrangement.inUseOptionKey;
+  if (inUse === undefined) return true;
+  if (toEpochMinutes(arrangement.start) - toEpochMinutes(plan.now) <= NEED_LEAD_MIN) return true;
+  const waiting = plan.requests.some(
+    (r) =>
+      r.live &&
+      r.basis.optionKey === inUse &&
+      (r.state === 'awaitingReply' || r.needsCheck === true),
+  );
+  // 家族の受け持ちは、本人が引き受けて時刻に置いてあれば、もう進める事は無い（覆ったと言えるかは計算が決める）。
+  const open = plan.tasks.some(
+    (t) =>
+      t.live &&
+      t.cancels === undefined &&
+      t.basis.optionKey === inUse &&
+      isActiveTask(plan, t) &&
+      t.commitment !== 'done' &&
+      !(t.cover === true && t.commitment === 'accepted' && !t.reconfirm && t.start !== undefined),
+  );
+  return !waiting && !open;
 }
 
 /**
@@ -176,8 +227,9 @@ export function todayCards(
   const backup: TodayCard[] = [];
   const decide: TodayCard[] = [];
   for (const arrangement of plan.arrangements) {
-    // 通用の「すること」の手配の札は、通用の文の画面で足す（今の決める画面は、子の居場所の文）。作業の札は出す。
-    if (!arrangement.live || arrangement.kind === 'need') continue;
+    // 予備の勧めは、通用の「すること」にも出す（選び直す所は「すること」の画面）。決める札は、子の居場所だけ
+    // （「すること」は need の札）。
+    if (!arrangement.live) continue;
     if (arrangement.status === 'dependsOnReply') {
       // 根拠が分からない依頼は、ふつうの返事待ちとして予備を勧めない（まず要るかを確かめる）。
       const waitingFor = plan.requests.find(
@@ -216,6 +268,14 @@ export function todayCards(
         });
       }
     }
+  }
+
+  const need: TodayCard[] = [];
+  for (const arrangement of plan.arrangements) {
+    if (!arrangement.live || arrangement.kind !== 'need') continue;
+    if (toEpochMinutes(arrangement.end) <= now || !needOpen(plan, arrangement)) continue;
+    const requirement = requirementOf(arrangement);
+    need.push({ kind: 'need', arrangement, ...(requirement ? { requirement } : {}) });
   }
 
   const stuck: TodayCard[] = [];
@@ -329,7 +389,17 @@ export function todayCards(
     .sort((x, y) => x.due - y.due || x.index - y.index)
     .map((x) => x.card);
   return {
-    main: [...released, ...cancel, ...check, ...backup, ...decide, ...stuck, ...work, ...question],
+    main: [
+      ...released,
+      ...cancel,
+      ...check,
+      ...backup,
+      ...decide,
+      ...need,
+      ...stuck,
+      ...work,
+      ...question,
+    ],
     quiet: [...bring, ...waiting, ...todo],
   };
 }

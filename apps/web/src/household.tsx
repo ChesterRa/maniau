@@ -61,7 +61,7 @@ function sourceText(ctx: Ctx, place: Place): string | undefined {
     : from;
 }
 
-function deadlineText(ctx: Ctx, rule: DeadlineRule): string {
+export function deadlineText(ctx: Ctx, rule: DeadlineRule): string {
   switch (rule.type) {
     case 'daysBefore':
       return ctx.t('household.ways.daysBefore', { days: rule.days, at: rule.at });
@@ -129,10 +129,17 @@ export function householdPreviewLines(ctx: Ctx, preview: HouseholdPreview): stri
     return task ? taskTitle(ctx, task) : key;
   };
   const optionName = (key: string) => optionList(ctx, [key]) || ctx.t('household.preview.aWay');
-  // 手配の時間（子の居場所が要る時間など）：同じ日の中なら終わりは時刻だけ。
-  const span = (w: { start: string; end: string }) =>
-    `${dayTime(ctx, w.start)}–${day(ctx, w.end) === day(ctx, w.start) ? timeOnly(ctx, w.end) : dayTime(ctx, w.end)}`;
+  // 手配の時間（子の居場所が要る時間など）：同じ日の中なら終わりは時刻だけ。締切までに済ませる「すること」は、
+  // 締切だけ（始まりは今で、要る時間ではない）。日だけの締切（その日の終わり。計画の時刻は家庭の時区で書いて
+  // ある）は日だけ（書かれていない時刻を見せない）。
+  const spanOf = (w: (typeof changes.windows)[number]) => (x: { start: string; end: string }) =>
+    w.kind === 'need' && w.needShape === 'by'
+      ? ctx.t('household.preview.window.by', {
+          by: x.end.slice(11, 16) === '23:59' ? day(ctx, x.end) : dayTime(ctx, x.end),
+        })
+      : `${dayTime(ctx, x.start)}–${day(ctx, x.end) === day(ctx, x.start) ? timeOnly(ctx, x.end) : dayTime(ctx, x.end)}`;
   for (const w of changes.windows) {
+    const span = spanOf(w);
     const what =
       w.kind === 'childCare'
         ? ctx.t('household.preview.window.childCare', {
@@ -140,7 +147,9 @@ export function householdPreviewLines(ctx: Ctx, preview: HouseholdPreview): stri
               ? nameOf(ctx.household, w.childId)
               : ctx.t('household.preview.window.aChild'),
           })
-        : ctx.t('household.preview.window.purchase');
+        : w.kind === 'need'
+          ? ctx.t('household.preview.window.need', { what: w.what ?? '' })
+          : ctx.t('household.preview.window.purchase');
     if (w.before && w.after) {
       lines.push(
         ctx.t('household.preview.window.moved', {

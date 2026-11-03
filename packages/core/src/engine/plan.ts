@@ -45,6 +45,7 @@ import {
   type DateTime,
   type EpochMinutes,
   formatDateTime,
+  isValidDateTime,
   type LocalDate,
   localDateOf,
   toEpochMinutes,
@@ -1036,7 +1037,11 @@ function planNeed(
     return;
   }
   const placed = withStatus(ctx, base, own);
-  out.arrangements.push(frame.shape === 'window' ? withCoverage(ctx, placed, own, ways) : placed);
+  out.arrangements.push(
+    frame.shape === 'window'
+      ? withCoverage(ctx, placed, own, ways, item.interpretation.place)
+      : placed,
+  );
 }
 
 /** 家族が窓の間受け持つ手順（外の相手に頼む手順でない受け持ち）。 */
@@ -1048,7 +1053,8 @@ const familyCover = (step: Way['steps'][number]): boolean =>
  * どれも、時刻に置いてあり、本人が引き受けた（済んだ）物（引き受け直しを待つ物は除く）。外の相手に頼む手順は
  * どれも（受け持つと書かれた相手も、承認などの前提も）、同じ窓・同じ中身（控えの about）に「はい」の返事のある
  * 依頼（取り消していない）。そのうえで、受け持つ人（家族の受け持ちか、受け持つと書かれた外の相手）が一人もいない
- * やり方は覆わない（承認は、だれかが受け持つことではない）。覆うのは、やり方に covers があればその内だけ、無ければ
+ * やり方は覆わない（承認は、だれかが受け持つことではない）。場所の書かれた「すること」は、家族の受け持ちでは
+ * 覆わない（書かれた場所にその人がいると示せない）。覆うのは、やり方に covers があればその内だけ、無ければ
  * 窓の全部。残りの時間を notCovered にする（覆ったと言わない）。今使う案が無ければ足さない。
  */
 function withCoverage(
@@ -1056,6 +1062,8 @@ function withCoverage(
   arrangement: Arrangement,
   tasks: readonly Task[],
   ways: readonly Way[],
+  /** 「すること」に書かれた場所（原文）。 */
+  place: string | undefined,
 ): Arrangement {
   const inUse = arrangement.options.find((o) => o.key === arrangement.inUseOptionKey);
   if (!inUse || !arrangement.live) return arrangement;
@@ -1080,6 +1088,9 @@ function withCoverage(
   const held = (step: Way['steps'][number]) => {
     const key = keys.task(inUse.key, step.id);
     if (!familyCover(step)) return yes.has(key);
+    // 場所の書かれた「すること」は、家族の受け持ちでは覆ったと言わない：書かれた場所（原文）と、受け持つ人が
+    // いる場所（家庭の場所）が同じだと示せない（家族が二つを結ぶ仕組みはまだ無い。行き帰りも確かめていない）。
+    if (place !== undefined) return false;
     const t = tasks.find((x) => x.key === key);
     return (
       t !== undefined &&
@@ -2577,12 +2588,66 @@ function externalRequests(
       state: request.state,
       basis: snapshot.basis,
       ...('window' in snapshot && snapshot.window ? { window: snapshot.window } : {}),
+      ...askedNeedOf(snapshot, request.taskKey),
       live,
       ...(needsCheck ? { needsCheck } : {}),
       ...(conditional ? { conditional } : {}),
     });
   }
   return result;
+}
+
+/**
+ * 通用の「すること」の依頼の、送った時の中身（控えの about。needWaysBasis の形で、案ごとにやり方は一つ）。頼んだ
+ * 手順は、作業の鍵（task:案:手順）と、その時のやり方の版から読む。読めない・形の違う控えからは作らない（今の値で
+ * 埋めない）。
+ */
+function askedNeedOf(
+  snapshot: RequestSnapshot,
+  taskKey: string,
+): Pick<ExternalRequest, 'askedNeed'> {
+  if (snapshot.about === undefined) return {};
+  let need: Record<string, unknown> | undefined;
+  let ways: unknown;
+  try {
+    ({ need, ways } = JSON.parse(snapshot.about) as {
+      need?: Record<string, unknown>;
+      ways?: unknown;
+    });
+  } catch {
+    return {};
+  }
+  const optionKey = snapshot.basis.optionKey;
+  const prefix = optionKey === undefined ? undefined : `task:${optionKey}:`;
+  const stepId = prefix && taskKey.startsWith(prefix) ? taskKey.slice(prefix.length) : undefined;
+  const way =
+    Array.isArray(ways) && ways.length === 1 ? (ways[0] as { steps?: unknown }) : undefined;
+  const found = Array.isArray(way?.steps)
+    ? (way.steps as { id?: unknown; name?: unknown; cover?: unknown }[]).find(
+        (s) => s.id === stepId,
+      )
+    : undefined;
+  const step =
+    found && typeof found.name === 'string'
+      ? { name: found.name, cover: found.cover === true }
+      : undefined;
+  const text = (key: string) =>
+    typeof need?.[key] === 'string' ? (need[key] as string) : undefined;
+  const what = text('what');
+  if (what === undefined) return {};
+  const deadline = text('deadline');
+  const place = text('place');
+  const forMemberId = text('forMemberId');
+  return {
+    askedNeed: {
+      what,
+      ...(step === undefined ? {} : { step }),
+      ...(place === undefined ? {} : { place }),
+      ...(forMemberId === undefined ? {} : { forMemberId }),
+      ...(deadline !== undefined && isValidDateTime(deadline) ? { deadline } : {}),
+      ...(need?.deadlineDayOnly === true ? { deadlineDayOnly: true as const } : {}),
+    },
+  };
 }
 
 /** 前提が消えた依頼で、まだ取り消していない物には、取り消しの連絡の作業を作る（§4）。 */

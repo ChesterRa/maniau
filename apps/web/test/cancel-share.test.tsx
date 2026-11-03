@@ -5,7 +5,7 @@ import type { ExternalRequest, Task } from '@maniau/core';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import i18n from '../src/i18n';
-import { CancelCard, type Ctx, cancelDraft } from '../src/screens';
+import { CancelCard, type Ctx, cancelDraft, cancelTwin } from '../src/screens';
 import { step } from './fake-fetch';
 
 /** 取り消しの札に要る物だけの画面の材料（DOM の試験では、デモのファイルを読まない）。 */
@@ -35,6 +35,7 @@ const task = {
   key: 'task:cancel:r-grandma',
   titleKey: 'task.cancelRequest',
   titleParams: { to: 'g' },
+  basis: { itemIds: ['i6'], arrangementKey: 'arr:childCare:n1:i6:c' },
 } as unknown as Task;
 const requestOn = (day: string) =>
   ({
@@ -103,16 +104,100 @@ const open = async (shown = request) => {
 };
 
 describe('取り消しの文を渡す', () => {
-  it('通用の「すること」の取り消しは、子の居場所の文を見せず、伝えたと記録するだけ', async () => {
+  it('通用の「すること」の取り消しは、送った時の控えで、どのお願いかを書く（人へは頼んだ時間と何を、所へは頼んだ時間だけ）', async () => {
     device({});
-    const need = {
-      ...requestOn('2026-12-07'),
-      basis: { itemIds: ['f-1:i1'], arrangementKey: 'arr:need:f-1:i1' },
+    const need = (day: string, from: string, to: string, what: string) =>
+      ({
+        ...requestOn(day),
+        window: { start: `${day}T${from}+09:00`, end: `${day}T${to}+09:00` },
+        basis: { itemIds: ['f-1:i1'], arrangementKey: 'arr:need:f-1:i1' },
+        askedNeed: { what },
+      }) as ExternalRequest;
+    // 同じ相手に同じ日の二つのお願い：取り消す方を、時間と何をで書く（もう一つまで取り消したと読ませない）。
+    const a = need('2026-11-28', '09:00', '10:00', '荷物Aを受け取る');
+    const b = need('2026-11-28', '13:00', '15:00', '荷物Bを受け取る');
+    expect(cancelDraft(ctx, a)).toBe(
+      'お母さん、11月28日（土）の9:00〜10:00の「荷物Aを受け取る」のお願いは、予定が変わったので大丈夫になりました。ありがとう。',
+    );
+    expect(cancelDraft(ctx, b)).toContain('「荷物Bを受け取る」');
+    // 所に頼んだ物：何を（家族の言葉で、子の名前を含みうる）を書かず、頼んだ時間だけで書く。
+    const placed = {
+      ...ctx,
+      household: {
+        ...ctx.household,
+        places: [{ id: 'sick-care', kind: 'other', name: '病児保育室' }],
+      },
+    } as unknown as Ctx;
+    const place = {
+      ...a,
+      to: 'sick-care',
+      askedNeed: { what: '陽菜を家で見る' },
     } as ExternalRequest;
-    await draw(need);
-    expect(button('伝える文を見る')).toBeUndefined();
-    expect(host.textContent).not.toContain('大丈夫になりました');
+    expect(cancelDraft(placed, place)).toBe(
+      '11月28日（土）の9:00〜10:00の件でお願いしていたことを、取り消します。',
+    );
+    // 締切の「すること」は、頼んだ時の締切（書かれた時刻があれば時刻も）で書く。
+    const by = {
+      ...a,
+      window: undefined,
+      askedNeed: { what: '資料を申し込む', deadline: '2026-11-28T17:00+09:00' },
+    } as unknown as ExternalRequest;
+    expect(cancelDraft(ctx, by)).toBe(
+      'お母さん、11月28日（土）の17:00までの「資料を申し込む」のお願いは、予定が変わったので大丈夫になりました。ありがとう。',
+    );
+    // 控えに中身の無い古い依頼：今の事項から推さず、頼んだ時間だけで書き、札で確かめてもらう。
+    const old = { ...a, askedNeed: undefined } as unknown as ExternalRequest;
+    expect(cancelDraft(ctx, old)).toBe(
+      'お母さん、11月28日（土）の9:00〜10:00のお願いは、予定が変わったので大丈夫になりました。ありがとう。',
+    );
+    expect(
+      cancelDraft(placed, { ...old, to: 'sick-care', window: undefined } as ExternalRequest),
+    ).toBe('前にお願いしていたことを、取り消します。');
+    await draw(old);
+    await step(() => button('伝える文を見る')?.click());
+    expect(host.textContent).toContain('どのお願いかを確かめ');
     expect(button('取り消しを伝えた')).toBeDefined();
+  });
+
+  it('文だけでは同じ相手の別のお願いと見分けられない時は、推して書き足さず、どれかを書き足すよう札で添える', async () => {
+    device({});
+    const place = (id: string, from: string, to: string, what: string) =>
+      ({
+        ...requestOn('2026-11-26'),
+        requestId: id,
+        to: 'sick-care',
+        window: { start: `2026-11-26T${from}+09:00`, end: `2026-11-26T${to}+09:00` },
+        basis: { itemIds: [`f-${id}:i1`], arrangementKey: `arr:need:f-${id}:i1` },
+        askedNeed: { what },
+      }) as ExternalRequest;
+    const one = place('r-1', '08:00', '18:00', '陽菜を家で見る');
+    const two = place('r-2', '08:00', '18:00', '蒼を家で見る');
+    const later = place('r-3', '13:00', '15:00', '蒼を家で見る');
+    const withRequests = (requests: ExternalRequest[]) =>
+      ({
+        ...ctx,
+        household: {
+          ...ctx.household,
+          places: [{ id: 'sick-care', kind: 'other', name: '病児保育室' }],
+        },
+        plan: { ...ctx.plan, requests },
+      }) as unknown as Ctx;
+    const card = async (shown: Ctx, request: ExternalRequest) => {
+      await step(() => root.render(<span />));
+      await step(() => root.render(<CancelCard ctx={shown} task={task} request={request} />));
+      await step(() => button('伝える文を見る')?.click());
+      return host.textContent ?? '';
+    };
+    // 同じ所に同じ時間の二つ：文が同じになる（子の名前で分けない）ので、札でどれかを書き足してもらう。
+    const twins = withRequests([one, two]);
+    expect(cancelDraft(twins, one)).toBe(cancelDraft(twins, two));
+    expect(cancelDraft(twins, one)).not.toContain('陽菜');
+    expect(cancelTwin(twins, one)).toBe(true);
+    expect(await card(twins, one)).toContain('どのお願いかを書き足して');
+    // 時間が違えば、文で見分けられるので、添えない。
+    const apart = withRequests([one, later]);
+    expect(cancelTwin(apart, one)).toBe(false);
+    expect(await card(apart, one)).not.toContain('どのお願いかを書き足して');
   });
 
   it('文を開いた後に、共有かコピーで、見せた文と同じ文を渡す', async () => {

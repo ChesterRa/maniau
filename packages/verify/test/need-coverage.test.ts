@@ -40,12 +40,20 @@ function check(
     about?: boolean;
     missingTaskAbout?: boolean;
     inUseUnchosen?: boolean;
+    place?: string;
     covers?: { start: string; end: string };
     gaps?: string[];
   } = {},
 ) {
   const external = options.external ?? false;
   const externalKind = options.externalKind ?? 'reply';
+  const currentItem =
+    options.place === undefined
+      ? item
+      : {
+          ...item,
+          interpretation: { ...item.interpretation, place: options.place },
+        };
   const home = Household.parse({
     ...household(),
     ways: [
@@ -75,7 +83,7 @@ function check(
   const way = home.ways[0];
   if (!way) throw new Error('やり方がない');
   const about = JSON.stringify({
-    need: { ...item.interpretation, condition: 'true' },
+    need: { ...currentItem.interpretation, condition: 'true' },
     ways: [way],
   });
   const shown = {
@@ -99,7 +107,7 @@ function check(
         sentences: [{ id: 'sentence-1', text: '架空の用件' }],
       },
     }),
-    event(3, { type: 'itemsStated', sourceId: 'source-1', items: [item] }),
+    event(3, { type: 'itemsStated', sourceId: 'source-1', items: [currentItem] }),
     event(4, { type: 'needWaysSet', itemId: 'item-1', wayIds: ['way-1'], about }),
     event(5, {
       type: 'optionChosen',
@@ -224,6 +232,20 @@ const has = (
 ) => report.issues.some((issue) => issue.kind === kind && issue.code === code);
 
 describe('窓を覆う事実', () => {
+  it('場所が書かれた時は家族の受け持ちだけでは覆えず、外の相手の確かな受け持ちは数える', () => {
+    const home = { accepted: true, place: '地区センター' };
+    expect(has(check(home), 'violation', 'need_coverage_gap_missing')).toBe(true);
+    const gap = check({ ...home, gaps: fullGap });
+    expect(has(gap, 'violation', 'need_coverage_gap_unfounded')).toBe(false);
+    expect(has(gap, 'violation', 'need_coverage_gap_missing')).toBe(false);
+
+    const external = { place: '地区センター', external: true, reply: 'yes' as const, about: true };
+    expect(has(check(external), 'violation', 'need_coverage_gap_missing')).toBe(false);
+    expect(
+      has(check({ ...external, gaps: fullGap }), 'violation', 'need_coverage_gap_unfounded'),
+    ).toBe(true);
+  });
+
   it('選んだだけでは覆わず、受け持ちを引き受けて初めて覆う', () => {
     expect(has(check(), 'violation', 'need_coverage_gap_missing')).toBe(true);
     expect(has(check({ gaps: fullGap }), 'violation', 'need_coverage_gap_missing')).toBe(false);

@@ -15,6 +15,7 @@ import {
 import { formatDayTime } from './format';
 import { HouseholdScreen } from './household';
 import { isUiLanguage, rememberedLanguage, rememberLanguage, type UiLanguage } from './i18n';
+import { NeedScreen, StateNeedScreen } from './need';
 import { usePush } from './push';
 import {
   AskScreen,
@@ -129,6 +130,7 @@ function Body(props: {
           ...(props.canHear ? { hear: live.hear, confirm: live.confirm } : {}),
           preview: live.preview,
           previewHousehold: live.previewHousehold,
+          previewChange: live.previewChange,
           me,
           lang,
           tz: view.household.timeZone,
@@ -340,6 +342,10 @@ function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {
       return <TodayScreen ctx={ctx} />;
     case 'decide':
       return <DecideScreen ctx={ctx} arrangementKey={route.key} />;
+    case 'need':
+      return <NeedScreen ctx={ctx} arrangementKey={route.key} />;
+    case 'stateNeed':
+      return <StateNeedScreen ctx={ctx} />;
     case 'ask':
       return <AskScreen ctx={ctx} taskKey={route.taskKey} />;
     case 'week':

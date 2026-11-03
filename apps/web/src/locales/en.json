@@ -52,7 +52,10 @@
     "nothingBody": "When a notice arrives, it shows up here.",
     "more_one": "Show {{count}} more",
     "more_other": "Show {{count}} more",
-    "quiet": "Waiting and to do"
+    "quiet": "Waiting and to do",
+    "addNeed": "Add something to do",
+    "needs": "To do",
+    "needItem": "{{what}} ({{when}})"
   },
   "card": {
     "decide": {
@@ -108,7 +111,8 @@
       "doneAlready": "If you’ve already done “{{what}}”, record it with “{{label}}”. If you only did the version from before the change, don’t press it.",
       "sentAlready": "“{{label}}” opens the current request. If you already sent that same request, record it as sent there.",
       "fixedBusy": "Your usual schedule (work, etc.) or another task overlaps the written time. If you can't do it, please ask someone else.",
-      "fixedPast": "The written time has passed. If it's done, tap Done."
+      "fixedPast": "The written time has passed. If it's done, tap Done.",
+      "cover": "You would cover this whole time (no other tasks are placed then)."
     },
     "backup": {
       "label": "Just in case",
@@ -124,7 +128,9 @@
       "body": "Plans changed. Please tell them it's cancelled.",
       "showDraft": "See the message",
       "checkDate": "There's no record of the date you asked for. Please check the date before sending.",
-      "done": "I told them"
+      "done": "I told them",
+      "checkContent": "The record does not say what was asked. Check which request this is and edit the message before sending.",
+      "checkWhich": "Another request to the same recipient would get this same message. Add which request this is before sending."
     },
     "check": {
       "label": "Please check",
@@ -207,6 +213,16 @@
       "inactive": "You took this on, but the family chose another way (or the main plan was confirmed), so this step will not go ahead. Please check before you head out.",
       "checkLabel": "Please check",
       "check": "A task you took on is no longer in the plan (for example, its notice was deleted). Please check whether it is still needed."
+    },
+    "need": {
+      "ways": "Choose which ways to use. No tasks are made until you choose.",
+      "waysChanged": "The details or the ways changed after you chose. Please choose the ways again.",
+      "choose": "Pick the way to go with.",
+      "stuck": "None of the chosen ways can be done in time. Choose other ways, or think of another way together.",
+      "gapsLabel": "Not yet confirmed as covered",
+      "gaps": "For {{gaps}}, it is not yet confirmed who covers it.",
+      "action": "Open",
+      "waiting": "A request is waiting for a reply. It does not count as covered until you record “They said OK”."
     }
   },
   "answer": {
@@ -225,7 +241,13 @@
     "bringBought": "Already bought.",
     "bringMissing": "Actually, it's not at home",
     "bringMissingLate": "You answered that it's not at home. The preparation deadline has passed, so it's up to the family what to do.",
-    "bringReady": "It's ready now"
+    "bringReady": "It's ready now",
+    "recorded": "As recorded: {{what}} (not the message they read)",
+    "recordedWhen": "{{what}}, {{when}}",
+    "recordedStep": "As recorded: {{step}} ({{what}}). This is not the message they read.",
+    "recordedPlace": "Place: {{place}}",
+    "recordedFor": "For: {{name}}",
+    "recordedUnknown": "We cannot tell from the record what was asked. Check what the reply is about before recording it."
   },
   "decide": {
     "eyebrow": "{{date}} {{what}}",
@@ -305,7 +327,20 @@
     "cancelHelperUndated": "Hi {{address}}, plans changed, so we no longer need the help we asked for. Thank you!",
     "cancelPlace": "Cancel {{child}}'s booking on {{date}}.",
     "cancelPlaceUndated": "Cancel {{child}}'s booking.",
-    "replySoon": "It would help to hear back as soon as you can."
+    "replySoon": "It would help to hear back as soon as you can.",
+    "askNeed": "Hi {{address}}, could you help?\nOn {{date}} from {{from}} to {{to}}, could you help with “{{what}}”?",
+    "askNeedBy": "Hi {{address}}, could you help?\nCould you help with “{{what}}” by {{date}}?",
+    "askNeedByTime": "Hi {{address}}, could you help?\nCould you help with “{{what}}” by {{time}} on {{date}}?",
+    "conditionalNeed": "If plans change, we may not need this after all.",
+    "cancelPlaceNeed": "We would like to cancel what we asked for ({{when}}).",
+    "cancelPlaceNeedUndated": "We would like to cancel what we asked for earlier.",
+    "needPlace": "The place is {{place}}.",
+    "needFor": "This is for {{name}}.",
+    "whenWindow": "{{date}}, {{from}}–{{to}}",
+    "whenBy": "by {{date}}",
+    "whenByTime": "by {{time}} on {{date}}",
+    "cancelHelperNeed": "Hi {{address}}, plans changed, so we no longer need help with “{{what}}” ({{when}}). Thank you!",
+    "cancelHelperNeedWhen": "Hi {{address}}, plans changed, so we no longer need the help we asked for ({{when}}). Thank you!"
   },
   "sources": {
     "eyebrow": "Imported notices",
@@ -409,7 +444,8 @@
     },
     "escortTo": "Drop-off for {{what}}",
     "escortFrom": "Pick-up from {{what}}",
-    "wayStep": "{{what}}"
+    "wayStep": "{{what}}",
+    "forNeed": "{{title}} ({{date}}, {{what}})"
   },
   "push": {
     "enable": "Get notifications",
@@ -655,7 +691,9 @@
         "purchase": "the shopping",
         "moved": "Time needed for {{what}}: {{before}} → {{after}}",
         "new": "Newly needed: {{what}} ({{when}})",
-        "gone": "No longer needed: {{what}} ({{when}})"
+        "gone": "No longer needed: {{what}} ({{when}})",
+        "need": "“{{what}}”",
+        "by": "by {{by}}"
       },
       "expires": "{{name}} would no longer be possible in time.",
       "deadlineUnknown": "{{name}}: its decision time can't be worked out, so we can't tell whether it is still possible in time.",
@@ -698,6 +736,66 @@
       "waysLocked": "Ways of handling things can't be changed here.",
       "unavailable": "We couldn't calculate this right now. Please try again in a moment.",
       "other": "This edit wasn't accepted."
+    }
+  },
+  "need": {
+    "label": "To do",
+    "when": {
+      "window": "{{day}} {{from}}–{{to}}: someone is needed",
+      "by": "Get it done by {{by}}"
+    },
+    "for": "For: {{name}}",
+    "place": "Place (as written): {{place}}",
+    "stated": "Your family said this (it is not from a notice).",
+    "written": "This was written in a notice.",
+    "source": "See the original text",
+    "gapsNote": "A time counts as covered only when all of a way’s commitments are in (the other side’s yes, and the family member’s acceptance).",
+    "placeNote": "We have not checked that someone will be at the written place, or the travel time.",
+    "options": "Pick the way to go with",
+    "look": "See what this changes",
+    "ways": {
+      "label": "Ways to use",
+      "none": "Your family has no ways registered yet (adding ways is not available yet).",
+      "note": "Choose from the ways your family registered. No tasks are made until you choose.",
+      "changed": "The details or the ways changed after you chose, so please choose again.",
+      "wait": {
+        "reply": "{{name}} (wait for a reply from {{to}})",
+        "approval": "{{name}} (wait for approval from {{to}})",
+        "acceptance": "{{name}} (wait for {{to}} to accept it)"
+      },
+      "cover": "Covered by: {{who}}",
+      "coverTime": "Covered by: {{who}} ({{from}}–{{to}})",
+      "noCover": "Nobody covers the time (only steps done beforehand)",
+      "family": "someone in the family",
+      "deadline": "Decide by: {{rule}}",
+      "save": "Save these ways"
+    },
+    "add": {
+      "title": "Add something to do",
+      "intro": "Write what your family said, as it was said. The fields below are what the plan uses. Before saving, you will see what this changes.",
+      "text": "What was said (as is)",
+      "what": "What (short)",
+      "shape": "Kind",
+      "window": "Someone is needed during a time",
+      "by": "Get it done by a deadline",
+      "date": "Date",
+      "from": "From",
+      "to": "To",
+      "byTime": "Deadline time (empty: by the end of the day)",
+      "for": "For whom (optional)",
+      "nobody": "Not set",
+      "missing": "Fill in what was said, what, and the date (and the start and end, for “someone is needed during a time”).",
+      "save": "Save"
+    },
+    "refused": {
+      "needWindowMissing": "Enter the date and the start and end times.",
+      "needWindowOvernight": "Make the end later than the start on the same day (times across midnight are not supported yet).",
+      "needMemberUnknown": "Choose who it is for from your family.",
+      "needDeadlineMissing": "Enter the deadline date.",
+      "needGone": "This item is gone or has changed.",
+      "wayUnknown": "A chosen way is not in your family’s information.",
+      "unavailable": "Could not work it out right now. Please try again shortly.",
+      "other": "This could not be saved as it is."
     }
   }
 }

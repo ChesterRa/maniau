@@ -164,6 +164,9 @@ export interface WindowChange {
   arrangementKey: string;
   kind: Arrangement['kind'];
   childId?: string;
+  /** 通用の「すること」だけ：何を（家族の言葉・原文）と形（締切か窓か）。 */
+  what?: string;
+  needShape?: Arrangement['needShape'];
   before?: { start: DateTime; end: DateTime };
   after?: { start: DateTime; end: DateTime };
 }
@@ -317,10 +320,16 @@ export function planChanges(before: PlanResult, after: PlanResult): PlanChanges 
     }
     const either = later ?? earlier;
     if (!either) continue;
+    const what =
+      either.kind === 'need'
+        ? (later ? after : before).requirements.find((r) => r.key === either.requirementKey)?.what
+        : undefined;
     windows.push({
       arrangementKey: key,
       kind: either.kind,
       ...(either.childId === undefined ? {} : { childId: either.childId }),
+      ...(what === undefined ? {} : { what }),
+      ...(either.needShape === undefined ? {} : { needShape: either.needShape }),
       ...(earlier ? { before: { start: earlier.start, end: earlier.end } } : {}),
       ...(later ? { after: { start: later.start, end: later.end } } : {}),
     });

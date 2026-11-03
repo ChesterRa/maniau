@@ -140,6 +140,22 @@ export const ExternalRequest = z.object({
    * 手配の日が替わっても、相手が覚えているのは頼まれた日）。無いのは古い事象か、時間で頼まない依頼。
    */
   window: z.object({ start: DateTime, end: DateTime }).optional(),
+  /**
+   * 通用の「すること」の依頼だけ：送った時の「すること」の中身（控えの about から読む。家族が直して送った文は
+   * 確かめていない）。返事を記録する時に、何への返事かを今の値ではなく頼んだ時の値で見せる。無いのは、控えに
+   * 中身の無い古い依頼（頼んだ時の中身は分からない）。
+   */
+  askedNeed: z
+    .object({
+      what: z.string(),
+      /** 頼んだ手順（その時のやり方の版の、手順の名前と、相手が窓を受け持つ手順か）。 */
+      step: z.object({ name: z.string(), cover: z.boolean() }).optional(),
+      place: z.string().optional(),
+      forMemberId: z.string().optional(),
+      deadline: DateTime.optional(),
+      deadlineDayOnly: z.literal(true).optional(),
+    })
+    .optional(),
   /** 根拠が今の事実で成り立つか。成り立たず、取り消していなければ、取り消しの連絡が要る。 */
   live: z.boolean(),
   /**

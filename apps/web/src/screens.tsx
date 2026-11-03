@@ -16,6 +16,7 @@ import {
   type Member,
   type OptionPlan,
   type PlanResult,
+  type PreviewCommand,
   proposalSnapshot,
   type Released,
   type Requirement,
@@ -76,6 +77,10 @@ export type Route =
   | { name: 'today' }
   | { name: 'household' }
   | { name: 'decide'; key: string }
+  /** 通用の「すること」の一つ（手配の key）。 */
+  | { name: 'need'; key: string }
+  /** 家族の言明で「すること」を足す。 */
+  | { name: 'stateNeed' }
   | { name: 'ask'; taskKey: string }
   | { name: 'week' }
   | { name: 'sources'; sourceId?: string; highlight?: string[] };
@@ -126,6 +131,11 @@ export interface Ctx {
   preview?: (arrangementKey: string) => Promise<ChoicePreview[] | undefined>;
   /** 家と暮らしの情報の直しの「この変更で変わること」を読む（何も書かない）。直せない直しは理由を返す。 */
   previewHousehold?: (household: Household) => Promise<HouseholdPreviewResult | undefined>;
+  /**
+   * 「すること」の言明・やり方の選びの「この変更で変わること」を読む（何も書かない。家の情報の直しと同じ見る口）。
+   * 書けない変更は理由を返す。
+   */
+  previewChange?: (command: PreviewCommand) => Promise<HouseholdPreviewResult | undefined>;
   go: (route: Route) => void;
 }
 
@@ -152,18 +162,46 @@ const seenOf = (task: Task) => ({
   commitment: task.commitment,
 });
 
-/** 本人しかできない手順の担当（家族の情報の案の手順で決まっている。例：自分の有休の申請）。 */
+/**
+ * 本人しかできない手順の担当（家族の情報の案・やり方の手順で決まっている。例：自分の有休の申請、やり方の
+ * 受け持ちの担当）。
+ */
 function fixedAssignee(household: Household, task: Task): string | undefined {
   const step = task.step;
   if (!step) return undefined;
-  return household.careOptions
-    .find((o) => o.id === step.templateId)
-    ?.steps.find((s) => s.id === step.stepId)?.assigneeId;
+  // 作業の手配の種類で、取れる手かやり方かを決める（ID が二つの集まりで同じでも、別の型の手順を当てない）。
+  const templates = isNeedArrangementKey(task.basis.arrangementKey)
+    ? household.ways
+    : household.careOptions;
+  return templates.find((o) => o.id === step.templateId)?.steps.find((s) => s.id === step.stepId)
+    ?.assigneeId;
+}
+
+/** 通用の「すること」の作業の、やり方の手順（今の家庭のデータ）。 */
+function needStepOf(ctx: Ctx, task: Task) {
+  const step = task.step;
+  if (!step || !isNeedArrangementKey(task.basis.arrangementKey)) return undefined;
+  return ctx.household.ways
+    .find((w) => w.id === step.templateId)
+    ?.steps.find((s) => s.id === step.stepId);
 }
 
 function templateOf(household: Household, option: OptionPlan) {
   return household.careOptions.find((o) => o.id === option.templateId);
 }
+
+/** 案の最初の手順に決まった担当（取れる手・家族のやり方の手順で決まっている時）。 */
+function firstStepAssignee(household: Household, option: OptionPlan): string | undefined {
+  return option.titleKey === 'option.way'
+    ? household.ways.find((w) => w.id === option.templateId)?.steps[0]?.assigneeId
+    : templateOf(household, option)?.steps[0]?.assigneeId;
+}
+
+/** 手配を決める画面（通用の「すること」は「すること」の画面。子の居場所の文の画面で決めさせない）。 */
+export const decideRoute = (arrangement: Arrangement): Route =>
+  arrangement.kind === 'need'
+    ? { name: 'need', key: arrangement.key }
+    : { name: 'decide', key: arrangement.key };
 
 function optionParams(ctx: Ctx, option: OptionPlan): Record<string, string> {
   const template = templateOf(ctx.household, option);
@@ -190,6 +228,7 @@ function optionNote(ctx: Ctx, option: OptionPlan): string {
     notes.push(ctx.t('cost.leave', { count: Math.round(option.cost.leaveMinutes / 480) || 1 }));
   }
   if (option.cost.helperRequests > 0) notes.push(ctx.t('cost.helper'));
+  if (option.cost.yen > 0) notes.push(ctx.t('household.ways.yen', { yen: option.cost.yen }));
   const template = templateOf(ctx.household, option);
   if (template?.extraSteps.some((s) => s.titleKey.startsWith('task.bento'))) {
     notes.push(ctx.t('cost.bento'));
@@ -200,8 +239,13 @@ function optionNote(ctx: Ctx, option: OptionPlan): string {
 export function taskTitle(ctx: Ctx, task: Task): string {
   const title = baseTitle(ctx, task);
   // 手配の手順は、どの日の分かを題に書く（引き受け・済んだの控えはその日を含む。同じ名前の手順が二つの
-  // 日にあっても見分けられ、押す前に分かる）。
+  // 日にあっても見分けられ、押す前に分かる）。通用の「すること」の手順は、何のための手順か（家族の言葉の
+  // 「何を」）も添える（手順の名前だけでは、どの「すること」の分か分からない）。
   const date = task.titleParams.date;
+  const what = isNeedArrangementKey(task.basis.arrangementKey)
+    ? ctx.plan.requirements.find((r) => r.key === task.basis.requirementKey)?.what
+    : undefined;
+  if (date && what) return ctx.t('task.forNeed', { title, date: day(ctx, date), what });
   return date ? ctx.t('task.forDate', { title, date: day(ctx, date) }) : title;
 }
 
@@ -422,10 +466,13 @@ function helperOf(ctx: Ctx, task: Task): Member | undefined {
 
 /**
  * 人に頼む作業（文を作って LINE などで送る）。学童・会社のような所へ出す物は、済んだと記録するだけ。通用の「すること」の
- * 作業は、頼む文が子の居場所の文なので、通用の文ができるまで文を作らず、送ったと記録するだけにする。
+ * 作業は、相手が窓（か締切まで）を受け持つ手順だけ、通用の文（「すること」の何を・日・時間・場所・だれの分。
+ * askDraft）で頼む。前提を聞く手順（「鍵を預けてよいか聞く」など）は、手順の名前から頼む文を作れない（家族の
+ * 側から見た言葉で、相手にしてほしい事とは限らない）ので、文を作らず、家族が書いて送ったと記録する。
  */
-const asksPerson = (ctx: Ctx, task: Task) =>
-  helperOf(ctx, task) !== undefined && !isNeedArrangementKey(task.basis.arrangementKey);
+export const asksPerson = (ctx: Ctx, task: Task) =>
+  helperOf(ctx, task) !== undefined &&
+  (!isNeedArrangementKey(task.basis.arrangementKey) || needStepOf(ctx, task)?.cover === true);
 
 function arrangementOf(ctx: Ctx, key: string | undefined): Arrangement | undefined {
   return ctx.plan.arrangements.find((a) => a.key === key);
@@ -470,6 +517,49 @@ export function askDraft(ctx: Ctx, task: Task): string {
   if (!helper || !arrangement) return '';
   const lng = outboundLanguage(helper);
   const t = ctx.outbound(lng);
+  const address = helper.addressAs ?? helper.name;
+  // 通用の「すること」：家族の言葉の「何を」と、日・時間（窓）か締切だけで書く（場面の言葉を足さない）。締切の
+  // 時刻が書かれていれば時刻まで書く（日だけにすると、頼んだ相手がその日の終わりまでと受け取りかねない）。日だけの
+  // 締切は日だけ（書かれていない時刻を書かない）。
+  if (arrangement.kind === 'need') {
+    const what =
+      ctx.plan.requirements.find((r) => r.key === arrangement.requirementKey)?.what ?? '';
+    const interpretation = needItem(ctx, arrangement)?.interpretation;
+    const dayOnly = interpretation?.deadlineDayOnly === true;
+    const place = interpretation?.place;
+    const forName = interpretation?.forMemberId
+      ? nameOf(ctx.household, interpretation.forMemberId)
+      : '';
+    const parts = [
+      arrangement.needShape === 'window'
+        ? t('draft.askNeed', {
+            address,
+            what,
+            date: formatLongDay(arrangement.start, lng, ctx.tz),
+            from: formatTime(arrangement.start, lng, ctx.tz),
+            to: formatTime(arrangement.end, lng, ctx.tz),
+          })
+        : t(dayOnly ? 'draft.askNeedBy' : 'draft.askNeedByTime', {
+            address,
+            what,
+            date: formatLongDay(arrangement.end, lng, ctx.tz),
+            time: formatTime(arrangement.end, lng, ctx.tz),
+          }),
+    ];
+    // 書かれた場所と、だれの分か（家族が選んだ時だけ）。頼む相手が、何を受けるかを取り違えないように。
+    if (place) parts.push(t('draft.needPlace', { place }));
+    if (forName) parts.push(t('draft.needFor', { name: forName }));
+    if (isConditional(arrangement)) parts.push(t('draft.conditionalNeed'));
+    const reply = replyBy(ctx, arrangement, task.basis.optionKey);
+    if (reply) {
+      parts.push(
+        reply.evening
+          ? t('draft.replyBy', { date: formatLongDay(reply.evening, lng, ctx.tz) })
+          : t('draft.replySoon'),
+      );
+    }
+    return parts.join('\n');
+  }
   const parts = [
     t('draft.ask', {
       address: helper.addressAs ?? helper.name,
@@ -498,6 +588,8 @@ export function askDraft(ctx: Ctx, task: Task): string {
  */
 export function cancelDraft(ctx: Ctx, request: ExternalRequest): string {
   const helper = ctx.household.members.find((m) => m.id === request.to);
+  if (isNeedArrangementKey(request.basis.arrangementKey))
+    return needCancelDraft(ctx, request, helper);
   const asked = request.window?.start;
   if (helper) {
     const lng = outboundLanguage(helper);
@@ -507,11 +599,58 @@ export function cancelDraft(ctx: Ctx, request: ExternalRequest): string {
       ? t('draft.cancelHelper', { address, date: formatLongDay(asked, lng, ctx.tz) })
       : t('draft.cancelHelperUndated', { address });
   }
-  const child = childName(ctx.household);
   const place = nameOf(ctx.household, request.to);
+  const child = childName(ctx.household);
   return asked
     ? ctx.t('draft.cancelPlace', { place, child, date: formatLongDay(asked, ctx.lang, ctx.tz) })
     : ctx.t('draft.cancelPlaceUndated', { place, child });
+}
+
+/**
+ * 通用の「すること」の取り消しの文。どのお願いかを、送った時の控えで書く。人へは頼んだ時間か締切と何を、所へは
+ * 頼んだ時間か締切だけ（何をは家族の言葉で、子の名前を含みうる。所への文に子の名前を書かない）。今の事項からは
+ * 推さない：控えに中身が無ければ、頼んだ時間だけ、それも無ければ日付の無い文にし、札で確かめてもらう
+ * （CancelCard）。文だけでは同じ相手の別のお願いと見分けられない時も、札で書き足してもらう（cancelTwin）。
+ */
+function needCancelDraft(ctx: Ctx, request: ExternalRequest, helper: Member | undefined): string {
+  const lng = helper ? outboundLanguage(helper) : ctx.lang;
+  const t = helper ? ctx.outbound(lng) : ctx.t;
+  const asked = request.askedNeed;
+  const window = request.window;
+  const when = window
+    ? t('draft.whenWindow', {
+        date: formatLongDay(window.start, lng, ctx.tz),
+        from: formatTime(window.start, lng, ctx.tz),
+        to: formatTime(window.end, lng, ctx.tz),
+      })
+    : asked?.deadline
+      ? asked.deadlineDayOnly
+        ? t('draft.whenBy', { date: formatLongDay(asked.deadline, lng, ctx.tz) })
+        : t('draft.whenByTime', {
+            date: formatLongDay(asked.deadline, lng, ctx.tz),
+            time: formatTime(asked.deadline, lng, ctx.tz),
+          })
+      : undefined;
+  if (helper) {
+    const address = helper.addressAs ?? helper.name;
+    if (asked && when) return t('draft.cancelHelperNeed', { address, what: asked.what, when });
+    return when
+      ? t('draft.cancelHelperNeedWhen', { address, when })
+      : t('draft.cancelHelperUndated', { address });
+  }
+  return when ? t('draft.cancelPlaceNeed', { when }) : t('draft.cancelPlaceNeedUndated');
+}
+
+/**
+ * 取り消しの文が、同じ相手への別の依頼の取り消しの文と同じになる（文だけでは、相手にどのお願いか分からない）。
+ * 推して書き足さず、札で家族に書き足してもらう。相手が受けた依頼は、状態を問わず数える（相手はどれも覚えている）。
+ */
+export function cancelTwin(ctx: Ctx, request: ExternalRequest): boolean {
+  const draft = cancelDraft(ctx, request);
+  return ctx.plan.requests.some(
+    (r) =>
+      r.requestId !== request.requestId && r.to === request.to && cancelDraft(ctx, r) === draft,
+  );
 }
 
 // ── きょう ──────────────────────────────
@@ -530,6 +669,12 @@ export function TodayScreen({ ctx }: { ctx: Ctx }) {
       />
       <Main>
         {ctx.hear && ctx.confirm && <SayCard ctx={ctx} hear={ctx.hear} confirm={ctx.confirm} />}
+        {/* 家族が言ったことを、欄で足す（保存の前に、変わることを見る口が要る）。 */}
+        {ctx.previewChange && (
+          <MoreLink onClick={() => ctx.go({ name: 'stateNeed' })}>
+            {ctx.t('today.addNeed')}
+          </MoreLink>
+        )}
         {ctx.changes && <ChangeCard ctx={ctx} change={ctx.changes} />}
         {shown.length === 0 && !ctx.changes && (
           <Card tone="accent">
@@ -545,6 +690,7 @@ export function TodayScreen({ ctx }: { ctx: Ctx }) {
             {ctx.t('today.more', { count: main.length - shown.length })}
           </MoreLink>
         )}
+        <NeedList ctx={ctx} />
         {quiet.length > 0 && (
           <Card>
             <Label tone="sub">{ctx.t('today.quiet')}</Label>
@@ -670,6 +816,7 @@ function cardKey(card: TodayCard): string {
       return `${card.kind}:${card.task.key}`;
     case 'backup':
     case 'decide':
+    case 'need':
     case 'stuck':
       return `${card.kind}:${card.arrangement.key}`;
     case 'question':
@@ -706,6 +853,8 @@ function CardView({ ctx, card }: { ctx: Ctx; card: TodayCard }) {
       return <CheckCard ctx={ctx} request={card.request} />;
     case 'stuck':
       return <StuckCard ctx={ctx} card={card} />;
+    case 'need':
+      return <NeedCard ctx={ctx} card={card} />;
     default:
       return null;
   }
@@ -785,8 +934,8 @@ function CheckCard({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
       <Label tone="warn">{ctx.t('card.check.label')}</Label>
       <Title>{ctx.t('card.check.title', { to: nameOf(ctx.household, request.to) })}</Title>
       <Text quiet>{ctx.t('card.check.body')}</Text>
-      {arrangement && arrangement.kind !== 'need' && (
-        <Button onClick={() => ctx.go({ name: 'decide', key: arrangement.key })}>
+      {arrangement && (
+        <Button onClick={() => ctx.go(decideRoute(arrangement))}>
           {ctx.t('card.check.action')}
         </Button>
       )}
@@ -1056,6 +1205,146 @@ export function StuckCard({
   );
 }
 
+// ── 通用の「すること」 ──────────────────────────────
+
+/** 「すること」の今の事項（要件の根拠の事項。置き換えをたどった今の物）。 */
+export function needItem(ctx: Ctx, arrangement: Arrangement): Item | undefined {
+  const requirement = ctx.plan.requirements.find((r) => r.key === arrangement.requirementKey);
+  return ctx.items.find((l) => requirement?.basis.itemIds.includes(l.item.id))?.item;
+}
+
+/**
+ * 「すること」の時：窓は日と始まり–終わり、締切は締切の日時（日だけの締切は日だけ。書かれていない時刻を見せない）。
+ */
+export function needWhen(ctx: Ctx, arrangement: Arrangement, item: Item | undefined): string {
+  if (arrangement.needShape === 'window') {
+    return ctx.t('need.when.window', {
+      day: day(ctx, arrangement.start),
+      from: time(ctx, arrangement.start),
+      to: time(ctx, arrangement.end),
+    });
+  }
+  const dayOnly = item?.interpretation.deadlineDayOnly === true;
+  return ctx.t('need.when.by', {
+    by: dayOnly ? day(ctx, arrangement.end) : dayTime(ctx, arrangement.end),
+  });
+}
+
+/** まだ受け持ちを確かめられていない時間（計算が出した、覆ったと言えない時間）。 */
+export function needGaps(ctx: Ctx, arrangement: Arrangement): string[] {
+  const refs = arrangement.reasons.find((r) => r.code === 'notCovered')?.refs ?? [];
+  return refs.map((ref) => {
+    const [start, end] = ref.split('/');
+    if (!start || !end) return ref;
+    return `${time(ctx, start)}–${day(ctx, end) === day(ctx, start) ? time(ctx, end) : dayTime(ctx, end)}`;
+  });
+}
+
+/**
+ * 「すること」で家族が次に決めること（札と画面の文）。やり方を選ぶ・選び直す、間に合う進め方が無い、本命を選ぶ、
+ * 受け持ちを確かめられない時間が残る、の順に見る。
+ */
+export function needStep(
+  arrangement: Arrangement,
+): 'ways' | 'waysChanged' | 'stuck' | 'choose' | 'gaps' | 'settled' {
+  const missing = arrangement.reasons.find((r) => r.code === 'inputMissing');
+  if (missing?.refs.includes('waysChanged')) return 'waysChanged';
+  if (arrangement.status === 'undetermined') return 'ways';
+  if (
+    arrangement.status === 'infeasible' ||
+    arrangement.reasons.some((r) => r.code === 'noOptionLeft')
+  ) {
+    return 'stuck';
+  }
+  if (arrangement.chosenOptionKey === undefined || arrangement.recommendedOptionKey !== undefined) {
+    return 'choose';
+  }
+  return arrangement.reasons.some((r) => r.code === 'notCovered') ? 'gaps' : 'settled';
+}
+
+/**
+ * 今ある「すること」のうち、上の札に出ていない物（返事待ち・進めている・受け持ちがそろった物）。いつでも開いて、
+ * 見て、やり方や本命を替えられるようにする（札が出ない間に、戻る道を無くさない）。
+ */
+function NeedList({ ctx }: { ctx: Ctx }) {
+  const shown = new Set(
+    ctx.today.main.flatMap((c) => (c.kind === 'need' ? [c.arrangement.key] : [])),
+  );
+  const now = toEpochMinutes(ctx.now);
+  const needs = ctx.plan.arrangements.filter(
+    (a) => a.kind === 'need' && a.live && !shown.has(a.key) && toEpochMinutes(a.end) > now,
+  );
+  if (needs.length === 0) return null;
+  return (
+    <Card>
+      <Label tone="sub">{ctx.t('today.needs')}</Label>
+      {needs.map((arrangement) => {
+        const what =
+          ctx.plan.requirements.find((r) => r.key === arrangement.requirementKey)?.what ?? '';
+        return (
+          <MoreLink
+            key={arrangement.key}
+            onClick={() => ctx.go({ name: 'need', key: arrangement.key })}
+          >
+            {ctx.t('today.needItem', {
+              what,
+              when: needWhen(ctx, arrangement, needItem(ctx, arrangement)),
+            })}
+          </MoreLink>
+        );
+      })}
+    </Card>
+  );
+}
+
+/** 通用の「すること」で、家族が決めることが残っている（大人の全員に出す）。 */
+function NeedCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 'need' }> }) {
+  const { arrangement, requirement } = card;
+  const step = needStep(arrangement);
+  const gaps = step === 'gaps' ? needGaps(ctx, arrangement) : [];
+  return (
+    <Card>
+      <Label tone="warn">
+        {ctx.t(
+          step === 'stuck'
+            ? 'card.stuck.label'
+            : step === 'gaps'
+              ? 'card.need.gapsLabel'
+              : 'card.decide.label',
+        )}
+      </Label>
+      <Title>{requirement?.what ?? ''}</Title>
+      <Text>{needWhen(ctx, arrangement, needItem(ctx, arrangement))}</Text>
+      <ConditionLine
+        ctx={ctx}
+        basis={{
+          itemIds: requirement?.basis.itemIds ?? [],
+          requirementKey: arrangement.requirementKey,
+          arrangementKey: arrangement.key,
+        }}
+      />
+      {arrangement.reasons.some((r) => r.code === 'turnedDown') && (
+        <Text>{ctx.t('card.decide.turnedDown')}</Text>
+      )}
+      {ctx.plan.requests.some(
+        (r) => r.live && r.basis.arrangementKey === arrangement.key && r.state === 'awaitingReply',
+      ) && <Text quiet>{ctx.t('card.need.waiting')}</Text>}
+      {step === 'gaps' ? (
+        <Text>
+          {ctx.t('card.need.gaps', {
+            gaps: new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(gaps),
+          })}
+        </Text>
+      ) : (
+        step !== 'settled' && <Text>{ctx.t(`card.need.${step}`)}</Text>
+      )}
+      <Button onClick={() => ctx.go({ name: 'need', key: arrangement.key })}>
+        {ctx.t('card.need.action')}
+      </Button>
+    </Card>
+  );
+}
+
 /**
  * 済んだと記録する命令。この札で見せている用件を付ける（直されて別の物になった後の古い札で、別の物を
  * 済みにしない。違えば、サーバーが断って見せ直す）。
@@ -1188,6 +1477,8 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
           })}
         </Text>
       )}
+      {/* 受け持ち：窓の間ずっと、その人の時間を使う（ほかの作業を置かない）。 */}
+      {task.cover && <Text quiet>{ctx.t('card.proposal.cover')}</Text>}
       {task.reconfirm && <Text quiet>{ctx.t('card.proposal.changed')}</Text>}
       {task.reconfirm && fact && (
         <Text quiet>
@@ -1216,8 +1507,8 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
           )}
         </Text>
       )}
-      {conflicted && arrangement && arrangement.kind !== 'need' && (
-        <MoreLink onClick={() => ctx.go({ name: 'decide', key: arrangement.key })}>
+      {conflicted && arrangement && (
+        <MoreLink onClick={() => ctx.go(decideRoute(arrangement))}>
           {ctx.t('card.proposal.review')}
         </MoreLink>
       )}
@@ -1374,7 +1665,7 @@ function BackupCard(props: { ctx: Ctx; arrangement: Arrangement; option: OptionP
       </Button>
       <Text quiet>{ctx.t('card.backup.note')}</Text>
       {/* 返事を待つ間も、全部の手と「選んだら」を見て、選び直せる（選ぶのは向きで、後から替えられる）。 */}
-      <MoreLink onClick={() => ctx.go({ name: 'decide', key: arrangement.key })}>
+      <MoreLink onClick={() => ctx.go(decideRoute(arrangement))}>
         {ctx.t('card.backup.all')}
       </MoreLink>
     </Card>
@@ -1392,17 +1683,21 @@ export function CancelCard({
 }) {
   const [open, setOpen] = useState(false);
   const draft = cancelDraft(ctx, request);
-  // 通用の「すること」の取り消しの文は、子の居場所の文なので、通用の文ができるまで見せない（伝えたと記録するだけ）。
-  const drafted = !isNeedArrangementKey(request.basis.arrangementKey);
   return (
     <Card>
       <Label tone="warn">{ctx.t('card.cancel.label')}</Label>
       <Title>{taskTitle(ctx, task)}</Title>
       <Text quiet>{ctx.t('card.cancel.body')}</Text>
-      {!drafted ? null : open ? (
+      {open ? (
         <>
           <Quote>{draft}</Quote>
-          {!request.window && <Text quiet>{ctx.t('card.cancel.checkDate')}</Text>}
+          {isNeedArrangementKey(request.basis.arrangementKey) && !request.askedNeed ? (
+            <Text quiet>{ctx.t('card.cancel.checkContent')}</Text>
+          ) : !request.window && !request.askedNeed?.deadline ? (
+            <Text quiet>{ctx.t('card.cancel.checkDate')}</Text>
+          ) : (
+            cancelTwin(ctx, request) && <Text quiet>{ctx.t('card.cancel.checkWhich')}</Text>
+          )}
           <DraftActions ctx={ctx} draft={draft} />
         </>
       ) : (
@@ -1417,6 +1712,33 @@ export function CancelCard({
       </Button>
     </Card>
   );
+}
+
+/**
+ * 通用の「すること」の依頼の、記録した時の中身（頼んだ手順・何を・頼んだ時間か締切・場所・だれの分）。今の値では
+ * 埋めない（控えに中身が無ければ、確かめられないと書く）。相手が読んだ文は、家族が直せるので確かめていない。
+ */
+export function askedLines(ctx: Ctx, request: ExternalRequest): string[] {
+  const asked = request.askedNeed;
+  if (!asked) return [ctx.t('quiet.recordedUnknown')];
+  const when =
+    requestWhen(ctx, request) ??
+    (asked.deadline
+      ? ctx.t('need.when.by', {
+          by: asked.deadlineDayOnly ? day(ctx, asked.deadline) : dayTime(ctx, asked.deadline),
+        })
+      : undefined);
+  const what = when ? ctx.t('quiet.recordedWhen', { what: asked.what, when }) : asked.what;
+  const lines = [
+    asked.step
+      ? ctx.t('quiet.recordedStep', { step: asked.step.name, what })
+      : ctx.t('quiet.recorded', { what }),
+  ];
+  if (asked.place) lines.push(ctx.t('quiet.recordedPlace', { place: asked.place }));
+  if (asked.forMemberId) {
+    lines.push(ctx.t('quiet.recordedFor', { name: nameOf(ctx.household, asked.forMemberId) }));
+  }
+  return lines;
 }
 
 function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolean }) {
@@ -1441,6 +1763,14 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
             sent: day(ctx, request.sentAt),
           })}
         </span>
+        {/* 通用の「すること」の「はい」は、控えの時間を覆う証拠になる。何に「はい」を記録するかを、記録した時の
+            控えで見せる（相手が読んだ文は、家族が直せるので確かめていない）。 */}
+        {isNeedArrangementKey(request.basis.arrangementKey) &&
+          askedLines(ctx, request).map((line) => (
+            <span key={line} className="text-sm text-sub">
+              {line}
+            </span>
+          ))}
         <Row>
           <Button kind="secondary" className="min-h-11 text-base" onClick={() => reply('yes')}>
             {ctx.t('quiet.replyYes')}
@@ -1594,55 +1924,16 @@ export function useChoicePreviews(
 }
 
 export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey: string }) {
-  const { reading, previews, reread } = useChoicePreviews(
-    ctx.preview,
-    arrangementKey,
-    ctx.plan.throughSeq,
-  );
   const arrangement = arrangementOf(ctx, arrangementKey);
-  // 通用の「すること」は、この画面（子の居場所の文）で決めさせない（通用の文の画面で足す。札からは開かない）。
+  // 通用の「すること」は、この画面（子の居場所の文）で決めさせない（「すること」の画面で決める）。
   if (!arrangement || arrangement.kind === 'need') return <Missing ctx={ctx} />;
   const requirement = ctx.plan.requirements.find((r) => r.key === arrangement.requirementKey);
   const date = requirement?.date ?? arrangement.start;
   const working = ctx.household.members
     .filter((m) => m.kind === 'adult' && m.active)
     .map((m) => ctx.t('decide.person', { name: m.name }));
-  const options = [...arrangement.options].sort(
-    (a, b) =>
-      Number(a.expired) - Number(b.expired) ||
-      (a.decisionDeadline ?? '9').localeCompare(b.decisionDeadline ?? '9'),
-  );
   // 選んだ手の作業が、ほかに進める作業と重ならずに置けていない（時刻を置いていない）。
   const conflicted = arrangement.reasons.find((r) => r.code === 'timeConflict')?.refs ?? [];
-
-  // 本命に選び、作業を担当に提案する。担当は「選んだら」と同じ人（決まった担当があればその人、無ければ
-  // 自分、自分の時間にもう置けなければ置ける大人。サーバーが決めて見せた人）。「選んだら」が無ければ、
-  // 決まった担当か自分。この画面は作業ごとの時刻・場所を見せていないので、ここでは引き受けない
-  // （提案の札で中身を見て引き受ける。人に頼む作業は、下書きを送れば済みになる）。
-  const choose = async (option: OptionPlan) => {
-    const tasks = option.taskKeys
-      .map((k) => ctx.plan.tasks.find((t) => t.key === k))
-      .filter((t): t is Task => t !== undefined && !t.extra);
-    const first = tasks[0];
-    const fixed = templateOf(ctx.household, option)?.steps[0]?.assigneeId;
-    // 「選んだら」を見せていれば、見せた物の要約を添える（変わっていれば、サーバーが断る。読み直して見せる）。
-    const seen = previews?.get(option.key);
-    if (reading !== 'off' && !seen?.seen) return;
-    const assignee = seen?.assigneeId ?? fixed ?? ctx.me.id;
-    const result = await ctx.send({
-      type: 'chooseOption',
-      arrangementKey: arrangement.key,
-      optionKey: option.key,
-      role: 'primary',
-      assigneeId: assignee,
-      ...(seen?.seen ? { seen: seen.seen } : {}),
-    });
-    if (result.status === 'conflict') reread();
-    if (!succeeded(result)) return;
-    if (first && asksPerson(ctx, first) && assignee === ctx.me.id) {
-      ctx.go({ name: 'ask', taskKey: first.key });
-    } else ctx.go({ name: 'today' });
-  };
 
   // 元の文へ：根拠の事項の出典（事項の ID から推し量らない。ID は中身を持たない）。
   const basisItems = ctx.items.filter(({ item }) => requirement?.basis.itemIds.includes(item.id));
@@ -1689,44 +1980,99 @@ export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey
             {ctx.t('decide.source')}
           </MoreLink>
         )}
-        <ChoiceClock
-          t={ctx.t}
-          lang={ctx.lang}
-          tz={ctx.tz}
-          now={ctx.now}
-          until={arrangement.start}
-          options={options.map((o) => ({
-            key: o.key,
-            title: optionTitle(ctx, o),
-            ...(o.decisionDeadline ? { deadline: o.decisionDeadline } : {}),
-            expired: o.expired,
-          }))}
-        />
-        {reading === 'failed' && (
-          <Card tone="warn">
-            <Text>{ctx.t('decide.previewFailed')}</Text>
-            <Button onClick={reread}>{ctx.t('decide.previewRetry')}</Button>
-          </Card>
-        )}
-        {options.map((option) => {
-          const shown = previews?.get(option.key);
-          // 「選んだら」を読める画面で、この手の分がまだ無い（読んでいる・読めなかった・出せなかった）。
-          const waiting =
-            reading === 'off' || shown ? undefined : reading === 'ready' ? 'missing' : reading;
-          return (
-            <OptionRow
-              key={option.key}
-              ctx={ctx}
-              option={option}
-              arrangement={arrangement}
-              {...(shown ? { preview: shown } : {})}
-              {...(waiting ? { waiting } : {})}
-              onChoose={() => void choose(option)}
-            />
-          );
-        })}
-        <Text quiet>{ctx.t('decide.reversible')}</Text>
+        <OptionChooser ctx={ctx} arrangement={arrangement} />
       </Main>
+    </>
+  );
+}
+
+/**
+ * 案を選ぶ所（決め時の時計・案の札と「選んだら」）。子の居場所の決める画面と、通用の「すること」の画面で同じ物。
+ *
+ * 本命に選び、作業を担当に提案する。担当は「選んだら」と同じ人（決まった担当があればその人、無ければ自分、自分の
+ * 時間にもう置けなければ置ける大人。サーバーが決めて見せた人）。「選んだら」が無ければ、決まった担当か自分。
+ * ここは作業ごとの時刻・場所を見せていないので、ここでは引き受けない（提案の札で中身を見て引き受ける。人に頼む
+ * 作業は、下書きを送れば済みになる）。
+ */
+export function OptionChooser({ ctx, arrangement }: { ctx: Ctx; arrangement: Arrangement }) {
+  const { reading, previews, reread } = useChoicePreviews(
+    ctx.preview,
+    arrangement.key,
+    ctx.plan.throughSeq,
+  );
+  const options = [...arrangement.options].sort(
+    (a, b) =>
+      Number(a.expired) - Number(b.expired) ||
+      (a.decisionDeadline ?? '9').localeCompare(b.decisionDeadline ?? '9'),
+  );
+  const choose = async (option: OptionPlan) => {
+    const tasks = option.taskKeys
+      .map((k) => ctx.plan.tasks.find((t) => t.key === k))
+      .filter((t): t is Task => t !== undefined && !t.extra);
+    const first = tasks[0];
+    const fixed = firstStepAssignee(ctx.household, option);
+    // 「選んだら」を見せていれば、見せた物の要約を添える（変わっていれば、サーバーが断る。読み直して見せる）。
+    const seen = previews?.get(option.key);
+    if (reading !== 'off' && !seen?.seen) return;
+    const assignee = seen?.assigneeId ?? fixed ?? ctx.me.id;
+    const result = await ctx.send({
+      type: 'chooseOption',
+      arrangementKey: arrangement.key,
+      optionKey: option.key,
+      role: 'primary',
+      assigneeId: assignee,
+      ...(seen?.seen ? { seen: seen.seen } : {}),
+    });
+    if (result.status === 'conflict') reread();
+    if (!succeeded(result)) return;
+    if (first && asksPerson(ctx, first) && assignee === ctx.me.id) {
+      ctx.go({ name: 'ask', taskKey: first.key });
+    } else ctx.go({ name: 'today' });
+  };
+  // 締切までに済ませる「すること」は、締切までの時計（窓の「すること」と子の居場所は、要る時の始まりまで）。
+  const until =
+    arrangement.kind === 'need' && arrangement.needShape === 'by'
+      ? arrangement.end
+      : arrangement.start;
+  return (
+    <>
+      <ChoiceClock
+        t={ctx.t}
+        lang={ctx.lang}
+        tz={ctx.tz}
+        now={ctx.now}
+        until={until}
+        options={options.map((o) => ({
+          key: o.key,
+          title: optionTitle(ctx, o),
+          ...(o.decisionDeadline ? { deadline: o.decisionDeadline } : {}),
+          expired: o.expired,
+        }))}
+      />
+      {reading === 'failed' && (
+        <Card tone="warn">
+          <Text>{ctx.t('decide.previewFailed')}</Text>
+          <Button onClick={reread}>{ctx.t('decide.previewRetry')}</Button>
+        </Card>
+      )}
+      {options.map((option) => {
+        const shown = previews?.get(option.key);
+        // 「選んだら」を読める画面で、この手の分がまだ無い（読んでいる・読めなかった・出せなかった）。
+        const waiting =
+          reading === 'off' || shown ? undefined : reading === 'ready' ? 'missing' : reading;
+        return (
+          <OptionRow
+            key={option.key}
+            ctx={ctx}
+            option={option}
+            arrangement={arrangement}
+            {...(shown ? { preview: shown } : {})}
+            {...(waiting ? { waiting } : {})}
+            onChoose={() => void choose(option)}
+          />
+        );
+      })}
+      <Text quiet>{ctx.t('decide.reversible')}</Text>
     </>
   );
 }
@@ -1786,7 +2132,7 @@ export function previewLines(ctx: Ctx, preview: ChoicePreview): string[] {
   const others = issues.filter((code) => code !== 'task_overlap').length;
   if (others > 0) lines.push(ctx.t('decide.then.issues', { count: others }));
   // 自分の時間にもう置けないので、置ける大人に提案する（案に決まった担当がある時は、案の名前で分かる）。
-  const fixed = option && templateOf(ctx.household, option)?.steps[0]?.assigneeId;
+  const fixed = option && firstStepAssignee(ctx.household, option);
   if (preview.assigneeId !== undefined && preview.assigneeId !== ctx.me.id && !fixed) {
     lines.push(
       ctx.t('decide.then.handOver', {
@@ -2563,7 +2909,13 @@ function conditionOf(
 }
 
 /** 条件しだいの札の一行（確かな作業として見せない）。 */
-function ConditionLine({ ctx, basis }: { ctx: Ctx; basis: Parameters<typeof conditionOf>[1] }) {
+export function ConditionLine({
+  ctx,
+  basis,
+}: {
+  ctx: Ctx;
+  basis: Parameters<typeof conditionOf>[1];
+}) {
   const condition = conditionOf(ctx, basis);
   if (!condition) return null;
   return (
@@ -3175,7 +3527,7 @@ function NoticeInputCard({
   );
 }
 
-function Missing({ ctx }: { ctx: Ctx }) {
+export function Missing({ ctx }: { ctx: Ctx }) {
   return (
     <>
       <Header

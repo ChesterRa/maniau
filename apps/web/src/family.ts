@@ -10,6 +10,7 @@ import type {
   Household,
   HouseholdPreview,
   PlanResult,
+  PreviewCommand,
   Source,
   TodayCard,
 } from '@maniau/core';
@@ -658,19 +659,23 @@ export function useServerView(where: Where | undefined) {
   );
 
   /**
-   * 家と暮らしの情報の直しの「この変更で変わること」を読む（サーバーが書き込まずに、書く時と同じ命令を展開
-   * した結果。何も書かない）。直せない直しは、その理由を返す。読めなければ無し。
+   * 変えた後に計画の何が変わるかを読む（サーバーが書き込まずに、書く時と同じ命令を展開した結果。何も書かない）。
+   * 書けない変更は、その理由を返す。読めなければ無し。家の情報の直し（household-preview）と、「すること」の言明・
+   * やり方の選び（change-preview）で同じ。
    */
-  const previewHousehold = useCallback(
-    async (household: Household): Promise<HouseholdPreviewResult | undefined> => {
+  const previewAt = useCallback(
+    async (
+      path: 'household-preview' | 'change-preview',
+      payload: { household: Household } | { command: PreviewCommand },
+    ): Promise<HouseholdPreviewResult | undefined> => {
       const now = current.current;
       if (!kind || !memberId || now.key !== key || now.memberId !== memberId) return undefined;
       if (kind === 'demo' && !sessionId) return undefined;
       const url =
         kind === 'demo'
-          ? `/api/demo/sessions/${sessionId}/household-preview`
-          : `/api/household-preview?as=${encodeURIComponent(memberId)}`;
-      const body = kind === 'demo' ? { memberId, household } : { household };
+          ? `/api/demo/sessions/${sessionId}/${path}`
+          : `/api/${path}?as=${encodeURIComponent(memberId)}`;
+      const body = kind === 'demo' ? { memberId, ...payload } : payload;
       try {
         const response = await fetch(url, {
           method: 'POST',
@@ -688,6 +693,17 @@ export function useServerView(where: Where | undefined) {
       }
     },
     [kind, key, sessionId, memberId, isCurrent],
+  );
+  const previewHousehold = useCallback(
+    (household: Household) => previewAt('household-preview', { household }),
+    [previewAt],
+  );
+  /**
+   * 「すること」の言明・やり方の選び（と家の情報の直し）の「この変更で変わること」を読む（同じく何も書かない）。
+   */
+  const previewChange = useCallback(
+    (command: PreviewCommand) => previewAt('change-preview', { command }),
+    [previewAt],
   );
 
   // 今の代の見せる物だけを返す（替えた直後は、読み終えるまで何も見せない）。家族の大人でなく
@@ -710,6 +726,7 @@ export function useServerView(where: Where | undefined) {
     confirm,
     preview,
     previewHousehold,
+    previewChange,
     /** 届いたか分からない操作を、同じ家庭・同じ大人・同じ ID・同じ代で送り直す。 */
     retry: async (): Promise<void> => {
       const operation = pending.current;

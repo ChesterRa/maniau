@@ -262,6 +262,9 @@ export function checkNeedCoverage(
       const step = way.steps.find((entry) => entry.id === task.step?.stepId);
       if (task.step?.templateId !== way.id || !step?.cover) continue;
       const evidence = `cover:${step.id}`;
+      // 書かれた場所と家庭の場所の対応はまだ確かめられない。家族が受け持ちを引き受けても、
+      // その場所にいる証拠にはならない（外の相手の受け持ちは、同じ依頼への返事を別に確かめる）。
+      if (item.interpretation.place !== undefined) continue;
       if (
         task.commitment === 'proposed' ||
         task.commitment === 'declined' ||
