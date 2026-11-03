@@ -5,7 +5,9 @@
 // 家庭の ID は、家族の情報の JSON の id（別に決めない）。一つのトランザクションで作るので、途中で
 // 失敗しても半分だけ残らない。
 //
-//   DATABASE_URL=... pnpm --filter @maniau/server setup:household -- --kind test|real --file <JSON>
+// 接続先は環境変数から受け取る。リポジトリの根から、架空の家庭を作る例：
+//   pnpm --filter @maniau/server setup:household --kind test --file ../../data/demo/household.json
+// --file は @maniau/server（apps/server）からの相対パス。
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { Household, validateHousehold } from '@maniau/core';
