@@ -97,8 +97,12 @@ export function Button(props: {
   );
 }
 
+/**
+ * ボタンの並び。狭い画面では、文字を一字ずつ折らずに、ボタンを次の行へ送る（ボタンは最小の幅を持ち、
+ * 行ごとに広がる）。
+ */
 export function Row({ children }: { children: ReactNode }) {
-  return <div className="flex gap-2.5">{children}</div>;
+  return <div className="flex flex-wrap gap-2.5 [&>button]:min-w-[7rem]">{children}</div>;
 }
 
 export function MoreLink(props: { children: ReactNode; onClick: () => void }) {

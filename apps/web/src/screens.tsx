@@ -723,6 +723,15 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
   // ようにする（時刻の無い物を、時刻のある提案として引き受けさせない）。
   const standalone =
     task.basis.optionKey === undefined && task.external === undefined && task.cancels === undefined;
+  // 一緒に置く中で、ほかに進める手の作業と重ならない時刻を見つけられなかった手の作業（時刻を置いていない）。
+  // ふだんの予定に空きが無いのとは違うので、そう書かず、決める画面で見直せるようにする。
+  const arrangement = arrangementOf(ctx, task.basis.arrangementKey);
+  const optionKey = task.basis.optionKey;
+  const conflicted =
+    !shown &&
+    optionKey !== undefined &&
+    (arrangement?.reasons.some((r) => r.code === 'timeConflict' && r.refs.includes(optionKey)) ??
+      false);
   // 自分の作業で、置けていない・時刻が来た物は、引き受けを経ずに、した事実（済んだ・送った）を記録できる
   // （先に済ませてから開くこともある。過ぎた時刻を引き受けさせない）。
   const due =
@@ -813,11 +822,18 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
           {ctx.t(
             task.handoff
               ? 'card.proposal.handoff'
-              : standalone
-                ? 'card.proposal.unplacedDue'
-                : 'card.proposal.unplaced',
+              : conflicted
+                ? 'card.proposal.conflicted'
+                : standalone
+                  ? 'card.proposal.unplacedDue'
+                  : 'card.proposal.unplaced',
           )}
         </Text>
+      )}
+      {conflicted && arrangement && (
+        <MoreLink onClick={() => ctx.go({ name: 'decide', key: arrangement.key })}>
+          {ctx.t('card.proposal.review')}
+        </MoreLink>
       )}
       <Row>
         {shown && !due && <Button onClick={accept}>{ctx.t('card.proposal.accept')}</Button>}
@@ -969,6 +985,10 @@ function BackupCard(props: { ctx: Ctx; arrangement: Arrangement; option: OptionP
         {ctx.t('card.backup.self')}
       </Button>
       <Text quiet>{ctx.t('card.backup.note')}</Text>
+      {/* 返事を待つ間も、全部の手と「選んだら」を見て、選び直せる（選ぶのは向きで、後から替えられる）。 */}
+      <MoreLink onClick={() => ctx.go({ name: 'decide', key: arrangement.key })}>
+        {ctx.t('card.backup.all')}
+      </MoreLink>
     </Card>
   );
 }

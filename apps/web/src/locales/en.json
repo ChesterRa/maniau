@@ -81,6 +81,8 @@
       "back": "About {{min}} min to get back (estimate)",
       "unplaced": "Your usual schedule has no time for this before the deadline. If you can't do it, please ask someone else.",
       "unplacedDue": "Your usual schedule has no time left before the due date. If it's already done, tap Done.",
+      "conflicted": "We couldn't find a time for this that doesn't overlap another task the same person is doing for an option in progress, so no time is set yet.",
+      "review": "Review the options, who does them, or the times",
       "handoff": "Someone else does the step before or after this one, so we can't tell when the papers change hands. No time is set. Have one person do both steps, or agree on the handoff together.",
       "external": {
         "reply": "Ask {{to}} and wait for their reply.",
@@ -97,7 +99,8 @@
       "body": "The deadline to sign up is about {{deadline}} (estimate).",
       "ask": "Ask {{name}}",
       "self": "I'll do it",
-      "note": "It shows up on their screen. They decide whether to take it."
+      "note": "It shows up on their screen. They decide whether to take it.",
+      "all": "See all options or switch"
     },
     "cancel": {
       "label": "No longer needed",
