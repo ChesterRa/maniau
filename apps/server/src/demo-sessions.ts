@@ -16,6 +16,7 @@ import {
   type SourceSender,
   seenOf,
   splitSentences,
+  taskContent,
   toExtraction,
   toUtteranceReply,
   type UnsupportedReason,
@@ -394,9 +395,9 @@ export function demoSessions(
   }
 
   /**
-   * 候補の命令に、前提で見せた物を付ける：済んだには作業の今の用件、家にあるかの答えには品物、送ったには
-   * 頼む時間（子の居場所の手配の区間）（命令は見せた物を必ず持つ。押すまでに直されて別の物になっていれば、
-   * サーバーが断る）。
+   * 候補の命令に、前提で見せた物を付ける：済んだには作業の今の用件（「すること」の中身とやり方の版も。画面の
+   * 「済んだ」と同じ）、家にあるかの答えには品物、送ったには頼む時間（子の居場所の手配と、窓の「すること」の
+   * 手配の区間）（命令は見せた物を必ず持つ。押すまでに直されて別の物になっていれば、サーバーが断る）。
    */
   // 家にあるかの答えには、モデルに渡した前提が見ていた事象の位置を付ける（その後に入った答えを、古い
   // 候補で上書きしない。札と同じ確かめ）。
@@ -404,15 +405,15 @@ export function demoSessions(
     if (command.type === 'recordSent') {
       const task = plan.tasks.find((t) => t.key === command.taskKey);
       const arrangement = plan.arrangements.find((a) => a.key === task?.basis.arrangementKey);
-      return arrangement?.kind === 'childCare'
+      // 頼む時間は、子の居場所の手配と、窓の「すること」の手配の区間（画面の「送った」と同じ）。
+      return arrangement?.kind === 'childCare' ||
+        (arrangement?.kind === 'need' && arrangement.needShape === 'window')
         ? { ...command, window: { start: arrangement.start, end: arrangement.end } }
         : command;
     }
     if (command.type === 'commitment' && command.action === 'done') {
       const task = plan.tasks.find((t) => t.key === command.taskKey);
-      return task
-        ? { ...command, seen: { titleKey: task.titleKey, titleParams: task.titleParams } }
-        : command;
+      return task ? { ...command, seen: taskContent(task) } : command;
     }
     if (command.type === 'answer') {
       // 家にあるかには品物を、家族が決める値には見せた位置を付ける（サーバーが、今と同じ時だけ受ける。ほかの

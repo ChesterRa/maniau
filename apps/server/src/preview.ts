@@ -35,8 +35,9 @@ export function previewChoices(
   const now =
     state.clock === undefined ? context.now : formatDateTime(state.clock, household.timeZone);
   const plan = planFromState(state, now);
+  // 子の居場所の手配と、通用の「すること」の手配（どちらも同じ選ぶ所を使う）。
   const arrangement = plan.arrangements.find(
-    (a) => a.key === arrangementKey && a.live && a.kind === 'childCare',
+    (a) => a.key === arrangementKey && a.live && (a.kind === 'childCare' || a.kind === 'need'),
   );
   if (!arrangement) return undefined;
   // 今すでにある違反は除く（選んだから起きる物だけを見せる）。
@@ -50,7 +51,11 @@ export function previewChoices(
   return arrangement.options.flatMap((option) => {
     // 今の本命も、同じ命令を通して見る（別の大人が選び直せば、担当がその人に替わる）。
     if (option.expired && option.key !== arrangement.chosenOptionKey) return [];
-    const template = household.careOptions.find((t) => t.id === option.templateId);
+    // 決まった担当は、手の最初の手順から（「すること」の案は家庭のやり方、子の居場所の案は取れる手）。
+    const template =
+      arrangement.kind === 'need'
+        ? household.ways.find((w) => w.id === option.templateId)
+        : household.careOptions.find((t) => t.id === option.templateId);
     const fixed = template?.steps[0]?.assigneeId;
     const people = fixed === undefined ? [context.memberId, ...adults] : [fixed];
     const tried = people.flatMap((assigneeId) => {
