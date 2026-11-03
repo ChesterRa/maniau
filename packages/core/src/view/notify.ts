@@ -27,6 +27,11 @@ export const NIGHT_START = '22:00';
 export const MORNING = '07:00';
 /** 朝に送ると、期限までこれだけの余裕が無い物は、夜でも送る（待てない）。 */
 export const MORNING_SLACK_MIN = 120;
+/**
+ * お知らせから読んだ「すること」を、読み取りからこれだけたっても確かめていなければ、お知らせを入れた人に一度
+ * 知らせる（読み取りの日時は確かめていないので、それで急ぐかを決めない。締切に間に合うとは言わない）。
+ */
+export const READ_CHECK_AFTER_MIN = 60;
 
 export type NotificationKind = 'decisionApproaching' | 'question' | 'cancellation' | 'assignment';
 
@@ -41,14 +46,17 @@ export type NotificationTitle =
   | 'notify.proposal'
   | 'notify.changed'
   | 'notify.question'
-  | 'notify.unowned';
+  | 'notify.unowned'
+  | 'notify.readCheck';
 
 /** 知らせの元（検証器が、キーを読まずに計画の物と照らすため）。 */
 export type NotificationSubject =
   | { type: 'request'; id: string }
   | { type: 'arrangement'; id: string; optionId: string; requestId?: string }
   | { type: 'task'; id: string }
-  | { type: 'question'; id: string };
+  | { type: 'question'; id: string }
+  /** お知らせの読み取り（出典と、読み取りの事象の番号）。 */
+  | { type: 'reading'; id: string; seq: number };
 
 export interface NotificationIntent {
   /** 何についての知らせか（大人ごと）。中身は入れない。 */
@@ -83,6 +91,7 @@ export const NOTIFICATION_TEXT: Record<
     'notify.changed': '引き受けたことの中身が変わりました。確かめてください。',
     'notify.question': '段取りについて、聞きたいことがあります。',
     'notify.unowned': 'まだだれもやると決めていないことがあります。期限が近づいています。',
+    'notify.readCheck': 'お知らせの読み取りで、まだ確かめていないものがあります。',
     'notify.many': '確かめてほしいことが {{count}} 件あります。',
   },
   en: {
@@ -98,6 +107,7 @@ export const NOTIFICATION_TEXT: Record<
     'notify.changed': 'Something you took on has changed. Please check it.',
     'notify.question': "There's a question about your plans.",
     'notify.unowned': 'Something still has no one to do it, and its deadline is coming up.',
+    'notify.readCheck': "Part of a notice's reading hasn't been checked yet.",
     'notify.many': '{{count}} things need your attention.',
   },
 };
@@ -336,6 +346,23 @@ function intentOf(
         ...(by ? { until: by } : {}),
       };
     }
+    case 'needCheck': {
+      // お知らせから読んだ「すること」の確かめ：読み取りから READ_CHECK_AFTER_MIN たっても確かめていなければ、
+      // お知らせを入れた大人にだけ一度（中身は入れない。同じ読み取りの事項はキーでまとめる。札が消えてまた出れば、
+      // ほかの知らせと同じく次の回）。読み取りの日時は確かめていないので、期限にしない（夜は朝まで待つ）。
+      // 仕組みが入れたお知らせは、だれも入れていないので知らせない。確かめ・直し・外し・取り下げ・読み直しで
+      // 札が消えれば、送る前に消える。
+      const reading = card.requirement.reading;
+      if (!reading || reading.addedBy === 'system' || reading.addedBy !== memberId)
+        return undefined;
+      if (now < toEpochMinutes(reading.at) + READ_CHECK_AFTER_MIN) return undefined;
+      return {
+        key: `readCheck:${reading.sourceId}:${reading.seq}`,
+        subject: { type: 'reading', id: reading.sourceId, seq: reading.seq },
+        kind: 'question',
+        titleKey: 'notify.readCheck',
+      };
+    }
     default:
       return undefined;
   }
@@ -354,11 +381,16 @@ export function notificationIntents(
   const intents: NotificationIntent[] = [];
   for (const member of household.members) {
     if (member.kind !== 'adult' || !member.active) continue;
+    const keys = new Set<string>();
     for (const card of todayCards(plan, member.id).main) {
       const intent = intentOf(card, member.id, now, history);
       if (!intent) continue;
       if (intent.until !== undefined && toEpochMinutes(intent.until) <= now) continue;
-      intents.push({ ...intent, key: `${intent.key}:${member.id}`, toMemberId: member.id });
+      // 同じ物についての知らせ（同じ読み取りの事項など）は、一つにまとめる。
+      const key = `${intent.key}:${member.id}`;
+      if (keys.has(key)) continue;
+      keys.add(key);
+      intents.push({ ...intent, key, toMemberId: member.id });
     }
   }
   return intents;

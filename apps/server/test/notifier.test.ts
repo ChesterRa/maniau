@@ -379,6 +379,84 @@ describe('知らせの仕事', () => {
     expect((await t.notified()).map((e) => e.toMemberId)).toEqual(['b']);
   });
 
+  it('お知らせを入れた大人にだけ、読み取りから 1 時間たっても確かめていなければ、中身の無い知らせを一度送る', async () => {
+    const AT = '2026-11-25T20:00+09:00';
+    const t = await setup(AT);
+    const text =
+      '12月12日（土）13:00〜14:00に地域交流会を行います。各家庭から大人1名、ご参加ください。';
+    await t.store.withHousehold(H, (log) => {
+      log.append(
+        [
+          {
+            type: 'noticeReceived',
+            source: {
+              id: 'r1',
+              version: 1,
+              receivedAt: AT,
+              sender: 'school',
+              language: 'ja',
+              medium: 'text',
+              sentences: [{ id: 'r1#1', text }],
+            },
+          },
+        ],
+        'b',
+        AT,
+      );
+      log.append(
+        [
+          {
+            type: 'modelOutputRecorded',
+            call: 'extract',
+            sourceId: 'r1',
+            sourceVersion: 1,
+            model: 'fixture',
+            promptVersion: 'fixture',
+            inputHash: 'r1',
+            output: {
+              sourceId: 'r1',
+              items: [
+                {
+                  id: 'r1:i1',
+                  sourceId: 'r1',
+                  sentenceIds: ['r1#1'],
+                  kind: 'need',
+                  written: text,
+                  interpretation: {
+                    what: '地域交流会への参加',
+                    shape: 'window',
+                    date: '2026-12-12',
+                    startTime: '13:00',
+                    endTime: '14:00',
+                  },
+                  evidence: 'stated',
+                  effects: [],
+                },
+              ],
+              unknowns: [],
+              conditions: [],
+              irrelevantSentenceIds: [],
+              ambiguities: [],
+            },
+          },
+        ] as never,
+        'system',
+        AT,
+      );
+    });
+    const readCheck = () =>
+      t.sent.filter((s) => s.body === NOTIFICATION_TEXT.ja['notify.readCheck']).map((s) => s.to);
+    t.at('2026-11-25T20:30+09:00');
+    await t.jobs.run(H);
+    expect(readCheck()).toEqual([]);
+    t.at('2026-11-25T21:00+09:00');
+    await t.jobs.run(H);
+    expect(readCheck()).toEqual([endpointOf('b')]);
+    t.at('2026-11-25T21:05+09:00');
+    await t.jobs.run(H);
+    expect(readCheck()).toEqual([endpointOf('b')]);
+  });
+
   it('検証器が違反を見つけたら、どの知らせに響くか絞れないので、その家庭の知らせを全部止める', async () => {
     const stop: SendGate = () => ({ all: true, blocked: new Set(), codes: ['test_violation'] });
     const t = await setup('2026-11-29T16:00+09:00', stop);

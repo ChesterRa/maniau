@@ -111,6 +111,18 @@ export const Requirement = z.object({
    * 読み取りを見せて確かめてもらう。家族の言明の「すること」には付かない。
    */
   unconfirmed: z.literal(true).optional(),
+  /**
+   * 確かめを待つ「すること」（unconfirmed）だけ：元の読み取り（出典、読み取りの事象の番号と時刻、お知らせを入れた
+   * 人）。確かめを促す知らせの時機と相手を決めるのに使う（読み取りの日時は使わない）。
+   */
+  reading: z
+    .object({
+      sourceId: Id,
+      seq: z.number().int().nonnegative(),
+      at: DateTime,
+      addedBy: z.string().min(1).optional(),
+    })
+    .optional(),
 });
 export type Requirement = z.infer<typeof Requirement>;
 

@@ -1005,6 +1005,9 @@ function planNeed(
   // 読み取りの日時が過ぎていても、確かめるまで残す（その日時こそ確かめる物で、読み違えた過去の日で、まだ要る
   // 物を隠さない）。もう要らなければ、家族が札で外す。
   if (!ctx.state.statedSources.has(item.sourceId) && item.evidence !== 'confirmed') {
+    const seq = ctx.state.extractionSeq.get(item.sourceId);
+    const at = ctx.state.extractionAt.get(item.sourceId);
+    const addedBy = ctx.state.sourceBy.get(item.sourceId);
     out.requirements.push({
       key: requirementKey,
       kind: 'need',
@@ -1014,6 +1017,9 @@ function planNeed(
       live,
       ...(conditional ? { conditional } : {}),
       unconfirmed: true,
+      ...(seq !== undefined && at !== undefined
+        ? { reading: { sourceId: item.sourceId, seq, at, ...(addedBy ? { addedBy } : {}) } }
+        : {}),
     });
     return;
   }

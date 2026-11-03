@@ -3,6 +3,7 @@
 
 import type { Household as Family, PlanResult as Plan, Task } from '@maniau/core';
 import { DateTime, DomainEvent, Household, PlanResult, toEpochMinutes } from '@maniau/core';
+import { collectFacts, type FactState } from './facts';
 import { checkHistory } from './history';
 import { Collector, type VerificationReport } from './report';
 import { matchesArrangementDay, matchesArrangementWindow } from './time';
@@ -18,10 +19,12 @@ type Title =
   | 'notify.released'
   | 'notify.releasedCheck'
   | 'notify.unowned'
-  | 'notify.question';
+  | 'notify.question'
+  | 'notify.readCheck';
 type Subject = {
-  type: 'task' | 'request' | 'arrangement' | 'question';
+  type: 'task' | 'request' | 'arrangement' | 'question' | 'reading';
   id: string;
+  seq?: number;
   optionId?: string;
   requestId?: string;
 };
@@ -46,6 +49,7 @@ const titles: Record<Title, string> = {
   'notify.releasedCheck': 'assignment',
   'notify.unowned': 'assignment',
   'notify.question': 'question',
+  'notify.readCheck': 'question',
 };
 
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -63,8 +67,12 @@ function readIntent(value: unknown, report: Collector): Intent | undefined {
     !nonempty(value.titleKey) ||
     !Object.hasOwn(titles, value.titleKey) ||
     !object(value.subject) ||
-    !['task', 'request', 'arrangement', 'question'].includes(String(value.subject.type)) ||
+    !['task', 'request', 'arrangement', 'question', 'reading'].includes(
+      String(value.subject.type),
+    ) ||
     !nonempty(value.subject.id) ||
+    (value.subject.type === 'reading' &&
+      (!Number.isSafeInteger(value.subject.seq) || Number(value.subject.seq) <= 0)) ||
     (value.subject.optionId !== undefined && !nonempty(value.subject.optionId)) ||
     (value.subject.requestId !== undefined && !nonempty(value.subject.requestId)) ||
     (value.until !== undefined && !date(value.until)) ||
@@ -136,6 +144,10 @@ function expectedKey(intent: Intent): string | undefined {
     case 'notify.question':
       if (subject.type !== 'question') return undefined;
       base = `question:${subject.id}`;
+      break;
+    case 'notify.readCheck':
+      if (subject.type !== 'reading' || subject.seq === undefined) return undefined;
+      base = `readCheck:${subject.id}:${subject.seq}`;
       break;
     case 'notify.decide':
     case 'notify.backup':
@@ -213,6 +225,17 @@ function checkTiming(
   out: Collector,
 ): void {
   const now = toEpochMinutes(plan.now);
+  if (intent.titleKey === 'notify.readCheck' && intent.subject.type === 'reading') {
+    const reading = events.find(
+      (event) =>
+        event.seq === intent.subject.seq &&
+        event.type === 'modelOutputRecorded' &&
+        event.call === 'extract',
+    );
+    if (reading && now < toEpochMinutes(reading.occurredAt) + 60)
+      out.violation('notification_wrong_time', intent.key, '読み取りから一時間たっていない。');
+    return;
+  }
   const inWindow = (deadline: string | undefined) => {
     if (!deadline) return false;
     const remaining = toEpochMinutes(deadline) - now;
@@ -268,6 +291,8 @@ function checkSubject(
   timeZone: string,
   needShapes: ReadonlyMap<string, 'by' | 'window'>,
   needRequestCurrent: ReadonlyMap<string, boolean>,
+  events: readonly DomainEvent[],
+  facts: FactState | undefined,
   out: Collector,
 ): undefined {
   const { subject, titleKey, toMemberId: member } = intent;
@@ -275,6 +300,41 @@ function checkSubject(
     out.violation('notification_subject_mismatch', intent.key, 'この人に出す根拠が計画にない。');
     return undefined;
   };
+  if (titleKey === 'notify.readCheck') {
+    if (subject.type !== 'reading' || subject.seq === undefined || !facts) return wrong();
+    const received = events.findLast(
+      (event) => event.type === 'noticeReceived' && event.source.id === subject.id,
+    );
+    const reading = events.find(
+      (event) =>
+        event.seq === subject.seq &&
+        event.type === 'modelOutputRecorded' &&
+        event.call === 'extract',
+    );
+    if (
+      !received ||
+      received.actorId === 'system' ||
+      received.actorId !== member ||
+      !reading ||
+      facts.sourceReadingSeq.get(subject.id) !== subject.seq ||
+      ![...facts.items.values()].some(
+        (item) =>
+          item.sourceId === subject.id &&
+          item.kind === 'need' &&
+          facts.needConfirmation.get(item.id) === 'pending' &&
+          facts.active.get(item.id) !== false &&
+          plan.requirements.some(
+            (requirement) =>
+              requirement.kind === 'need' &&
+              requirement.unconfirmed === true &&
+              requirement.basis.itemIds.includes(item.id),
+          ),
+      )
+    )
+      return wrong();
+    checkTime(intent, undefined, undefined, out);
+    return;
+  }
   if (titleKey === 'notify.released' || titleKey === 'notify.releasedCheck') {
     if (subject.type !== 'task') return wrong();
     const release = plan.released?.find(
@@ -551,6 +611,12 @@ export function verifyNotifications(input: NotificationVerificationInput): Verif
     : undefined;
   const needShapes = needHistory?.needShapes ?? new Map<string, 'by' | 'window'>();
   const needRequestCurrent = needHistory?.needRequestCurrent ?? new Map<string, boolean>();
+  // 計画の reading 旗を根拠にせず、採用された読み取りと家族の言明を事象から組み立てる。
+  const readingFacts = input.intents.some(
+    (value) => object(value) && value.titleKey === 'notify.readCheck',
+  )
+    ? collectFacts(events, new Collector())
+    : undefined;
   const keys = new Set<string>();
   const now = toEpochMinutes(plan.data.now);
   for (const value of input.intents) {
@@ -575,7 +641,16 @@ export function verifyNotifications(input: NotificationVerificationInput): Verif
         intent.key,
         'キーに家庭の名前または場所が含まれる。',
       );
-    checkSubject(intent, plan.data, household.data.timeZone, needShapes, needRequestCurrent, out);
+    checkSubject(
+      intent,
+      plan.data,
+      household.data.timeZone,
+      needShapes,
+      needRequestCurrent,
+      events,
+      readingFacts,
+      out,
+    );
     checkTiming(intent, plan.data, events, out);
     out.undetermined(
       'notification_round_unverified',
@@ -601,6 +676,7 @@ const safeText: Record<'ja' | 'en', Record<Title | 'notify.app' | 'notify.many',
       '引き受けたことが、今の計画に見つかりません。まだ要るか確かめてください。',
     'notify.unowned': 'まだだれもやると決めていないことがあります。期限が近づいています。',
     'notify.question': '段取りについて、聞きたいことがあります。',
+    'notify.readCheck': 'お知らせの読み取りで、まだ確かめていないものがあります。',
     'notify.many': '確かめてほしいことが {{count}} 件あります。',
   },
   en: {
@@ -616,6 +692,7 @@ const safeText: Record<'ja' | 'en', Record<Title | 'notify.app' | 'notify.many',
       'Something you took on is no longer in the plan. Please check whether it is still needed.',
     'notify.unowned': 'Something still has no one to do it, and its deadline is coming up.',
     'notify.question': "There's a question about your plans.",
+    'notify.readCheck': "Part of a notice's reading hasn't been checked yet.",
     'notify.many': '{{count}} things need your attention.',
   },
 };

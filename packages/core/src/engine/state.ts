@@ -88,6 +88,10 @@ export interface EngineState {
   seenItemIds: Set<string>;
   /** 出典が届いた時の seq（出典の ID → seq）。 */
   sourceSeq: Map<string, number>;
+  /** 出典を入れた人（出典の ID → 最後に届けた事象の actorId。仕組みが入れた物は system）。 */
+  sourceBy: Map<string, string>;
+  /** 出典ごとの、今の読み取りの時刻（読み取りの事象の occurredAt）。 */
+  extractionAt: Map<string, DateTime>;
   /** 出典ごとの、今の読み取りが読んだ文の版。出典の版より古ければ、書き起こしを直す前の読み取り。 */
   extractionVersion: Map<string, number>;
   /** 出典ごとの、今の読み取りを記録した seq（読み直すと進む。同じ ID が同じ事項かを確かめる手がかり）。 */
@@ -188,6 +192,8 @@ export function emptyState(): EngineState {
     doubted: new Set(),
     seenItemIds: new Set(),
     sourceSeq: new Map(),
+    sourceBy: new Map(),
+    extractionAt: new Map(),
     extractionVersion: new Map(),
     extractionSeq: new Map(),
     corrections: new Map(),
@@ -298,6 +304,7 @@ function apply(state: EngineState, event: DomainEvent): void {
       }
       state.sources.set(event.source.id, event.source);
       state.sourceSeq.set(event.source.id, event.seq);
+      state.sourceBy.set(event.source.id, event.actorId);
       return;
     case 'modelOutputRecorded': {
       if (event.call !== 'extract') return;
@@ -347,6 +354,7 @@ function apply(state: EngineState, event: DomainEvent): void {
       }
       state.extractionVersion.set(sourceId, version);
       state.extractionSeq.set(sourceId, event.seq);
+      state.extractionAt.set(sourceId, event.occurredAt);
       state.extractions.set(sourceId, parsed.data);
       const declared = state.declaredUnknowns.get(sourceId) ?? new Set<string>();
       for (const unknown of parsed.data.unknowns) declared.add(unknown.id);
@@ -394,6 +402,7 @@ function apply(state: EngineState, event: DomainEvent): void {
       });
       state.extractionVersion.set(event.sourceId, source.version);
       state.extractionSeq.set(event.sourceId, event.seq);
+      state.extractionAt.set(event.sourceId, event.occurredAt);
       for (const item of event.items) state.seenItemIds.add(item.id);
       return;
     }
