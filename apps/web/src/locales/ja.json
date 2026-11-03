@@ -279,7 +279,7 @@
     "title": "よてい",
     "today": "きょう",
     "none": "なし",
-    "next": "来週",
+    "later": "その後の7日",
     "task": "{{name}}：{{what}} {{time}}",
     "deadline": "{{option}}の決め時",
     "conditional": "{{what}}（{{when}}）",
@@ -292,7 +292,7 @@
     "body": "この項目は、もうありません。きょうの画面に戻ってください。"
   },
   "cost": {
-    "leave": "有休を{{days}}日使います",
+    "leave": "有休を{{count}}日使います",
     "helper": "人に頼みます",
     "bento": "お弁当を持たせます"
   },

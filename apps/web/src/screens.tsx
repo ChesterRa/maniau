@@ -165,7 +165,7 @@ const optionTitle = (ctx: Ctx, option: OptionPlan) =>
 function optionNote(ctx: Ctx, option: OptionPlan): string {
   const notes: string[] = [];
   if (option.cost.leaveMinutes > 0) {
-    notes.push(ctx.t('cost.leave', { days: Math.round(option.cost.leaveMinutes / 480) || 1 }));
+    notes.push(ctx.t('cost.leave', { count: Math.round(option.cost.leaveMinutes / 480) || 1 }));
   }
   if (option.cost.helperRequests > 0) notes.push(ctx.t('cost.helper'));
   const template = templateOf(ctx.household, option);
@@ -1406,7 +1406,7 @@ export function previewLines(ctx: Ctx, preview: ChoicePreview): string[] {
     const who =
       first.assigneeId === ctx.me.id
         ? ctx.t('decide.then.you')
-        : nameOf(ctx.household, first.assigneeId);
+        : ctx.t('decide.person', { name: nameOf(ctx.household, first.assigneeId) });
     lines.push(
       first.start
         ? ctx.t('decide.then.first', { who, what, when: dayTime(ctx, first.start) })
@@ -1649,9 +1649,30 @@ function requestId(): string {
 
 export function WeekScreen({ ctx }: { ctx: Ctx }) {
   const today = localDate(ctx.now, ctx.tz);
-  const start = mondayOf(today);
-  const days = Array.from({ length: 7 }, (_, i) => addDaysIso(start, i));
-  const nextWeek = Array.from({ length: 7 }, (_, i) => addDaysIso(start, i + 7));
+  // きょうから七日と、その後の七日（暦の週にしない。日曜の夜に、終わる週の空の日を並べない）。
+  const days = Array.from({ length: 7 }, (_, i) => addDaysIso(today, i));
+  const later = Array.from({ length: 7 }, (_, i) => addDaysIso(today, i + 7));
+  // 決め時を出す手：お勧め・予備と、返事を待つ間は、選んでいない手のうち次に消える物（断られた時の次の手）。
+  const deadlineKeys = new Set<string>();
+  for (const arrangement of ctx.plan.arrangements) {
+    if (!arrangement.live) continue;
+    if (arrangement.recommendedOptionKey) deadlineKeys.add(arrangement.recommendedOptionKey);
+    for (const key of arrangement.backupOptionKeys) deadlineKeys.add(key);
+    if (arrangement.status !== 'dependsOnReply') continue;
+    const next = arrangement.options
+      .filter(
+        (o) =>
+          !o.expired &&
+          o.decisionDeadline !== undefined &&
+          o.key !== arrangement.chosenOptionKey &&
+          !arrangement.backupOptionKeys.includes(o.key),
+      )
+      .sort(
+        (a, b) =>
+          toEpochMinutes(a.decisionDeadline ?? '') - toEpochMinutes(b.decisionDeadline ?? ''),
+      )[0];
+    if (next) deadlineKeys.add(next.key);
+  }
   const linesFor = (date: string) => {
     const lines: string[] = [];
     for (const { item, live, conditional, trusted, when: condition } of ctx.items) {
@@ -1688,11 +1709,7 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
       for (const option of arrangement.options) {
         if (option.expired || !option.decisionDeadline) continue;
         if (localDate(option.decisionDeadline, ctx.tz) !== date) continue;
-        if (
-          option.key !== arrangement.recommendedOptionKey &&
-          !arrangement.backupOptionKeys.includes(option.key)
-        )
-          continue;
+        if (!deadlineKeys.has(option.key)) continue;
         lines.push(ctx.t('week.deadline', { option: optionTitle(ctx, option) }));
       }
     }
@@ -1743,8 +1760,8 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
           })}
         </Card>
         <Card className="gap-0.5">
-          <Label tone="sub">{ctx.t('week.next')}</Label>
-          {nextWeek
+          <Label tone="sub">{ctx.t('week.later')}</Label>
+          {later
             .map((date) => ({ date, lines: linesFor(date) }))
             .filter((d) => d.lines.length > 0)
             .map((d, index, all) => (
@@ -1759,12 +1776,6 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
       </Main>
     </>
   );
-}
-
-function mondayOf(date: string): string {
-  const d = new Date(`${date}T00:00:00Z`);
-  const weekday = (d.getUTCDay() + 6) % 7;
-  return addDaysIso(date, -weekday);
 }
 
 function addDaysIso(date: string, days: number): string {

@@ -70,6 +70,13 @@ describe('決める画面の札', () => {
     expect(lines.some((l) => l.includes('重ならないように動きます'))).toBe(true);
     // 今進めている案には出さない。
     expect(previewLines(ctx, { ...preview, current: true })).toEqual([]);
+    // もう一人の大人がする時は、ほかの行と同じく「さん」を付けて書く。
+    const other = previewLines(ctx, {
+      ...preview,
+      steps: preview.steps.map((s, i) => (i === 0 ? { ...s, assigneeId: 'a' } : s)),
+    });
+    expect(other[0]).toContain('健太さんが「');
+    expect(other[0]).not.toMatch(/健太が/);
   });
 
   it('重ならずに置けない時・自分の時間にもう置けない時・ほかの人なら後まで間に合う時を、そう書く', () => {
@@ -99,6 +106,28 @@ describe('決める画面の札', () => {
       later: { memberId: 'a', start: '2026-11-30T17:20+09:00' },
     });
     expect(later.some((l) => l.includes('健太さんなら') && l.includes('17:20'))).toBe(true);
+    const laterEn = previewLines(ctxFor('arrived', 'b', 'en'), {
+      ...base,
+      assigneeId: 'b',
+      later: { memberId: 'a', start: '2026-11-30T17:20+09:00' },
+    });
+    expect(laterEn.some((l) => l.includes('健太 could still make it if they start by'))).toBe(true);
+  });
+
+  it('休みの日数は、日英とも数に合わせて書く（英語で「day(s)」と書かない）', () => {
+    const ja = text(
+      renderToStaticMarkup(
+        <DecideScreen ctx={ctxFor('arrived', 'b', 'ja')} arrangementKey={care} />,
+      ),
+    );
+    expect(ja).toContain('有休を1日使います');
+    const en = text(
+      renderToStaticMarkup(
+        <DecideScreen ctx={ctxFor('arrived', 'b', 'en')} arrangementKey={care} />,
+      ),
+    );
+    expect(en).toContain('Paid leave: 1 day');
+    expect(en).not.toContain('day(s)');
   });
 
   it('お勧めは一つだけ（人に頼む手の返事の期限は、その手の札に事実として書く）', () => {
