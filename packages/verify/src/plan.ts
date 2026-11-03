@@ -9,7 +9,7 @@ import {
   type Task,
 } from '@maniau/core';
 import { type FactState, historicalItem } from './facts';
-import { doneContentMatches, type History } from './history';
+import { doneContentMatches, type History, otherAnswerPossible } from './history';
 import type { Collector } from './report';
 import { dateFromIndex, dateIndex, instantMinute, localMinute, weekday } from './time';
 
@@ -568,6 +568,123 @@ export function checkPlan(
     report,
   );
   for (const requirement of plan.requirements) {
+    // 家にあると示す時は、その言明が家族の最後の答えと品物に対応するかを、事象から確かめる。
+    // 別の出典の作用・退休・欠落で答えが変わり得る時は、ここでは断定しない。
+    if (
+      requirement.kind === 'belongings' &&
+      requirement.atHome !== undefined &&
+      !requirement.atHomeUnknownId
+    ) {
+      report.undetermined(
+        'at_home_answer_unverified',
+        requirement.key,
+        '持ち物についての答えの識別子が無い。',
+      );
+    }
+    if (
+      requirement.kind === 'belongings' &&
+      requirement.atHome !== undefined &&
+      requirement.atHomeUnknownId
+    ) {
+      const id = requirement.atHomeUnknownId;
+      const possibleOtherAnswer = otherAnswerPossible(history.events, id);
+      if (!history.complete || possibleOtherAnswer) {
+        report.undetermined(
+          'at_home_answer_unverified',
+          requirement.key,
+          '持ち物についての家族の答えを独立に確かめられない。',
+        );
+      } else {
+        const answer = history.events.findLast(
+          (entry) => entry.type === 'answered' && entry.unknownId === id,
+        );
+        if (
+          answer?.type !== 'answered' ||
+          answer.value !== requirement.atHome ||
+          (answer.about !== undefined && answer.about !== requirement.what)
+        )
+          report.violation(
+            'at_home_answer_mismatch',
+            requirement.key,
+            '持ち物に示した答えが、最後の答えか、その時の品物と違う。',
+          );
+      }
+    }
+    if (requirement.kind === 'belongings' && requirement.bought === true) {
+      // 手配が締切後に消えても、安定した要件キーから購入作業の事象をたどる。形が未知なら断定しない。
+      const prefix = 'req:belongings:';
+      const root = requirement.key.startsWith(prefix) ? requirement.key.slice(prefix.length) : '';
+      const taskKey = root ? `task:opt:arr:purchase:${root}:buy:buy` : '';
+      if (!history.complete || !taskKey || history.requestBasedDone.has(taskKey)) {
+        report.undetermined(
+          'belonging_bought_unverified',
+          requirement.key,
+          '買い終えた事象を独立に確かめられない。',
+        );
+      } else if (history.commitments.get(taskKey) !== 'done') {
+        report.violation(
+          'belonging_bought_mismatch',
+          requirement.key,
+          '購入を済ませた事象がない。',
+        );
+      } else {
+        const content = history.doneContents.get(taskKey);
+        if (!content) {
+          report.undetermined(
+            'belonging_bought_unverified',
+            requirement.key,
+            '昔の済みには購入した品物の控えが無い。',
+          );
+        } else if (
+          content.titleKey !== 'task.buy' ||
+          Object.keys(content.titleParams).length !== 1 ||
+          content.titleParams.what !== requirement.what
+        ) {
+          report.violation(
+            'belonging_bought_mismatch',
+            requirement.key,
+            '済ませた購入の品物と、今の品物が違う。',
+          );
+        } else {
+          const unknownId = `u-atHome:${root}`;
+          const answer = history.events.findLast(
+            (entry) => entry.type === 'answered' && entry.unknownId === unknownId,
+          );
+          const doneSeq = history.commitmentSeq.get(taskKey);
+          if (
+            answer?.type === 'answered' &&
+            (answer.value === 'yes' || answer.value === 'no') &&
+            (answer.about === undefined || answer.about === requirement.what) &&
+            doneSeq !== undefined &&
+            answer.seq > doneSeq
+          ) {
+            const family = history.events.findLast(
+              (entry) => entry.type === 'householdSet' && entry.seq <= answer.seq,
+            );
+            const member =
+              family?.type === 'householdSet'
+                ? family.household.members.find((entry) => entry.id === answer.actorId)
+                : undefined;
+            if (
+              member?.kind !== 'adult' ||
+              !member.active ||
+              otherAnswerPossible(history.events, unknownId)
+            )
+              report.undetermined(
+                'belonging_bought_unverified',
+                requirement.key,
+                '購入の後の答えを独立に確かめられない。',
+              );
+            else
+              report.violation(
+                'belonging_bought_mismatch',
+                requirement.key,
+                '購入の後に持ち物の状態を答え直している。',
+              );
+          }
+        }
+      }
+    }
     checkBasis(requirement.basis, requirement.key, requirement.live, facts, plan, report, false);
     if (requirement.live && requirement.nature === 'required') {
       if (
@@ -631,9 +748,9 @@ export function checkPlan(
         }
         if (
           requirement.basis.itemIds.length === 1 &&
-          requirement.kind === 'childCare' &&
+          ((requirement.kind === 'childCare' && item?.kind === 'dayChange') ||
+            (requirement.kind === 'belongings' && item?.kind === 'belongings')) &&
           requirement.date &&
-          item?.kind === 'dayChange' &&
           item.interpretation.date &&
           requirement.date !== item.interpretation.date
         ) {
@@ -641,14 +758,26 @@ export function checkPlan(
             report.undetermined(
               'requirement_date_unverified',
               requirement.key,
-              '元の事項の適用や読み取りを確かめられず、子の居場所の日を照らせない。',
+              '元の事項の適用や読み取りを確かめられず、要件の日を照らせない。',
             );
           else
             report.violation(
               'requirement_date_mismatch',
               requirement.key,
-              '子の居場所の日が、元の事項の今の日と違う。',
+              '要件の日が、元の事項の今の日と違う。',
             );
+        }
+        if (
+          requirement.kind === 'belongings' &&
+          requirement.date &&
+          item?.kind === 'belongings' &&
+          item.interpretation.date === undefined
+        ) {
+          report.undetermined(
+            'requirement_date_unverified',
+            requirement.key,
+            '持ち物を使う日が元の事項に明記されていない。',
+          );
         }
         if (
           requirement.kind === 'belongings' &&

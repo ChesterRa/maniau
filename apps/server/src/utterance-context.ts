@@ -3,6 +3,7 @@
 // （実在の家族に使う前に、送る範囲を決める。01-model §10、02-foundation §11）。
 import { readFileSync } from 'node:fs';
 import {
+  atHomeAnswerable,
   type ConditionNode,
   type DateTime,
   type DomainEvent,
@@ -11,7 +12,6 @@ import {
   isActiveTask,
   type PlanResult,
   type Task,
-  toEpochMinutes,
   type UtteranceContext,
 } from '@maniau/core';
 import {
@@ -131,25 +131,27 @@ export function conditionText(
 }
 
 /**
- * 持ち物の「家にあるか」の値（エンジンが宣言する。答えは「ある」yes・「ない」no だけ）。要件が生きていて
- * 要る時の前なら、問いが消えた後も載せる（「やっぱり無かった」「用意できた」と言えるように。サーバーが
- * 受け付ける範囲と同じ）。一言の答えの命令には、サーバーが見せた品物を付ける（品物が直された後の古い候補で、
- * 別の物を「ある」にしない）。今の答えは、今の品物について答えた物だけ（前の品物への答えは使わない）。
+ * 持ち物の「家にあるか」の値（エンジンが宣言する。答えは「ある」yes・「ない」no だけ）。答えられる間
+ * （atHomeAnswerable：要件が生きていて、用意の締切の前か書かれた使う日が終わるまで）なら、問いが消えた後も載せる
+ * （「やっぱり無かった」「用意できた」と言えるように。サーバーが受け付ける範囲と同じ）。一言の答えの命令には、サーバーが見せた品物を付ける（品物が直された後の古い候補で、
+ * 別の物を「ある」にしない）。今の答えは、今の品物について答えた物だけ（前の品物への答えは使わない）。買い
+ * 終えた後は空にする（買ったことは、家にあることを示さない）。
  * 同じ品物が別の日にも要る時に見分けられるよう、名前に要る日を添える（画面の候補にも同じ日を出す）。
  */
 function atHomeUnknowns(state: EngineState, plan: PlanResult): UtteranceContext['unknowns'] {
-  const now = toEpochMinutes(plan.now);
   return plan.requirements.flatMap((r) => {
-    if (!r.live || r.atHomeUnknownId === undefined) return [];
-    if (r.by === undefined || toEpochMinutes(r.by) <= now) return [];
+    if (r.atHomeUnknownId === undefined || r.by === undefined) return [];
+    if (!atHomeAnswerable(r, plan.now)) return [];
     const answer = state.resolved.get(r.atHomeUnknownId);
     const current = answer && (answer.about === undefined || answer.about === r.what);
+    // 買い終えた後は、前の答え（ある・ない）は今を表さない。買ったことは、家にあることも示さない（買って
+    // 帰る前かもしれない）。後の「ある」「ない」のどちらも候補にできるよう、今の答えは空にする。
     return [
       {
         id: r.atHomeUnknownId,
         label: `${r.what}が家にあるか（${r.by.slice(0, 10)}までに要る）`,
         values: ['yes', 'no'],
-        answer: current ? answer.value : null,
+        answer: !r.bought && current ? answer.value : null,
       },
     ];
   });

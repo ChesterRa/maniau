@@ -1,6 +1,7 @@
 // 命令（02-foundation §7.2・§7.3）。画面は事象を直接書かず、命令を送る。サーバーが、権限と前提を
 // 確かめて事象に展開する。一つの命令は、家庭を押さえた一続きの中で処理する。
 import {
+  atHomeAnswerable,
   type Command,
   type DateTime,
   type DomainEvent,
@@ -133,15 +134,12 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         .flatMap((e) => e.unknowns)
         .find((u) => u.id === command.unknownId);
       const asked = plan.questions.some((q) => q.unknownId === command.unknownId);
-      // 家にあるかの値（持ち物の要件。仕組みが作る値）は、要件が生きていて要る時の前だけ答えられる。問いが
-      // 消えた後も答えられる（無いと答えた後の「用意できた」、あると答えた後の「やっぱり無かった」）。条件が
-      // 外れて要らない間は、古い札から答えても受けない（条件が戻った時に、その答えを使ってしまう）。
+      // 家にあるかの値（持ち物の要件。仕組みが作る値）は、要件が生きていて、用意の締切の前か書かれた使う日が
+      // 終わるまでだけ答えられる（atHomeAnswerable。画面・一言と同じ決まり）。問いが消えた後も答えられる（無いと
+      // 答えた後の「用意できた」、あると答えた後の「やっぱり無かった」）。条件が外れて要らない間は、古い札から
+      // 答えても受けない（条件が戻った時に、その答えを使ってしまう）。
       const atHome = plan.requirements.find((r) => r.atHomeUnknownId === command.unknownId);
-      const answerable =
-        atHome?.live === true &&
-        atHome.by !== undefined &&
-        toEpochMinutes(atHome.by) > toEpochMinutes(plan.now);
-      if (atHome ? !answerable : !declared && !asked) {
+      if (atHome ? !atHomeAnswerable(atHome, plan.now) : !declared && !asked) {
         return { status: 'conflict', reason: 'unknownGone' };
       }
       if (retiredUnknowns(state).has(command.unknownId)) {

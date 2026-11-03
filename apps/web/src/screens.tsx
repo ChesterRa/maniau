@@ -382,22 +382,44 @@ function ChangeCard({ ctx, change }: { ctx: Ctx; change: ChangeSummary }) {
     r.kind === 'childCare' && r.date
       ? ctx.t('card.change.gone.childCare', { date: day(ctx, r.date), what: r.what })
       : ctx.t('card.change.gone.other', { what: r.what });
-  const moved = (item: ChangedRequirement) => {
+  const moved = (item: ChangedRequirement): string[] => {
     const { before, after } = item;
-    const text =
-      after?.by && before.by
-        ? ctx.t('card.change.moved.by', {
-            what: before.what,
-            before: due(ctx, before.by, before.basis.itemIds),
-            after: due(ctx, after.by, after.basis.itemIds),
-          })
-        : ctx.t('card.change.moved.date', {
-            what: before.what,
-            before: before.date ? day(ctx, before.date) : '',
-            after: after?.date ? day(ctx, after.date) : '',
-          });
-    if (item.ready === undefined) return text;
-    return `${text}${ctx.t(item.ready ? 'card.change.ready' : 'card.change.notReady')}`;
+    // 変わった方を見せる（持ち物は、使う日と用意の締切の二つを持つ）。両方が変わったら両方を見せる。ただし
+    // 締切が使う日の同じ日に付いて動いただけ（書かれていない締切の見積もり：使う日の朝）なら、日だけを見せる。
+    const dateChanged = (before.date ?? '') !== (after?.date ?? '');
+    const byChanged =
+      before.by !== undefined &&
+      after?.by !== undefined &&
+      toEpochMinutes(before.by) !== toEpochMinutes(after.by);
+    const follows = (r: Requirement | undefined) =>
+      r?.date !== undefined && r.by !== undefined && r.by.slice(0, 10) === r.date;
+    const lines: string[] = [];
+    if (dateChanged || !byChanged) {
+      lines.push(
+        ctx.t('card.change.moved.date', {
+          what: before.what,
+          before: before.date ? day(ctx, before.date) : '',
+          after: after?.date ? day(ctx, after.date) : '',
+        }),
+      );
+    }
+    if (
+      before.by &&
+      after?.by &&
+      byChanged &&
+      !(dateChanged && follows(before) && follows(after))
+    ) {
+      lines.push(
+        ctx.t('card.change.moved.by', {
+          what: before.what,
+          before: due(ctx, before.by, before.basis.itemIds),
+          after: due(ctx, after.by, after.basis.itemIds),
+        }),
+      );
+    }
+    if (item.ready === undefined) return lines;
+    const ready = ctx.t(item.ready ? 'card.change.ready' : 'card.change.notReady');
+    return lines.map((line, i) => (i === lines.length - 1 ? `${line}${ready}` : line));
   };
   return (
     <Card>
@@ -413,7 +435,9 @@ function ChangeCard({ ctx, change }: { ctx: Ctx; change: ChangeSummary }) {
         ))}
         {change.moved.map((item) => (
           <li key={item.before.key} className="flex flex-col gap-1">
-            <span>{moved(item)}</span>
+            {moved(item).map((line) => (
+              <span key={line}>{line}</span>
+            ))}
             {item.undo.length > 0 && <ul className="flex flex-col gap-1">{undo(item)}</ul>}
           </li>
         ))}
@@ -441,6 +465,8 @@ function cardKey(card: TodayCard): string {
     case 'check':
     case 'waiting':
       return `${card.kind}:${card.request.requestId}`;
+    case 'bring':
+      return `${card.kind}:${card.requirement.key}`;
   }
 }
 
@@ -952,6 +978,69 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
           </Button>
         </Row>
         {mistaken && <MoreLink onClick={mistaken}>{ctx.t('quiet.notSent')}</MoreLink>}
+      </div>
+    );
+  }
+  if (card.kind === 'bring') {
+    const { requirement } = card;
+    const unknownId = requirement.atHomeUnknownId;
+    const condition = conditionOf(ctx, requirement.basis);
+    // どのお知らせの物か（同じ品物を同じ日に求めるお知らせが二つあっても、答え直す物を見分けられる）。
+    const item = ctx.items.find((l) => requirement.basis.itemIds.includes(l.item.id))?.item;
+    const title = item && ctx.sources.get(item.sourceId)?.title;
+    // 用意の締切の後に、無いと答えた物（もう買う手配は無い。どうするかは家族が決める）。
+    const missing = !card.bought && requirement.atHome === 'no';
+    // 答えられる間は答え直せる：家にあると答えた物は「やっぱり無かった」（締切の前なら、買う手配か「このまま
+    // では無理」が出る）、無いと答えた物は「用意できた」。
+    const reanswer =
+      card.reanswer && unknownId
+        ? () =>
+            void ctx.send({
+              type: 'answer',
+              unknownId,
+              value: missing ? 'yes' : 'no',
+              seen: { what: requirement.what, throughSeq: ctx.plan.throughSeq },
+            })
+        : undefined;
+    return (
+      <div className={`flex flex-col gap-1 py-2.5 ${border}`}>
+        <span className="flex items-center gap-2">
+          {!missing && (
+            <span className="text-accent">
+              <Icon path={ICON.check} size={20} />
+            </span>
+          )}
+          {ctx.t('quiet.bring', {
+            what: requirement.what,
+            day: requirement.date ? day(ctx, requirement.date) : '',
+          })}
+        </span>
+        <span className={`text-sm ${missing ? 'font-bold text-warn' : 'text-sub'}`}>
+          {ctx.t(
+            card.bought
+              ? 'quiet.bringBought'
+              : missing
+                ? 'quiet.bringMissingLate'
+                : 'quiet.bringAtHome',
+          )}
+        </span>
+        {condition && (
+          <span className="text-sm text-sub">{condition.when ?? ctx.t('say.conditional')}</span>
+        )}
+        {item && (
+          <MoreLink
+            onClick={() =>
+              ctx.go({ name: 'sources', sourceId: item.sourceId, highlight: item.sentenceIds })
+            }
+          >
+            {title ? ctx.t('card.question.sourceTitled', { title }) : ctx.t('card.question.source')}
+          </MoreLink>
+        )}
+        {reanswer && (
+          <MoreLink onClick={reanswer}>
+            {ctx.t(missing ? 'quiet.bringReady' : 'quiet.bringMissing')}
+          </MoreLink>
+        )}
       </div>
     );
   }

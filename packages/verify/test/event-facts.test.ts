@@ -625,3 +625,38 @@ describe('書き起こしと読み取りの版', () => {
     expect(codes(report, 'violation')).not.toContain('stale_item_unmarked');
   });
 });
+
+describe('持ち物の使用日', () => {
+  it('事項に使用日が書かれている時、違う日を使っていれば検出する', () => {
+    const events = [
+      event(1, { type: 'householdSet', household: household() }),
+      event(2, { type: 'noticeReceived', source: source('n1') }),
+      event(
+        3,
+        reading(
+          'n1',
+          extraction('n1', [
+            item('i', 'n1', { interpretation: { what: '白いシャツ', date: '2026-12-14' } }),
+          ]),
+          1,
+        ),
+      ),
+    ];
+    const check = (date: string) =>
+      verifyPlan({
+        household: household(),
+        events,
+        plan: plan({ throughSeq: 3, requirements: [req('白いシャツ', { date })] }),
+      });
+    expect(codes(check('2026-12-07'), 'violation')).toContain('requirement_date_mismatch');
+    expect(codes(check('2026-12-14'), 'violation')).not.toContain('requirement_date_mismatch');
+  });
+  it('持ち物の事項に日が無い時は、その日を独立に裏付けられない', () => {
+    const result = verifyPlan({
+      household: household(),
+      events: base(),
+      plan: plan({ throughSeq: 3, requirements: [req('白いシャツ', { date: '2026-12-14' })] }),
+    });
+    expect(codes(result, 'undetermined')).toContain('requirement_date_unverified');
+  });
+});

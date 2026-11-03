@@ -10,7 +10,7 @@ import type {
   Requirement,
   Task,
 } from '../schema/plan';
-import { toEpochMinutes } from '../time';
+import { addDays, type DateTime, toEpochMinutes } from '../time';
 
 export type TodayCard =
   /** 要らなくなった依頼の取り消しを伝える（頼んだ本人に）。 */
@@ -47,7 +47,26 @@ export type TodayCard =
   /** 自分が頼んで、返事を待っている。 */
   | { kind: 'waiting'; request: ExternalRequest }
   /** 自分が引き受けた、まだ済んでいない作業。 */
-  | { kind: 'todo'; task: Task };
+  | { kind: 'todo'; task: Task }
+  /**
+   * 使う日の前の日と使う日の、持って行く物（家にあると答えた物、買い終えた物、用意の締切の後に無いと
+   * 答えた物）。大人の全員に、静かに出す。reanswer：家にあるかを、まだ答え直せるか（atHomeAnswerable）。
+   */
+  | { kind: 'bring'; requirement: Requirement; bought: boolean; reanswer: boolean };
+
+/**
+ * 持ち物が家にあるかに答えられる間（画面・一言・サーバーで同じ決まり）。要件が生きていて、用意の締切の前か、
+ * 書かれた使う日が終わるまで。締切の後の答えでは買う手配を作らず、家族が知った事として二人に見せる（無ければ、
+ * どうするかは家族が決める）。使う日の書かれていない物は、締切の前だけ。now は計画の今（家庭の時区で書いた
+ * 時刻。日をそのまま読める）。
+ */
+export function atHomeAnswerable(requirement: Requirement, now: DateTime): boolean {
+  if (!requirement.live || requirement.atHomeUnknownId === undefined) return false;
+  if (requirement.by !== undefined && toEpochMinutes(requirement.by) > toEpochMinutes(now)) {
+    return true;
+  }
+  return requirement.date !== undefined && now.slice(0, 10) <= requirement.date;
+}
 
 /** 予備を勧め始める時：次の案の決め時のこの時間前から（前の晩に知らせる）。 */
 export const BACKUP_LEAD_MIN = 26 * 60;
@@ -215,6 +234,34 @@ export function todayCards(
       return { kind: 'question', question: q, ...(requirement ? { requirement } : {}) };
     });
 
+  const bring: TodayCard[] = [];
+  // 使う日の前の日と、使う日（一日中。家を出る時刻は家庭ごとに違うので、朝で消さない）。計画の今は、
+  // 家庭の時区で書いてある（日をそのまま読める）。
+  const today = plan.now.slice(0, 10);
+  for (const requirement of plan.requirements) {
+    const day = requirement.date;
+    if (requirement.kind !== 'belongings' || !requirement.live || !day) continue;
+    if (today !== addDays(day, -1) && today !== day) continue;
+    const reanswer = atHomeAnswerable(requirement, plan.now);
+    // 買い終えた物（用意の締切の後で買い物の手配が無くても、要件が覚えている）。買った後に見つからなければ、
+    // 「やっぱり無かった」と答え直せる（後の答えが今の事実になる）。
+    if (requirement.bought) {
+      bring.push({ kind: 'bring', requirement, bought: true, reanswer });
+      continue;
+    }
+    if (requirement.atHome === 'yes') {
+      bring.push({ kind: 'bring', requirement, bought: false, reanswer });
+    } else if (
+      requirement.atHome === 'no' &&
+      requirement.by !== undefined &&
+      toEpochMinutes(requirement.by) <= now
+    ) {
+      // 無いと答えて、用意の締切を過ぎた物（もう買う手配は作らない）。無いことを二人に見せる。締切の前の
+      // 物は、買い物の作業や「このままでは無理」が出す。
+      bring.push({ kind: 'bring', requirement, bought: false, reanswer });
+    }
+  }
+
   const waiting: TodayCard[] = plan.requests
     .filter(
       (r) =>
@@ -233,6 +280,6 @@ export function todayCards(
       ...proposal,
       ...question,
     ],
-    quiet: [...waiting, ...todo],
+    quiet: [...bring, ...waiting, ...todo],
   };
 }

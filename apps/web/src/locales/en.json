@@ -163,7 +163,13 @@
     "replyNo": "They said no",
     "notSent": "I didn't actually send it",
     "send": "Send",
-    "done": "Done"
+    "done": "Done",
+    "bring": "Bring {{what}} ({{day}})",
+    "bringAtHome": "You answered that it's at home.",
+    "bringBought": "Already bought.",
+    "bringMissing": "Actually, it's not at home",
+    "bringMissingLate": "You answered that it's not at home. The preparation deadline has passed, so it's up to the family what to do.",
+    "bringReady": "It's ready now"
   },
   "decide": {
     "eyebrow": "{{date}} {{what}}",

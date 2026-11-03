@@ -186,6 +186,9 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
         live,
         conditional,
         by,
+        // 使う日は、持ち物に書かれた日付だけ（行事の日から推し量らない。行事が二つある・条件しだいの時に
+        // 取り違えないように）。書かれた締切は用意の締切で、使う日にしない。
+        item.interpretation.date,
         requirements,
         arrangements,
         tasks,
@@ -405,14 +408,20 @@ function commitmentOf(ctx: Context, key: string, content: TaskContent): Commitme
   return done === undefined || sameContent(done, content) ? 'done' : 'accepted';
 }
 
+/**
+ * 作業を作る。reopen：済んだ記録の後に、それを打ち消す事実が入った（買った物が無いと答え直した等）。済みと
+ * せず、引き受けた所に戻す。
+ */
 function task(
   ctx: Context,
   key: string,
   fields: Omit<Task, 'key' | 'commitment' | 'travelBeforeMin' | 'travelAfterMin' | 'travelSource'> &
     Partial<Pick<Task, 'travelBeforeMin' | 'travelAfterMin' | 'travelSource'>>,
+  options: { reopen?: boolean } = {},
 ): Task {
   const assignee = ctx.state.assignees.get(key);
   const condition = taskCondition(ctx, fields.basis.itemIds);
+  const commitment = commitmentOf(ctx, key, fields);
   const built: Task = {
     key,
     travelBeforeMin: 0,
@@ -421,7 +430,7 @@ function task(
     ...fields,
     ...(condition === undefined ? {} : { condition }),
     ...(assignee === undefined ? {} : { assigneeId: assignee }),
-    commitment: commitmentOf(ctx, key, fields),
+    commitment: options.reopen && commitment === 'done' ? 'accepted' : commitment,
   };
   if (built.commitment !== 'accepted') return built;
   // 引き受けた時に見た提案と、今の提案が同じでなければ、見せ直す（控えの無い古い形も同じ）。
@@ -558,6 +567,8 @@ function belongingsDeadline(
   if (item.interpretation.deadline) return toEpochMinutes(item.interpretation.deadline);
   if (item.interpretation.date)
     return zonedToEpochMinutes(item.interpretation.date, '08:00', ctx.tz);
+  // 使う日が書かれていなければ、同じお知らせの最も早い行事の日を、用意の締切の目安にする（間に合わなく
+  // ならない側。使う日とは言わない）。
   const dates = items
     .filter(
       (e) =>
@@ -701,6 +712,7 @@ function purchase(
   live: boolean,
   conditional: boolean,
   by: EpochMinutes | undefined,
+  day: LocalDate | undefined,
   requirements: Requirement[],
   arrangements: Arrangement[],
   tasks: Task[],
@@ -710,17 +722,6 @@ function purchase(
   const requirementKey = keys.belongingsRequirement(rootId);
   const basis = { itemIds: [item.id], requirementKey };
   const unknownId = keys.atHomeUnknown(rootId);
-  requirements.push({
-    key: requirementKey,
-    kind: 'belongings',
-    what,
-    ...(by === undefined ? {} : { by: ctx.fmt(by) }),
-    nature: 'required',
-    basis,
-    live,
-    ...(conditional ? { conditional } : {}),
-    atHomeUnknownId: unknownId,
-  });
   // 答えた時に見せた品物が、今の品物と違えば（直されて別の物になった）、その答えは使わない（家に
   // あるかは、まだ分からないものとして扱う）。
   const answer = ctx.state.resolved.get(unknownId);
@@ -728,11 +729,36 @@ function purchase(
     answer === undefined || (answer.about !== undefined && answer.about !== what)
       ? undefined
       : answer.value;
+  const arrangementKey = keys.purchaseArrangement(rootId);
+  const optionKey = keys.option(arrangementKey, 'buy');
+  const buyKey = keys.task(optionKey, 'buy');
+  // 買い終えたか（済んだ時の品物が今の品物と同じ時だけ）。用意の締切を過ぎて手配を作らなくなっても、
+  // 使う日の前の日に持って行く物を出せるように、要件が持つ。買った後に家にあるかを答え直した（買った物が
+  // 見つからない・やはり家にあった）なら、後の答えが今の事実（買い終えたとは見せない。無いと答え直したら、
+  // 締切の前なら買い物をもう一度開く）。
+  const buyDone =
+    commitmentOf(ctx, buyKey, { titleKey: 'task.buy', titleParams: { what } }) === 'done';
+  const doneSeq = ctx.state.commitmentLog.get(buyKey)?.at(-1)?.seq ?? Number.NEGATIVE_INFINITY;
+  const answeredAfter =
+    buyDone && atHome !== undefined && answer !== undefined && answer.seq > doneSeq;
+  const bought = buyDone && !answeredAfter;
+  requirements.push({
+    key: requirementKey,
+    kind: 'belongings',
+    what,
+    ...(day === undefined ? {} : { date: day }),
+    ...(by === undefined ? {} : { by: ctx.fmt(by) }),
+    nature: 'required',
+    basis,
+    live,
+    ...(conditional ? { conditional } : {}),
+    atHomeUnknownId: unknownId,
+    ...(atHome === 'yes' || atHome === 'no' ? { atHome } : {}),
+    ...(bought ? { bought } : {}),
+  });
   // 持って行く時（by）を過ぎたら、もう買う手配も問いも出さない（要件は記録に残す）。
   if (atHome === 'yes' || by === undefined || by <= ctx.now) return;
 
-  const arrangementKey = keys.purchaseArrangement(rootId);
-  const optionKey = keys.option(arrangementKey, 'buy');
   const goods = goodsFor(what);
   const reasons: Reason[] = [];
   let status: PlanStatus = atHome === undefined ? 'askFirst' : 'decidable';
@@ -769,11 +795,11 @@ function purchase(
     reasons.push({ code: 'inputMissing', refs: ['storeKind'] });
     if (atHome === undefined) askFirst(askByOf(ctx, by - DAY_MIN, by));
   } else {
-    const key = keys.task(optionKey, 'buy');
+    const key = buyKey;
     // 誰かが引き受けた・頼まれた買い物は、その人の機会から選ぶ（別の人に勝手に移さない）。
     // 済んだ買い物は、置き直さない。
     const assignee = ctx.state.assignees.get(key);
-    const done = commitmentOf(ctx, key, { titleKey: 'task.buy', titleParams: { what } }) === 'done';
+    const done = bought;
     const all = purchaseOpportunities(ctx.household, goods, PURCHASE_MINUTES, ctx.now, by);
     const chances = assignee === undefined ? all : all.filter((c) => c.memberId === assignee);
     const first = chances[0];
@@ -830,33 +856,38 @@ function purchase(
       option.deadlineCertainty = 'estimate';
       option.taskKeys.push(key);
       tasks.push(
-        task(ctx, key, {
-          titleKey: 'task.buy',
-          titleParams: { what },
-          basis: { ...basis, arrangementKey, optionKey },
-          durationMin: PURCHASE_MINUTES,
-          deadline: ctx.fmt(by),
-          after: [],
-          segments: ['commute', 'away'],
-          placeKind: 'store',
-          goods,
-          assigneeId: first.memberId,
-          start: ctx.fmt(first.start),
-          end: ctx.fmt(first.end),
-          atPlaceId: first.storeId,
-          travelBeforeMin: first.travelBeforeMin,
-          travelAfterMin: first.travelAfterMin,
-          travelSource: 'estimate',
-          ...(first.detour
-            ? {
-                detour: {
-                  plannedArrival: ctx.fmt(first.detour.plannedArrival),
-                  delayedArrival: ctx.fmt(first.detour.delayedArrival),
-                },
-              }
-            : {}),
-          live,
-        }),
+        task(
+          ctx,
+          key,
+          {
+            titleKey: 'task.buy',
+            titleParams: { what },
+            basis: { ...basis, arrangementKey, optionKey },
+            durationMin: PURCHASE_MINUTES,
+            deadline: ctx.fmt(by),
+            after: [],
+            segments: ['commute', 'away'],
+            placeKind: 'store',
+            goods,
+            assigneeId: first.memberId,
+            start: ctx.fmt(first.start),
+            end: ctx.fmt(first.end),
+            atPlaceId: first.storeId,
+            travelBeforeMin: first.travelBeforeMin,
+            travelAfterMin: first.travelAfterMin,
+            travelSource: 'estimate',
+            ...(first.detour
+              ? {
+                  detour: {
+                    plannedArrival: ctx.fmt(first.detour.plannedArrival),
+                    delayedArrival: ctx.fmt(first.detour.delayedArrival),
+                  },
+                }
+              : {}),
+            live,
+          },
+          { reopen: answeredAfter },
+        ),
       );
       if (atHome === undefined) askFirst(askByOf(ctx, last.start - QUESTION_LEAD_MIN, last.start));
     }

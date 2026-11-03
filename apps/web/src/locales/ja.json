@@ -163,7 +163,13 @@
     "replyNo": "断られた",
     "notSent": "まだ送っていなかった（押し間違い）",
     "send": "送る",
-    "done": "済んだ"
+    "done": "済んだ",
+    "bring": "{{what}}を持って行く（{{day}}）",
+    "bringAtHome": "家にあると答えています。",
+    "bringBought": "買ってあります。",
+    "bringMissing": "やっぱり無かった",
+    "bringMissingLate": "家に無いと答えています。用意の締切を過ぎたので、どうするかは家族で決めてください。",
+    "bringReady": "用意できた"
   },
   "decide": {
     "eyebrow": "{{date}} {{what}}",

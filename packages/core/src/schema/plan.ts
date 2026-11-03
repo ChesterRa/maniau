@@ -78,7 +78,9 @@ export const Requirement = z.object({
   kind: z.enum(['childCare', 'belongings', 'attendance', 'submission']),
   /** 品物・行事の名前（原文の言葉）。 */
   what: z.string().min(1),
+  /** 子の居場所なら、その日。持ち物なら、書かれた使う日（持って行く日。書かれていなければ無し）。 */
   date: LocalDate.optional(),
+  /** 持ち物なら、用意の締切（書かれた締切か、使う日の朝 8:00）。 */
   by: DateTime.optional(),
   nature: Nature,
   basis: Basis,
@@ -89,10 +91,20 @@ export const Requirement = z.object({
    */
   conditional: z.boolean().optional(),
   /**
-   * 持ち物なら、家にあるかの値（仕組みが作る）。家にあると答えて買い物の手配が無い時も、要る時までは
+   * 持ち物なら、家にあるかの値（仕組みが作る）。家にあると答えて買い物の手配が無い時も、用意の締切までは
    * 答え直せるように（「やっぱり無かった」）、要件が持つ。
    */
   atHomeUnknownId: Id.optional(),
+  /**
+   * 持ち物なら、家族の今の答え（家にあるか）。答えた時の品物が今の品物と違えば、その答えは使わない（無い）。
+   * 使う日の前の日と使う日の「持って行く物」と、「やっぱり無かった」を出すのに使う。
+   */
+  atHome: z.enum(['yes', 'no']).optional(),
+  /**
+   * 持ち物なら、買い終えたと記録してあるか（済んだ時の品物が今の品物と同じ時だけ）。用意の締切を過ぎて
+   * 買い物の手配が無くなっても、使う日の前の日の「持って行く物」を出すのに使う。
+   */
+  bought: z.boolean().optional(),
 });
 export type Requirement = z.infer<typeof Requirement>;
 
