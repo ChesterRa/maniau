@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { formatDateTime, Household, toEpochMinutes } from '../src';
+import { formatDateTime, Household, type StepTemplate, toEpochMinutes } from '../src';
 import { noAdultAtHome, optionDeadline, ruleDeadline } from '../src/engine';
 
 const household = Household.parse(
@@ -90,6 +90,75 @@ describe('決め時（手順の逆算）', () => {
     expect(optionDeadline(template('opt-leave-b'), NEED_DATE, household, later).expired).toBe(
       false,
     );
+  });
+
+  /** 一つの手順の案（締切はその日の 23:59）。 */
+  const oneStep = (step: Partial<StepTemplate>) => ({
+    id: 'probe',
+    deadline: { type: 'onTheDay' as const, at: '23:59' },
+    steps: [
+      {
+        id: 'do',
+        titleKey: 'task.wayStep',
+        durationMin: 15,
+        segments: [],
+        waitAfterMin: 0,
+        ...step,
+      },
+    ] as StepTemplate[],
+  });
+
+  it('ふだんの予定に置ける区間が無い手順（平日の昼だけ開く窓口）は、決め時を出さず、締切までは過ぎたと言わない', () => {
+    const counter = oneStep({ segments: ['away'], placeId: 'ward-center' });
+    const before = optionDeadline(counter, '2026-12-04', household, NOTICE_ARRIVED);
+    expect(before.decisionDeadline).toBeUndefined();
+    expect(before.noSlot).toBe(true);
+    expect(before.expired).toBe(false);
+    // 締切が過ぎた後は、過ぎた。
+    const after = optionDeadline(counter, '2026-12-04', household, at('2026-12-05T09:00+09:00'));
+    expect(after.noSlot).toBe(true);
+    expect(after.expired).toBe(true);
+    // 家でできる手順なら置ける（同じ締切）。
+    const online = optionDeadline(
+      oneStep({ segments: ['home', 'commute'] }),
+      '2026-12-04',
+      household,
+      NOTICE_ARRIVED,
+    );
+    expect(online.decisionDeadline).toBeDefined();
+    expect(online.noSlot).toBeUndefined();
+    expect(online.expired).toBe(false);
+  });
+
+  it('置ける区間がふだんの予定にあるのに、今日から締切までに無い時は、二週さかのぼった最後の機会を過ぎた決め時として示す（作業は過去に置かない）', () => {
+    // 勤務の中でする手順を、土曜に、日曜が締切で考える（最後の機会は金曜の勤務だった）。
+    const atWork = oneStep({ segments: ['work'], durationMin: 5 });
+    const now = at('2026-11-28T10:00+09:00');
+    const result = optionDeadline(atWork, '2026-11-29', household, now);
+    expect(show(result.decisionDeadline)?.slice(0, 10)).toBe('2026-11-27');
+    expect(result.expired).toBe(true);
+    expect(result.noSlot).toBeUndefined();
+    expect(result.steps).toEqual([]);
+  });
+
+  it('子が熱を出した朝に言った「すること」：病児保育の予約は前の日の 21:00 までなので、決め時は前の晩（過ぎた）', () => {
+    const way = household.ways.find((w) => w.id === 'way-sick-care');
+    if (!way) throw new Error('病児保育のやり方が無い');
+    const sick = {
+      id: way.id,
+      deadline: { type: 'onTheDay' as const, at: '08:00' },
+      steps: way.steps.map(({ name: _name, cover: _cover, ...step }) => ({
+        ...step,
+        titleKey: 'task.wayStep',
+      })),
+    };
+    const result = optionDeadline(sick, '2026-11-26', household, at('2026-11-26T07:00+09:00'));
+    expect(show(result.decisionDeadline)).toBe('2026-11-25T20:50+09:00');
+    expect(result.expired).toBe(true);
+    // 前の晩に考えれば、まだ間に合う（同じ決め時）。
+    const evening = optionDeadline(sick, '2026-11-26', household, at('2026-11-25T20:00+09:00'));
+    expect(show(evening.decisionDeadline)).toBe('2026-11-25T20:50+09:00');
+    expect(evening.expired).toBe(false);
   });
 });
 

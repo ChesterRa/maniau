@@ -31,7 +31,7 @@ import { sendGate } from '../src/gate';
 const DEMO_ID = 'demo-toyosu';
 const SOURCE_ID = 't005-push-notice';
 const ITEM_ID = 't005-push-item';
-const FIXTURE_SHA256 = 'd34de10fca5e1c0b9f46581f5eee746b31d88dae79c2cdaa6cab28c176c82440';
+const FIXTURE_SHA256 = 'd83abe9fd906116f3c079f56686f2097fab7651b17fb8c513515d0df5c9fb521';
 const ERRORS: Readonly<Record<string, string>> = {
   database_missing: '接続先が設定されていません。',
   fixture_changed: '架空のデモ材料が固定した物と違います。',

@@ -222,6 +222,42 @@
       "kind": "other",
       "name": "みらい橋病児保育室（架空）",
       "area": "豊洲"
+    },
+    {
+      "id": "ward-center",
+      "kind": "other",
+      "name": "みらい橋地区センター（架空）",
+      "area": "豊洲",
+      "hours": {
+        "periods": [
+          {
+            "weekday": 1,
+            "open": "09:00",
+            "close": "17:00"
+          },
+          {
+            "weekday": 2,
+            "open": "09:00",
+            "close": "17:00"
+          },
+          {
+            "weekday": 3,
+            "open": "09:00",
+            "close": "17:00"
+          },
+          {
+            "weekday": 4,
+            "open": "09:00",
+            "close": "17:00"
+          },
+          {
+            "weekday": 5,
+            "open": "09:00",
+            "close": "17:00"
+          }
+        ],
+        "source": "family"
+      }
     }
   ],
   "routines": [
@@ -1008,6 +1044,35 @@
         "helperRequests": 1
       },
       "cancellable": true
+    },
+    {
+      "id": "way-apply-online",
+      "name": "区のホームページで申し込む",
+      "steps": [
+        {
+          "id": "apply",
+          "name": "区のホームページの申し込みフォームで申し込む",
+          "durationMin": 15,
+          "segments": ["home", "commute"]
+        }
+      ],
+      "cost": {},
+      "cancellable": false
+    },
+    {
+      "id": "way-apply-counter",
+      "name": "地区センターの窓口で申し込む",
+      "steps": [
+        {
+          "id": "apply",
+          "name": "地区センターの窓口で申し込む",
+          "durationMin": 15,
+          "segments": ["away"],
+          "placeId": "ward-center"
+        }
+      ],
+      "cost": {},
+      "cancellable": false
     }
   ]
 }

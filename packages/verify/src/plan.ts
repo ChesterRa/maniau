@@ -14,6 +14,7 @@ import { checkEscort } from './escort';
 import { type FactState, historicalItem } from './facts';
 import { checkFamilyQuestions } from './family-question';
 import { doneContentMatches, type History, otherAnswerPossible } from './history';
+import { checkNoSlot } from './no-slot';
 import type { Collector } from './report';
 import {
   dateFromIndex,
@@ -249,6 +250,72 @@ export function needDeadline(item: Item, timeZone: string): number | undefined {
   if (!value.deadlineDayOnly) return instantMinute(value.deadline);
   const date = localMinute(instantMinute(value.deadline), timeZone).date;
   return Date.parse(`${date}T23:59:00+09:00`) / 60_000;
+}
+
+/** 決め時が無くても、元の事項と家庭の決まりから、その案の締切が過ぎたと証明できるか。 */
+function ruleDeadlinePast(
+  option: OptionPlan,
+  arrangement: Arrangement,
+  household: Household,
+  plan: PlanResult,
+  facts: FactState,
+  history: History,
+  report: Collector,
+): boolean | 'unknown' {
+  if (!history.complete) return 'unknown';
+  const requirement = plan.requirements.find((entry) => entry.key === arrangement.requirementKey);
+  const id = requirement?.basis.itemIds.length === 1 ? requirement.basis.itemIds[0] : undefined;
+  if (!id || facts.staleItems.has(id)) return 'unknown';
+  const item = facts.items.get(id);
+  if (!item) return 'unknown';
+  const activity = facts.active.get(id);
+  if (activity !== true) {
+    // 適用や置換・取消しが未定でも、表示も条件しだいの元の事項なら、その分岐の締切だけは確かめられる。
+    // その分岐が実際に適用されるか、変更が効くかは checkBasis が未判定として残す。
+    const conditional =
+      activity === 'unknown' &&
+      requirement?.conditional === true &&
+      (item.evidence === 'stated' || item.evidence === 'confirmed');
+    if (!conditional) return 'unknown';
+  }
+  let deadline: number | undefined;
+  if (arrangement.kind === 'need' && requirement?.kind === 'need' && item.kind === 'need') {
+    if (!['stated', 'confirmed'].includes(facts.needConfirmation.get(id) ?? '')) return 'unknown';
+    const way = household.ways.find((entry) => entry.id === option.templateId);
+    const date = needDate(item, household.timeZone);
+    if (!way || !date) return 'unknown';
+    const boundary =
+      item.interpretation.shape === 'window'
+        ? statedWindow(item)?.start
+        : needDeadline(item, household.timeZone);
+    if (boundary === undefined) return 'unknown';
+    const rule = way.deadline
+      ? deadlineOnDate(household, date, way.deadline, option.key, report)
+      : undefined;
+    // 家庭の決まりを計算できなくても、書かれた窓・締切が過ぎたことは分かる。
+    if (way.deadline && rule === undefined && instantMinute(plan.now) <= boundary) return 'unknown';
+    deadline = rule === undefined ? boundary : Math.min(boundary, rule);
+  } else if (
+    arrangement.kind === 'childCare' &&
+    requirement?.kind === 'childCare' &&
+    item.kind === 'dayChange' &&
+    item.interpretation.dayType === 'noSchool' &&
+    item.interpretation.date &&
+    item.interpretation.date === requirement.date
+  ) {
+    const care = household.careOptions.find((entry) => entry.id === option.templateId);
+    if (!care) return 'unknown';
+    deadline = deadlineOnDate(
+      household,
+      item.interpretation.date,
+      care.deadline,
+      option.key,
+      report,
+    );
+  }
+  return deadline === undefined || !Number.isFinite(deadline)
+    ? 'unknown'
+    : instantMinute(plan.now) > deadline;
 }
 
 function checkStep(
@@ -627,6 +694,8 @@ export function optionFailure(
 function checkReasons(
   arrangement: Arrangement,
   plan: PlanResult,
+  household: Household,
+  facts: FactState,
   history: History,
   report: Collector,
   timeZone: string,
@@ -704,6 +773,32 @@ function checkReasons(
           '期限以外の条件も含め、使える案がないか確かめられない。',
         );
       }
+    } else if (reason.code === 'noSlot') {
+      if (
+        arrangement.status !== 'undetermined' ||
+        arrangement.recommendedOptionKey !== undefined ||
+        reason.refs.length === 0 ||
+        reason.refs.some((key) => {
+          const option = arrangement.options.find((entry) => entry.key === key);
+          return (
+            !option ||
+            option.expired ||
+            option.deadlineCertainty !== 'undetermined' ||
+            option.decisionDeadline !== undefined
+          );
+        })
+      ) {
+        report.violation(
+          'no_slot_reason_invalid',
+          arrangement.key,
+          '時刻を決められない案の理由と、実際の案の状態が一致しない。',
+        );
+      }
+      report.undetermined(
+        'no_slot_failure_unverified',
+        arrangement.key,
+        '理由に挙げた案を使えるか、断りなどを含めて確かめきれない。',
+      );
     } else if (reason.code === 'notCovered' && arrangement.kind === 'need') {
     } else {
       report.undetermined(
@@ -728,7 +823,13 @@ function checkReasons(
     if (
       arrangement.options.some(
         (option) =>
-          option.deadlineCertainty === 'undetermined' && isPastDecision(option, plan) !== true,
+          option.deadlineCertainty === 'undetermined' &&
+          isPastDecision(option, plan) !== true &&
+          ruleDeadlinePast(option, arrangement, household, plan, facts, history, report) !== true &&
+          !(
+            history.complete &&
+            optionFailure(option, arrangement, plan, history, timeZone)?.code === 'turnedDown'
+          ),
       )
     ) {
       report.violation(
@@ -1205,7 +1306,7 @@ export function checkPlan(
     if (instantMinute(arrangement.end) < instantMinute(arrangement.start)) {
       report.violation('arrangement_time_invalid', arrangement.key, '手配の終わりが始まりより前。');
     }
-    checkReasons(arrangement, plan, history, report, household.timeZone);
+    checkReasons(arrangement, plan, household, facts, history, report, household.timeZone);
     for (const option of arrangement.options) {
       if (option.arrangementKey !== arrangement.key)
         report.violation('option_arrangement_mismatch', option.key, '案が別の手配を指している。');
@@ -1217,6 +1318,7 @@ export function checkPlan(
         arrangement.kind === 'need'
           ? undefined
           : household.careOptions.find((entry) => entry.id === option.templateId);
+      checkNoSlot(household, option, way, careTemplate, report);
       if (!careTemplate && !way) {
         if (arrangement.kind === 'purchase') {
           report.undetermined(
@@ -1239,7 +1341,11 @@ export function checkPlan(
         );
       }
       const past = isPastDecision(option, plan);
-      if (past !== 'unknown' && option.expired !== past)
+      const rulePast =
+        past === 'unknown'
+          ? ruleDeadlinePast(option, arrangement, household, plan, facts, history, report)
+          : past;
+      if (rulePast !== 'unknown' && option.expired !== rulePast)
         report.violation('expired_state_mismatch', option.key, '決め時の経過と計画の状態が違う。');
       for (const key of option.taskKeys)
         if (!tasks.has(key))
@@ -1289,6 +1395,13 @@ export function checkPlan(
       (option) => option.key === arrangement.recommendedOptionKey,
     );
     if (recommended) {
+      if (recommended.noSlot) {
+        report.violation(
+          'no_slot_recommended',
+          recommended.key,
+          '時刻を決められない案を、進め方として推薦している。',
+        );
+      }
       if (recommended.decisionDeadline) {
         report.undetermined(
           'latest_deadline_unproved',

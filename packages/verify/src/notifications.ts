@@ -297,7 +297,9 @@ function checkTiming(
 /** 画面と通知の関数を呼ばず、手配の欄から次に決める事を照らす。 */
 function needDecision(arrangement: Arrangement): 'ways' | 'stuck' | 'choose' | 'gaps' | 'settled' {
   const missing = arrangement.reasons.find((reason) => reason.code === 'inputMissing');
-  if (missing?.refs.includes('waysChanged') || arrangement.status === 'undetermined') return 'ways';
+  if (missing?.refs.includes('waysChanged')) return 'ways';
+  if (arrangement.reasons.some((reason) => reason.code === 'noSlot')) return 'stuck';
+  if (arrangement.status === 'undetermined') return 'ways';
   if (
     arrangement.status === 'infeasible' ||
     arrangement.reasons.some((r) => r.code === 'noOptionLeft')

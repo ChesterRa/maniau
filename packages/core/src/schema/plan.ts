@@ -137,6 +137,12 @@ export const OptionPlan = z.object({
   deadlineCertainty: z.enum(['checked', 'estimate', 'undetermined']),
   /** 決め時が過ぎて、もう選べない。勧めない。既に選んで動き出した案は、これで無効にしない。 */
   expired: z.boolean(),
+  /**
+   * どれかの手順を置ける時間が、ふだんの予定に無い（決まった場所にいる区間が無い等。時刻が過ぎたのではない）。
+   * 決め時は無く（undetermined）、決まりの締切が過ぎるまでは expired にしない。勧めない。家族は選べる（休みを取って
+   * 行く等）。
+   */
+  noSlot: z.literal(true).optional(),
   cost: Cost,
   taskKeys: z.array(z.string()),
 });
@@ -204,6 +210,12 @@ export const Reason = z.object({
     'askFirst',
     /** 決め時の過ぎていない案が無い（refs：案の key）。 */
     'noOptionLeft',
+    /**
+     * 決め時を出せないが過ぎてもいない案だけが残る（refs：案の key。ふだんの予定に置ける区間が無い手順がある案
+     * 〔案の noSlot〕と、二週さかのぼっても置き方が見つからない案）。取れないとは言わない（まだ判断できない）。勧めず、
+     * 家族が選ぶ（いつするかは家族が決める）。決まりの締切が過ぎた案は含めない。
+     */
+    'noSlot',
     /** 探索の手数の上限に達した。 */
     'searchLimit',
     /**

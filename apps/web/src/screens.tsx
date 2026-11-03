@@ -1706,6 +1706,10 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
     optionKey !== undefined &&
     (arrangement?.reasons.some((r) => r.code === 'timeConflict' && r.refs.includes(optionKey)) ??
       false);
+  // どれかの手順を、ふだんの予定に置ける区間が無い手（平日の昼の窓口等）。手の単位の印なので、この作業そのものに
+  // 時間が無いとは書かない（前の手順は置けることがある）。ほかの人に頼んでも置けないので、そう書かない。
+  const noSlot =
+    !shown && arrangement?.options.some((o) => o.key === optionKey && o.noSlot === true) === true;
   // 自分の作業で、置けていない・時刻が来た物は、引き受けを経ずに、した事実（済んだ・送った）を記録できる
   // （先に済ませてから開くこともある。過ぎた時刻を引き受けさせない）。
   const due =
@@ -1806,13 +1810,15 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
               ? 'card.proposal.handoff'
               : conflicted
                 ? 'card.proposal.conflicted'
-                : fixedTime
-                  ? toEpochMinutes(task.earliestStart ?? ctx.now) > toEpochMinutes(ctx.now)
-                    ? 'card.proposal.fixedBusy'
-                    : 'card.proposal.fixedPast'
-                  : standalone
-                    ? 'card.proposal.unplacedDue'
-                    : 'card.proposal.unplaced',
+                : noSlot
+                  ? 'card.proposal.noSlot'
+                  : fixedTime
+                    ? toEpochMinutes(task.earliestStart ?? ctx.now) > toEpochMinutes(ctx.now)
+                      ? 'card.proposal.fixedBusy'
+                      : 'card.proposal.fixedPast'
+                    : standalone
+                      ? 'card.proposal.unplacedDue'
+                      : 'card.proposal.unplaced',
           )}
         </Text>
       )}
@@ -2579,7 +2585,9 @@ function OptionRow({
             )}
           </span>
         ) : (
-          <span className="text-[15px] text-sub">{ctx.t('decide.unknownDeadline')}</span>
+          <span className="text-[15px] text-sub">
+            {ctx.t(option.noSlot ? 'decide.noSlot' : 'decide.unknownDeadline')}
+          </span>
         )}
         <span className="text-sm text-sub">{optionNote(ctx, option)}</span>
         {reply && (

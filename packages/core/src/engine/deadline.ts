@@ -62,8 +62,16 @@ export interface OptionDeadline {
   decisionDeadline?: EpochMinutes;
   /** 決め時に置いた手順（担当の人と時刻）。 */
   steps: PlacedStep[];
-  /** now より決め時が前なら、もう選べない。 */
+  /**
+   * now より決め時が前なら、もう選べない。決め時を出せない案（noSlot など）は、決まりの締切が過ぎるまでは過ぎたと
+   * 言わない（置き方が見つからないことを、過ぎた証拠にしない）。
+   */
   expired: boolean;
+  /**
+   * どれかの手順を置ける区間（種類・決まった場所・営業時間・長さ）が、担当できる大人のふだんの二週に一つも無い
+   * （平日の昼の窓口に、ふだんの予定で行く時が無い等）。時刻の問題ではないので、決め時を出さず、過ぎたとも言わない。
+   */
+  noSlot?: true;
 }
 
 /** 手順を置ける区間か（区間の種類、決まった場所、人）。 */
@@ -234,34 +242,74 @@ export function optionDeadline(
   const adults = activeAdultIds(household);
   const fixed = template.steps.map((s) => s.assigneeId).filter((id) => id !== undefined);
   const members = [...new Set([...adults, ...fixed, ...(only === undefined ? [] : [only])])];
-  const slotsByMember = new Map(
-    members.map((id) => [
-      id,
-      slotsBetweenDates(household, id, firstDate, lastDate)
-        .map((slot) => (from === undefined ? slot : { ...slot, start: Math.max(slot.start, from) }))
-        .flatMap((slot) => withoutBusy(slot, busy.get(id) ?? []))
-        .filter((slot) => slot.end > slot.start),
-    ]),
-  );
+  // 担当できる人ごとの区間（busy を除くか選べる。from より前には置かない）。
+  const slotsSince = (start: LocalDate, withBusy: boolean) =>
+    new Map(
+      members.map((id) => [
+        id,
+        slotsBetweenDates(household, id, start, lastDate)
+          .map((slot) =>
+            from === undefined ? slot : { ...slot, start: Math.max(slot.start, from) },
+          )
+          .flatMap((slot) => (withBusy ? withoutBusy(slot, busy.get(id) ?? []) : [slot]))
+          .filter((slot) => slot.end > slot.start),
+      ]),
+    );
   const candidates =
     only !== undefined
       ? [only]
       : fixed.length === template.steps.length
         ? [fixed[0] ?? '']
         : adults;
+  /** 最初の手順の始まりが最も遅い置き方。 */
+  const latest = (slotsByMember: ReadonlyMap<string, Slot[]>): PlacedStep[] | undefined => {
+    let best: PlacedStep[] | undefined;
+    for (const memberId of candidates) {
+      const chain = placeChain(
+        template.steps,
+        memberId,
+        slotsByMember,
+        deadline,
+        limits,
+        household,
+      );
+      const first = chain?.[0];
+      if (chain && first && (!best || first.start > (best[0]?.start ?? -Infinity))) best = chain;
+    }
+    return best;
+  };
 
-  let best: PlacedStep[] | undefined;
-  for (const memberId of candidates) {
-    const chain = placeChain(template.steps, memberId, slotsByMember, deadline, limits, household);
-    const first = chain?.[0];
-    if (chain && first && (!best || first.start > (best[0]?.start ?? -Infinity))) best = chain;
+  const best = latest(slotsSince(firstDate, true));
+  let decisionDeadline = best?.[0]?.start;
+  // 今日から締切までに、ほかの作業を除いても置けない時：最後の機会は前の日にあったかもしれない。同じ置き方で
+  // ふだんの予定の二週をさかのぼり、そろった置き方が見つかれば、その始まりを過ぎた決め時とする（過ぎたと言う
+  // 証拠。作業は過去に置かない）。ほかの作業を除けば今日から置ける時はさかのぼらない（重なりは呼び出し側が扱う）。
+  if (decisionDeadline === undefined && latest(slotsSince(firstDate, false)) === undefined) {
+    const earlier = latest(slotsSince(addDays(firstDate, -14), false))?.[0]?.start;
+    if (earlier !== undefined && earlier < now) decisionDeadline = earlier;
   }
-  const decisionDeadline = best?.[0]?.start;
+  // それでも置けない時：ふだんの二週（休みの日を一つ挟んでも週の決まりを見落とさない長さ）に、どれかの手順を置ける
+  // 区間が、担当できる大人のだれにも無ければ、時刻の問題ではない（noSlot）。ほかの作業（busy）と前の手順（from）は
+  // 見ない。区間はあるのに置き方が見つからない時（手順の先後が合わない等）も、置き方を探し尽くしたとは言わない。
+  const noSlot =
+    decisionDeadline === undefined &&
+    template.steps.some((step) => {
+      const who = step.assigneeId !== undefined ? [step.assigneeId] : only ? [only] : adults;
+      return !who.some((id) =>
+        slotsBetweenDates(household, id, firstDate, addDays(firstDate, 13)).some((slot) =>
+          usableIn(step, slot, household).some(
+            (piece) => piece.end - piece.start >= step.durationMin,
+          ),
+        ),
+      );
+    });
   return {
     templateId: template.id,
     ruleDeadline: deadline,
     ...(decisionDeadline === undefined ? {} : { decisionDeadline }),
     steps: best ?? [],
-    expired: decisionDeadline === undefined ? true : decisionDeadline < now,
+    // 決め時を出せない案は、決まりの締切が過ぎるまでは過ぎたと言わない（見つからないことを過ぎた証拠にしない）。
+    expired: decisionDeadline !== undefined ? decisionDeadline < now : deadline < now,
+    ...(noSlot ? { noSlot: true as const } : {}),
   };
 }

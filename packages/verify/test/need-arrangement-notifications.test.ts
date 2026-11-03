@@ -144,6 +144,26 @@ describe('することの手配の知らせ', () => {
     ).toContain('notification_subject_mismatch');
   });
 
+  it('時間を決められない案は選択済みなので、やり方未選択の通知を出さない', () => {
+    const unplaced = {
+      reasons: [{ code: 'noSlot', refs: ['counter'] }],
+      options: [option('counter', { noSlot: true })],
+    };
+    expect(violations(check('by', ways, unplaced))).toContain('notification_subject_mismatch');
+    // 内容が変わったため選び直しが必要なら、その事を知らせる。
+    expect(
+      violations(
+        check('by', ways, {
+          ...unplaced,
+          reasons: [
+            { code: 'inputMissing', refs: ['waysChanged'] },
+            { code: 'noSlot', refs: ['counter'] },
+          ],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
   it('本命選びは残る候補の最も早い決め時を使い、候補なしや対象外は拒む', () => {
     const choices = {
       status: 'decidable',

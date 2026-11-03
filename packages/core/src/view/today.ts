@@ -163,9 +163,11 @@ export function needOpen(
  */
 export function needStep(
   arrangement: Arrangement,
-): 'ways' | 'waysChanged' | 'stuck' | 'choose' | 'gaps' | 'settled' {
+): 'ways' | 'waysChanged' | 'noSlot' | 'stuck' | 'choose' | 'gaps' | 'settled' {
   const missing = arrangement.reasons.find((r) => r.code === 'inputMissing');
   if (missing?.refs.includes('waysChanged')) return 'waysChanged';
+  // 選んだやり方の案が、ふだんの予定に置ける時間の無い手順を持つ物だけ（まだ判断できない。取れないとは言わない）。
+  if (arrangement.reasons.some((r) => r.code === 'noSlot')) return 'noSlot';
   if (arrangement.status === 'undetermined') return 'ways';
   if (
     arrangement.status === 'infeasible' ||

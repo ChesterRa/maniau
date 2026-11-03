@@ -1049,7 +1049,8 @@ function planNeed(
     requirementKey,
     kind: 'need',
     needShape: frame.shape,
-    start: ctx.fmt(frame.shape === 'window' ? frame.start : ctx.now),
+    // 締切の形の始まりは計算した時刻（締切を過ぎたら締切。始まりを終わりの後にしない）。
+    start: ctx.fmt(frame.shape === 'window' ? frame.start : Math.min(ctx.now, frame.by)),
     end: ctx.fmt(frame.shape === 'window' ? frame.end : frame.by),
     status: ways.length === 0 ? 'undetermined' : 'decidable',
     options,
@@ -1457,6 +1458,7 @@ function careOption(
       ...(decisionDeadline === undefined ? {} : { decisionDeadline: ctx.fmt(decisionDeadline) }),
       deadlineCertainty: decisionDeadline === undefined ? 'undetermined' : 'estimate',
       expired: result.expired,
+      ...(result.noSlot ? { noSlot: true as const } : {}),
       cost: template.cost,
       taskKeys,
     },
@@ -1649,6 +1651,16 @@ function withStatus(ctx: Context, arrangement: Arrangement, tasks: Task[]): Arra
     (o) => !o.expired && o.decisionDeadline !== undefined && !failed.has(o.key),
   );
   if (open.length === 0) {
+    // 決め時を出せないが過ぎてもいない案（ふだんの予定に置ける区間が無い手順がある、二週さかのぼっても置き方が
+    // 見つからない）が残れば、取れないとは言わない（まだ判断できない）。勧めず、家族が選ぶ（選べば、時刻の無い作業に
+    // なる）。決まりの締切が過ぎた案は、過ぎた（決め時が無くても、締切で確かめられる）。
+    const unplaced = arrangement.options.filter(
+      (o) => o.decisionDeadline === undefined && !o.expired && !failed.has(o.key),
+    );
+    if (unplaced.length > 0) {
+      reasons.push({ code: 'noSlot', refs: unplaced.map((o) => o.key) });
+      return { ...arrangement, status: 'undetermined', reasons };
+    }
     reasons.push({ code: 'noOptionLeft', refs: arrangement.options.map((o) => o.key) });
     return { ...arrangement, status: 'infeasible', reasons };
   }

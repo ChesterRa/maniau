@@ -336,6 +336,138 @@ describe('通用の「すること」の画面', () => {
     }
   });
 
+  it('ふだんの予定に置ける時間が無いやり方（平日の昼の窓口）は、決め時を過ぎたと書かず、置ける時間が無いと書く。本命にした作業も、ほかの人に頼めとは書かない（日本語・英語）', async () => {
+    const app = family();
+    await app.write({
+      type: 'stateNeed',
+      text: '12月4日までに、学童クラブの継続を申し込む。',
+      interpretation: {
+        what: '学童クラブの継続の申し込み',
+        shape: 'by',
+        date: '2026-12-04',
+        deadline: '2026-12-04T00:00+09:00',
+        deadlineDayOnly: true,
+      },
+    });
+    const { itemId, arrangement } = await app.need();
+    await app.write({
+      type: 'setNeedWays',
+      itemId,
+      wayIds: ['way-apply-online', 'way-apply-counter'],
+    });
+    for (const [lang, noSlot, expired] of [
+      ['ja', 'この手には、ふだんの予定に置ける時間が無い手順があります', '決め時を過ぎました'],
+      [
+        'en',
+        'This option includes a step your usual schedule has no time for',
+        'Too late to choose',
+      ],
+    ] as const) {
+      const screen = text(
+        renderToStaticMarkup(
+          <NeedScreen ctx={await app.ctx('b', lang)} arrangementKey={arrangement.key} />,
+        ),
+      );
+      expect(screen).toContain(noSlot);
+      expect(screen).not.toContain(expired);
+    }
+    await app.choose('way-apply-counter');
+    for (const [lang, said, notSaid] of [
+      ['ja', 'いつするかは家族で決めて', 'ほかの人に頼んでください'],
+      ['en', 'Decide together when to do it', 'ask someone else'],
+    ] as const) {
+      const today = text(renderToStaticMarkup(<TodayScreen ctx={await app.ctx('b', lang)} />));
+      expect(today).toContain(said);
+      expect(today).not.toContain(notSaid);
+    }
+  });
+
+  it('置ける時間が無いやり方だけを選んだ時は、間に合わないと書かず、まだ確かめられないと書く（きょうの札と「すること」の画面。日本語・英語）', async () => {
+    const app = family();
+    await app.write({
+      type: 'stateNeed',
+      text: '12月4日までに、学童クラブの継続を申し込む。',
+      interpretation: {
+        what: '学童クラブの継続の申し込み',
+        shape: 'by',
+        date: '2026-12-04',
+        deadline: '2026-12-04T00:00+09:00',
+        deadlineDayOnly: true,
+      },
+    });
+    const { itemId } = await app.need();
+    await app.write({ type: 'setNeedWays', itemId, wayIds: ['way-apply-counter'] });
+    const { arrangement } = await app.need();
+    for (const [lang, said, notSaid] of [
+      [
+        'ja',
+        'ふだんの予定で時刻を決められず、間に合うか確かめられません',
+        'このままでは間に合いません',
+      ],
+      ['en', 'no time could be set in your usual schedule', 'None of the chosen ways'],
+    ] as const) {
+      const ctx = await app.ctx('b', lang);
+      const today = text(renderToStaticMarkup(<TodayScreen ctx={ctx} />));
+      expect(today).toContain(said);
+      expect(today).not.toContain(notSaid);
+      const screen = text(
+        renderToStaticMarkup(<NeedScreen ctx={ctx} arrangementKey={arrangement.key} />),
+      );
+      expect(screen).toContain(said);
+    }
+  });
+
+  it('置ける時間が無いのが後の手順だけでも、前の手順の札に「この手順を置ける時間が無い」と書かない（手の単位で書く）', async () => {
+    const twoSteps: Way = {
+      id: 'way-prepare-submit',
+      name: '書類をそろえて窓口に出す',
+      steps: [
+        {
+          id: 'prepare',
+          name: '家で書類をそろえる',
+          durationMin: 10,
+          segments: ['home'],
+          waitAfterMin: 0,
+        },
+        {
+          id: 'submit',
+          name: '地区センターの窓口に出す',
+          durationMin: 15,
+          segments: ['away'],
+          placeId: 'ward-center',
+          waitAfterMin: 0,
+        },
+      ],
+      cost: { leaveMinutes: 0, helperRequests: 0, yen: 0, extraTasks: 0 },
+      cancellable: false,
+    };
+    const app = family([twoSteps]);
+    await app.write({
+      type: 'stateNeed',
+      text: '12月4日までに、書類をそろえて窓口に出す。',
+      interpretation: {
+        what: '書類の提出',
+        shape: 'by',
+        date: '2026-12-04',
+        deadline: '2026-12-04T00:00+09:00',
+        deadlineDayOnly: true,
+      },
+    });
+    const { itemId } = await app.need();
+    await app.write({ type: 'setNeedWays', itemId, wayIds: [twoSteps.id] });
+    const option = await app.choose(twoSteps.id);
+    const ctx = await app.ctx('b');
+    const tasks = ctx.plan.tasks.filter((t) => t.live && t.basis.optionKey === option.key);
+    expect(tasks.map((t) => [t.step?.stepId, t.start])).toEqual([
+      ['prepare', undefined],
+      ['submit', undefined],
+    ]);
+    const today = text(renderToStaticMarkup(<TodayScreen ctx={ctx} />));
+    expect(today).toContain('家で書類をそろえる');
+    expect(today).toContain('この手には、ふだんの予定に置ける時間が無い手順があるので');
+    expect(today).not.toContain('この手順を置ける時間がありません');
+  });
+
   it('場所とだれの分を頼む文に書き、返事を記録する所には、頼んだ時の控えの場所・だれの分・手順を出す', async () => {
     const app = family();
     await app.write({

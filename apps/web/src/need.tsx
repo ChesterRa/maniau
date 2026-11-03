@@ -338,9 +338,9 @@ export function NeedScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey: 
             <Text>{ctx.t('card.decide.turnedDown')}</Text>
           </Card>
         )}
-        {step === 'stuck' && (
+        {(step === 'stuck' || step === 'noSlot') && (
           <Card tone="warn">
-            <Text>{ctx.t('card.need.stuck')}</Text>
+            <Text>{ctx.t(`card.need.${step}`)}</Text>
           </Card>
         )}
         {gaps.length > 0 && (
