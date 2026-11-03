@@ -157,9 +157,10 @@ export function placeStep(
 }
 
 /**
- * 案の決め時を、手順の逆算で求める（一つの案だけを見た目安。計画全体との重なりは §5 の2で確かめる）。
- * 探すのは now の日から締切の日まで。only を渡すと、その大人だけで手順を置く（担当の決まった作業を、
- * 担当の人のふだんの時間に置くため）。
+ * 案の決め時を、手順の逆算で求める。探すのは now の日から締切の日まで。only を渡すと、その大人だけで手順を
+ * 置く（担当の決まった作業を、担当の人のふだんの時間に置くため）。busy を渡すと、その人のほかの作業が使う
+ * 時間には置かない（家族が進める案どうしを、同じ人の同じ時間に重ねないため。joint.ts）。from を渡すと、
+ * それより前には置かない（済ませた手順の後に待つ時間がある時。now より前に置けるのは、過ぎた決め時を示すため）。
  */
 export function optionDeadline(
   template: CareOptionTemplate,
@@ -167,6 +168,8 @@ export function optionDeadline(
   household: Household,
   now: EpochMinutes,
   only?: string,
+  busy: ReadonlyMap<string, readonly Busy[]> = new Map(),
+  from?: EpochMinutes,
 ): OptionDeadline {
   const deadline = ruleDeadline(template.deadline, needDate, household);
   const tz = household.timeZone;
@@ -176,7 +179,13 @@ export function optionDeadline(
   const fixed = template.steps.map((s) => s.assigneeId).filter((id) => id !== undefined);
   const members = [...new Set([...adults, ...fixed, ...(only === undefined ? [] : [only])])];
   const slotsByMember = new Map(
-    members.map((id) => [id, slotsBetweenDates(household, id, firstDate, lastDate)]),
+    members.map((id) => [
+      id,
+      slotsBetweenDates(household, id, firstDate, lastDate)
+        .map((slot) => (from === undefined ? slot : { ...slot, start: Math.max(slot.start, from) }))
+        .flatMap((slot) => withoutBusy(slot, busy.get(id) ?? []))
+        .filter((slot) => slot.end > slot.start),
+    ]),
   );
   const candidates =
     only !== undefined

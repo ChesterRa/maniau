@@ -4,7 +4,7 @@ import {
   atHomeAnswerable,
   type Command,
   type DateTime,
-  type DomainEvent,
+  DomainEvent,
   formatDateTime,
   type PlanResult,
   proposalSnapshot,
@@ -21,6 +21,7 @@ import {
   requestSnapshot,
   retiredUnknowns,
 } from '@maniau/core/engine';
+import { consequencesOf, violationsOf } from './consequences';
 import { sha256Of } from './digest';
 import type { EventBody, HouseholdLog, Store } from './store';
 
@@ -100,6 +101,30 @@ function handle(
   const plan = planFromState(state, now);
   const decided = expand({ plan, state, events }, at, command);
   if ('reason' in decided) return { ...decided, throughSeq: throughSeq() };
+  // 「選んだら」で見せた物と、同じ命令の今の「選んだら」（同じ関数で作る）が違えば、断って見せ直す。
+  // 見せた時の命令（引き受けの控えを除く）で作り直して比べる。
+  if (command.type === 'chooseOption' && command.seen !== undefined) {
+    const { seen, shown: _shown, ...asked } = command;
+    const form = expand({ plan, state, events }, at, asked);
+    const added = 'reason' in form ? [] : asEvents(events, form.bodies, context.memberId, now);
+    const again =
+      'reason' in form
+        ? undefined
+        : consequencesOf(
+            household,
+            events,
+            new Set(violationsOf(household, events, plan)),
+            { before: plan, added, after: planFromState(foldEvents([...events, ...added]), now) },
+            {
+              arrangementKey: command.arrangementKey,
+              optionKey: command.optionKey,
+              ...(command.assigneeId === undefined ? {} : { assigneeId: command.assigneeId }),
+            },
+          );
+    if (again?.seen !== seen) {
+      return { status: 'conflict', reason: 'consequencesChanged', throughSeq: throughSeq() };
+    }
+  }
   if (decided.bodies.length > 0) log.append(decided.bodies, context.memberId, now);
   // 何も起きなかった操作も残す（同じ操作の送り直しで、後の別の人の変更を戻さないため。§7.3 の 7）。
   log.recordOperation({
@@ -109,6 +134,68 @@ function handle(
     throughSeq: throughSeq(),
   });
   return { status: decided.bodies.length > 0 ? 'ok' : 'noop', throughSeq: throughSeq() };
+}
+
+/**
+ * 命令を書き込まずに展開し、展開した事象を足した後の計画を返す（選ぶ前に、選んだら何が起きるかを見せる。
+ * 書く時と同じ確かめと同じ計算）。足すはずの事象（added）も返す（検証器は事象から選択を読むので、後の計画を
+ * 確かめる時は、これを足した事象の列で確かめる）。操作 ID は引かない（何も残さない）。
+ */
+export function previewCommand(
+  events: readonly DomainEvent[],
+  context: Pick<CommandContext, 'memberId' | 'now'>,
+  command: Command,
+  /** 同じ事象の列から作った状態と今の計画（いくつも見る時に、作り直さない）。 */
+  base?: { state: EngineState; plan: PlanResult },
+):
+  | { status: 'ok'; before: PlanResult; after: PlanResult; added: DomainEvent[] }
+  | { status: 'conflict' | 'forbidden' | 'invalid'; reason: string } {
+  const state = base?.state ?? foldEvents(events);
+  const household = state.household;
+  const member = household?.members.find((m) => m.id === context.memberId);
+  if (!household || !member || member.kind !== 'adult' || !member.active) {
+    return { status: 'forbidden', reason: 'notAnActiveAdult' };
+  }
+  const now =
+    state.clock === undefined ? context.now : formatDateTime(state.clock, household.timeZone);
+  const before = base?.plan ?? planFromState(state, now);
+  const decided = expand(
+    { plan: before, state, events },
+    { memberId: context.memberId, operationId: 'preview', now, demo: false },
+    command,
+  );
+  if ('reason' in decided) return decided;
+  const added = asEvents(events, decided.bodies, context.memberId, now);
+  return {
+    status: 'ok',
+    before,
+    after: planFromState(foldEvents([...events, ...added]), now),
+    added,
+  };
+}
+
+/** 書き込まない事象（「選んだら」の計算だけに使う。通し番号は今の後に続ける）。 */
+function asEvents(
+  events: readonly DomainEvent[],
+  bodies: readonly EventBody[],
+  actorId: string,
+  now: DateTime,
+): DomainEvent[] {
+  let seq = events.at(-1)?.seq ?? 0;
+  const householdId = events[0]?.householdId ?? '';
+  return bodies.map((body) => {
+    seq += 1;
+    return DomainEvent.parse({
+      id: `preview-${seq}`,
+      householdId,
+      seq,
+      version: 1,
+      occurredAt: now,
+      recordedAt: now,
+      actorId,
+      ...body,
+    });
+  });
 }
 
 type Expanded =

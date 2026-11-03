@@ -95,7 +95,11 @@ export interface EngineState {
    * 作業ごとの、引き受けの変遷（担当の提案・本人の操作・送った）。「送った」の押し間違いを直したら、
    * その送ったを除いてたどり直す（後の担当替え・済んだ・別の依頼は、そのまま残る）。
    */
-  commitmentLog: Map<string, { state: CommitmentState; seq: number; requestId?: string }[]>;
+  /** 作業ごとの引き受けの変遷（at は事象の時。済んだ手順の後の待ち時間を、記録した時から数えるのに使う）。 */
+  commitmentLog: Map<
+    string,
+    { state: CommitmentState; seq: number; at: number; requestId?: string }[]
+  >;
   requests: Map<string, RequestRecord>;
   /** これまでに使った依頼の ID（押し間違いを直して消した物も含む。同じ ID は二度使わない）。 */
   sentRequestIds: Set<string>;
@@ -285,7 +289,7 @@ function apply(state: EngineState, event: DomainEvent): void {
     case 'assignmentProposed':
       // 担当を決め直したら、前の引き受けの控えは使わない（前の担当の同意を、次の担当に引き継がない）。
       state.assignees.set(event.taskKey, event.assigneeId);
-      setCommitment(state, event.taskKey, 'proposed', event.seq);
+      setCommitment(state, event.taskKey, 'proposed', event);
       state.shown.delete(event.taskKey);
       return;
     case 'itemConfirmed':
@@ -385,7 +389,7 @@ function apply(state: EngineState, event: DomainEvent): void {
         done: 'done',
         withdraw: 'withdrawn',
       };
-      setCommitment(state, event.taskKey, next[event.action], event.seq);
+      setCommitment(state, event.taskKey, next[event.action], event);
       return;
     }
     case 'externalRequestSent': {
@@ -402,7 +406,7 @@ function apply(state: EngineState, event: DomainEvent): void {
         state: 'awaitingReply',
         ...(event.snapshot ? { snapshot: event.snapshot } : {}),
       });
-      setCommitment(state, event.taskKey, 'done', event.seq, event.requestId);
+      setCommitment(state, event.taskKey, 'done', event, event.requestId);
       return;
     }
     case 'externalReplyRecorded': {
@@ -437,11 +441,15 @@ function setCommitment(
   state: EngineState,
   taskKey: string,
   value: CommitmentState,
-  seq: number,
+  event: Pick<DomainEvent, 'seq' | 'occurredAt'>,
   requestId?: string,
 ): void {
   const changes = state.commitmentLog.get(taskKey) ?? [];
-  changes.push(requestId === undefined ? { state: value, seq } : { state: value, seq, requestId });
+  const { seq } = event;
+  const at = toEpochMinutes(event.occurredAt);
+  changes.push(
+    requestId === undefined ? { state: value, seq, at } : { state: value, seq, at, requestId },
+  );
   state.commitmentLog.set(taskKey, changes);
   state.commitments.set(taskKey, value);
 }

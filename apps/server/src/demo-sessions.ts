@@ -2,6 +2,7 @@
 // 一人の操作が、別の人の見るデモを変えないようにする。古い物から捨てる。
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  type ChoicePreview,
   type Command,
   type DateTime,
   type DomainEvent,
@@ -23,6 +24,7 @@ import {
 import { currentItems, foldEvents } from '@maniau/core/engine';
 import { type CommandGuard, type CommandResult, runCommand } from './commands';
 import { DEMO_STAGES, type DemoStageId, demoEvents } from './demo';
+import { previewChoices } from './preview';
 import {
   buildExtractInput,
   type ExtractRequest,
@@ -519,6 +521,18 @@ export function demoSessions(
       const session = touch(id);
       if (!session) return undefined;
       return store.withHousehold(id, (log) => viewFor(log.events(), memberId, session.now));
+    },
+    /** 決める画面の「選んだら」（何も書かない）。家庭が無ければ null、手配が無ければ undefined。 */
+    async preview(
+      id: string,
+      memberId: string,
+      arrangementKey: string,
+    ): Promise<ChoicePreview[] | undefined | null> {
+      const session = touch(id);
+      if (!session) return null;
+      return store.withHousehold(id, (log) =>
+        previewChoices(log.events(), { memberId, now: session.now }, arrangementKey),
+      );
     },
     async command(
       id: string,

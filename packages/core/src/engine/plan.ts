@@ -1,6 +1,7 @@
 // 事象の列と今の時刻から、計画の結果を作る（docs/design/01-model.md §1 の 3〜9）。
 // v0：要件 → 手配 → 案と決め時（逆算の目安）→ 問い → 買い物の置き場所 → 取り消しの連絡。
-// 計画全体を解いての決め時の確かめ（§5 の2）と、最小の組み直し（§8）は、まだ無い。
+// 子の居場所の手配で家族が進める案どうしは、同じ人の時間が重ならないように一緒に置く（joint.ts。少数の手配の
+// 並べ方を試す）。買い物・提出物を含めた計画全体の求解（§5 の2）と、最小の組み直し（§8）は、まだ無い。
 import { conditionShape, evaluateCondition, NO_CONDITION } from '../schema/condition';
 import {
   type DomainEvent,
@@ -38,6 +39,7 @@ import {
 import { isActiveTask } from '../view/today';
 import { noAdultAtHome } from './availability';
 import { type Busy, optionDeadline, placeStep } from './deadline';
+import { bestOrder } from './joint';
 import { purchaseOpportunities } from './purchase';
 import {
   currentItems,
@@ -171,11 +173,22 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
   const questions: Question[] = [];
   const submissions: { item: Item; rootId: string; live: boolean; conditional: boolean }[] = [];
 
-  for (const { item, rootId, rootSourceId, live, trusted, conditional } of items) {
+  // 子の居場所の手配は、家族が進める案どうしを一緒に置いてから（joint.ts）、お知らせの順に並べる。
+  // 本命が決まって、もう進めない予備（「きょう」に出ない。isActiveTask）は、一緒に置く鎖から外して置き直す
+  // （本命が決まったかは依頼の返事で決まり、置き方では変わらないので、置き直しは一度で足りる）。
+  const careEntries = items.filter((l) => l.trusted && noSchool(l.item));
+  let care = placeCare(ctx, careEntries);
+  const idle = idleBackups(ctx, care, items);
+  if (idle.size > 0) care = placeCare(ctx, careEntries, idle);
+  for (const entry of items) {
+    const { item, rootId, rootSourceId, live, trusted, conditional } = entry;
     // 推定・食い違いは、家族が確かめるまで要件を作らない。画面は「確かめてください」として出す。
     if (!trusted) continue;
-    if (item.kind === 'dayChange' && item.interpretation.dayType === 'noSchool') {
-      childCare(ctx, item, rootId, live, conditional, requirements, arrangements, tasks);
+    const placed = care.get(entry);
+    if (placed) {
+      requirements.push(...placed.requirements);
+      arrangements.push(...placed.arrangements);
+      tasks.push(...placed.tasks);
     }
     if (item.kind === 'belongings') {
       const by = belongingsDeadline(ctx, item, rootSourceId, items);
@@ -220,60 +233,248 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
   };
 }
 
-function childCare(
+const noSchool = (item: Item) =>
+  item.kind === 'dayChange' && item.interpretation.dayType === 'noSchool';
+
+interface CarePlaced {
+  requirements: Requirement[];
+  arrangements: Arrangement[];
+  tasks: Task[];
+}
+
+/** 子の居場所の手配の一つ（お知らせの事項と子ごと）。 */
+interface CareSlot {
+  entry: LiveItem;
+  childId: string;
+  date: LocalDate;
+  requirementKey: string;
+  arrangementKey: string;
+  /** 大人が家にいない一番長い間。無ければ手配は要らない。 */
+  gap?: { start: EpochMinutes; end: EpochMinutes };
+}
+
+/** 家族が進める案（本命・予備）の手順の鎖。並べ方を試す単位。 */
+interface CareChain {
+  slot: CareSlot;
+  template: CareOptionTemplate;
+}
+
+interface PlacedChain {
+  option: OptionPlan;
+  tasks: Task[];
+  conflicted: boolean;
+}
+
+/**
+ * 子の居場所の手配を、家族が進める案どうしの作業が同じ人の同じ時間に重ならないように置く（joint.ts）。
+ * 進める案の鎖（本命・予備。手配をまたぐ）を一つずつ置き、前に置いた鎖の作業の時間を、後の鎖で使わない。
+ * 鎖の並べ方を試し、物差し（chainScore）が一番良い置き方を選ぶ（同じ手配の本命が、予備にしか置けない
+ * 時間を先に取ることもあるので、手配の中の順も試す）。数が多ければ、お知らせの順・本命が先で一度だけ置く。
+ * 置くのは残りの手順だけ（済ませた手順は時間を取らない。careOption）。本命が決まってもう進めない予備（idle）は
+ * 鎖に入れない。まだ選んでいない案と idle の予備は、鎖の作業を避けて置く（選べば、置き直す）。
+ */
+function placeCare(
   ctx: Context,
-  item: Item,
-  rootId: string,
-  live: boolean,
-  conditional: boolean,
-  requirements: Requirement[],
-  arrangements: Arrangement[],
-  tasks: Task[],
-): void {
-  const date = item.interpretation.date;
-  if (!date) return;
-  for (const child of ctx.household.members.filter((m) => m.kind === 'child' && m.active)) {
-    const requirementKey = keys.childCareRequirement(rootId, child.id);
-    const basis = { itemIds: [item.id], requirementKey };
-    requirements.push({
-      key: requirementKey,
-      kind: 'childCare',
-      what: item.interpretation.what ?? item.written,
-      date,
-      nature: 'required',
-      basis,
-      live,
-      ...(conditional ? { conditional } : {}),
-    });
+  entries: readonly LiveItem[],
+  idle: ReadonlySet<string> = new Set(),
+): Map<LiveItem, CarePlaced> {
+  const children = ctx.household.members.filter((m) => m.kind === 'child' && m.active);
+  const slots: CareSlot[] = entries.flatMap((entry) => {
+    const date = entry.item.interpretation.date;
+    if (!date) return [];
     const gap = noAdultAtHome(ctx.household, date).sort(
       (a, b) => b.end - b.start - (a.end - a.start),
     )[0];
-    if (!gap) continue;
-    const arrangementKey = keys.childCareArrangement(rootId, child.id);
-    const options = ctx.household.careOptions.map((template) =>
-      careOption(ctx, template, arrangementKey, requirementKey, item, date, live, tasks),
-    );
-    arrangements.push(
+    return children.map((child) => ({
+      entry,
+      childId: child.id,
+      date,
+      requirementKey: keys.childCareRequirement(entry.rootId, child.id),
+      arrangementKey: keys.childCareArrangement(entry.rootId, child.id),
+      ...(gap ? { gap } : {}),
+    }));
+  });
+  const templates = ctx.household.careOptions;
+  const chains: CareChain[] = slots.flatMap((slot) => {
+    if (!slot.gap) return [];
+    const primary = ctx.state.primary.get(slot.arrangementKey);
+    const backups = ctx.state.backups.get(slot.arrangementKey) ?? new Set<string>();
+    const keyOf = (t: CareOptionTemplate) => keys.option(slot.arrangementKey, t.id);
+    return [
+      ...templates.filter((t) => keyOf(t) === primary),
+      ...templates.filter(
+        (t) => keyOf(t) !== primary && backups.has(keyOf(t)) && !idle.has(keyOf(t)),
+      ),
+    ].map((template) => ({ slot, template }));
+  });
+  const placed = bestOrder(
+    chains,
+    (order) => {
+      const busy = new Map<string, Busy[]>();
+      const result = new Map<string, PlacedChain>();
+      for (const { slot, template } of order) {
+        const own: Task[] = [];
+        const { option, conflicted } = careOption(
+          ctx,
+          template,
+          slot.arrangementKey,
+          slot.requirementKey,
+          slot.entry.item,
+          slot.date,
+          slot.entry.live,
+          own,
+          busy,
+        );
+        addBusy(busy, own);
+        result.set(option.key, { option, tasks: own, conflicted });
+      }
+      return result;
+    },
+    (result) => chainScore([...result.values()]),
+    // 重なりも、引き受けた時刻からの動きも無ければ、本命が先の決まった順のままにする。
+    (result) =>
+      [...result.values()].every((c) => !c.conflicted && c.tasks.every((t) => !t.reconfirm)),
+  ).result;
+
+  const byItem = new Map<LiveItem, CarePlaced>();
+  for (const slot of slots) {
+    const { entry } = slot;
+    const out = byItem.get(entry) ?? { requirements: [], arrangements: [], tasks: [] };
+    byItem.set(entry, out);
+    out.requirements.push({
+      key: slot.requirementKey,
+      kind: 'childCare',
+      what: entry.item.interpretation.what ?? entry.item.written,
+      date: slot.date,
+      nature: 'required',
+      basis: { itemIds: [entry.item.id], requirementKey: slot.requirementKey },
+      live: entry.live,
+      ...(entry.conditional ? { conditional: entry.conditional } : {}),
+    });
+    if (!slot.gap) continue;
+    // まだ選んでいない案は、進める案と済ませた手順の作業を避ける（同じ手配の物も。本命と並べて予備にする
+    // 時に重ならず、本命から替える時は少し早めの目安になる）。
+    const others = new Map<string, Busy[]>();
+    for (const chain of placed.values()) addBusy(others, chain.tasks);
+    const built = templates.map((template) => {
+      const committed = placed.get(keys.option(slot.arrangementKey, template.id));
+      if (committed) return committed;
+      const own: Task[] = [];
+      const { option } = careOption(
+        ctx,
+        template,
+        slot.arrangementKey,
+        slot.requirementKey,
+        entry.item,
+        slot.date,
+        entry.live,
+        own,
+        others,
+      );
+      return { option, tasks: own };
+    });
+    const tasks = built.flatMap((b) => b.tasks);
+    out.tasks.push(...tasks);
+    out.arrangements.push(
       withStatus(
         ctx,
         {
-          key: arrangementKey,
-          requirementKey,
+          key: slot.arrangementKey,
+          requirementKey: slot.requirementKey,
           kind: 'childCare',
-          childId: child.id,
-          start: ctx.fmt(gap.start),
-          end: ctx.fmt(gap.end),
+          childId: slot.childId,
+          start: ctx.fmt(slot.gap.start),
+          end: ctx.fmt(slot.gap.end),
           status: 'decidable',
-          options,
-          backupOptionKeys: [...(ctx.state.backups.get(arrangementKey) ?? [])],
-          reasons: [],
-          live,
-          ...(conditional ? { conditional } : {}),
-          ...chosen(ctx, arrangementKey),
+          options: built.map((b) => b.option),
+          backupOptionKeys: [...(ctx.state.backups.get(slot.arrangementKey) ?? [])],
+          reasons: conflictReasons(placed, slot.arrangementKey),
+          live: entry.live,
+          ...(entry.conditional ? { conditional: entry.conditional } : {}),
+          ...chosen(ctx, slot.arrangementKey),
         },
         tasks,
       ),
     );
+  }
+  return byItem;
+}
+
+/**
+ * 本命が決まって、もう進めない予備（「きょう」に出ない。isActiveTask と同じ見方）。依頼と手配の状態は、
+ * 一度置いた結果から作る（本命が決まったかは依頼の返事で決まり、置き方では変わらない）。
+ */
+function idleBackups(
+  ctx: Context,
+  care: ReadonlyMap<LiveItem, CarePlaced>,
+  items: readonly LiveItem[],
+): Set<string> {
+  const placed = [...care.values()];
+  const arrangements = placed.flatMap((p) => p.arrangements);
+  const tasks = placed.flatMap((p) => p.tasks);
+  const view = { arrangements, requests: externalRequests(ctx, tasks, arrangements, items) };
+  const idle = new Set<string>();
+  for (const arrangement of arrangements) {
+    for (const optionKey of arrangement.backupOptionKeys) {
+      const own = tasks.filter((t) => t.basis.optionKey === optionKey && !t.extra);
+      if (own.length > 0 && own.every((t) => !isActiveTask(view, t))) idle.add(optionKey);
+    }
+  }
+  return idle;
+}
+
+/** 手配の中で、ほかの進める案と重ならない時刻を見つけられなかった案（時刻を置いていない）。 */
+function conflictReasons(
+  placed: ReadonlyMap<string, PlacedChain>,
+  arrangementKey: string,
+): Reason[] {
+  const refs = [...placed.values()]
+    .filter((c) => c.conflicted && c.option.arrangementKey === arrangementKey)
+    .map((c) => c.option.key);
+  return refs.length > 0 ? [{ code: 'timeConflict', refs }] : [];
+}
+
+/**
+ * 置き方の物差し（大きいほど良い。前から順に比べる）。一、引き受けた時の時刻から動いて、確かめ直しになる
+ * 作業が少ない。二、ほかの案の作業を避けて置けなかった鎖が少ない。三、進める案の決め時が遅い（早い物から
+ * 順に比べる。決め時が遅いほど、家族が選び直せる間が長い）。
+ */
+function chainScore(placed: readonly PlacedChain[]): number[] {
+  const reconfirm = placed.flatMap((p) => p.tasks).filter((t) => t.reconfirm).length;
+  const conflicts = placed.filter((p) => p.conflicted).length;
+  const deadlines = placed
+    .map((p) =>
+      p.option.decisionDeadline === undefined
+        ? Number.NEGATIVE_INFINITY
+        : toEpochMinutes(p.option.decisionDeadline),
+    )
+    .sort((x, y) => x - y);
+  return [-reconfirm, -conflicts, ...deadlines];
+}
+
+/** 作業が、その人の時間を使う区間（移動と寄り道の帰りを含む。busyOf と同じ）。 */
+function taskBusy(t: Task): Busy | undefined {
+  if (!t.start || !t.end) return undefined;
+  return {
+    start: toEpochMinutes(t.start) - t.travelBeforeMin,
+    end: Math.max(
+      toEpochMinutes(t.end) + t.travelAfterMin,
+      t.detour ? toEpochMinutes(t.detour.delayedArrival) : 0,
+    ),
+  };
+}
+
+/**
+ * 作業がその人の時間を使うか：生きていて、やめても済んでもいない物。済んだ手順は、もう時間を使わない（時刻を
+ * 置かない。careOption）。
+ */
+const usesTime = (t: Task) => t.live && t.commitment !== 'done' && !NOT_DOING.has(t.commitment);
+
+function addBusy(busy: Map<string, Busy[]>, tasks: readonly Task[]): void {
+  for (const t of tasks) {
+    if (!usesTime(t) || t.assigneeId === undefined) continue;
+    const used = taskBusy(t);
+    if (used) busy.set(t.assigneeId, [...(busy.get(t.assigneeId) ?? []), used]);
   }
 }
 
@@ -291,9 +492,63 @@ function careOption(
   needDate: LocalDate,
   live: boolean,
   tasks: Task[],
-): OptionPlan {
+  busy: ReadonlyMap<string, readonly Busy[]>,
+): { option: OptionPlan; conflicted: boolean } {
   const optionKey = keys.option(arrangementKey, template.id);
-  const result = optionDeadline(template, needDate, ctx.household, ctx.now);
+  // 依頼を送って済みになった手順は、送った依頼の日で見る。前の日の分を送った済みは、今の日に当てず、
+  // 引き受けた所に戻す（今の日の分を頼み直せるように）。控えに時間の無い古い事象は、時間からは決めない。
+  // 取り消しを伝えた依頼は、送ったことにしない（案がまた要るなら、頼み直す）。
+  const reopenOf = (key: string) => {
+    const sentWith = ctx.state.commitmentLog.get(key)?.at(-1)?.requestId;
+    const sent = sentWith === undefined ? undefined : ctx.state.requests.get(sentWith);
+    const sentDay = sent === undefined ? undefined : requestDay(sent, ctx.tz);
+    return (
+      sent !== undefined &&
+      (sent.state === 'cancelled' || (sentDay !== undefined && sentDay !== needDate))
+    );
+  };
+  // 済ませた手順（今の用件を済ませた物）は、もう時間を使わない。置くのは残りの手順だけ（済ませた時刻は記録に
+  // 無いので、計画の時刻を、済ませた時として残さない）。全部済んでいれば、何も置かない。
+  const finished = template.steps.map((step) => {
+    const key = keys.task(optionKey, step.id);
+    const content = { titleKey: step.titleKey, titleParams: { date: needDate } };
+    return !reopenOf(key) && commitmentOf(ctx, key, content) === 'done';
+  });
+  const rest = template.steps.flatMap((_, i) => (finished[i] ? [] : [i]));
+  // 済ませた手順の後に待つ時間があれば、残りの手順は、済んだと記録した時から待った後に置く（記録した時は、
+  // 実際に済ませた時より前にはならないので、早すぎる時刻を置かない側）。
+  const ready = template.steps.reduce<EpochMinutes | undefined>((from, step, i) => {
+    if (!finished[i] || step.waitAfterMin <= 0 || !rest.some((j) => j > i)) return from;
+    const doneAt = ctx.state.commitmentLog.get(keys.task(optionKey, step.id))?.at(-1)?.at;
+    if (doneAt === undefined) return from;
+    return Math.max(from ?? doneAt + step.waitAfterMin, doneAt + step.waitAfterMin);
+  }, undefined);
+  const remaining = {
+    ...template,
+    steps: rest.map((i) => template.steps[i] as CareOptionTemplate['steps'][number]),
+  };
+  // ほかの案の作業（busy）を避けて置く。避けて置けなければ、決め時はこの案だけを見た逆算の目安にし
+  // （置けないとは言わない）、作業には時刻を置かない（ほかの作業と重ねて置かない。手配に timeConflict）。
+  let conflicted = false;
+  let result =
+    rest.length > 0
+      ? optionDeadline(remaining, needDate, ctx.household, ctx.now, undefined, busy, ready)
+      : optionDeadline(template, needDate, ctx.household, ctx.now);
+  if (rest.length > 0 && result.decisionDeadline === undefined && busy.size > 0) {
+    const alone = optionDeadline(
+      remaining,
+      needDate,
+      ctx.household,
+      ctx.now,
+      undefined,
+      new Map(),
+      ready,
+    );
+    if (alone.decisionDeadline !== undefined) {
+      result = alone;
+      conflicted = true;
+    }
+  }
   // 決め時は、大人の誰かが間に合うかで決める。作業の置き場所は、担当が決まっていれば、手順ごとに
   // その人のふだんの時間に、先後を守って置き直す（担当の無い手順は、最初の担当の人がする）。
   // 置けた人が担当と違う手順は、時刻の無い提案にする（別の人の時間を、担当の時間に見せない）。
@@ -304,24 +559,43 @@ function careOption(
   const handoff = doers.some(
     (who, i) => i > 0 && who !== undefined && doers[i - 1] !== undefined && who !== doers[i - 1],
   );
-  const placedSteps =
-    lead === undefined
+  const byAssignee = {
+    ...template,
+    steps: rest.map((i) => {
+      const s = template.steps[i] as CareOptionTemplate['steps'][number];
+      const who = assigned[i];
+      return who !== undefined && s.assigneeId === undefined ? { ...s, assigneeId: who } : s;
+    }),
+  };
+  // 置いた手順（残りの手順の順）。済んだ手順には、何も置かない。作業の時刻は、これから（今より後。待つ時間が
+  // あればその後）の空きにだけ置く：過ぎた時刻を、今からする作業として出さない（決め時は上の逆算のまま、過ぎて
+  // いれば過ぎたと示す）。引き受けた時刻が過ぎても済んでいなければ、置き直して確かめ直してもらう（reconfirm）。
+  // これからの空きが無ければ、時刻を置かない。
+  const from = Math.max(ctx.now, ready ?? ctx.now);
+  const chain = lead === undefined ? remaining : byAssignee;
+  let placedRest: ReturnType<typeof optionDeadline>['steps'] = [];
+  if (!conflicted && rest.length > 0) {
+    const ahead = lead === undefined && (result.steps[0]?.start ?? from - 1) >= from;
+    placedRest = ahead
       ? result.steps
-      : optionDeadline(
-          {
-            ...template,
-            steps: template.steps.map((s, i) => {
-              const who = assigned[i];
-              return who !== undefined && s.assigneeId === undefined
-                ? { ...s, assigneeId: who }
-                : s;
-            }),
-          },
-          needDate,
-          ctx.household,
-          ctx.now,
-          lead,
-        ).steps;
+      : optionDeadline(chain, needDate, ctx.household, ctx.now, lead, busy, from).steps;
+    if (placedRest.length === 0 && busy.size > 0) {
+      const alone = optionDeadline(
+        chain,
+        needDate,
+        ctx.household,
+        ctx.now,
+        lead,
+        new Map(),
+        from,
+      ).steps;
+      if (alone.length > 0) conflicted = true;
+    }
+  }
+  const placedSteps = template.steps.map((_, i) => {
+    const at = rest.indexOf(i);
+    return at === -1 ? undefined : placedRest[at];
+  });
   const basis = { itemIds: [item.id], requirementKey, arrangementKey, optionKey };
   const taskKeys: string[] = [];
   template.steps.forEach((step, index) => {
@@ -332,15 +606,7 @@ function careOption(
     const key = keys.task(optionKey, step.id);
     taskKeys.push(key);
     const previous = template.steps[index - 1];
-    // 依頼を送って済みになった手順は、送った依頼の日で見る。前の日の分を送った済みは、今の日に当てず、
-    // 引き受けた所に戻す（今の日の分を頼み直せるように）。控えに時間の無い古い事象は、時間からは決めない。
-    const sentWith = ctx.state.commitmentLog.get(key)?.at(-1)?.requestId;
-    const sent = sentWith === undefined ? undefined : ctx.state.requests.get(sentWith);
-    const sentDay = sent === undefined ? undefined : requestDay(sent, ctx.tz);
-    // 取り消しを伝えた依頼は、送ったことにしない（案がまた要るなら、頼み直す）。
-    const reopen =
-      sent !== undefined &&
-      (sent.state === 'cancelled' || (sentDay !== undefined && sentDay !== needDate));
+    const reopen = reopenOf(key);
     tasks.push(
       task(
         ctx,
@@ -399,15 +665,18 @@ function careOption(
   }
   const decisionDeadline = result.decisionDeadline;
   return {
-    key: optionKey,
-    arrangementKey,
-    templateId: template.id,
-    titleKey: template.titleKey,
-    ...(decisionDeadline === undefined ? {} : { decisionDeadline: ctx.fmt(decisionDeadline) }),
-    deadlineCertainty: decisionDeadline === undefined ? 'undetermined' : 'estimate',
-    expired: result.expired,
-    cost: template.cost,
-    taskKeys,
+    option: {
+      key: optionKey,
+      arrangementKey,
+      templateId: template.id,
+      titleKey: template.titleKey,
+      ...(decisionDeadline === undefined ? {} : { decisionDeadline: ctx.fmt(decisionDeadline) }),
+      deadlineCertainty: decisionDeadline === undefined ? 'undetermined' : 'estimate',
+      expired: result.expired,
+      cost: template.cost,
+      taskKeys,
+    },
+    conflicted,
   };
 }
 
@@ -551,7 +820,8 @@ function withStatus(ctx: Context, arrangement: Arrangement, tasks: Task[]): Arra
   const chosenKeys = [arrangement.chosenOptionKey, ...arrangement.backupOptionKeys].filter(
     (k): k is string => k !== undefined && byKey.has(k),
   );
-  const reasons: Reason[] = [];
+  // 置き方で分かった理由（重ならずに置けなかった案）は残す。
+  const reasons: Reason[] = [...arrangement.reasons];
   const failed = new Set<string>();
   for (const key of chosenKeys) {
     const option = byKey.get(key);
@@ -584,16 +854,21 @@ function withStatus(ctx: Context, arrangement: Arrangement, tasks: Task[]): Arra
     reasons.push({ code: 'noOptionLeft', refs: arrangement.options.map((o) => o.key) });
     return { ...arrangement, status: 'infeasible', reasons };
   }
-  const recommended = [...open].sort(
+  const [recommended, next] = [...open].sort(
     (a, b) =>
       costScore(a.cost) - costScore(b.cost) ||
       (b.decisionDeadline ?? '').localeCompare(a.decisionDeadline ?? ''),
-  )[0];
+  );
+  const recommendedReason = !next
+    ? 'onlyOption'
+    : recommended && costScore(recommended.cost) < costScore(next.cost)
+      ? 'lowerCost'
+      : 'moreTime';
   return {
     ...arrangement,
     status: 'decidable',
     reasons,
-    ...(recommended ? { recommendedOptionKey: recommended.key } : {}),
+    ...(recommended ? { recommendedOptionKey: recommended.key, recommendedReason } : {}),
   };
 }
 

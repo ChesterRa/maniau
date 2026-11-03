@@ -167,6 +167,12 @@ export const Reason = z.object({
     'noOptionLeft',
     /** 探索の手数の上限に達した。 */
     'searchLimit',
+    /**
+     * 家族が進める案の作業に、ほかに進める案の作業と同じ人の時間で重ならない時刻を、今の探し方では見つけられ
+     * なかった（refs：案の key。無いとは言わない。鎖ごとの並べ方だけを試し、手順を互い違いに置く置き方は
+     * 探さない）。その案の作業には時刻を置かない（重ねて置かない）。どうするかは家族が決める。
+     */
+    'timeConflict',
     /** 祝日のデータの範囲の外の日がある（refs：日付）。 */
     'holidayDataMissing',
     /** 家庭の情報が足りない（refs：足りない物の名前）。 */
@@ -190,6 +196,11 @@ export const Arrangement = z.object({
   end: DateTime,
   status: PlanStatus,
   recommendedOptionKey: z.string().optional(),
+  /**
+   * 勧める理由（決まりで選ぶ）。onlyOption：選べる案が一つ。lowerCost：代償（休みの時間、人に頼む数、
+   * 費用、増える作業）が一番小さい。moreTime：代償の同じ案の中で、決め時まで一番余裕がある。
+   */
+  recommendedReason: z.enum(['onlyOption', 'lowerCost', 'moreTime']).optional(),
   /** 家族が選んだ本命の案。選ぶのは家族である。 */
   chosenOptionKey: z.string().optional(),
   /** 本命の返事を待つ間に、家族が押さえた予備の案（例：祖母の返事待ちの間の学童の届け）。 */

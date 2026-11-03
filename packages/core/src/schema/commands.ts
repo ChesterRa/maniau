@@ -47,6 +47,12 @@ export const Command = z.discriminatedUnion('type', [
     role: z.enum(['primary', 'backup']),
     assigneeId: Id.optional(),
     shown: z.array(z.object({ taskKey: z.string().min(1), snapshot: ProposalSnapshot })).optional(),
+    /**
+     * 決める画面の「選んだら」で見せた物の要約（サーバーが作って渡した物）。付ければ、同じ命令の今の
+     * 「選んだら」と違う時に断って見せ直す（見た後に、もう一人が頼んだ・事項の日が直された等で、日・作業・
+     * 担当・取り消し・動く作業・重なりが変わっていたら）。
+     */
+    seen: z.string().min(1).max(128).optional(),
   }),
   z.object({
     type: z.literal('dropOption'),

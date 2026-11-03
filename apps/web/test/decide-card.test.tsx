@@ -1,0 +1,160 @@
+// 決める画面の札：決まりで選んだお勧めと理由、選べる手が消えるまでの時計、選んだら何が起きるか（サーバーが
+// 同じ計算で出した「選んだら」を文にする）、選んだ後も替えられること。
+import type { ChoicePreview } from '@maniau/core';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it } from 'vitest';
+import { ChoiceClock } from '../src/choice-clock';
+import { DecideScreen, previewLines } from '../src/screens';
+import { ctxFor } from './ctx';
+
+const care = 'arr:childCare:n1:i6:c';
+const text = (html: string) => html.replace(/<[^>]+>/g, ' ');
+
+describe('決める画面の札', () => {
+  it('まだ選んでいない時、お勧めと理由、時計、替えられることを出す', () => {
+    const ctx = ctxFor('arrived', 'b', 'ja');
+    const arrangement = ctx.plan.arrangements.find((a) => a.key === care);
+    expect(arrangement?.recommendedOptionKey).toBeDefined();
+    expect(arrangement?.recommendedReason).toBeDefined();
+    const shown = text(renderToStaticMarkup(<DecideScreen ctx={ctx} arrangementKey={care} />));
+    expect(shown).toContain('おすすめ');
+    expect(shown).toContain(ctx.t(`decide.because.${arrangement?.recommendedReason}`));
+    expect(shown).toContain('選べる手が消えるまで');
+    expect(shown).toContain('選んだ後も、替えられます');
+  });
+
+  it('英語でも同じ物を出す', () => {
+    const ctx = ctxFor('arrived', 'b', 'en');
+    const shown = text(renderToStaticMarkup(<DecideScreen ctx={ctx} arrangementKey={care} />));
+    expect(shown).toContain('Suggested');
+    expect(shown).toContain('Until each choice disappears');
+    expect(shown).toContain('You can change this later');
+  });
+
+  it('「選んだら」を、最初の一手・ほかの作業の数・取り消し・動く作業の文にする', () => {
+    const ctx = ctxFor('chase', 'b', 'ja');
+    const write = ctx.plan.tasks.find(
+      (t) => t.key === 'task:opt:arr:childCare:n1:i6:c:opt-gakudo:write',
+    );
+    const request = ctx.plan.requests.find((r) => r.requestId === 'r-grandma');
+    if (!write?.start || !request) throw new Error('作業か依頼が無い');
+    const preview: ChoicePreview = {
+      arrangementKey: care,
+      optionKey: 'opt:arr:childCare:n1:i6:c:opt-gakudo',
+      current: false,
+      steps: [
+        {
+          taskKey: write.key,
+          titleKey: write.titleKey,
+          titleParams: write.titleParams,
+          assigneeId: 'b',
+          start: write.start,
+          external: false,
+        },
+        {
+          taskKey: 'task:opt:arr:childCare:n1:i6:c:opt-gakudo:submit',
+          titleKey: 'task.gakudo.submit',
+          titleParams: {},
+          external: false,
+        },
+      ],
+      cancels: [request],
+      conflicts: [],
+      moved: [{ taskKey: 'x', before: {}, after: {} }],
+    };
+    const lines = previewLines(ctx, preview);
+    expect(lines[0]).toContain('あなたが');
+    expect(lines[0]).toContain('までに始める');
+    expect(lines).toContain('ほかに作業が1つ');
+    expect(lines.some((l) => l.includes('取り消しを伝える作業'))).toBe(true);
+    expect(lines.some((l) => l.includes('重ならないように動きます'))).toBe(true);
+    // 今進めている案には出さない。
+    expect(previewLines(ctx, { ...preview, current: true })).toEqual([]);
+  });
+
+  it('重ならずに置けない時・自分の時間にもう置けない時・ほかの人なら後まで間に合う時を、そう書く', () => {
+    const ctx = ctxFor('arrived', 'b', 'ja');
+    const base: ChoicePreview = {
+      arrangementKey: care,
+      optionKey: 'opt:arr:childCare:n1:i6:c:opt-gakudo',
+      current: false,
+      steps: [],
+      cancels: [],
+      conflicts: [],
+      moved: [],
+    };
+    // 重ならずに置けない：時刻を決めずに残すと先に書く。
+    const conflict = previewLines(ctx, { ...base, conflicts: [base.optionKey] });
+    expect(conflict[0]).toContain('「12/7（月）の学童に預ける」の作業に');
+    expect(conflict[0]).toContain('今の計算では見つけられません');
+    expect(conflict[0]).toContain('時刻を決めずに残します');
+    // 自分の時間にもう置けない：置ける大人に提案すると書く。
+    expect(previewLines(ctx, { ...base, assigneeId: 'a' })[0]).toContain(
+      '健太さんに作業を提案します',
+    );
+    // 自分でするなら早い時は、後まで間に合う人と時刻を添える。
+    const later = previewLines(ctx, {
+      ...base,
+      assigneeId: 'b',
+      later: { memberId: 'a', start: '2026-11-30T17:20+09:00' },
+    });
+    expect(later.some((l) => l.includes('健太さんなら') && l.includes('17:20'))).toBe(true);
+  });
+
+  it('お勧めは一つだけ（人に頼む手の返事の期限は、その手の札に事実として書く）', () => {
+    const ctx = ctxFor('arrived', 'b', 'ja');
+    const shown = text(renderToStaticMarkup(<DecideScreen ctx={ctx} arrangementKey={care} />));
+    expect(shown.match(/おすすめ/g)).toHaveLength(1);
+    expect(shown).not.toContain('迷ったら');
+    expect(shown).toMatch(/の夜までに返事をもらえれば/);
+  });
+
+  it('時計は、エンジンと同じ境目で数え、決め時の分からない手を「無い」と言わない', () => {
+    const ctx = ctxFor('arrived', 'a', 'ja');
+    const now = '2026-11-30T17:20+09:00';
+    const clock = (options: Parameters<typeof ChoiceClock>[0]['options']) =>
+      text(
+        renderToStaticMarkup(
+          <ChoiceClock
+            t={ctx.t}
+            lang="ja"
+            tz="Asia/Tokyo"
+            now={now}
+            until="2026-12-07T08:10+09:00"
+            options={options}
+          />,
+        ),
+      );
+    // 決め時のちょうどその時は、まだ選べる（過ぎたのは、決め時より後）。
+    const atDeadline = clock([{ key: 's', title: '学童', deadline: now, expired: false }]);
+    expect(atDeadline).toContain('いま選べる手は1つ');
+    expect(atDeadline).not.toContain('もうありません。');
+    // 決め時の分からない手だけ：分からないと書く（無いとは言わない）。
+    const unknown = clock([{ key: 's', title: '学童', expired: false }]);
+    expect(unknown).toContain('決め時の分からない手が1つあります');
+    expect(unknown).not.toContain('決め時の過ぎていない手は、もうありません');
+    // 全部過ぎていれば、無いと書く。
+    const gone = clock([
+      { key: 's', title: '学童', deadline: '2026-11-30T17:00+09:00', expired: true },
+    ]);
+    expect(gone).toContain('決め時の過ぎていない手は、もうありません');
+  });
+
+  it('「選んだら」を読める画面では、読み終えるまで手を選べない（読んでいると書く）', () => {
+    const ctx = { ...ctxFor('chase', 'b', 'ja'), preview: () => new Promise<never>(() => {}) };
+    const html = renderToStaticMarkup(<DecideScreen ctx={ctx} arrangementKey={care} />);
+    const buttons = html.match(/<button[^>]*>/g) ?? [];
+    const options = ctx.plan.arrangements.find((a) => a.key === care)?.options ?? [];
+    expect(buttons.filter((b) => b.includes('disabled')).length).toBeGreaterThanOrEqual(
+      options.length,
+    );
+    expect(text(html)).toContain('計算しています');
+  });
+
+  it('条件しだいの手配は、決める画面でもそう書く', () => {
+    const ctx = ctxFor('arrived', 'b', 'ja');
+    expect(ctx.plan.arrangements.find((a) => a.key === care)?.conditional).toBe(true);
+    const shown = text(renderToStaticMarkup(<DecideScreen ctx={ctx} arrangementKey={care} />));
+    expect(shown).toContain('まだ決まっていません');
+  });
+});

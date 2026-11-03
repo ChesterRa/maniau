@@ -4,6 +4,7 @@ import {
   type Arrangement,
   type ChangedRequirement,
   type ChangeSummary,
+  type ChoicePreview,
   type Command,
   type ExternalRequest,
   type Household,
@@ -21,7 +22,8 @@ import {
   toEpochMinutes,
 } from '@maniau/core';
 import type { TFunction } from 'i18next';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ChoiceClock } from './choice-clock';
 import {
   type ConfirmResult,
   type Heard,
@@ -104,6 +106,8 @@ export interface Ctx {
   /** 家族の一言を読む・その候補を記録する（同じく、使える時だけ）。 */
   hear?: (text: string, operationId: string) => Promise<HearResult>;
   confirm?: (proposalId: string, operationId: string) => Promise<ConfirmResult>;
+  /** 決める画面の「選んだら」を読む（何も書かない。読めなければ無し）。 */
+  preview?: (arrangementKey: string) => Promise<ChoicePreview[] | undefined>;
   go: (route: Route) => void;
 }
 
@@ -689,6 +693,25 @@ const doneCommand = (task: Task): Command => ({
   seen: { titleKey: task.titleKey, titleParams: task.titleParams },
 });
 
+/**
+ * した事実を記録する操作：人に頼む作業は頼む文の画面へ（送ったと記録するのは、その画面で）、所へ出す物
+ * （学童の申込書・会社への届け）は「送った」（見せた頼む時間を付ける）、ほかは「済んだ」（見せた用件を付ける）。
+ */
+function finishOf(ctx: Ctx, task: Task): { label: string; ask: boolean; run: () => void } {
+  const ask = asksPerson(ctx, task);
+  const external = task.external !== undefined;
+  return {
+    label: ctx.t(ask ? 'quiet.send' : 'quiet.done'),
+    ask,
+    run: () =>
+      ask
+        ? ctx.go({ name: 'ask', taskKey: task.key })
+        : external
+          ? void ctx.send(sentCommand(ctx, task))
+          : void ctx.send(doneCommand(task)),
+  };
+}
+
 function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
   // 引き受けには、この札で見せている提案の控えを付ける。今の提案と違えば、サーバーが断って見せ直す。
   const shown = proposalSnapshot(task);
@@ -700,7 +723,16 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
   // ようにする（時刻の無い物を、時刻のある提案として引き受けさせない）。
   const standalone =
     task.basis.optionKey === undefined && task.external === undefined && task.cancels === undefined;
-  const done = () => void ctx.send(doneCommand(task));
+  // 自分の作業で、置けていない・時刻が来た物は、引き受けを経ずに、した事実（済んだ・送った）を記録できる
+  // （先に済ませてから開くこともある。過ぎた時刻を引き受けさせない）。
+  const due =
+    !shown || (task.start !== undefined && toEpochMinutes(task.start) <= toEpochMinutes(ctx.now));
+  // 引き受けた後に変わった物（時刻が過ぎて置き直した、日が直された等）も、今の用件そのものをもう済ませて
+  // いれば記録できる。記録するのは今の札の用件で、変わる前の用件を済ませた事ではない。
+  const fact =
+    task.assigneeId === ctx.me.id && task.cancels === undefined && (due || task.reconfirm === true)
+      ? finishOf(ctx, task)
+      : undefined;
   // 置ける時間が無い時は、その場でもう一人に頼めるようにする（断ってから探し直させない）。本人しか
   // できない手順は頼めない。
   const other =
@@ -766,6 +798,16 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
         </Text>
       )}
       {task.reconfirm && <Text quiet>{ctx.t('card.proposal.changed')}</Text>}
+      {task.reconfirm && fact && (
+        <Text quiet>
+          {fact.ask
+            ? ctx.t('card.proposal.sentAlready', { label: fact.label })
+            : ctx.t('card.proposal.doneAlready', {
+                what: taskTitle(ctx, task),
+                label: fact.label,
+              })}
+        </Text>
+      )}
       {!shown && (
         <Text>
           {ctx.t(
@@ -778,8 +820,12 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
         </Text>
       )}
       <Row>
-        {shown && <Button onClick={accept}>{ctx.t('card.proposal.accept')}</Button>}
-        {!shown && standalone && <Button onClick={done}>{ctx.t('card.proposal.done')}</Button>}
+        {shown && !due && <Button onClick={accept}>{ctx.t('card.proposal.accept')}</Button>}
+        {fact && (
+          <Button kind={shown && !due ? 'secondary' : 'primary'} onClick={fact.run}>
+            {fact.label}
+          </Button>
+        )}
         {!shown && other && (
           <Button onClick={askOther}>{ctx.t('card.proposal.ask', { name: other.name })}</Button>
         )}
@@ -1063,15 +1109,8 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
   if (card.kind === 'todo') {
     const { task } = card;
     const condition = conditionOf(ctx, task.basis);
-    const external = task.external !== undefined;
-    const ask = asksPerson(ctx, task);
     // 所へ出す物（学童の申込書・会社への届け）は、出した時に「送った」と記録し、相手の返事を待つ。
-    const finish = () =>
-      ask
-        ? ctx.go({ name: 'ask', taskKey: task.key })
-        : external
-          ? void ctx.send(sentCommand(ctx, task))
-          : void ctx.send(doneCommand(task));
+    const finish = finishOf(ctx, task);
     return (
       <div className={`flex items-center gap-3 py-2.5 ${border}`}>
         <span className="flex min-w-0 flex-1 flex-col">
@@ -1085,10 +1124,10 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
         </span>
         <button
           type="button"
-          onClick={finish}
+          onClick={finish.run}
           className="min-h-11 rounded-xl border-[1.5px] border-btn-line bg-white px-3 text-[15px] font-bold"
         >
-          {ctx.t(ask ? 'quiet.send' : 'quiet.done')}
+          {finish.label}
         </button>
       </div>
     );
@@ -1098,7 +1137,54 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
 
 // ── 決める ──────────────────────────────
 
+/**
+ * 決める画面の「選んだら」（サーバーが書き込まずに同じ計算をした結果）を読む。計画が変わるたびと、reread で
+ * 読み直す。今の計画の分を読み終えるまで（loading）と、読めなかった時（failed）は、選ぶ操作を止める（見せて
+ * いない後始末のまま選ばせない）。読む手立ての無い画面（off）では、前のとおり選べる。
+ */
+export function useChoicePreviews(
+  preview: Ctx['preview'],
+  arrangementKey: string,
+  throughSeq: number,
+): {
+  reading: 'off' | 'loading' | 'failed' | 'ready';
+  previews?: ReadonlyMap<string, ChoicePreview>;
+  reread: () => void;
+} {
+  const [read, setRead] = useState<{
+    key: string;
+    previews?: ReadonlyMap<string, ChoicePreview>;
+  }>();
+  // 読み直しの合図（選ぶ前に中身が変わっていて断られた時と、読めずにもう一度読む時）。
+  const [again, setAgain] = useState(0);
+  const readKey = `${arrangementKey}|${throughSeq}|${again}`;
+  useEffect(() => {
+    if (!preview) return;
+    let cancelled = false;
+    void preview(arrangementKey).then((list) => {
+      if (cancelled) return;
+      setRead({
+        key: readKey,
+        ...(list ? { previews: new Map(list.map((p) => [p.optionKey, p])) } : {}),
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [preview, arrangementKey, readKey]);
+  const reread = useCallback(() => setAgain((n) => n + 1), []);
+  const fresh = read?.key === readKey;
+  const previews = fresh ? read?.previews : undefined;
+  const reading = !preview ? 'off' : !fresh ? 'loading' : previews ? 'ready' : 'failed';
+  return { reading, ...(previews ? { previews } : {}), reread };
+}
+
 export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey: string }) {
+  const { reading, previews, reread } = useChoicePreviews(
+    ctx.preview,
+    arrangementKey,
+    ctx.plan.throughSeq,
+  );
   const arrangement = arrangementOf(ctx, arrangementKey);
   if (!arrangement) return <Missing ctx={ctx} />;
   const requirement = ctx.plan.requirements.find((r) => r.key === arrangement.requirementKey);
@@ -1111,12 +1197,12 @@ export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey
       Number(a.expired) - Number(b.expired) ||
       (a.decisionDeadline ?? '9').localeCompare(b.decisionDeadline ?? '9'),
   );
-  const helperOption = options.find((o) => o.titleKey === 'option.askHelper' && !o.expired);
-  // 迷った時の勧め：まず人に聞く。返事の期限は、頼む文と同じ（断られた時に移る案の前の晩）。
-  const reply = helperOption && replyBy(ctx, arrangement, helperOption.key);
+  // 選んだ手の作業が、ほかに進める作業と重ならずに置けていない（時刻を置いていない）。
+  const conflicted = arrangement.reasons.find((r) => r.code === 'timeConflict')?.refs ?? [];
 
-  // 本命に選び、作業を担当に提案する。担当が決まっている案（例：健太さんが休む）はその人に、
-  // ほかは自分に。この画面は作業ごとの時刻・場所を見せていないので、ここでは引き受けない
+  // 本命に選び、作業を担当に提案する。担当は「選んだら」と同じ人（決まった担当があればその人、無ければ
+  // 自分、自分の時間にもう置けなければ置ける大人。サーバーが決めて見せた人）。「選んだら」が無ければ、
+  // 決まった担当か自分。この画面は作業ごとの時刻・場所を見せていないので、ここでは引き受けない
   // （提案の札で中身を見て引き受ける。人に頼む作業は、下書きを送れば済みになる）。
   const choose = async (option: OptionPlan) => {
     const tasks = option.taskKeys
@@ -1124,14 +1210,19 @@ export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey
       .filter((t): t is Task => t !== undefined && !t.extra);
     const first = tasks[0];
     const fixed = templateOf(ctx.household, option)?.steps[0]?.assigneeId;
-    const assignee = fixed ?? ctx.me.id;
+    // 「選んだら」を見せていれば、見せた物の要約を添える（変わっていれば、サーバーが断る。読み直して見せる）。
+    const seen = previews?.get(option.key);
+    if (reading !== 'off' && !seen?.seen) return;
+    const assignee = seen?.assigneeId ?? fixed ?? ctx.me.id;
     const result = await ctx.send({
       type: 'chooseOption',
       arrangementKey: arrangement.key,
       optionKey: option.key,
       role: 'primary',
       assigneeId: assignee,
+      ...(seen?.seen ? { seen: seen.seen } : {}),
     });
+    if (result.status === 'conflict') reread();
     if (!succeeded(result)) return;
     if (first && asksPerson(ctx, first) && assignee === ctx.me.id) {
       ctx.go({ name: 'ask', taskKey: first.key });
@@ -1149,6 +1240,20 @@ export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey
         title={ctx.t('decide.title', { child: childName(ctx.household) })}
       />
       <Main>
+        {/* 条件しだいの手配は、決める画面でもそう書く（確かな予定として選ばせない）。 */}
+        <ConditionLine
+          ctx={ctx}
+          basis={{
+            itemIds: requirement?.basis.itemIds ?? [],
+            requirementKey: arrangement.requirementKey,
+            arrangementKey: arrangement.key,
+          }}
+        />
+        {conflicted.length > 0 && (
+          <Card tone="warn">
+            <Text>{ctx.t('decide.conflicted', { options: optionList(ctx, conflicted) })}</Text>
+          </Card>
+        )}
         <Text quiet>
           {ctx.t('decide.context', {
             names: new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(working),
@@ -1169,35 +1274,43 @@ export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey
             {ctx.t('decide.source')}
           </MoreLink>
         )}
-        {options.map((option) => (
-          <OptionRow
-            key={option.key}
-            ctx={ctx}
-            option={option}
-            onChoose={() => void choose(option)}
-          />
-        ))}
-        {helperOption && reply && (
-          <Card tone="accent">
-            <Label tone="accent">{ctx.t('decide.tipLabel')}</Label>
-            <Text>
-              {reply.evening
-                ? ctx.t('decide.tip', {
-                    helper: optionParams(ctx, helperOption).name ?? '',
-                    night: day(ctx, reply.evening),
-                    fallback: optionTitle(ctx, reply.fallback),
-                  })
-                : ctx.t('decide.tipSoon', {
-                    helper: optionParams(ctx, helperOption).name ?? '',
-                    deadline: dayTime(ctx, reply.deadline),
-                    fallback: optionTitle(ctx, reply.fallback),
-                  })}
-            </Text>
-            <Button onClick={() => void choose(helperOption)}>
-              {optionTitle(ctx, helperOption)}
-            </Button>
+        <ChoiceClock
+          t={ctx.t}
+          lang={ctx.lang}
+          tz={ctx.tz}
+          now={ctx.now}
+          until={arrangement.start}
+          options={options.map((o) => ({
+            key: o.key,
+            title: optionTitle(ctx, o),
+            ...(o.decisionDeadline ? { deadline: o.decisionDeadline } : {}),
+            expired: o.expired,
+          }))}
+        />
+        {reading === 'failed' && (
+          <Card tone="warn">
+            <Text>{ctx.t('decide.previewFailed')}</Text>
+            <Button onClick={reread}>{ctx.t('decide.previewRetry')}</Button>
           </Card>
         )}
+        {options.map((option) => {
+          const shown = previews?.get(option.key);
+          // 「選んだら」を読める画面で、この手の分がまだ無い（読んでいる・読めなかった・出せなかった）。
+          const waiting =
+            reading === 'off' || shown ? undefined : reading === 'ready' ? 'missing' : reading;
+          return (
+            <OptionRow
+              key={option.key}
+              ctx={ctx}
+              option={option}
+              arrangement={arrangement}
+              {...(shown ? { preview: shown } : {})}
+              {...(waiting ? { waiting } : {})}
+              onChoose={() => void choose(option)}
+            />
+          );
+        })}
+        <Text quiet>{ctx.t('decide.reversible')}</Text>
       </Main>
     </>
   );
@@ -1210,30 +1323,165 @@ function previousEvening(deadline: string): string {
   return previous.toISOString().slice(0, 10);
 }
 
+/** 手の名前を並べた一句（ほかの日の手なら日を添える）。 */
+function optionList(ctx: Ctx, optionKeys: readonly string[]): string {
+  const names = optionKeys.flatMap((key) => {
+    const arrangement = ctx.plan.arrangements.find((a) => a.options.some((o) => o.key === key));
+    const option = arrangement?.options.find((o) => o.key === key);
+    if (!arrangement || !option) return [];
+    const date = ctx.plan.requirements.find((r) => r.key === arrangement.requirementKey)?.date;
+    return [
+      ctx.t('decide.quoted', {
+        title: date
+          ? ctx.t('decide.onDay', { title: optionTitle(ctx, option), day: day(ctx, date) })
+          : optionTitle(ctx, option),
+      }),
+    ];
+  });
+  return new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(names);
+}
+
+/** 案の札の印（勧める・進めている・予備）。 */
+function Badge({ children, accent }: { children: string; accent?: boolean }) {
+  return (
+    <span
+      className={`rounded-full px-2 text-[13px] font-bold ${accent ? 'bg-accent text-white' : 'bg-accent-soft text-accent-dark'}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+/**
+ * 選んだら何が起きるか（サーバーが同じ計算で出した物）を、短い文にする。最初の一手（誰が、いつまでに
+ * 始めるか）、ほかの作業の数、返事を待つこと、取り消しを伝える依頼、時刻の動くほかの作業。今進めている
+ * 案には出さない（決める画面では選び直さない）。
+ */
+export function previewLines(ctx: Ctx, preview: ChoicePreview): string[] {
+  if (preview.current) return [];
+  const lines: string[] = [];
+  const arrangement = arrangementOf(ctx, preview.arrangementKey);
+  const option = arrangement?.options.find((o) => o.key === preview.optionKey);
+  // 重ならずに置けない（時刻を置かずに残す）手と、検証器が見つけた新しい違反（選ぶと起きる物）を先に書く。
+  if (preview.conflicts.length > 0) {
+    lines.push(ctx.t('decide.then.conflict', { options: optionList(ctx, preview.conflicts) }));
+  }
+  const issues = preview.issues ?? [];
+  if (issues.includes('task_overlap')) lines.push(ctx.t('decide.then.overlap'));
+  const others = issues.filter((code) => code !== 'task_overlap').length;
+  if (others > 0) lines.push(ctx.t('decide.then.issues', { count: others }));
+  // 自分の時間にもう置けないので、置ける大人に提案する（案に決まった担当がある時は、案の名前で分かる）。
+  const fixed = option && templateOf(ctx.household, option)?.steps[0]?.assigneeId;
+  if (preview.assigneeId !== undefined && preview.assigneeId !== ctx.me.id && !fixed) {
+    lines.push(
+      ctx.t('decide.then.handOver', {
+        name: ctx.t('decide.person', { name: nameOf(ctx.household, preview.assigneeId) }),
+      }),
+    );
+  }
+  const first = preview.steps[0];
+  if (first) {
+    const task = ctx.plan.tasks.find((t) => t.key === first.taskKey);
+    const what = task ? baseTitle(ctx, task) : ctx.t(first.titleKey, first.titleParams);
+    const who =
+      first.assigneeId === ctx.me.id
+        ? ctx.t('decide.then.you')
+        : nameOf(ctx.household, first.assigneeId);
+    lines.push(
+      first.start
+        ? ctx.t('decide.then.first', { who, what, when: dayTime(ctx, first.start) })
+        : ctx.t('decide.then.firstUntimed', { who, what }),
+    );
+    if (preview.steps.length > 1) {
+      lines.push(ctx.t('decide.then.more', { count: preview.steps.length - 1 }));
+    }
+    if (first.external) lines.push(ctx.t('decide.then.waitReply'));
+  }
+  // 決め時は、大人の誰かが間に合う最後。自分の分が先に過ぎる時は、後まで間に合う人を添える。
+  if (preview.later) {
+    lines.push(
+      ctx.t('decide.then.later', {
+        name: ctx.t('decide.person', { name: nameOf(ctx.household, preview.later.memberId) }),
+        when: dayTime(ctx, preview.later.start),
+      }),
+    );
+  }
+  for (const request of preview.cancels) {
+    lines.push(ctx.t('decide.then.cancel', { to: nameOf(ctx.household, request.to) }));
+  }
+  if (preview.moved.length > 0) {
+    lines.push(ctx.t('decide.then.moved', { count: preview.moved.length }));
+  }
+  return lines;
+}
+
+function Consequences({ ctx, preview }: { ctx: Ctx; preview: ChoicePreview }) {
+  const lines = previewLines(ctx, preview);
+  if (lines.length === 0) return null;
+  const warn = (preview.issues ?? []).length > 0 || preview.conflicts.length > 0;
+  return (
+    <span
+      className={`mt-1 flex flex-col gap-0.5 rounded-xl px-3 py-2 text-sm ${warn ? 'bg-warn-soft text-warn' : 'bg-paper'}`}
+    >
+      <span className="font-bold text-sub">{ctx.t('decide.then.label')}</span>
+      {lines.map((line) => (
+        <span key={line}>{line}</span>
+      ))}
+    </span>
+  );
+}
+
 function OptionRow({
   ctx,
   option,
+  arrangement,
+  preview,
+  waiting,
   onChoose,
 }: {
   ctx: Ctx;
   option: OptionPlan;
+  arrangement: Arrangement;
+  preview?: ChoicePreview;
+  /** 「選んだら」がまだ無い（読んでいる・読めなかった・この手の分を出せなかった）。その間は選べない。 */
+  waiting?: 'loading' | 'failed' | 'missing';
   onChoose: () => void;
 }) {
   const left = option.decisionDeadline
     ? daysBetween(ctx.now, option.decisionDeadline, ctx.tz)
     : undefined;
   const urgent = left !== undefined && left <= 5 && !option.expired;
+  const current = arrangement.chosenOptionKey === option.key;
+  const backup = arrangement.backupOptionKeys.includes(option.key);
+  // 勧めるのは、まだ何も進めていない時だけ（エンジンが決まりで選ぶ。理由も決まりから）。
+  const recommended = arrangement.recommendedOptionKey === option.key;
+  // 人に頼む手には、いつまでに返事が要るかを添える（頼む文と同じ：断られた時に移る手の決め時の前の晩）。
+  // 勧めとは別の、その手の事実として書く。
+  const reply =
+    option.titleKey === 'option.askHelper' && !option.expired
+      ? replyBy(ctx, arrangement, option.key)
+      : undefined;
   return (
     <button
       type="button"
       onClick={onChoose}
-      disabled={option.expired}
-      className="flex w-full items-center gap-2.5 rounded-[18px] border border-line bg-white px-4 py-3.5 text-left disabled:opacity-55"
+      disabled={option.expired || current || waiting !== undefined}
+      className={`flex w-full items-center gap-2.5 rounded-[18px] border bg-white px-4 py-3.5 text-left disabled:opacity-55 ${recommended ? 'border-accent-line' : 'border-line'}`}
     >
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="font-round text-xl leading-snug font-bold">
-          {optionTitle(ctx, option)}
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span className="font-round text-xl leading-snug font-bold">
+            {optionTitle(ctx, option)}
+          </span>
+          {recommended && <Badge accent>{ctx.t('decide.recommended')}</Badge>}
+          {current && <Badge>{ctx.t('decide.current')}</Badge>}
+          {backup && <Badge>{ctx.t('decide.backup')}</Badge>}
         </span>
+        {recommended && arrangement.recommendedReason && (
+          <span className="text-sm text-accent-dark">
+            {ctx.t(`decide.because.${arrangement.recommendedReason}`)}
+          </span>
+        )}
         {option.expired ? (
           <span className="text-[15px] font-bold text-sub">{ctx.t('decide.expired')}</span>
         ) : option.decisionDeadline ? (
@@ -1252,6 +1500,25 @@ function OptionRow({
           <span className="text-[15px] text-sub">{ctx.t('decide.unknownDeadline')}</span>
         )}
         <span className="text-sm text-sub">{optionNote(ctx, option)}</span>
+        {reply && (
+          <span className="text-sm">
+            {reply.evening
+              ? ctx.t('decide.replyBy', {
+                  night: day(ctx, reply.evening),
+                  fallback: optionTitle(ctx, reply.fallback),
+                })
+              : ctx.t('decide.replySoon', {
+                  deadline: dayTime(ctx, reply.deadline),
+                  fallback: optionTitle(ctx, reply.fallback),
+                })}
+          </span>
+        )}
+        {preview && !option.expired && <Consequences ctx={ctx} preview={preview} />}
+        {waiting && !option.expired && !current && (
+          <span className="mt-1 rounded-xl bg-paper px-3 py-2 text-sm text-sub">
+            {ctx.t(`decide.waiting.${waiting}`)}
+          </span>
+        )}
       </span>
       <span className="text-sub">
         <Icon path={ICON.chevron} size={22} />

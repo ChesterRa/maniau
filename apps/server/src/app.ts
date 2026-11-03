@@ -17,6 +17,7 @@ import {
 } from './demo-sessions';
 import { type FamilyMember, type Invitations, memberFor } from './members';
 import type { Notifier } from './notifier';
+import { previewChoices } from './preview';
 import { isPushEndpoint, removeSubscription, saveSubscription } from './push';
 import { checkPhoto, PhotoMediaType } from './reading/transcribe';
 import type { Store } from './store';
@@ -136,6 +137,29 @@ export function createApp(
     if (c.req.query('as') !== member.memberId) return switched(c);
     const view = await viewOf(family, member);
     return view ? c.json(view) : notAMember(c);
+  });
+  // 決める画面の「選んだら」（書き込まずに同じ計算をした結果。preview.ts）。見る物と同じく、身元を確かめ直す。
+  app.get('/api/preview', async (c) => {
+    if (!family) return c.json({ error: 'familyDisabled' }, 404);
+    const member = await memberOf(c, family);
+    if (member instanceof Response) return member;
+    if (c.req.query('as') !== member.memberId) return switched(c);
+    const arrangementKey = c.req.query('arrangement');
+    if (!arrangementKey) return c.json({ error: 'arrangementRequired' }, 400);
+    const previews = await family.store.withHousehold(member.householdId, (log) =>
+      log.isBound?.(member.memberId, member.identityId)
+        ? previewChoices(
+            log.events(),
+            {
+              memberId: member.memberId,
+              now: nowIn(member.timeZone, family.clock?.()),
+            },
+            arrangementKey,
+          )
+        : null,
+    );
+    if (previews === null) return notAMember(c);
+    return previews ? c.json({ previews }) : c.json({ error: 'unknownArrangement' }, 404);
   });
   app.post('/api/commands', async (c) => {
     if (!family) return c.json({ error: 'familyDisabled' }, 404);
@@ -264,6 +288,14 @@ export function createApp(
     if (!member) return c.json({ error: 'memberRequired' }, 400);
     const view = await sessions.view(c.req.param('sid'), member);
     return view ? c.json(view) : c.json({ error: 'unknownSession' }, 404);
+  });
+  app.get('/api/demo/sessions/:sid/preview', async (c) => {
+    const member = c.req.query('member');
+    const arrangementKey = c.req.query('arrangement');
+    if (!member || !arrangementKey) return c.json({ error: 'memberRequired' }, 400);
+    const previews = await sessions.preview(c.req.param('sid'), member, arrangementKey);
+    if (previews === null) return c.json({ error: 'unknownSession' }, 404);
+    return previews ? c.json({ previews }) : c.json({ error: 'unknownArrangement' }, 404);
   });
   app.post('/api/demo/sessions/:sid/commands', async (c) => {
     const body = z

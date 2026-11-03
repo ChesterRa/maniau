@@ -126,6 +126,7 @@ function Body(props: {
           ...(props.canRead ? { read: live.read } : {}),
           ...(props.canRead && props.canPhoto ? { transcribe: live.transcribe } : {}),
           ...(props.canHear ? { hear: live.hear, confirm: live.confirm } : {}),
+          preview: live.preview,
           me,
           lang,
           tz: view.household.timeZone,

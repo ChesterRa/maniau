@@ -81,14 +81,15 @@
       "back": "About {{min}} min to get back (estimate)",
       "unplaced": "Your usual schedule has no time for this before the deadline. If you can't do it, please ask someone else.",
       "unplacedDue": "Your usual schedule has no time left before the due date. If it's already done, tap Done.",
-      "done": "Done",
       "handoff": "Someone else does the step before or after this one, so we can't tell when the papers change hands. No time is set. Have one person do both steps, or agree on the handoff together.",
       "external": {
         "reply": "Ask {{to}} and wait for their reply.",
         "approval": "Hand it to {{to}} and wait for approval.",
         "acceptance": "Hand it to {{to}} and wait for them to accept it."
       },
-      "ask": "Ask {{name}}"
+      "ask": "Ask {{name}}",
+      "doneAlready": "If you’ve already done “{{what}}”, record it with “{{label}}”. If you only did the version from before the change, don’t press it.",
+      "sentAlready": "“{{label}}” opens the current request. If you already sent that same request, record it as sent there."
     },
     "backup": {
       "label": "Just in case",
@@ -181,10 +182,46 @@
     "daysLeft_other": "{{count}} days left",
     "expired": "Too late to choose",
     "unknownDeadline": "Deadline not known yet",
-    "tipLabel": "Not sure?",
-    "tip": "Ask {{helper}} first. If you hear back by the evening of {{night}}, you can still switch before the deadline for “{{fallback}}” (estimate) if they say no.",
-    "tipSoon": "Ask {{helper}} first. The deadline for “{{fallback}}” is around {{deadline}} (estimate), so try to hear back as soon as you can.",
-    "person": "{{name}}"
+    "person": "{{name}}",
+    "recommended": "Suggested",
+    "current": "In progress",
+    "backup": "Backup",
+    "because": {
+      "onlyOption": "This is the only option known to still be in time",
+      "lowerCost": "Lightest overall when leave, asking others, cost and extra tasks are combined with rough weights",
+      "moreTime": "Of the options with the same estimated burden, it leaves the most time to decide"
+    },
+    "then": {
+      "label": "If you choose this",
+      "you": "You",
+      "first": "{{who}}: start “{{what}}” by {{when}}",
+      "firstUntimed": "{{who}}: “{{what}}”",
+      "more_one": "{{count}} more task",
+      "more_other": "{{count}} more tasks",
+      "waitReply": "Then wait for the reply",
+      "cancel": "A task to tell {{to}} the request is cancelled will appear",
+      "moved_one": "{{count}} other task moves so times do not overlap",
+      "moved_other": "{{count}} other tasks move so times do not overlap",
+      "overlap": "This would overlap another task; both cannot be placed (one of them needs to change)",
+      "issues_one": "The plan has {{count}} point that needs checking",
+      "issues_other": "The plan has {{count}} points that need checking",
+      "conflict": "We can't find times for the tasks of {{options}} that don't overlap other tasks your family is doing, so they stay without a time (review the options, who does them, or the times)",
+      "handOver": "It no longer fits your time. Choosing proposes the tasks to {{name}}",
+      "later": "{{name}} could still make it by starting by {{when}}"
+    },
+    "reversible": "You can change this later. If you do, Maniau shows what needs cancelling or asking again as tasks (your family does the contacting).",
+    "conflicted": "We couldn't find times for the tasks of {{options}} that don't overlap another task the same person is doing, so they have no time yet. Review the options, who does them, or the times.",
+    "replyBy": "If you hear back by the evening of {{night}}, you can still switch to “{{fallback}}” if they say no",
+    "replySoon": "The decision deadline for “{{fallback}}” is around {{deadline}} (estimate), so try to hear back as soon as you can",
+    "quoted": "“{{title}}”",
+    "onDay": "{{title}} on {{day}}",
+    "waiting": {
+      "loading": "Working out what would happen. You can choose once it shows.",
+      "failed": "What would happen isn't shown yet, so you can't choose this yet.",
+      "missing": "We couldn't work out what would happen for this option, so it can't be chosen now."
+    },
+    "previewFailed": "Couldn't load what would happen. Load it again before choosing.",
+    "previewRetry": "Load again"
   },
   "ask": {
     "title": "Send this message",
@@ -432,5 +469,19 @@
     "noLongerNeeded": "no longer needed (send a cancellation)",
     "needsCheck": "check whether it is still needed",
     "outdated": "The plan changed, so the earlier answer was closed. Please send your update again."
+  },
+  "clock": {
+    "label": "Until each choice disappears",
+    "summary_one": "{{count}} choice left. Next to go: {{option}} ({{when}})",
+    "summary_other": "{{count}} choices left. Next to go: {{option}} ({{when}})",
+    "none": "No choice is left before its decision deadline",
+    "until": "Until {{when}} ({{left}})",
+    "gone": "Decision deadline passed",
+    "unknown": "Decision deadline unknown",
+    "now": "Now",
+    "need": "{{day}} (needed)",
+    "unknownOnly_one": "No option with a known deadline is left. {{count}} option has an unknown deadline",
+    "unknownOnly_other": "No option with a known deadline is left. {{count}} options have an unknown deadline",
+    "show": "See the time left for each option"
   }
 }

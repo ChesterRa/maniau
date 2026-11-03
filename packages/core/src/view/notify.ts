@@ -208,6 +208,10 @@ function intentOf(
       const { task } = card;
       const changed = task.reconfirm === true;
       const by = history.proposedBy(task.key);
+      // 時刻を置けなかった案の作業で、案の決め時も過ぎた物（これからの空きが無い）は知らせない（今から引き受けても
+      // 間に合わない）。
+      const own = card.arrangement?.options.find((o) => o.key === task.basis.optionKey);
+      if (task.start === undefined && own?.expired) return undefined;
       // 自分で自分に頼んだ物（案を選んで自分を担当にした）は知らせない。引き受けた後に中身が
       // 変わった物は、誰が頼んだ物でも知らせる。
       if (!changed && by === memberId) return undefined;

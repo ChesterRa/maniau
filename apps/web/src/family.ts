@@ -4,6 +4,7 @@
 // 返事の行き違い（遅れた返事・切り替え・途切れ）の扱いは、どちらも同じ（useServerView）。
 import type {
   ChangeSummary,
+  ChoicePreview,
   Command,
   DateTime,
   Household,
@@ -624,6 +625,32 @@ export function useServerView(where: Where | undefined) {
     [kind, key, sessionId, memberId, deliverProposal],
   );
 
+  /**
+   * 決める画面の「選んだら」を読む（サーバーが書き込まずに同じ計算をした結果。何も書かない）。読めない・
+   * 待つ間に使う人が替わった時は無し（画面は「選んだら」を出さずに、ふだんの案を見せる）。
+   */
+  const preview = useCallback(
+    async (arrangementKey: string): Promise<ChoicePreview[] | undefined> => {
+      const now = current.current;
+      if (!kind || !memberId || now.key !== key || now.memberId !== memberId) return undefined;
+      if (kind === 'demo' && !sessionId) return undefined;
+      const query = `arrangement=${encodeURIComponent(arrangementKey)}`;
+      const url =
+        kind === 'demo'
+          ? `/api/demo/sessions/${sessionId}/preview?member=${encodeURIComponent(memberId)}&${query}`
+          : `/api/preview?as=${encodeURIComponent(memberId)}&${query}`;
+      try {
+        const response = await fetch(url, { signal: AbortSignal.timeout(READ_TIMEOUT_MS) });
+        if (!response.ok || !isCurrent(now.epoch)) return undefined;
+        const body = (await response.json()) as { previews?: ChoicePreview[] };
+        return isCurrent(now.epoch) ? body.previews : undefined;
+      } catch {
+        return undefined;
+      }
+    },
+    [kind, key, sessionId, memberId, isCurrent],
+  );
+
   // 今の代の見せる物だけを返す（替えた直後は、読み終えるまで何も見せない）。家族の大人でなく
   // なった（外された）と分かったら、前に読んだ物も見せない。
   const view = shown && shown.epoch === epoch && !denied && !switched ? shown.view : undefined;
@@ -642,6 +669,7 @@ export function useServerView(where: Where | undefined) {
     transcribe,
     hear,
     confirm,
+    preview,
     /** 届いたか分からない操作を、同じ家庭・同じ大人・同じ ID・同じ代で送り直す。 */
     retry: async (): Promise<void> => {
       const operation = pending.current;

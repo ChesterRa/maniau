@@ -1,6 +1,6 @@
 // デモの各段の計画を、エンジンと別に書いた検証器にかける（エンジンと検証器をつなぐ試験）。
 // 検証器は道のりや要件の網羅を確かめられないので、全体は「未判定」になり得る。違反が無いことを確かめる。
-import { DomainEvent, toEpochMinutes } from '@maniau/core';
+import { DomainEvent } from '@maniau/core';
 import { computePlan } from '@maniau/core/engine';
 import { verifyPlan } from '@maniau/verify';
 import { describe, expect, it } from 'vitest';
@@ -92,7 +92,7 @@ describe('提出物を検証器にかける', () => {
     expect(placed?.start).toBeDefined();
   });
 
-  it('済んだ作業は、今は要らなくなっていても、その時間に提出物を重ねない（検証器と同じ見方）', () => {
+  it('済んだ作業は時間を取らない（今は要らなくなっていても、計画の時刻を残さない）。提出物を置き、違反は無い', () => {
     const events = [...demoEvents('asked')];
     const at = '2026-12-04T20:30+09:00';
     const add = (actorId: string, body: object) => {
@@ -155,14 +155,11 @@ describe('提出物を検証器にかける', () => {
     const plan = computePlan(events, at);
     const asked = plan.tasks.find((t) => t.key.includes('opt-grandma:ask'));
     expect(asked).toMatchObject({ assigneeId: 'b', commitment: 'done', live: false });
+    // 済ませた時刻は記録に無いので、計画の時刻を済ませた時として残さない（時間を取らない）。
+    expect(asked?.start).toBeUndefined();
     const submission = plan.tasks.find((t) => t.key === 'task:submit:n3:i1');
-    if (!asked?.start || !asked.end || !submission?.start || !submission.end) {
-      throw new Error('時刻が無い');
-    }
-    const overlap =
-      toEpochMinutes(submission.start) < toEpochMinutes(asked.end) &&
-      toEpochMinutes(asked.start) < toEpochMinutes(submission.end);
-    expect(overlap).toBe(false);
+    expect(submission?.start).toBeDefined();
+    expect(submission?.end).toBeDefined();
     const { household } = demoPlan('asked');
     const report = verifyPlan({ household, plan, events });
     expect(report.issues.filter((i) => i.kind === 'violation')).toEqual([]);
