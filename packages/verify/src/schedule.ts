@@ -106,6 +106,14 @@ function checkOpeningHours(
       );
       return;
     }
+    // 周期の時刻と取得時刻だけでは、店の時区・実際の有効期間・臨時営業を確かめられない。
+    // 日付別の根拠を受け取れるまでは、営業時間外や休業と決めない。
+    report.undetermined(
+      'opening_hours_coverage_unverified',
+      task.key,
+      '地図の営業時間を確かめた期間と店の時区を照らせない。',
+    );
+    return;
   }
   const localStart = localMinute(start, household.timeZone).localIndex;
   const localEnd = localMinute(end, household.timeZone).localIndex;
