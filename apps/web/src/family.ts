@@ -8,6 +8,7 @@ import type {
   Command,
   DateTime,
   Household,
+  HouseholdPreview,
   PlanResult,
   Source,
   TodayCard,
@@ -15,6 +16,9 @@ import type {
 import type { LiveItem } from '@maniau/core/engine';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Uploadable } from './photo';
+
+/** 家の情報の直しを見た結果：変わること、または直せない理由（サーバーの符号）。 */
+export type HouseholdPreviewResult = { preview: HouseholdPreview } | { refused: string };
 
 export interface Stage {
   id: string;
@@ -653,6 +657,39 @@ export function useServerView(where: Where | undefined) {
     [kind, key, sessionId, memberId, isCurrent],
   );
 
+  /**
+   * 家と暮らしの情報の直しの「この変更で変わること」を読む（サーバーが書き込まずに、書く時と同じ命令を展開
+   * した結果。何も書かない）。直せない直しは、その理由を返す。読めなければ無し。
+   */
+  const previewHousehold = useCallback(
+    async (household: Household): Promise<HouseholdPreviewResult | undefined> => {
+      const now = current.current;
+      if (!kind || !memberId || now.key !== key || now.memberId !== memberId) return undefined;
+      if (kind === 'demo' && !sessionId) return undefined;
+      const url =
+        kind === 'demo'
+          ? `/api/demo/sessions/${sessionId}/household-preview`
+          : `/api/household-preview?as=${encodeURIComponent(memberId)}`;
+      const body = kind === 'demo' ? { memberId, household } : { household };
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+        });
+        if (!isCurrent(now.epoch)) return undefined;
+        const answer = (await response.json()) as { preview?: HouseholdPreview; error?: string };
+        if (response.ok && answer.preview) return { preview: answer.preview };
+        if (response.status === 409 && answer.error) return { refused: answer.error };
+        return undefined;
+      } catch {
+        return undefined;
+      }
+    },
+    [kind, key, sessionId, memberId, isCurrent],
+  );
+
   // 今の代の見せる物だけを返す（替えた直後は、読み終えるまで何も見せない）。家族の大人でなく
   // なった（外された）と分かったら、前に読んだ物も見せない。
   const view = shown && shown.epoch === epoch && !denied && !switched ? shown.view : undefined;
@@ -672,6 +709,7 @@ export function useServerView(where: Where | undefined) {
     hear,
     confirm,
     preview,
+    previewHousehold,
     /** 届いたか分からない操作を、同じ家庭・同じ大人・同じ ID・同じ代で送り直す。 */
     retry: async (): Promise<void> => {
       const operation = pending.current;

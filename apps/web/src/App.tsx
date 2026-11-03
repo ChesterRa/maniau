@@ -13,6 +13,7 @@ import {
   useMode,
 } from './family';
 import { formatDayTime } from './format';
+import { HouseholdScreen } from './household';
 import { isUiLanguage, rememberedLanguage, rememberLanguage, type UiLanguage } from './i18n';
 import { usePush } from './push';
 import {
@@ -127,6 +128,7 @@ function Body(props: {
           ...(props.canRead && props.canPhoto ? { transcribe: live.transcribe } : {}),
           ...(props.canHear ? { hear: live.hear, confirm: live.confirm } : {}),
           preview: live.preview,
+          previewHousehold: live.previewHousehold,
           me,
           lang,
           tz: view.household.timeZone,
@@ -153,11 +155,19 @@ function Body(props: {
       {ctx && <Screen ctx={ctx} route={route} />}
       {ctx && (
         <TabBar
-          active={route.name === 'week' ? 'week' : 'today'}
-          labels={{ today: t('nav.today'), snap: t('nav.snap'), week: t('nav.week') }}
+          active={
+            route.name === 'week' ? 'week' : route.name === 'household' ? 'household' : 'today'
+          }
+          labels={{
+            today: t('nav.today'),
+            snap: t('nav.snap'),
+            week: t('nav.week'),
+            household: t('nav.household'),
+          }}
           onToday={() => go({ name: 'today' })}
           onSnap={() => go({ name: 'sources' })}
           onWeek={() => go({ name: 'week' })}
+          onHousehold={() => go({ name: 'household' })}
         />
       )}
     </>
@@ -334,6 +344,8 @@ function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {
       return <AskScreen ctx={ctx} taskKey={route.taskKey} />;
     case 'week':
       return <WeekScreen ctx={ctx} />;
+    case 'household':
+      return <HouseholdScreen ctx={ctx} />;
     case 'sources':
       return (
         <SourcesScreen

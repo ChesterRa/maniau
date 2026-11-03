@@ -8,6 +8,7 @@ import {
   type DomainEvent,
   type Extraction,
   formatDateTime,
+  type Household,
   type PlanResult,
   type ProposalSeen,
   type Source,
@@ -24,7 +25,7 @@ import {
 import { computePlan, currentItems, foldEvents } from '@maniau/core/engine';
 import { type CommandGuard, type CommandResult, reopened, runCommand } from './commands';
 import { DEMO_STAGES, type DemoStageId, demoEvents } from './demo';
-import { previewChoices } from './preview';
+import { previewChoices, previewHousehold } from './preview';
 import {
   buildExtractInput,
   type ExtractRequest,
@@ -538,6 +539,18 @@ export function demoSessions(
       if (!session) return null;
       return store.withHousehold(id, (log) =>
         previewChoices(log.events(), { memberId, now: session.now }, arrangementKey),
+      );
+    },
+    /** 家と暮らしの情報の直しを、書き込まずに見る（previewHousehold）。会話が無ければ null。 */
+    async householdPreview(
+      id: string,
+      memberId: string,
+      household: Household,
+    ): Promise<ReturnType<typeof previewHousehold> | null> {
+      const session = touch(id);
+      if (!session) return null;
+      return store.withHousehold(id, (log) =>
+        previewHousehold(log.events(), { memberId, now: session.now }, household),
       );
     },
     async command(

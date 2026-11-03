@@ -6,12 +6,14 @@ import {
   type DateTime,
   DomainEvent,
   formatDateTime,
+  type Household,
   isActiveTask,
   type PlanResult,
   proposalSnapshot,
   sameContent,
   sameProposal,
   toEpochMinutes,
+  validateHousehold,
 } from '@maniau/core';
 import {
   currentReadings,
@@ -25,7 +27,7 @@ import {
   requestSnapshot,
   retiredUnknowns,
 } from '@maniau/core/engine';
-import { consequencesOf, violationsOf } from './consequences';
+import { consequencesOf, householdConsequences, violationsOf } from './consequences';
 import { sha256Of } from './digest';
 import type { EventBody, HouseholdLog, Store } from './store';
 
@@ -134,6 +136,35 @@ function handle(
             },
           );
     if (again?.seen !== seen) {
+      return { status: 'conflict', reason: 'consequencesChanged', throughSeq: throughSeq() };
+    }
+  }
+  // 家の情報の直しは、見せた計画の番号と、見せた「この変更で変わること」（送られた直しを含む要約）が、押さえた
+  // 中で今の時刻に作り直した物と同じ時だけ書く（もう一人の直し・時が進んで変わった結果を、黙って書かない）。
+  if (command.type === 'updateHousehold') {
+    if (command.seen === undefined) {
+      return { status: 'invalid', reason: 'seenRequired', throughSeq: throughSeq() };
+    }
+    if (command.seen.throughSeq !== plan.throughSeq) {
+      return { status: 'conflict', reason: 'proposalChanged', throughSeq: throughSeq() };
+    }
+    const added = asEvents(
+      events,
+      withReopened({ plan, events }, decided.bodies, context.memberId, now),
+      context.memberId,
+      now,
+    );
+    const set = added.find((e) => e.type === 'householdSet');
+    const again = householdConsequences(
+      { household, events, plan },
+      {
+        household: set?.type === 'householdSet' ? set.household : household,
+        added,
+        plan: planFromState(foldEvents([...events, ...added]), now),
+      },
+      command.household,
+    );
+    if (again.seen !== command.seen.changes) {
       return { status: 'conflict', reason: 'consequencesChanged', throughSeq: throughSeq() };
     }
   }
@@ -766,6 +797,11 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       // 取り下げ済みなら何も足さない（操作は記録する）。
       if (state.withdrawnSources.has(command.sourceId)) return { bodies: [] };
       return { bodies: [{ type: 'sourceWithdrawn', sourceId: command.sourceId }] };
+    case 'updateHousehold': {
+      const checked = checkHouseholdEdit(state.household, command.household, context.now);
+      if ('reason' in checked) return checked;
+      return { bodies: [{ type: 'householdSet', household: checked.household }] };
+    }
     case 'advanceClock': {
       if (!context.demo) return { status: 'forbidden', reason: 'demoOnly' };
       // 時計は進めるだけ（戻すと、記録の時刻が前後する）。
@@ -775,6 +811,108 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       return { bodies: [{ type: 'clockAdvanced', to: command.to }] };
     }
   }
+}
+
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * 家と暮らしの情報の直しを、エンジンが正しく扱える範囲に限る（validateHousehold に加えて。02-foundation §6）。
+ * - 家庭の ID・地域・時区は替えない。
+ * - 成員は消さず、足さず、ID・種類・有効を替えない（ログインの身元の正本は成員の表で、家の情報の事象では
+ *   替えない。成員を止めるのは別の操作にする）。名前・言葉・送り迎えの決まりは直せる。
+ * - 場所は消さない（場所には止める欄が無い）。種類は替えない。店を足せる。営業時間は同じ日の中の区間だけ
+ *   （日をまたぐ営業は、買い物の計算が正しく扱えない）。直した営業時間は、家族が確かめた物として今の時刻を付ける。
+ * - 取れる手は、足さず消さず、ID の重なりも認めない。直せるのは締切の決まりの数と代償だけ（手順の形・担当・
+ *   相手は替えない。新しい手は、やり方の表で足す）。
+ * - 大人のふだんの一日には、家にいる区間が要る（家にいる区間が一つも無い日は、子の居場所の手配の要る時間を
+ *   決められない）。
+ */
+function checkHouseholdEdit(
+  current: Household | undefined,
+  next: Household,
+  now: DateTime,
+): { household: Household } | { status: 'invalid'; reason: string } {
+  const invalid = (reason: string) => ({ status: 'invalid' as const, reason });
+  if (!current) return invalid('householdMissing');
+  if (validateHousehold(next).length > 0) return invalid('householdInvalid');
+  if (
+    next.id !== current.id ||
+    next.region !== current.region ||
+    next.timeZone !== current.timeZone
+  ) {
+    return invalid('householdIdentity');
+  }
+  if (next.members.length !== current.members.length) return invalid('membersLocked');
+  for (const member of current.members) {
+    const edited = next.members.find((m) => m.id === member.id);
+    if (!edited || edited.kind !== member.kind || edited.active !== member.active) {
+      return invalid('membersLocked');
+    }
+  }
+  for (const place of current.places) {
+    const edited = next.places.find((p) => p.id === place.id);
+    if (!edited || edited.kind !== place.kind) return invalid('placesLocked');
+  }
+  for (const place of next.places) {
+    if (!current.places.some((p) => p.id === place.id) && place.kind !== 'store') {
+      return invalid('placesLocked');
+    }
+    if (place.hours?.periods.some((p) => p.open >= p.close)) return invalid('hoursOvernight');
+  }
+  const ids = next.careOptions.map((o) => o.id);
+  if (new Set(ids).size !== ids.length || ids.length !== current.careOptions.length) {
+    return invalid('careOptionsLocked');
+  }
+  for (const option of current.careOptions) {
+    const edited = next.careOptions.find((o) => o.id === option.id);
+    const { deadline: _d, cost: _c, ...rest } = option;
+    if (!edited) return invalid('careOptionsLocked');
+    const { deadline: _d2, cost: _c2, ...editedRest } = edited;
+    if (!sameJson(rest, editedRest)) return invalid('careOptionsLocked');
+  }
+  // 大人のふだんの一日：前からある曜日は消さず（区間の無い日にしない）、直した日は区間を切れ目なく続ける
+  // （書かれていない時間を作らない）。分からない時間で、子の居場所の手配が要る時間を決めないため。
+  const adults = new Set(next.members.filter((m) => m.kind === 'adult').map((m) => m.id));
+  const dayOf = (h: Household, memberId: string, weekday: number) =>
+    h.routines.find((d) => d.memberId === memberId && d.weekday === weekday);
+  for (const day of current.routines) {
+    if (!adults.has(day.memberId)) continue;
+    if (!dayOf(next, day.memberId, day.weekday)?.segments.length) {
+      return invalid('routineDayMissing');
+    }
+  }
+  // 過ごし方と場所を食い違わせない：「家」は家の場所、外出・迎えは家以外（家で仕事をするのは受ける）。
+  const homes = new Set(next.places.filter((p) => p.kind === 'home').map((p) => p.id));
+  for (const day of next.routines) {
+    if (!adults.has(day.memberId)) continue;
+    if (sameJson(dayOf(current, day.memberId, day.weekday)?.segments, day.segments)) continue;
+    if (day.segments.some((s, i) => i > 0 && s.start !== day.segments[i - 1]?.end)) {
+      return invalid('routineGap');
+    }
+    const mismatch = day.segments.some(
+      (s) =>
+        s.placeId !== undefined &&
+        ((s.kind === 'home' && !homes.has(s.placeId)) ||
+          ((s.kind === 'away' || s.kind === 'pickup') && homes.has(s.placeId))),
+    );
+    if (mismatch) return invalid('routinePlace');
+  }
+  // 営業時間の調べた所と時刻はサーバーが持つ：時間（曜日ごとの区間・休みの日）を直していなければ、今の記録の
+  // 物をそのまま使う（送られた調べた所・時刻は採らない）。直した・新しく入れた時間は、家族が確かめた物として
+  // 今の時刻を付ける。
+  const places = next.places.map((place) => {
+    const before = current.places.find((p) => p.id === place.id);
+    const same =
+      sameJson(before?.hours?.periods, place.hours?.periods) &&
+      sameJson(before?.hours?.closedDates, place.hours?.closedDates);
+    if (same) {
+      const { hours: _sent, ...rest } = place;
+      return before?.hours ? { ...rest, hours: before.hours } : rest;
+    }
+    if (!place.hours) return place;
+    return { ...place, hours: { ...place.hours, source: 'family' as const, checkedAt: now } };
+  });
+  return { household: { ...next, places } };
 }
 
 /**

@@ -186,4 +186,32 @@ describe('決める画面の札', () => {
     const shown = text(renderToStaticMarkup(<DecideScreen ctx={ctx} arrangementKey={care} />));
     expect(shown).toContain('まだ決まっていません');
   });
+
+  it('選ぶと今の計画に見つからなくなるだけの引き受けは、要らなくなるとは言わず、確かめてもらうと書く', () => {
+    const ctx = ctxFor('arrived', 'b', 'ja');
+    const content = { titleKey: 'task.gakudoForm.write', titleParams: {} };
+    const lines = previewLines(ctx, {
+      arrangementKey: care,
+      optionKey: 'opt:arr:childCare:n1:i6:c:opt-gakudo',
+      current: false,
+      steps: [],
+      cancels: [],
+      conflicts: [],
+      moved: [],
+      released: [
+        { taskKey: 't1', assigneeId: 'a', content, reason: 'unconfirmed' },
+        { taskKey: 't2', assigneeId: 'b', content, reason: 'unconfirmed' },
+        { taskKey: 't3', assigneeId: 'a', content, reason: 'gone' },
+      ],
+    });
+    expect(lines).toContain(
+      '健太さんが引き受けていた「学童の申込書を書く」が、今の計画に見つからなくなります（まだ要るか、確かめてもらいます）',
+    );
+    expect(lines).toContain(
+      'あなたが引き受けていた「学童の申込書を書く」が、今の計画に見つからなくなります（まだ要るか、確かめてください）',
+    );
+    expect(lines).toContain(
+      '健太さんが引き受けていた「学童の申込書を書く」は要らなくなります（知らせます）',
+    );
+  });
 });

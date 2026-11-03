@@ -6,7 +6,8 @@
   "nav": {
     "today": "きょう",
     "snap": "撮る",
-    "week": "よてい"
+    "week": "よてい",
+    "household": "うち"
   },
   "adult": {
     "label": "使う人"
@@ -260,7 +261,9 @@
       "handOver": "あなたの時間には、もう置けません。選ぶと、{{name}}に作業を提案します",
       "later": "{{name}}なら、{{when}}までに始めれば間に合います",
       "released": "{{name}}が引き受けていた「{{what}}」は要らなくなります（知らせます）",
-      "releasedYou": "あなたが引き受けていた「{{what}}」は要らなくなります"
+      "releasedYou": "あなたが引き受けていた「{{what}}」は要らなくなります",
+      "releasedCheck": "{{name}}が引き受けていた「{{what}}」が、今の計画に見つからなくなります（まだ要るか、確かめてもらいます）",
+      "releasedCheckYou": "あなたが引き受けていた「{{what}}」が、今の計画に見つからなくなります（まだ要るか、確かめてください）"
     },
     "reversible": "選んだ後も、替えられます。替えると、取り消しや頼み直しが要る物を作業として示します（連絡するのは家族です）。",
     "conflicted": "{{options}}の作業に、ほかに進める作業と重ならない時刻を、今の計算では見つけられなかったので、時刻を決めずに残しています。手、する人、時間を見直してください。",
@@ -547,5 +550,138 @@
     "need": "{{day}}（要る日）",
     "unknownOnly_other": "決め時の分かる手は、もうありません。決め時の分からない手が{{count}}つあります",
     "show": "手ごとの残りを見る"
+  },
+  "household": {
+    "title": "うちのこと",
+    "intro": "まにあうが計算に使っている、うちの情報です。直すと、保存の前に「この変更で変わること」を同じ計算で見られます。",
+    "edit": "直す",
+    "look": "変わることを見る",
+    "save": "この内容で保存",
+    "cancel": "やめる",
+    "people": {
+      "label": "人",
+      "used": "だれに作業を提案し、だれに知らせるかに使います。",
+      "kind": {
+        "adult": "{{name}}（大人）",
+        "child": "{{name}}（子ども）",
+        "helper": "{{name}}（頼める人）"
+      },
+      "grade": "・{{grade}}",
+      "escort": "・習い事の送り迎え：{{rule}}",
+      "escortRule": {
+        "toFrom": "行きも帰りも要る",
+        "toNoFrom": "行きだけ要る",
+        "noFrom": "帰りだけ要る",
+        "noNoFrom": "要らない"
+      }
+    },
+    "week": {
+      "label": "ふだんの一週間",
+      "summary": "{{name}}（{{count}}日分）",
+      "used": "作業を置ける時間と、子どもを預ける手配が要る時間に使います。「家」の区間だけを、子どもを見られる時間として数えます（家で仕事をしていて見られない時は「仕事」にしてください）。一日の最初の区間の前と、最後の区間の後は、家にいるとして計算します。",
+      "noDay": "この曜日の予定は登録されていません。",
+      "start": "始まり",
+      "end": "終わり",
+      "kindLabel": "過ごし方",
+      "kind": {
+        "home": "家",
+        "commute": "通勤",
+        "work": "仕事",
+        "pickup": "お迎え",
+        "away": "外出"
+      },
+      "route": "{{from}}→{{to}}"
+    },
+    "places": {
+      "label": "場所と店",
+      "used": "寄り道の店と、営業時間内に行けるかに使います。",
+      "noHours": "営業時間は登録されていません",
+      "everyDay": "毎日 {{range}}",
+      "daySeparator": "・",
+      "source": {
+        "family": "家族が確かめた",
+        "officialSite": "公式サイト",
+        "googlePlaces": "Google の情報",
+        "demo": "デモの値"
+      },
+      "checked": "{{from}}（{{when}}）",
+      "kind": {
+        "home": "家",
+        "school": "学校",
+        "afterSchoolCare": "学童",
+        "workplace": "職場",
+        "station": "駅",
+        "store": "店",
+        "helperHome": "頼める人の家",
+        "other": "そのほか"
+      },
+      "open": "開く時刻",
+      "close": "閉まる時刻"
+    },
+    "ways": {
+      "label": "取れる手",
+      "used": "それぞれの手の決め時（締切から逆算）と、お勧めの順に使います。",
+      "daysBefore": "{{days}}日前の {{at}} まで",
+      "businessDaysBefore": "{{days}}営業日前の {{at}} まで",
+      "previousWeek": "前の週の{{weekday}}曜 {{at}} まで",
+      "waitsReply": "{{title}}（返事を待つ）",
+      "yen": "{{yen}}円",
+      "daysUnit": "日前",
+      "businessDaysUnit": "営業日前",
+      "weekday": "曜日",
+      "previousWeekDay": "前の週の{{weekday}}曜",
+      "at": "時刻"
+    },
+    "preview": {
+      "label": "この変更で変わること",
+      "none": "計画は変わりません。",
+      "aWay": "ある手",
+      "window": {
+        "childCare": "{{child}}の居場所の手配",
+        "aChild": "子ども",
+        "purchase": "買い物の手配",
+        "moved": "{{what}}が要る時間：{{before}} → {{after}}",
+        "new": "新しく要る：{{what}}（{{when}}）",
+        "gone": "要らなくなる：{{what}}（{{when}}）"
+      },
+      "expires": "{{name}}は、もう間に合わなくなります。",
+      "deadlineUnknown": "{{name}}は、決め時を計算できず、間に合うか確かめられなくなります。",
+      "deadlineKnown": "{{name}}の決め時が分かるようになります：{{after}}",
+      "reopens": "{{name}}が、また間に合うようになります。",
+      "deadline": "{{name}}の決め時：{{before}} → {{after}}",
+      "wayGone": "{{name}}は、選べる手から外れます。",
+      "wayNew": "{{name}}が、選べる手に入ります。",
+      "added": "新しい作業：{{what}}（{{when}}）",
+      "addedUntimed": "新しい作業：{{what}}",
+      "removed": "無くなる作業：{{what}}",
+      "moved": "時刻が動く作業：{{what}}（{{before}} → {{after}}）",
+      "unplaced": "時刻を置けなくなる作業：{{what}}",
+      "placed": "時刻を置けるようになる作業：{{what}}",
+      "reassigned": "担当が替わる作業：{{what}}（{{before}} → {{after}}）",
+      "nobody": "担当なし",
+      "reconfirm": "引き受け直しをお願いする作業：{{what}}",
+      "changed": "中身が替わる作業：{{what}}",
+      "relocated": "行く所が替わる作業：{{what}}（{{before}} → {{after}}）",
+      "noPlace": "決まっていない所",
+      "released": "要らなくなる引き受け：{{what}}（{{name}}さんに知らせます）",
+      "releasedCheck": "今の計画に見つからなくなる引き受け：{{what}}（まだ要るか、{{name}}さんに確かめてもらいます）",
+      "cancel": "{{to}}への取り消しの連絡が要ります。",
+      "check": "{{to}}への頼み事は、頼んだ時と時間や根拠が変わるので、相手に確かめが要ります。",
+      "conflict": "ほかの作業と重なって置けない手：{{options}}",
+      "issues": "確かめた結果、新しい問題が{{count}}件あります。",
+      "unverified": "確かめきれない点が{{count}}件あります（計算できていない所が残ります）。"
+    },
+    "refused": {
+      "householdInvalid": "この直し方では、うちの情報として成り立ちません（時刻の前後や重なりを確かめてください）。",
+      "routineGap": "ふだんの一日の区間は、切れ目なく続けてください（前の区間の終わりと、次の区間の始まりを同じ時刻に）。書かれていない時間があると、子どもを預ける手配が要る時間を確かめられません。",
+      "routineDayMissing": "大人のふだんの一日（曜日）は、ここでは消せません。",
+      "routinePlace": "過ごし方と場所が食い違っています（「家」は家に、「外出」「お迎え」は家以外の場所にしてください）。",
+      "hoursOvernight": "日をまたぐ営業時間は、まだ扱えません（閉まる時刻を開く時刻より後にしてください）。",
+      "membersLocked": "人の追加・削除や、大人・子どもの区別は、ここでは変えられません。",
+      "placesLocked": "場所の削除や種類の変更は、ここではできません。",
+      "careOptionsLocked": "取れる手の手順や相手は、ここでは変えられません。",
+      "unavailable": "今は計算できませんでした。少しして、もう一度押してください。",
+      "other": "この直し方は受け付けられませんでした。"
+    }
   }
 }

@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import { DateTime } from '../time';
 import { ProposalSnapshot, TaskContent } from './events';
-import { Id } from './household';
+import { Household, Id } from './household';
 import { CommitmentState, ExternalRequestState } from './plan';
 import { Interpretation } from './source';
 
@@ -147,6 +147,19 @@ export const Command = z.discriminatedUnion('type', [
     seen: ItemSeen,
   }),
   z.object({ type: z.literal('withdrawSource'), sourceId: Id }),
+  /**
+   * 家と暮らしの情報（家族・ふだんの一週間・場所・取れる手）を直す。画面は直した家の情報を丸ごと送る。
+   * 書く時は seen が要る：見せた計画の通し番号と、見せた「この変更で変わること」の要約（サーバーが作る）。
+   * 今と違えば断って見せ直す（もう一人の直し・時が進んで変わった結果を、黙って書かない）。直せる範囲は
+   * サーバーが決める（成員の ID・種類・有効と、場所・取れる手の ID は替えない。02-foundation §6）。
+   */
+  z.object({
+    type: z.literal('updateHousehold'),
+    household: Household,
+    seen: z
+      .object({ throughSeq: z.number().int().nonnegative(), changes: z.string().min(1) })
+      .optional(),
+  }),
   /** 時計を進める。デモの家庭だけ。 */
   z.object({ type: z.literal('advanceClock'), to: DateTime }),
 ]);

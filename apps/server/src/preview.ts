@@ -6,11 +6,13 @@ import {
   type DateTime,
   type DomainEvent,
   formatDateTime,
+  type Household,
+  type HouseholdPreview,
   toEpochMinutes,
 } from '@maniau/core';
 import { foldEvents, planFromState } from '@maniau/core/engine';
 import { previewCommand } from './commands';
-import { consequencesOf, violationsOf } from './consequences';
+import { consequencesOf, householdConsequences, violationsOf } from './consequences';
 
 /**
  * その手配の、選べる案（決め時を過ぎていない物と、今の本命）ごとの「選んだら」。どの案も、画面と同じ命令を
@@ -96,4 +98,39 @@ export function previewChoices(
         : { ...shown, later: { memberId: later.assigneeId, start: later.first } },
     ];
   });
+}
+
+/**
+ * 家と暮らしの情報を直したら、計画の何が変わるか。書く時と同じ命令（updateHousehold）を書き込まずに展開し、
+ * 同じ計算で比べる（頼み直し reopened も含む）。何も書かない（事象・操作・知らせ・家の情報）。直せない直しは、
+ * 書く時と同じ理由で断る。
+ */
+export function previewHousehold(
+  events: readonly DomainEvent[],
+  context: { memberId: string; now: DateTime },
+  household: Household,
+): HouseholdPreview | { status: 'conflict' | 'forbidden' | 'invalid'; reason: string } {
+  const state = foldEvents(events);
+  const current = state.household;
+  if (!current) return { status: 'invalid', reason: 'householdMissing' };
+  const now =
+    state.clock === undefined ? context.now : formatDateTime(state.clock, current.timeZone);
+  const plan = planFromState(state, now);
+  const result = previewCommand(
+    events,
+    { memberId: context.memberId, now },
+    { type: 'updateHousehold', household },
+    { state, plan },
+  );
+  if (result.status !== 'ok') return result;
+  const set = result.added.find((e) => e.type === 'householdSet');
+  return householdConsequences(
+    { household: current, events, plan },
+    {
+      household: set?.type === 'householdSet' ? set.household : current,
+      added: result.added,
+      plan: result.after,
+    },
+    household,
+  );
 }

@@ -61,32 +61,51 @@ export function slotsBetweenDates(
   return slots.sort((a, b) => a.start - b.start);
 }
 
-/**
- * その日、大人が誰も家にいない時間（子の居場所の手配が要る時間）。
- * 大人の home の区間を合わせ、その外で、最初に家を出てから最後に帰るまでを返す。
- */
-export function noAdultAtHome(
-  household: Household,
-  date: LocalDate,
-): { start: EpochMinutes; end: EpochMinutes }[] {
-  const home = activeAdultIds(household)
-    .flatMap((id) => slotsOn(household, id, date))
-    .filter((s) => s.kind === 'home')
-    .map((s) => ({ start: s.start, end: s.end }))
-    .sort((a, b) => a.start - b.start);
-  if (home.length === 0) return [];
-  const merged: { start: number; end: number }[] = [];
-  for (const interval of home) {
-    const last = merged.at(-1);
+type Interval = { start: EpochMinutes; end: EpochMinutes };
+
+/** 時刻の順に並べ、重なる・接する区間を一つにする。 */
+function merged(intervals: readonly Interval[]): Interval[] {
+  const out: Interval[] = [];
+  for (const interval of [...intervals].sort((a, b) => a.start - b.start)) {
+    const last = out.at(-1);
     if (last && interval.start <= last.end) last.end = Math.max(last.end, interval.end);
-    else merged.push({ ...interval });
+    else out.push({ start: interval.start, end: interval.end });
   }
-  const gaps: { start: number; end: number }[] = [];
-  for (let i = 0; i + 1 < merged.length; i += 1) {
-    const current = merged[i];
-    const next = merged[i + 1];
-    if (current && next && next.start > current.end)
-      gaps.push({ start: current.end, end: next.start });
+  return out;
+}
+
+/** 二つの、並べて一つにした区間の列の重なり。 */
+function intersected(a: readonly Interval[], b: readonly Interval[]): Interval[] {
+  const out: Interval[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    const x = a[i] as Interval;
+    const y = b[j] as Interval;
+    const start = Math.max(x.start, y.start);
+    const end = Math.min(x.end, y.end);
+    if (start < end) out.push({ start, end });
+    if (x.end < y.end) i += 1;
+    else j += 1;
   }
-  return gaps;
+  return out;
+}
+
+/**
+ * その日、子を見られる大人が家にいない時間（子の居場所の手配が要る時間）。
+ * 有効な大人の誰もが「家」以外の区間（通勤・仕事・迎え・外出）にいると書かれている時間の重なりを返す。
+ * 「家」の区間だけを、子を見られる時間として数える（家で仕事をして見られない時は「仕事」と書く。画面にも
+ * 書く）。一日は家で始まり家で終わるとし、最初の区間の前と最後の区間の後は家にいるとする。区間の間の
+ * 空きは、家の外とは決めない（分からない時間で、手配の要る時間を広げない）。朝だけ家にいて帰らない日や、
+ * 一日中出かけている日は、その外の区間の全部が手配の要る時間になる（手配は黙って消えない）。その日の
+ * 区間が無い大人は、分からないので数えず、ほかの大人だけで決める。どの大人にも区間が無ければ返さない。
+ */
+export function noAdultAtHome(household: Household, date: LocalDate): Interval[] {
+  const away = activeAdultIds(household)
+    .map((id) => slotsOn(household, id, date))
+    .filter((slots) => slots.length > 0)
+    .map((slots) => merged(slots.filter((s) => s.kind !== 'home')));
+  const [first, ...rest] = away;
+  if (!first) return [];
+  return rest.reduce(intersected, first);
 }

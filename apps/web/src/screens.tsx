@@ -31,6 +31,7 @@ import {
   type ConfirmResult,
   type Heard,
   type HearResult,
+  type HouseholdPreviewResult,
   type ItemWhen,
   type NoticeInput,
   operationId,
@@ -71,6 +72,7 @@ import {
 
 export type Route =
   | { name: 'today' }
+  | { name: 'household' }
   | { name: 'decide'; key: string }
   | { name: 'ask'; taskKey: string }
   | { name: 'week' }
@@ -120,6 +122,8 @@ export interface Ctx {
   confirm?: (proposalId: string, operationId: string) => Promise<ConfirmResult>;
   /** 決める画面の「選んだら」を読む（何も書かない。読めなければ無し）。 */
   preview?: (arrangementKey: string) => Promise<ChoicePreview[] | undefined>;
+  /** 家と暮らしの情報の直しの「この変更で変わること」を読む（何も書かない）。直せない直しは理由を返す。 */
+  previewHousehold?: (household: Household) => Promise<HouseholdPreviewResult | undefined>;
   go: (route: Route) => void;
 }
 
@@ -127,7 +131,7 @@ const succeeded = (result: SendResult) => result.status === 'ok' || result.statu
 
 // ── 名前と言葉 ──────────────────────────────
 
-const nameOf = (household: Household, id: string | undefined) =>
+export const nameOf = (household: Household, id: string | undefined) =>
   household.members.find((m) => m.id === id)?.name ??
   household.places.find((p) => p.id === id)?.name ??
   '';
@@ -209,9 +213,10 @@ function baseTitle(ctx: Ctx, task: Task): string {
   return ctx.t(task.titleKey, task.titleParams);
 }
 
-const day = (ctx: Ctx, value: string) => formatDay(value, ctx.lang, ctx.tz);
-const dayTime = (ctx: Ctx, value: string) => formatDayTime(value, ctx.lang, ctx.tz);
+export const day = (ctx: Ctx, value: string) => formatDay(value, ctx.lang, ctx.tz);
+export const dayTime = (ctx: Ctx, value: string) => formatDayTime(value, ctx.lang, ctx.tz);
 const time = (ctx: Ctx, value: string) => formatTime(value, ctx.lang, ctx.tz);
+export const timeOnly = time;
 /**
  * 締切の表示：お知らせや家族が時刻まで書いた締切なら日と時刻、日だけの物（仕組みがその日の朝に置く）は
  * 日だけ（書かれていない時刻を見せない）。
@@ -700,7 +705,7 @@ function CardView({ ctx, card }: { ctx: Ctx; card: TodayCard }) {
  * 置いた時間を見せ（今の作業ではなく約束した物）、「分かりました」で引き受けを取り下げる。控えの無い古い
  * 引き受けは、用件が分からないと書く。
  */
-function releasedTitle(ctx: Ctx, released: Released): string {
+export function releasedTitle(ctx: Ctx, released: Released): string {
   const { content } = released;
   const title = !content
     ? ctx.t('card.released.unknown')
@@ -1720,7 +1725,7 @@ function previousEvening(deadline: string): string {
 }
 
 /** 手の名前を並べた一句（ほかの日の手なら日を添える）。 */
-function optionList(ctx: Ctx, optionKeys: readonly string[]): string {
+export function optionList(ctx: Ctx, optionKeys: readonly string[]): string {
   const names = optionKeys.flatMap((key) => {
     const arrangement = ctx.plan.arrangements.find((a) => a.options.some((o) => o.key === key));
     const option = arrangement?.options.find((o) => o.key === key);
@@ -1805,13 +1810,15 @@ export function previewLines(ctx: Ctx, preview: ChoicePreview): string[] {
   for (const request of preview.cancels) {
     lines.push(ctx.t('decide.then.cancel', { to: nameOf(ctx.household, request.to) }));
   }
-  // 選ぶと、だれかが引き受けていた作業が要らなくなる（その人に知らせる）。
+  // 選ぶと、だれかが引き受けていた作業が要らなくなる（その人に知らせる）。今の計画に見つからないだけの物は、
+  // 要らなくなったとは言わず、まだ要るか確かめてもらう（札・知らせと同じ）。
   for (const released of preview.released ?? []) {
     const what = releasedTitle(ctx, released);
+    const check = released.reason === 'unconfirmed';
     lines.push(
       released.assigneeId === ctx.me.id
-        ? ctx.t('decide.then.releasedYou', { what })
-        : ctx.t('decide.then.released', {
+        ? ctx.t(check ? 'decide.then.releasedCheckYou' : 'decide.then.releasedYou', { what })
+        : ctx.t(check ? 'decide.then.releasedCheck' : 'decide.then.released', {
             name: ctx.t('decide.person', { name: nameOf(ctx.household, released.assigneeId) }),
             what,
           }),

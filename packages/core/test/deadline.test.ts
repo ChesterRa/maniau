@@ -98,4 +98,84 @@ describe('子の居場所の手配が要る時間', () => {
     const gaps = noAdultAtHome(household, NEED_DATE).map((g) => [show(g.start), show(g.end)]);
     expect(gaps).toEqual([['2026-12-07T08:10+09:00', '2026-12-07T18:15+09:00']]);
   });
+
+  it('二人とも朝だけ家にいて、そのまま一日の終わりまで帰らない日も、家を出てから終わりまでを手配の要る時間にする', () => {
+    const dayOut = (workId: string): Household['routines'][number]['segments'] => [
+      { start: '00:00', end: '07:00', kind: 'home', placeId: 'home', viaStationIds: [] },
+      { start: '07:00', end: '23:59', kind: 'work', placeId: workId, viaStationIds: [] },
+    ];
+    const away: Household = {
+      ...household,
+      routines: household.routines.map((r) =>
+        r.weekday === 1 && (r.memberId === 'a' || r.memberId === 'b')
+          ? { ...r, segments: dayOut(r.memberId === 'a' ? 'work-a' : 'work-b') }
+          : r,
+      ),
+    };
+    const gaps = noAdultAtHome(away, NEED_DATE).map((g) => [show(g.start), show(g.end)]);
+    expect(gaps).toEqual([['2026-12-07T07:00+09:00', '2026-12-07T23:59+09:00']]);
+  });
+
+  it('家の場所でも、仕事の区間は子を見られないとして数える（見られるなら「家」と書く）', () => {
+    const remote: Household = {
+      ...household,
+      routines: household.routines.map((r) =>
+        r.weekday === 1 && r.memberId === 'a'
+          ? {
+              ...r,
+              segments: r.segments.map((s, i) =>
+                i === 0 ? { ...s, kind: 'work' as const, placeId: 'home' } : s,
+              ),
+            }
+          : r,
+      ),
+    };
+    // 健太（a）は 6:30 から家で仕事をして 8:10 に出る。彩（b）は 8:00 に出る。
+    const gaps = noAdultAtHome(remote, NEED_DATE).map((g) => [show(g.start), show(g.end)]);
+    expect(gaps).toEqual([['2026-12-07T08:00+09:00', '2026-12-07T18:15+09:00']]);
+  });
+
+  it('外出は、家の場所と書かれていても家の外として数える', () => {
+    const out: Household = {
+      ...household,
+      routines: household.routines.map((r) =>
+        r.weekday === 1 && r.memberId === 'a'
+          ? {
+              ...r,
+              segments: r.segments.map((s, i) =>
+                i === 0 ? { ...s, kind: 'away' as const, placeId: 'home' } : s,
+              ),
+            }
+          : r,
+      ),
+    };
+    const gaps = noAdultAtHome(out, NEED_DATE).map((g) => [show(g.start), show(g.end)]);
+    expect(gaps).toEqual([['2026-12-07T08:00+09:00', '2026-12-07T18:15+09:00']]);
+  });
+
+  it('一人が家で一日を終え、もう一人が遅くまで出ている夜は、手配の要る時間にしない', () => {
+    const late: Household = {
+      ...household,
+      routines: household.routines.map((r) =>
+        r.weekday === 1 && r.memberId === 'b'
+          ? {
+              ...r,
+              segments: [
+                { start: '06:30', end: '08:00', kind: 'home', placeId: 'home', viaStationIds: [] },
+                {
+                  start: '08:00',
+                  end: '23:30',
+                  kind: 'work',
+                  placeId: 'work-b',
+                  viaStationIds: [],
+                },
+              ],
+            }
+          : r,
+      ),
+    };
+    // 健太（a）は 18:15 に帰って家で一日を終える。彩（b）は 23:30 まで出ている。
+    const gaps = noAdultAtHome(late, NEED_DATE).map((g) => [show(g.start), show(g.end)]);
+    expect(gaps).toEqual([['2026-12-07T08:10+09:00', '2026-12-07T18:15+09:00']]);
+  });
 });

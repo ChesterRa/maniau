@@ -5,7 +5,9 @@ import {
   choicePreview,
   type DomainEvent,
   type Household,
+  type HouseholdPreview,
   type PlanResult,
+  planChanges,
 } from '@maniau/core';
 import { verifyPlan } from '@maniau/verify';
 import { sha256Of } from './digest';
@@ -18,9 +20,10 @@ export function violationsOf(
   household: Household,
   events: readonly DomainEvent[],
   plan: PlanResult,
+  kind: 'violation' | 'undetermined' = 'violation',
 ): string[] {
   return verifyPlan({ household, events, plan })
-    .issues.filter((i) => i.kind === 'violation')
+    .issues.filter((i) => i.kind === kind)
     .map((i) =>
       JSON.stringify(
         i.related === undefined ? [i.code, i.subject] : [i.code, ...[i.subject, i.related].sort()],
@@ -66,4 +69,37 @@ export function consequencesOf(
     issues,
   };
   return { ...shown, seen: sha256Of(shown).slice(0, 32) };
+}
+
+/**
+ * 家の情報の直しの「この変更で変わること」。before は今、after は直しの事象を足した後（検証器は、直した後の
+ * 家の情報と、足した事象の列で確かめる）。edited は画面が送った直し（要約に入れる。サーバーが付ける確かめた
+ * 時刻は入れない：見た時と書く時で違う）。
+ */
+export function householdConsequences(
+  before: { household: Household; events: readonly DomainEvent[]; plan: PlanResult },
+  after: { household: Household; added: readonly DomainEvent[]; plan: PlanResult },
+  edited: Household,
+): HouseholdPreview {
+  const events = [...before.events, ...after.added];
+  const newly = (kind: 'violation' | 'undetermined') => {
+    const already = new Set(violationsOf(before.household, before.events, before.plan, kind));
+    return [
+      ...new Set(
+        violationsOf(after.household, events, after.plan, kind)
+          .filter((v) => !already.has(v))
+          .map(codeOf),
+      ),
+    ];
+  };
+  const shown = {
+    changes: planChanges(before.plan, after.plan),
+    issues: newly('violation'),
+    unverified: newly('undetermined'),
+  };
+  return {
+    ...shown,
+    seen: sha256Of({ ...shown, edited }).slice(0, 32),
+    throughSeq: before.plan.throughSeq,
+  };
 }

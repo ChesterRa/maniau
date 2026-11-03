@@ -6,7 +6,8 @@
   "nav": {
     "today": "Today",
     "snap": "Snap",
-    "week": "Schedule"
+    "week": "Schedule",
+    "household": "Family"
   },
   "adult": {
     "label": "Viewing as"
@@ -263,7 +264,9 @@
       "handOver": "It no longer fits your time. Choosing proposes the tasks to {{name}}",
       "later": "{{name}} could still make it if they start by {{when}}",
       "released": "“{{what}}”, which {{name}} took on, will no longer be needed (they will be told)",
-      "releasedYou": "“{{what}}”, which you took on, will no longer be needed"
+      "releasedYou": "“{{what}}”, which you took on, will no longer be needed",
+      "releasedCheck": "“{{what}}”, which {{name}} took on, will drop out of the plan (they will be asked to check whether it is still needed)",
+      "releasedCheckYou": "“{{what}}”, which you took on, will drop out of the plan (please check whether it is still needed)"
     },
     "reversible": "You can change this later. If you do, Maniau shows what needs cancelling or asking again as tasks (your family does the contacting).",
     "conflicted": "We couldn't find times for the tasks of {{options}} that don't overlap another task the same person is doing, so they have no time yet. Review the options, who does them, or the times.",
@@ -554,5 +557,141 @@
     "unknownOnly_one": "No option with a known deadline is left. {{count}} option has an unknown deadline",
     "unknownOnly_other": "No option with a known deadline is left. {{count}} options have an unknown deadline",
     "show": "See the time left for each option"
+  },
+  "household": {
+    "title": "Our family",
+    "intro": "This is the family information Maniau calculates with. When you edit it, you can see what would change before you save, using the same calculation.",
+    "edit": "Edit",
+    "look": "See what changes",
+    "save": "Save these changes",
+    "cancel": "Cancel",
+    "people": {
+      "label": "People",
+      "used": "Used to decide whom to propose tasks to and whom to notify.",
+      "kind": {
+        "adult": "{{name}} (adult)",
+        "child": "{{name}} (child)",
+        "helper": "{{name}} (can help)"
+      },
+      "grade": " · {{grade}}",
+      "escort": " · Lessons drop-off/pick-up: {{rule}}",
+      "escortRule": {
+        "toFrom": "both ways",
+        "toNoFrom": "drop-off only",
+        "noFrom": "pick-up only",
+        "noNoFrom": "not needed"
+      }
+    },
+    "week": {
+      "label": "A usual week",
+      "summary_one": "{{name}} ({{count}} day)",
+      "summary_other": "{{name}} ({{count}} days)",
+      "used": "Used to find when tasks can fit, and when the child needs someone to look after them. Only “Home” blocks count as time someone can look after the child (if you work from home and can't, mark it “Work”). Before the first block and after the last block of a day, we count the person as at home.",
+      "noDay": "No plan is registered for this day.",
+      "start": "Start",
+      "end": "End",
+      "kindLabel": "Where",
+      "kind": {
+        "home": "Home",
+        "commute": "Commute",
+        "work": "Work",
+        "pickup": "Pick-up",
+        "away": "Out"
+      },
+      "route": "{{from}} → {{to}}"
+    },
+    "places": {
+      "label": "Places and shops",
+      "used": "Used for stops on the way and whether a shop is open in time.",
+      "noHours": "No opening hours registered",
+      "everyDay": "Every day {{range}}",
+      "daySeparator": ", ",
+      "source": {
+        "family": "Checked by the family",
+        "officialSite": "Official site",
+        "googlePlaces": "Google",
+        "demo": "Demo value"
+      },
+      "checked": "{{from}} ({{when}})",
+      "kind": {
+        "home": "Home",
+        "school": "School",
+        "afterSchoolCare": "After-school care",
+        "workplace": "Workplace",
+        "station": "Station",
+        "store": "Shop",
+        "helperHome": "Helper's home",
+        "other": "Other"
+      },
+      "open": "Opens",
+      "close": "Closes"
+    },
+    "ways": {
+      "label": "Ways to cover",
+      "used": "Used for each way's decision time (counted back from its deadline) and for the order we recommend.",
+      "daysBefore": "By {{at}}, {{days}} days before",
+      "businessDaysBefore": "By {{at}}, {{days}} business days before",
+      "previousWeek": "By {{weekday}} {{at}} the week before",
+      "waitsReply": "{{title}} (wait for a reply)",
+      "yen": "¥{{yen}}",
+      "daysUnit": "days before",
+      "businessDaysUnit": "business days before",
+      "weekday": "Day",
+      "previousWeekDay": "{{weekday}} the week before",
+      "at": "Time"
+    },
+    "preview": {
+      "label": "What this change would do",
+      "none": "The plan doesn't change.",
+      "aWay": "a way",
+      "window": {
+        "childCare": "care for {{child}}",
+        "aChild": "the child",
+        "purchase": "the shopping",
+        "moved": "Time needed for {{what}}: {{before}} → {{after}}",
+        "new": "Newly needed: {{what}} ({{when}})",
+        "gone": "No longer needed: {{what}} ({{when}})"
+      },
+      "expires": "{{name}} would no longer be possible in time.",
+      "deadlineUnknown": "{{name}}: its decision time can't be worked out, so we can't tell whether it is still possible in time.",
+      "deadlineKnown": "Decision time for {{name}} can now be worked out: {{after}}",
+      "reopens": "{{name}} would be possible in time again.",
+      "deadline": "Decision time for {{name}}: {{before}} → {{after}}",
+      "wayGone": "{{name}} would no longer be an option.",
+      "wayNew": "{{name}} would become an option.",
+      "added": "New task: {{what}} ({{when}})",
+      "addedUntimed": "New task: {{what}}",
+      "removed": "Task no longer needed: {{what}}",
+      "moved": "Task moves: {{what}} ({{before}} → {{after}})",
+      "unplaced": "Task can no longer be given a time: {{what}}",
+      "placed": "Task can now be given a time: {{what}}",
+      "reassigned": "Task changes hands: {{what}} ({{before}} → {{after}})",
+      "nobody": "no one",
+      "reconfirm": "Task to re-confirm with whoever took it: {{what}}",
+      "changed": "Task details change: {{what}}",
+      "relocated": "Task goes somewhere else: {{what}} ({{before}} → {{after}})",
+      "noPlace": "an undecided place",
+      "released": "No longer needed: {{what}} (we'll tell {{name}})",
+      "releasedCheck": "Dropped from the plan: {{what}} (we'll ask {{name}} to check whether it's still needed)",
+      "cancel": "A cancellation message to {{to}} is needed.",
+      "check": "Your request to {{to}} needs checking with them: its time or reason has changed since you asked.",
+      "conflict": "Ways that would clash with other tasks: {{options}}",
+      "issues_one": "The check found {{count}} new problem.",
+      "issues_other": "The check found {{count}} new problems.",
+      "unverified_one": "{{count}} point couldn't be checked (part of the calculation is incomplete).",
+      "unverified_other": "{{count}} points couldn't be checked (part of the calculation is incomplete)."
+    },
+    "refused": {
+      "householdInvalid": "This edit doesn't make valid family information (check the order and overlap of times).",
+      "routineGap": "Keep each usual day's blocks back to back (each block starting when the previous one ends). Time that isn't written down can't be used to work out when the child needs looking after.",
+      "routineDayMissing": "An adult's usual day can't be removed here.",
+      "routinePlace": "A block's kind and place don't match (“Home” must be at home; “Out” and “Pick-up” must be somewhere else).",
+      "hoursOvernight": "Opening hours past midnight aren't supported yet (set the closing time after the opening time).",
+      "membersLocked": "Adding or removing people, or changing adult/child, isn't possible here.",
+      "placesLocked": "Removing a place or changing its type isn't possible here.",
+      "careOptionsLocked": "The steps or the contact of a way can't be changed here.",
+      "unavailable": "We couldn't calculate this right now. Please try again in a moment.",
+      "other": "This edit wasn't accepted."
+    }
   }
 }

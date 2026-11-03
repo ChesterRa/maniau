@@ -1,6 +1,6 @@
 // API。見る人ごとのデモの家庭（架空の家族。ログインなし）と、家族の家庭（Cloudflare Access の身元。
 // Postgres）。どちらも、画面には見せる物だけを渡し、事象の列は渡さない（02-foundation §7.1）。
-import { Command, SourceSender } from '@maniau/core';
+import { Command, Household, SourceSender } from '@maniau/core';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
@@ -17,7 +17,7 @@ import {
 } from './demo-sessions';
 import { type FamilyMember, type Invitations, memberFor } from './members';
 import type { Notifier } from './notifier';
-import { previewChoices } from './preview';
+import { previewChoices, previewHousehold } from './preview';
 import { isPushEndpoint, removeSubscription, saveSubscription } from './push';
 import { checkPhoto, PhotoMediaType } from './reading/transcribe';
 import type { Store } from './store';
@@ -179,6 +179,28 @@ export function createApp(
     if (previews === null) return notAMember(c);
     return previews ? c.json({ previews }) : c.json({ error: 'unknownArrangement' }, 404);
   });
+  // 家と暮らしの情報の直しの「この変更で変わること」（書き込まずに同じ命令を展開した結果。preview.ts）。
+  app.post('/api/household-preview', async (c) => {
+    if (!family) return c.json({ error: 'familyDisabled' }, 404);
+    const member = await memberOf(c, family);
+    if (member instanceof Response) return member;
+    if (c.req.query('as') !== member.memberId) return switched(c);
+    const body = z.object({ household: Household }).safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: 'invalidBody' }, 400);
+    const preview = await family.store.withHousehold(member.householdId, (log) =>
+      log.isBound?.(member.memberId, member.identityId)
+        ? previewHousehold(
+            log.events(),
+            { memberId: member.memberId, now: nowIn(member.timeZone, family.clock?.()) },
+            body.data.household,
+          )
+        : null,
+    );
+    if (preview === null) return notAMember(c);
+    return 'reason' in preview
+      ? c.json({ error: preview.reason }, preview.status === 'forbidden' ? 403 : 409)
+      : c.json({ preview });
+  });
   app.post('/api/commands', async (c) => {
     if (!family) return c.json({ error: 'familyDisabled' }, 404);
     const refused = refuseWrite(c, family);
@@ -314,6 +336,21 @@ export function createApp(
     const previews = await sessions.preview(c.req.param('sid'), member, arrangementKey);
     if (previews === null) return c.json({ error: 'unknownSession' }, 404);
     return previews ? c.json({ previews }) : c.json({ error: 'unknownArrangement' }, 404);
+  });
+  app.post('/api/demo/sessions/:sid/household-preview', async (c) => {
+    const body = z
+      .object({ memberId: z.string().min(1), household: Household })
+      .safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: 'invalidBody' }, 400);
+    const preview = await sessions.householdPreview(
+      c.req.param('sid'),
+      body.data.memberId,
+      body.data.household,
+    );
+    if (preview === null) return c.json({ error: 'unknownSession' }, 404);
+    return 'reason' in preview
+      ? c.json({ error: preview.reason }, preview.status === 'forbidden' ? 403 : 409)
+      : c.json({ preview });
   });
   app.post('/api/demo/sessions/:sid/commands', async (c) => {
     const body = z

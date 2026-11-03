@@ -151,6 +151,8 @@ export const ICON = {
   message:
     '<path d="M4 5.5h16a1 1 0 0 1 1 1V16a1 1 0 0 1-1 1H9l-4.5 3.5V17H4a1 1 0 0 1-1-1V6.5a1 1 0 0 1 1-1z"></path>',
   bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"></path><path d="M10 20.5a2 2 0 0 0 4 0"></path>',
+  people:
+    '<circle cx="9" cy="8.5" r="3"></circle><path d="M3.5 19a5.5 5.5 0 0 1 11 0"></path><circle cx="16.5" cy="9.5" r="2.5"></circle><path d="M15.5 14.4a4.5 4.5 0 0 1 5.5 4.6"></path>',
 } as const;
 
 export function Icon({
@@ -180,13 +182,19 @@ export function Icon({
 }
 
 export function TabBar(props: {
-  active: 'today' | 'week';
-  labels: { today: string; snap: string; week: string };
+  active: 'today' | 'week' | 'household';
+  labels: { today: string; snap: string; week: string; household: string };
   onToday: () => void;
   onSnap: () => void;
   onWeek: () => void;
+  onHousehold: () => void;
 }) {
-  const item = (key: 'today' | 'week', icon: string, label: string, onClick: () => void) => (
+  const item = (
+    key: 'today' | 'week' | 'household',
+    icon: string,
+    label: string,
+    onClick: () => void,
+  ) => (
     <button
       type="button"
       onClick={onClick}
@@ -211,6 +219,7 @@ export function TabBar(props: {
         {props.labels.snap}
       </button>
       {item('week', ICON.calendar, props.labels.week, props.onWeek)}
+      {item('household', ICON.people, props.labels.household, props.onHousehold)}
     </nav>
   );
 }
