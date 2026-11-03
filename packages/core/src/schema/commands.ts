@@ -169,12 +169,22 @@ export const Command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('correctSentRecord'), requestId: Id }),
   z.object({ type: z.literal('recordReply'), requestId: Id, reply: z.enum(['yes', 'no']) }),
   z.object({ type: z.literal('recordCancellationSent'), requestId: Id }),
-  z.object({ type: z.literal('confirmItem'), itemId: Id }),
-  z.object({ type: z.literal('correctItem'), itemId: Id, interpretation: Interpretation }),
+  /**
+   * 読み取りの事項を確かめる・直す・外す。モデルが読んだ「すること」は、見せた時の番号（seen）が要る：見せた後に
+   * 出典の文・事項・答え・言明・読み直しがあれば、古い画面から決めさせない。
+   */
+  z.object({ type: z.literal('confirmItem'), itemId: Id, seen: ItemSeen.optional() }),
+  z.object({
+    type: z.literal('correctItem'),
+    itemId: Id,
+    interpretation: Interpretation,
+    seen: ItemSeen.optional(),
+  }),
   z.object({
     type: z.literal('dismissItem'),
     itemId: Id,
     reason: z.enum(['notOurs', 'misread', 'other']),
+    seen: ItemSeen.optional(),
   }),
   /**
    * 当番が、うちの番か（「うちの番です」「うちの番ではない」）。読んだ中身の確かめ・取り下げとは別の言明で、

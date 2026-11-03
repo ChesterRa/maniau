@@ -130,7 +130,8 @@
       "checkDate": "There's no record of the date you asked for. Please check the date before sending.",
       "done": "I told them",
       "checkContent": "The record does not say what was asked. Check which request this is and edit the message before sending.",
-      "checkWhich": "Another request to the same recipient would get this same message. Add which request this is before sending."
+      "checkWhich": "Another request to the same recipient would get this same message. Add which request this is before sending.",
+      "checkChild": "The record doesn't say which child this was for. Add the child's name before sending."
     },
     "check": {
       "label": "Please check",
@@ -223,6 +224,60 @@
       "gaps": "For {{gaps}}, it is not yet confirmed who covers it.",
       "action": "Open",
       "waiting": "A request is waiting for a reply. It does not count as covered until you record “They said OK”."
+    },
+    "needCheck": {
+      "label": "Check the reading",
+      "read": "Read as: {{when}}",
+      "window": "someone is needed on {{day}}, {{from}}–{{to}}",
+      "windowNoEnd": "someone is needed on {{day}} from {{from}} (no end time read)",
+      "windowNoTime": "someone is needed on {{day}} (no times read)",
+      "noDate": "someone is needed during a time (no date read)",
+      "by": "get it done by {{by}}",
+      "noDeadline": "get it done by a deadline (no deadline read)",
+      "noShape": "could not tell whether someone is needed during a time or it must be done by a deadline",
+      "noCondition": "Condition: none written",
+      "conditionExpr": "Condition: needed only if {{expr}}",
+      "notLive": "With the current answer, this is not needed. If the condition doesn’t match the original text, remove it with “Misread”.",
+      "past": "The date and time read have already passed. Fix it if they are wrong; otherwise remove it.",
+      "replaces": "Read as replacing {{target}}. Until you confirm, the earlier one is treated as uncertain.",
+      "cancels": "Read as calling off {{target}}. Until you confirm, the earlier one is treated as uncertain.",
+      "answers": "Read as answering “{{label}}” with “{{value}}”. Until you confirm, this answer is not counted.",
+      "unknownItem": "(an item not found)",
+      "flagged": "Parts of this reading may not match the original text, or may have been missed. Check the date and times against the original text carefully.",
+      "unshown": "Part of this reading (its condition, an answer, or what it replaces) can’t be shown here in a way you can tell apart, so it can’t be confirmed. If it is needed, remove it with “Misread” and add it with “Add something to do”.",
+      "body": "This was read by the model, so it stays out of the plan until your family checks it (no tasks or messages are made). The bold text is what the reading is based on; check the rest of the notice too for anything that changes the date, time, or conditions.",
+      "wholeNotice_one": "Show the whole notice ({{count}} more sentence)",
+      "wholeNotice_other": "Show the whole notice ({{count}} more sentences)",
+      "brief": "Show only the sentences it is based on and their neighbors",
+      "ok": "It is right",
+      "fix": "Fix",
+      "misread": "Misread (remove)",
+      "misreadNote": "Once removed, this reading stays out of the plan (if it is needed, add it with “Add something to do”). If the notice is read again, you will be asked again.",
+      "notOurs": "Not needed for us (remove)",
+      "failed": {
+        "itemChanged": "This notice changed after it was shown. Look again, then choose.",
+        "seenAhead": "The screen is out of step. Reopen it, then choose again.",
+        "itemGone": "This reading is gone or has changed.",
+        "sourceWithdrawn": "This notice was withdrawn.",
+        "rereadPending": "The notice text was corrected and is waiting to be read again. Please check it again after it has been re-read.",
+        "needShapeMissing": "Whether this is a time or a deadline was not read. Use Fix to set it.",
+        "needWindowMissing": "The date and the start and end times are not all there. Use Fix to fill them in.",
+        "needWindowOvernight": "The end is not later than the start on the same day. Use Fix to correct it.",
+        "needDeadlineMissing": "There is no deadline date. Use Fix to set it.",
+        "needMemberUnknown": "The person it is for is not in your family. Use Fix to choose again.",
+        "other": "Could not record this right now. Please try again shortly.",
+        "readingUnshown": "The condition or answer in this reading can’t be shown, so it can’t be confirmed."
+      },
+      "answersFrom": "Read as answering “{{label}}” in {{from}} with “{{value}}”. Until you confirm, this answer is not counted.",
+      "targetWhat": "“{{what}}”",
+      "targetFrom": "“{{what}}” in {{from}}",
+      "targetWhen": "{{target}} ({{when}})",
+      "targetDay": "{{day}}",
+      "targetTime": "{{day}}, {{from}}–{{to}}",
+      "targetBy": "by {{by}}",
+      "targetJoin": "; ",
+      "fromDay": "the notice received {{day}}",
+      "fromTitled": "“{{title}}” received {{day}}"
     }
   },
   "answer": {
@@ -319,6 +374,9 @@
     "next1": "When they reply, tap “They said OK” here.",
     "next2": "If there's no reply, the backup option shows on Today about a day before its deadline."
   },
+  "child": {
+    "unknown": "the child"
+  },
   "draft": {
     "ask": "Hi {{address}}, could you help?\nOn {{date}}, {{child}} has no school. Could you look after {{child}} from {{from}} to about {{to}}?",
     "conditional": "If the plans change, there will be school that day and we won't need help.",
@@ -327,6 +385,8 @@
     "cancelHelperUndated": "Hi {{address}}, plans changed, so we no longer need the help we asked for. Thank you!",
     "cancelPlace": "Cancel {{child}}'s booking on {{date}}.",
     "cancelPlaceUndated": "Cancel {{child}}'s booking.",
+    "cancelPlaceNoChild": "Cancel the booking on {{date}}.",
+    "cancelPlaceUndatedNoChild": "Cancel the booking.",
     "replySoon": "It would help to hear back as soon as you can.",
     "askNeed": "Hi {{address}}, could you help?\nOn {{date}} from {{from}} to {{to}}, could you help with “{{what}}”?",
     "askNeedBy": "Hi {{address}}, could you help?\nCould you help with “{{what}}” by {{date}}?",
@@ -376,7 +436,13 @@
   },
   "condition": {
     "if": "if {{label}} is {{value}}",
-    "unless": "if {{label}} is not {{value}}"
+    "unless": "if {{label}} is not {{value}}",
+    "term": "“{{label}}” is “{{value}}”",
+    "notTerm": "not {{term}}",
+    "and": " and ",
+    "or": " or ",
+    "group": "({{expr}})",
+    "termFrom": "“{{label}}” in {{from}} is “{{value}}”"
   },
   "week": {
     "title": "Schedule",
@@ -786,6 +852,14 @@
       "nobody": "Not set",
       "missing": "Fill in what was said, what, and the date (and the start and end, for “someone is needed during a time”).",
       "save": "Save"
+    },
+    "fix": {
+      "title": "Fix the reading",
+      "intro": "Fix the fields the plan uses, looking at the original text. Once saved, it goes into the plan as checked by your family.",
+      "shape": "Kind: {{shape}} (kept from the reading. If the kind is wrong, remove it with “Misread” on Today, then use “Add something to do”.)",
+      "changed": "This notice changed after it was shown. Please check it again on Today.",
+      "save": "Save as checked",
+      "conditionNote": "The condition and answers can’t be changed here (they are confirmed as read). If they are wrong, remove the reading with “Misread” on Today."
     },
     "refused": {
       "needWindowMissing": "Enter the date and the start and end times.",

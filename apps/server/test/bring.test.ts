@@ -31,6 +31,7 @@ const socksReader: NoticeReader = async (request) => {
           conditionNodeId: null,
           inferred: false,
           familyAction: false,
+          shape: 'none',
           effects: [],
         },
       ],

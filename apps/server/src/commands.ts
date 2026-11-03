@@ -24,6 +24,7 @@ import {
   type EngineState,
   familyQuestionBasis,
   foldEvents,
+  itemShown,
   itemsOf,
   liveItems,
   needWaysBasis,
@@ -673,20 +674,54 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       if (state.withdrawnSources.has(item.sourceId)) {
         return { status: 'conflict', reason: 'sourceWithdrawn' };
       }
-      if (command.type === 'confirmItem') {
-        return { bodies: [{ type: 'itemConfirmed', itemId: item.id }] };
+      // モデルが読んだ「すること」（家族の言明でない出典の need）は、確かめるまで計画に入らない（エンジン）。確かめる・
+      // 直す・外すのは、見せた中身に対してだけ：見せた計画の通し番号が今と同じ時だけ受ける（条件や答える値の名前は、
+      // ほかの出典の読み取りから来ることがあり、出典ごとの番号では、その読み直しを見落とす。替わって元に戻った時も、
+      // 今より先の番号も断る）。送り手が家族でも、モデルが読んだ物は同じ。
+      const noticeNeed = item.kind === 'need' && !state.statedSources.has(item.sourceId);
+      if (noticeNeed) {
+        if (!command.seen) return { status: 'invalid', reason: 'seenRequired' };
+        if (command.seen.throughSeq > state.lastSeq)
+          return { status: 'invalid', reason: 'seenAhead' };
+        if (command.seen.throughSeq !== state.lastSeq) {
+          return { status: 'conflict', reason: 'itemChanged' };
+        }
+        // 文を直して、読み直す前は決めさせない（見せた読み取りは前の文の物。家族が決める値の答えと同じ）。
+        const source = state.sources.get(item.sourceId);
+        if (source && (state.extractionVersion.get(item.sourceId) ?? 0) < source.version) {
+          return { status: 'conflict', reason: 'rereadPending' };
+        }
+        // 条件の式や答える値を画面に見せられない読み取りは、確かめ・直しで認めさせない（外すことはできる）。
+        if (command.type !== 'dismissItem' && !itemShown(state, item).shown) {
+          return { status: 'invalid', reason: 'readingUnshown' };
+        }
       }
       if (command.type === 'dismissItem') {
         return { bodies: [{ type: 'itemDismissed', itemId: item.id, reason: command.reason }] };
+      }
+      if (command.type === 'confirmItem') {
+        // 「合っている」は、形のそろった読み取りにだけ（足りない欄を、確かめで埋めたことにしない。直してもらう）。
+        if (noticeNeed) {
+          const i = item.interpretation;
+          if (i.shape === undefined) return { status: 'invalid', reason: 'needShapeMissing' };
+          const checked = checkNeed(state.household, {
+            ...i,
+            what: i.what ?? item.written,
+            shape: i.shape,
+          });
+          if ('reason' in checked) return checked;
+        }
+        return { bodies: [{ type: 'itemConfirmed', itemId: item.id }] };
       }
       if (Object.keys(command.interpretation).length === 0) {
         return { status: 'invalid', reason: 'nothingToCorrect' };
       }
       // 家族の言明の「すること」は、直した後も言った時と同じ決まりで確かめる。形（締切か時間か）は替えない
-      // （替えるなら言い直す。前の形の欄を残したまま別の形にしない）。
+      // （替えるなら言い直す。前の形の欄を残したまま別の形にしない）。読み取りに形が無かった物だけ、形を入れられる。
       if (item.kind === 'need') {
         const merged = { ...item.interpretation, ...command.interpretation };
-        if (merged.shape === undefined || merged.shape !== item.interpretation.shape) {
+        if (merged.shape === undefined) return { status: 'invalid', reason: 'needShapeMissing' };
+        if (item.interpretation.shape !== undefined && merged.shape !== item.interpretation.shape) {
           return { status: 'invalid', reason: 'needShapeLocked' };
         }
         const checked = checkNeed(state.household, {

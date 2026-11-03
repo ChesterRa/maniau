@@ -18,6 +18,8 @@ import { weekday } from './time';
 
 export interface FactState {
   items: Map<string, Item>;
+  /** 家族の言明か、採用中の読み取りを家族が確かめたか。事項と読み取りの事象から独立に組む。 */
+  needConfirmation: Map<string, 'stated' | 'confirmed' | 'dismissed' | 'pending'>;
   /** 出典の内容を持ち越さず、送り手だけを要件の検査に使う。 */
   sourceSenders: Map<string, SourceSender>;
   /** 古い版・型の違う読み取りを除き、各出典で採用された読み取りの通し番号。 */
@@ -96,6 +98,76 @@ interface Extracted extends Extraction {
   sourceVersion: number;
 }
 
+/** 確認した時の参照先。計画やエンジンの控えを使わず、採用された事象から組む。 */
+interface NeedReferences {
+  sources: Map<string, number>;
+  missing: Set<string>;
+}
+
+function needReferences(
+  item: Item,
+  readings: Iterable<Extracted>,
+  purgedSources: ReadonlySet<string>,
+): NeedReferences {
+  const accepted = [...readings].filter((reading) => !purgedSources.has(reading.sourceId));
+  const nodes = new Map(accepted.flatMap((reading) => reading.conditions).map((n) => [n.id, n]));
+  const nodeIds = new Set<string>();
+  const unknownIds = new Set<string>();
+  const itemIds = new Set<string>();
+  const pending: { id: string; depth: number }[] = item.conditionNodeId
+    ? [{ id: item.conditionNodeId, depth: 0 }]
+    : [];
+  while (pending.length > 0) {
+    const entry = pending.pop();
+    if (!entry || entry.depth > MAX_CONDITION_NODES || nodeIds.has(entry.id)) continue;
+    nodeIds.add(entry.id);
+    const node = nodes.get(entry.id);
+    if (!node) continue;
+    if (node.kind === 'eq') unknownIds.add(node.unknownId);
+    else if (node.kind === 'not') pending.push({ id: node.childId, depth: entry.depth + 1 });
+    else for (const id of node.childIds) pending.push({ id, depth: entry.depth + 1 });
+  }
+  for (const effect of item.effects) {
+    if (effect.type === 'resolveUnknown') unknownIds.add(effect.unknownId);
+    else itemIds.add(effect.itemId);
+  }
+
+  const sources = new Map<string, number>();
+  const missing = new Set([...nodeIds, ...unknownIds, ...itemIds]);
+  for (const reading of accepted) {
+    let used = reading.sourceId === item.sourceId;
+    for (const node of reading.conditions) {
+      if (nodeIds.has(node.id)) {
+        used = true;
+        missing.delete(node.id);
+      }
+    }
+    for (const unknown of reading.unknowns) {
+      if (unknownIds.has(unknown.id)) {
+        used = true;
+        missing.delete(unknown.id);
+      }
+    }
+    for (const target of reading.items) {
+      if (itemIds.has(target.id)) {
+        used = true;
+        missing.delete(target.id);
+      }
+    }
+    if (used) sources.set(reading.sourceId, reading.seq);
+  }
+  return { sources, missing };
+}
+
+function sameNeedReferences(left: NeedReferences, right: NeedReferences): boolean {
+  return (
+    left.sources.size === right.sources.size &&
+    [...left.sources].every(([id, seq]) => right.sources.get(id) === seq) &&
+    left.missing.size === right.missing.size &&
+    [...left.missing].every((id) => right.missing.has(id))
+  );
+}
+
 /** JSON の値を、オブジェクトの欄の順に依らず照らす。中身を検証結果には出さない。 */
 function sameValue(left: unknown, right: unknown): boolean {
   if (left === right) return true;
@@ -167,6 +239,15 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   const invalidExtractions: { eventId: string; sourceId?: string }[] = [];
   const corrections = new Map<string, Interpretation>();
   const verdicts = new Map<string, 'confirmed' | 'dismissed'>();
+  const needVerdicts = new Map<
+    string,
+    {
+      reading: number;
+      references: NeedReferences;
+      verdict: 'confirmed' | 'dismissed';
+      correction?: Interpretation;
+    }
+  >();
   const turns = new Map<string, { ours: boolean; what: string; audience: string | null }>();
   const escorts: FactState['escorts'] = new Map();
   for (const event of events) {
@@ -279,6 +360,35 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
           date: event.date,
           at: event.at,
           place: event.place,
+        });
+        continue;
+      }
+      // モデルが読んだ need への確かめ・直しは、その時に採用された読み取りに結ぶ。
+      // 同じ事項 ID が読み直しで別の内容に使われても、前の言明を新しい読み取りに当てない。
+      const reading = [...latestBySource.values()].find((entry) =>
+        entry.items.some((item) => item.id === event.itemId && item.kind === 'need'),
+      );
+      if (reading && !statedSources.has(reading.sourceId)) {
+        const previous = needVerdicts.get(event.itemId);
+        const item = reading.items.find((entry) => entry.id === event.itemId);
+        if (!item) continue;
+        const references = needReferences(item, latestBySource.values(), purgedSources);
+        const sameReading =
+          previous?.reading === reading.seq && sameNeedReferences(previous.references, references);
+        const correction =
+          event.type === 'itemCorrected'
+            ? {
+                ...(sameReading ? previous.correction : {}),
+                ...event.interpretation,
+              }
+            : sameReading
+              ? previous.correction
+              : undefined;
+        needVerdicts.set(event.itemId, {
+          reading: reading.seq,
+          references,
+          verdict: event.type === 'itemDismissed' ? 'dismissed' : 'confirmed',
+          ...(correction === undefined ? {} : { correction }),
         });
         continue;
       }
@@ -467,6 +577,8 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   }
 
   const items = new Map<string, Item>();
+  const needConfirmation: FactState['needConfirmation'] = new Map();
+  const effectiveVerdicts = new Map<string, 'confirmed' | 'dismissed'>();
   const itemSeq = new Map<string, number>();
   const nodes = new Map<string, ConditionNode>();
   const invalidNodes = new Set<string>();
@@ -475,11 +587,31 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
     for (const raw of extraction.items) {
       if (items.has(raw.id))
         report.violation('duplicate_item', raw.id, '事項の ID が重複している。');
-      const correction = corrections.get(raw.id);
+      const bound = needVerdicts.get(raw.id);
+      const readNeed = raw.kind === 'need' && !statedSources.has(extraction.sourceId);
+      const useBound = readNeed || bound !== undefined;
+      const references = readNeed
+        ? needReferences(raw, latestBySource.values(), purgedSources)
+        : undefined;
+      const current =
+        bound?.reading === extraction.seq &&
+        references !== undefined &&
+        sameNeedReferences(bound.references, references)
+          ? bound
+          : undefined;
+      const correction = useBound ? current?.correction : corrections.get(raw.id);
+      const verdict = useBound ? current?.verdict : verdicts.get(raw.id);
+      if (verdict !== undefined) effectiveVerdicts.set(raw.id, verdict);
+      if (raw.kind === 'need') {
+        needConfirmation.set(
+          raw.id,
+          statedSources.has(extraction.sourceId) ? 'stated' : (current?.verdict ?? 'pending'),
+        );
+      }
       const item: Item = {
         ...raw,
         ...(correction ? { interpretation: { ...raw.interpretation, ...correction } } : {}),
-        ...(verdicts.get(raw.id) === 'confirmed' ? { evidence: 'confirmed' } : {}),
+        ...(verdict === 'confirmed' ? { evidence: 'confirmed' } : {}),
       };
       items.set(raw.id, item);
       itemSeq.set(raw.id, extraction.sourceSeq);
@@ -740,8 +872,11 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
     }
   }
   const baseActivity = (item: Item): Truth => {
-    if (withdrawnSources.has(item.sourceId) || verdicts.get(item.id) === 'dismissed') return false;
+    if (withdrawnSources.has(item.sourceId) || effectiveVerdicts.get(item.id) === 'dismissed')
+      return false;
     if (staleItems.has(item.id)) return 'unknown';
+    // まだ確かめていない need の条件も作用も確定していない。取消・置換の先や答えも決めつけない。
+    if (needConfirmation.get(item.id) === 'pending') return 'unknown';
     const condition = conditionOf(item);
     if (condition === false) return false;
     return item.evidence === 'inferred' || item.evidence === 'conflicting' ? 'unknown' : condition;
@@ -887,6 +1022,7 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   }
   return {
     items,
+    needConfirmation,
     sourceReadingSeq: new Map(extracted.map((entry) => [entry.sourceId, entry.seq])),
     sourceSenders: new Map(
       [...sources]

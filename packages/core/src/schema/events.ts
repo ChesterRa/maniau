@@ -41,6 +41,8 @@ export const RequestSnapshot = z.object({
    * 要るかを頼んだ本人に確かめてもらう（日・締切・だれのため・やり方が替わった時に、前の返事を当てない）。
    */
   about: z.string().min(1).optional(),
+  /** 子の居場所の依頼だけ：頼んだ時の手配の子（成員の ID）。無いのは古い事象か、子の居場所でない依頼。 */
+  childId: Id.optional(),
 });
 export type RequestSnapshot = z.infer<typeof RequestSnapshot>;
 

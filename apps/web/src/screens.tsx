@@ -6,6 +6,7 @@ import {
   type ChangeSummary,
   type ChoicePreview,
   type Command,
+  type ConditionView,
   type ExternalRequest,
   formatDateTime,
   type Household,
@@ -20,12 +21,15 @@ import {
   proposalSnapshot,
   type Released,
   type Requirement,
+  type ShownFrom,
+  type ShownTarget,
   type Source,
   type Task,
   type TodayCard,
   taskContent,
   toEpochMinutes,
   untimed,
+  zonedToEpochMinutes,
 } from '@maniau/core';
 import type { TFunction } from 'i18next';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -81,6 +85,8 @@ export type Route =
   | { name: 'need'; key: string }
   /** 家族の言明で「すること」を足す。 */
   | { name: 'stateNeed' }
+  /** モデルが読んだ「すること」の読み取りを、家族が直す（事項の ID）。 */
+  | { name: 'needFix'; itemId: string }
   | { name: 'ask'; taskKey: string }
   | { name: 'week' }
   | { name: 'sources'; sourceId?: string; highlight?: string[] };
@@ -109,6 +115,17 @@ export interface Ctx {
       childId: string;
       legs: { leg: 'to' | 'from'; needed: boolean; stated?: true }[];
     };
+    /** 「すること」だけ：確かめる時に見せる条件の式（答えに依らず、読み取りのまま）。 */
+    condition?: ConditionView;
+    /** 「すること」だけ：未定の値への答え（どの値に何と。別のお知らせの値なら、そのお知らせ）。 */
+    answers?: { unknownId: string; label: string; value: string; from?: ShownFrom }[];
+    /** 「すること」だけ：置き換え・取り消しの先（何を・いつ・どのお知らせの）。 */
+    targets?: ShownTarget[];
+    /**
+     * 「すること」だけ：条件・答え・置き換えの先を、見分けられる形で見せられない（確かめ・直しはできない。外すことは
+     * できる）。
+     */
+    unshown?: true;
   }[];
   sources: Map<string, Source>;
   readings: Reading[];
@@ -139,7 +156,7 @@ export interface Ctx {
   go: (route: Route) => void;
 }
 
-const succeeded = (result: SendResult) => result.status === 'ok' || result.status === 'noop';
+export const succeeded = (result: SendResult) => result.status === 'ok' || result.status === 'noop';
 
 // ── 名前と言葉 ──────────────────────────────
 
@@ -148,8 +165,20 @@ export const nameOf = (household: Household, id: string | undefined) =>
   household.places.find((p) => p.id === id)?.name ??
   '';
 
-const childName = (household: Household) =>
-  household.members.find((m) => m.kind === 'child' && m.active)?.name ?? '';
+/**
+ * 手配か依頼の子（成員）。手配・控えに子が無い時は、家の子が一人だけならその子（その子の分しか無い）。
+ * ほかには推さない（無ければ undefined：文に名前を書かず、家族に書き足してもらう）。
+ */
+/**
+ * 子の成員。ID の分かる時だけ（控えに子の無い古い依頼で、今の家の子を当てない：今の子が一人でも、頼んだ時の子
+ * だという証拠にはならない）。
+ */
+const childOf = (household: Household, childId: string | undefined): Member | undefined =>
+  childId === undefined
+    ? undefined
+    : household.members.find((m) => m.id === childId && m.kind === 'child');
+const childLabel = (ctx: Ctx, childId: string | undefined, t: TFunction = ctx.t) =>
+  childOf(ctx.household, childId)?.name ?? t('child.unknown');
 
 function otherAdult(household: Household, me: string): Member | undefined {
   return household.members.find((m) => m.kind === 'adult' && m.active && m.id !== me);
@@ -566,7 +595,7 @@ export function askDraft(ctx: Ctx, task: Task): string {
       date: formatLongDay(arrangement.start, lng, ctx.tz),
       from: formatTime(arrangement.start, lng, ctx.tz),
       to: formatTime(arrangement.end, lng, ctx.tz),
-      child: childName(ctx.household),
+      child: childLabel(ctx, arrangement.childId, t),
     }),
   ];
   if (isConditional(arrangement)) parts.push(t('draft.conditional'));
@@ -600,9 +629,15 @@ export function cancelDraft(ctx: Ctx, request: ExternalRequest): string {
       : t('draft.cancelHelperUndated', { address });
   }
   const place = nameOf(ctx.household, request.to);
-  const child = childName(ctx.household);
-  return asked
-    ? ctx.t('draft.cancelPlace', { place, child, date: formatLongDay(asked, ctx.lang, ctx.tz) })
+  // だれの分かは、依頼の控えの子で書く（今の成員から推さない）。分からなければ名前を書かず、札で書き足してもらう。
+  const child = childOf(ctx.household, request.childId)?.name;
+  const date = asked ? formatLongDay(asked, ctx.lang, ctx.tz) : undefined;
+  if (child === undefined)
+    return date
+      ? ctx.t('draft.cancelPlaceNoChild', { place, date })
+      : ctx.t('draft.cancelPlaceUndatedNoChild', { place });
+  return date
+    ? ctx.t('draft.cancelPlace', { place, child, date })
     : ctx.t('draft.cancelPlaceUndated', { place, child });
 }
 
@@ -639,6 +674,23 @@ function needCancelDraft(ctx: Ctx, request: ExternalRequest, helper: Member | un
       : t('draft.cancelHelperUndated', { address });
   }
   return when ? t('draft.cancelPlaceNeed', { when }) : t('draft.cancelPlaceNeedUndated');
+}
+
+/**
+ * 取り消しの文だけでは足りない時に、札に添える言葉（推して埋めず、家族に確かめて書き足してもらう）：頼んだ時の
+ * 中身か日が控えに無い、所への子の居場所の取り消しで、だれの分か分からない、文が同じ相手の別の依頼と同じになる。
+ */
+export function cancelNotes(ctx: Ctx, request: ExternalRequest): string[] {
+  const need = isNeedArrangementKey(request.basis.arrangementKey);
+  const notes: string[] = [];
+  if (need && !request.askedNeed) notes.push('card.cancel.checkContent');
+  else if (!request.window && !request.askedNeed?.deadline) notes.push('card.cancel.checkDate');
+  const toPlace = !ctx.household.members.some((m) => m.id === request.to);
+  if (!need && toPlace && !childOf(ctx.household, request.childId)) {
+    notes.push('card.cancel.checkChild');
+  }
+  if (notes.length === 0 && cancelTwin(ctx, request)) notes.push('card.cancel.checkWhich');
+  return notes;
 }
 
 /**
@@ -825,6 +877,7 @@ function cardKey(card: TodayCard): string {
     case 'waiting':
       return `${card.kind}:${card.request.requestId}`;
     case 'bring':
+    case 'needCheck':
       return `${card.kind}:${card.requirement.key}`;
   }
 }
@@ -855,6 +908,8 @@ function CardView({ ctx, card }: { ctx: Ctx; card: TodayCard }) {
       return <StuckCard ctx={ctx} card={card} />;
     case 'need':
       return <NeedCard ctx={ctx} card={card} />;
+    case 'needCheck':
+      return <NeedCheckCard ctx={ctx} card={card} />;
     default:
       return null;
   }
@@ -965,7 +1020,7 @@ function DecideCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 
       {recommended?.decisionDeadline && (
         <Text>
           {ctx.t('card.decide.body', {
-            child: childName(ctx.household),
+            child: childLabel(ctx, arrangement.childId),
             deadline: dayTime(ctx, recommended.decisionDeadline),
             option: optionTitle(ctx, recommended),
           })}
@@ -1182,7 +1237,7 @@ export function StuckCard({
           ? ctx.t(noStore ? 'card.stuck.noStore' : 'card.stuck.purchase', {
               date: due(ctx, date, requirement?.basis.itemIds ?? []),
             })
-          : ctx.t('card.stuck.childCare', { child: childName(ctx.household) })}
+          : ctx.t('card.stuck.childCare', { child: childLabel(ctx, arrangement.childId) })}
       </Text>
       {purchase && unknownId && requirement && (
         <Row>
@@ -1341,6 +1396,281 @@ function NeedCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 'n
       <Button onClick={() => ctx.go({ name: 'need', key: arrangement.key })}>
         {ctx.t('card.need.action')}
       </Button>
+    </Card>
+  );
+}
+
+/**
+ * モデルが読んだ「すること」の読み取り（何を・いつ）。書かれていない欄は、書かれていないと書く（作らない）。
+ */
+export function readNeedWhen(ctx: Ctx, interpretation: Item['interpretation']): string {
+  const i = interpretation;
+  if (i.shape === 'window') {
+    if (!i.date) return ctx.t('card.needCheck.noDate');
+    return ctx.t(
+      i.startTime && i.endTime
+        ? 'card.needCheck.window'
+        : i.startTime
+          ? 'card.needCheck.windowNoEnd'
+          : 'card.needCheck.windowNoTime',
+      { day: day(ctx, i.date), from: i.startTime ?? '', to: i.endTime ?? '' },
+    );
+  }
+  if (i.shape === 'by') {
+    if (!i.deadline) return ctx.t('card.needCheck.noDeadline');
+    return ctx.t('card.needCheck.by', {
+      by: i.deadlineDayOnly === true ? day(ctx, i.deadline) : dayTime(ctx, i.deadline),
+    });
+  }
+  return ctx.t('card.needCheck.noShape');
+}
+
+/**
+ * 読み取りの日時が終わる時（窓の終わり・締切。日だけの締切と、形の足りない物は書かれた日の終わり）。過ぎたことを
+ * 札に添えるだけに使う（確かめていない日時なので、札を隠さない）。
+ */
+function readNeedOver(ctx: Ctx, i: Item['interpretation']): number | undefined {
+  if (i.shape === 'window' && i.date && i.endTime) {
+    return zonedToEpochMinutes(i.date, i.endTime, ctx.tz);
+  }
+  if (i.shape === 'by' && i.deadline) {
+    return i.deadlineDayOnly === true
+      ? zonedToEpochMinutes(i.deadline.slice(0, 10), '23:59', ctx.tz)
+      : toEpochMinutes(i.deadline);
+  }
+  const date = i.date ?? i.deadline?.slice(0, 10);
+  return date && isValidLocalDate(date) ? zonedToEpochMinutes(date, '23:59', ctx.tz) : undefined;
+}
+
+/** 確かめられる（「合っている」を押せる）形のそろった読み取りか。足りなければ、直してもらう。 */
+export function readNeedComplete(interpretation: Item['interpretation']): boolean {
+  const i = interpretation;
+  if (i.shape === 'window')
+    return !!i.date && !!i.startTime && !!i.endTime && i.startTime < i.endTime;
+  return i.shape === 'by' && !!i.deadline;
+}
+
+/** 条件の値の言葉（はい・いいえ、実在する日付は日。ほかはお知らせの言葉のまま）。 */
+const conditionValue = (ctx: Ctx, value: string) =>
+  value === 'yes' || value === 'no'
+    ? ctx.t(`card.question.family.${value}`)
+    : isValidLocalDate(value)
+      ? day(ctx, value)
+      : value;
+
+/**
+ * 条件の式を、連結（かつ・または）と否定のまま文にする（短く言い換えない）。入れ子の連結は括弧でくくる。
+ */
+export function conditionExpr(ctx: Ctx, view: ConditionView, nested = false): string {
+  if (view.kind === 'eq') {
+    const value = conditionValue(ctx, view.value);
+    return view.from
+      ? ctx.t('condition.termFrom', { label: view.label, value, from: fromText(ctx, view.from) })
+      : ctx.t('condition.term', { label: view.label, value });
+  }
+  if (view.kind === 'not') {
+    return ctx.t('condition.notTerm', { term: conditionExpr(ctx, view.child, true) });
+  }
+  const joined = view.children
+    .map((child) => conditionExpr(ctx, child, true))
+    .join(ctx.t(view.kind === 'and' ? 'condition.and' : 'condition.or'));
+  return nested ? ctx.t('condition.group', { expr: joined }) : joined;
+}
+
+/** 別のお知らせの手がかり（届いた日と、あれば題）。 */
+function fromText(ctx: Ctx, from: ShownFrom): string {
+  const at = day(ctx, from.day);
+  return from.title === undefined
+    ? ctx.t('card.needCheck.fromDay', { day: at })
+    : ctx.t('card.needCheck.fromTitled', { day: at, title: from.title });
+}
+
+/** 置き換え・取り消しの先の事項（何を・いつ・別のお知らせなら、どれの）。見つからなければ、そう書く。 */
+function targetText(ctx: Ctx, target: ShownTarget): string {
+  if (target.what === undefined) return ctx.t('card.needCheck.unknownItem');
+  const named = target.from
+    ? ctx.t('card.needCheck.targetFrom', { what: target.what, from: fromText(ctx, target.from) })
+    : ctx.t('card.needCheck.targetWhat', { what: target.what });
+  const w = target.when;
+  const parts = [
+    w?.date &&
+      ctx.t(w.startTime || w.endTime ? 'card.needCheck.targetTime' : 'card.needCheck.targetDay', {
+        day: day(ctx, w.date),
+        from: w.startTime ?? '',
+        to: w.endTime ?? '',
+      }),
+    w?.deadline &&
+      ctx.t('card.needCheck.targetBy', {
+        by: w.deadlineDayOnly === true ? day(ctx, w.deadline) : dayTime(ctx, w.deadline),
+      }),
+  ].filter((part): part is string => typeof part === 'string' && part !== '');
+  return parts.length === 0
+    ? named
+    : ctx.t('card.needCheck.targetWhen', {
+        target: named,
+        when: parts.join(ctx.t('card.needCheck.targetJoin')),
+      });
+}
+
+/**
+ * 家族が確かめる読み取りの条件、未定の値への答え（どの値に何と）、置き換え・取り消しの先（何を・いつ）。別のお知らせ
+ * の物には、そのお知らせを添える。見せられない・見分けられない物があれば、そう書く（確かめ・直しはできない。
+ * サーバーも断る）。確かめる札と直す画面が同じ物を見せる。
+ */
+export function ReadingShown({ ctx, live }: { ctx: Ctx; live: Ctx['items'][number] }) {
+  const { item } = live;
+  return (
+    <>
+      {item.conditionNodeId === undefined ? (
+        <Text quiet>{ctx.t('card.needCheck.noCondition')}</Text>
+      ) : (
+        live.condition && (
+          <Text quiet>
+            {ctx.t('card.needCheck.conditionExpr', { expr: conditionExpr(ctx, live.condition) })}
+          </Text>
+        )
+      )}
+      {(live.answers ?? []).map((answer) => {
+        const params = { label: answer.label, value: conditionValue(ctx, answer.value) };
+        return (
+          <Text key={answer.unknownId}>
+            {answer.from
+              ? ctx.t('card.needCheck.answersFrom', { ...params, from: fromText(ctx, answer.from) })
+              : ctx.t('card.needCheck.answers', params)}
+          </Text>
+        );
+      })}
+      {(live.targets ?? []).map((target) => (
+        <Text key={`${target.type}:${target.itemId}`}>
+          {ctx.t(target.type === 'replace' ? 'card.needCheck.replaces' : 'card.needCheck.cancels', {
+            target: targetText(ctx, target),
+          })}
+        </Text>
+      ))}
+      {live.unshown && <Text>{ctx.t('card.needCheck.unshown')}</Text>}
+    </>
+  );
+}
+
+/**
+ * 読み取りを確かめる・直す時の元の文。初めはお知らせの全文を見せ、読み取りが指した文を太字にする（指す文はモデルが
+ * 選ぶので、指さなかった文に日時や条件を変える所〔「登校前にお願いします」〕があっても見落とさない）。長ければ、
+ * 指した文と前後の一文にたためる。
+ */
+export function NoticeText({
+  source,
+  cited,
+  t,
+}: {
+  source: Source | undefined;
+  cited: readonly string[];
+  t: TFunction;
+}) {
+  const [brief, setBrief] = useState(false);
+  const sentences = source?.sentences ?? [];
+  if (sentences.length === 0) return null;
+  const marked = new Set(cited);
+  const near = new Set(
+    sentences.flatMap((sentence, index) =>
+      marked.has(sentence.id) ? [index - 1, index, index + 1] : [],
+    ),
+  );
+  const shown = sentences.filter((_, index) => !brief || near.has(index));
+  const gap = source?.language === 'ja' ? '' : ' ';
+  return (
+    <>
+      <Quote>
+        {shown.map((sentence, index) => (
+          <span key={sentence.id} className={marked.has(sentence.id) ? 'font-bold' : 'text-sub'}>
+            {index > 0 ? gap : ''}
+            {sentence.text}
+          </span>
+        ))}
+      </Quote>
+      {brief ? (
+        <MoreLink onClick={() => setBrief(false)}>
+          {t('card.needCheck.wholeNotice', { count: sentences.length - shown.length })}
+        </MoreLink>
+      ) : (
+        near.size > 0 &&
+        sentences.some((_, index) => !near.has(index)) && (
+          <MoreLink onClick={() => setBrief(true)}>{t('card.needCheck.brief')}</MoreLink>
+        )
+      )}
+    </>
+  );
+}
+
+/**
+ * モデルが読んだ「すること」を、家族に確かめてもらう札。確かめるまで計画に入れない（手配も作業も無い）。元の文と、
+ * 読み取り（何を・いつ・条件・ほかの事項への作用）を見せ、合っている・直す・読み取りが違う（外す）を選んでもらう。
+ * どれも、見せた時の番号を付ける（後で読み直された中身を、古い札から決めない）。
+ */
+function NeedCheckCard({
+  ctx,
+  card,
+}: {
+  ctx: Ctx;
+  card: Extract<TodayCard, { kind: 'needCheck' }>;
+}) {
+  const { requirement } = card;
+  const itemId = requirement.basis.itemIds[0] ?? '';
+  const live = ctx.items.find((l) => l.item.id === itemId);
+  const [failed, setFailed] = useState<string | undefined>();
+  if (!live) return null;
+  const { item } = live;
+  const source = ctx.sources.get(item.sourceId);
+  const seen = { throughSeq: ctx.plan.throughSeq };
+  const confirmable = live.unshown !== true;
+  // 元の文と食い違う・推定の読み取りか、確かめてほしい文（時刻の読み落としかもしれない等）を指す読み取り。
+  const reading = ctx.readings.find((r) => r.sourceId === item.sourceId);
+  const flagged =
+    !live.trusted ||
+    reading?.checkAll === true ||
+    item.sentenceIds.some((id) => reading?.check?.includes(id) === true);
+  const over = readNeedOver(ctx, item.interpretation);
+  const past = over !== undefined && over <= toEpochMinutes(ctx.now);
+  const send = async (command: Command) => {
+    const result = await ctx.send(command);
+    setFailed(succeeded(result) ? undefined : ('reason' in result && result.reason) || 'other');
+  };
+  return (
+    <Card>
+      <Label tone="warn">{ctx.t('card.needCheck.label')}</Label>
+      <Title>{requirement.what}</Title>
+      <Text>{ctx.t('card.needCheck.read', { when: readNeedWhen(ctx, item.interpretation) })}</Text>
+      <ReadingShown ctx={ctx} live={live} />
+      {!requirement.live && <Text>{ctx.t('card.needCheck.notLive')}</Text>}
+      {past && <Text>{ctx.t('card.needCheck.past')}</Text>}
+      <NoticeText source={source} cited={item.sentenceIds} t={ctx.t} />
+      {flagged && <Text>{ctx.t('card.needCheck.flagged')}</Text>}
+      <Text quiet>{ctx.t('card.needCheck.body')}</Text>
+      {failed !== undefined && (
+        <Text>
+          {ctx.t(`card.needCheck.failed.${failed}`, {
+            defaultValue: ctx.t('card.needCheck.failed.other'),
+          })}
+        </Text>
+      )}
+      {confirmable && (
+        <Row>
+          {readNeedComplete(item.interpretation) && (
+            <Button onClick={() => void send({ type: 'confirmItem', itemId, seen })}>
+              {ctx.t('card.needCheck.ok')}
+            </Button>
+          )}
+          <Button kind="secondary" onClick={() => ctx.go({ name: 'needFix', itemId })}>
+            {ctx.t('card.needCheck.fix')}
+          </Button>
+        </Row>
+      )}
+      <MoreLink onClick={() => void send({ type: 'dismissItem', itemId, reason: 'misread', seen })}>
+        {ctx.t('card.needCheck.misread')}
+      </MoreLink>
+      <MoreLink onClick={() => void send({ type: 'dismissItem', itemId, reason: 'notOurs', seen })}>
+        {ctx.t('card.needCheck.notOurs')}
+      </MoreLink>
+      <Text quiet>{ctx.t('card.needCheck.misreadNote')}</Text>
     </Card>
   );
 }
@@ -1691,13 +2021,11 @@ export function CancelCard({
       {open ? (
         <>
           <Quote>{draft}</Quote>
-          {isNeedArrangementKey(request.basis.arrangementKey) && !request.askedNeed ? (
-            <Text quiet>{ctx.t('card.cancel.checkContent')}</Text>
-          ) : !request.window && !request.askedNeed?.deadline ? (
-            <Text quiet>{ctx.t('card.cancel.checkDate')}</Text>
-          ) : (
-            cancelTwin(ctx, request) && <Text quiet>{ctx.t('card.cancel.checkWhich')}</Text>
-          )}
+          {cancelNotes(ctx, request).map((note) => (
+            <Text quiet key={note}>
+              {ctx.t(note)}
+            </Text>
+          ))}
           <DraftActions ctx={ctx} draft={draft} />
         </>
       ) : (
@@ -1943,7 +2271,7 @@ export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey
       <Header
         back={{ label: ctx.t('nav.today'), onClick: () => ctx.go({ name: 'today' }) }}
         eyebrow={ctx.t('decide.eyebrow', { date: day(ctx, date), what: requirement?.what ?? '' })}
-        title={ctx.t('decide.title', { child: childName(ctx.household) })}
+        title={ctx.t('decide.title', { child: childLabel(ctx, arrangement.childId) })}
       />
       <Main>
         {/* 条件しだいの手配は、決める画面でもそう書く（確かな予定として選ばせない）。 */}

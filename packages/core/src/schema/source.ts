@@ -90,9 +90,10 @@ export const Interpretation = z.object({
   deadline: DateTime.optional(),
   /**
    * 締切の時刻が、指した文に見つからない（「12月4日まで」。書き方を読み取れなかった時もある）。deadline の
-   * 時刻は、その日の朝の目安（仕組みが決めた物）で、画面は日だけを見せる。
+   * 時刻は、その日の朝の目安（仕組みが決めた物）で、画面は日だけを見せる。false は、家族が直して時刻を入れた
+   * 印（読み取りの「日だけ」を、直しで外す。直しは前の欄に重ねるので、消すには false が要る）。
    */
-  deadlineDayOnly: z.literal(true).optional(),
+  deadlineDayOnly: z.boolean().optional(),
   /**
    * 読み取りの始まりの時刻が、指した文に見つからず、落とした（書き方を読み取れなかっただけで、時刻は
    * 書かれているかもしれない）。画面は「書かれていない」と言わず、元の文で確かめてもらう。

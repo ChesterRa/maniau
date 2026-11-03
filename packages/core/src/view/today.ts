@@ -54,6 +54,11 @@ export type TodayCard =
    * 「すること」の画面で決める。
    */
   | { kind: 'need'; arrangement: Arrangement; requirement?: Requirement }
+  /**
+   * 通用の「すること」で、モデルが読んだ物を、家族がまだ確かめていない（合っている・直す・読み取りが違う）。確かめる
+   * まで計画に入れない（手配も作業も無い）。大人の全員に出し、元の文と読み取り（何を・いつ・条件・作用）を見せる。
+   */
+  | { kind: 'needCheck'; requirement: Requirement }
   /** 答えで段取りが変わる問い。 */
   | { kind: 'question'; question: Question; requirement?: Requirement }
   /** 自分が頼んで、返事を待っている。 */
@@ -278,6 +283,12 @@ export function todayCards(
     need.push({ kind: 'need', arrangement, ...(requirement ? { requirement } : {}) });
   }
 
+  // モデルが読んだ「すること」で、家族の確かめを待つ物。読み取りの条件で今は要らない物も出す（その条件こそ確かめる
+  // 物で、読み違えた条件で確かめの入口を隠さない）。読み取りの日時が過ぎた物も、エンジンが残す。
+  const needCheck: TodayCard[] = plan.requirements
+    .filter((r) => r.kind === 'need' && r.unconfirmed === true)
+    .map((requirement) => ({ kind: 'needCheck', requirement }));
+
   const stuck: TodayCard[] = [];
   for (const arrangement of plan.arrangements) {
     if (!arrangement.live || arrangement.status === 'askFirst' || arrangement.kind === 'need')
@@ -396,6 +407,7 @@ export function todayCards(
       ...backup,
       ...decide,
       ...need,
+      ...needCheck,
       ...stuck,
       ...work,
       ...question,

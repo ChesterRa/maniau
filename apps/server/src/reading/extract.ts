@@ -7,8 +7,8 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { ExtractionOutput, type Item, type Source, type Unknown } from '@maniau/core';
 
-export const EXTRACT_PROMPT_VERSION = 'extract.v3';
-const PROMPT = readFileSync(new URL('./prompts/extract.v3.md', import.meta.url), 'utf8');
+export const EXTRACT_PROMPT_VERSION = 'extract.v4';
+const PROMPT = readFileSync(new URL('./prompts/extract.v4.md', import.meta.url), 'utf8');
 
 export const DEFAULT_EXTRACT_MODEL = 'claude-opus-5-5';
 

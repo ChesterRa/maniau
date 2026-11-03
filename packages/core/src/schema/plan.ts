@@ -105,6 +105,12 @@ export const Requirement = z.object({
    * 買い物の手配が無くなっても、使う日の前の日の「持って行く物」を出すのに使う。
    */
   bought: z.boolean().optional(),
+  /**
+   * 通用の「すること」なら、お知らせから読んだ物で、家族がまだ確かめていない（合っている・直す）。家の人がする
+   * 事か・いつかを読み取りだけで決めないので、日時（date・by）を写さず、手配も作業も作らない。札で、元の文と
+   * 読み取りを見せて確かめてもらう。家族の言明の「すること」には付かない。
+   */
+  unconfirmed: z.literal(true).optional(),
 });
 export type Requirement = z.infer<typeof Requirement>;
 
@@ -156,6 +162,11 @@ export const ExternalRequest = z.object({
       deadlineDayOnly: z.literal(true).optional(),
     })
     .optional(),
+  /**
+   * 子の居場所の依頼だけ：だれの分か（送った時の控えの子。控えに無い古い依頼は、同じキーの手配が今あればその子）。
+   * 無ければ分からない（今の成員から推さない。文には名前を書かず、家族に書き足してもらう）。
+   */
+  childId: Id.optional(),
   /** 根拠が今の事実で成り立つか。成り立たず、取り消していなければ、取り消しの連絡が要る。 */
   live: z.boolean(),
   /**

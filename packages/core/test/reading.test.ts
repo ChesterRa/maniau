@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type ExtractionOutput, toExtraction } from '../src';
+import { type ExtractionOutput, parseStoredExtraction, toExtraction } from '../src';
 import { notice1, notice2 } from './fixtures/demo';
 
 // 手で書いたモデルの出力の形（モデルの出力ではない）。検査のコードの試験に使う。
@@ -22,6 +22,7 @@ const item = (
   conditionNodeId: null,
   inferred: false,
   familyAction: false,
+  shape: 'none',
   effects: [],
   ...over,
 });
@@ -537,6 +538,38 @@ describe('書かれていない時刻', () => {
     expect(extraction.items[0]?.evidence).toBe('stated');
   });
 
+  it('日だけで読んだ締切（時刻を付けない）は、日だけと印を付け、確かめを求めない', () => {
+    const text = '個人面談の出欠票は12月4日までに出してください。';
+    const { extraction, issues } = read(text, { deadline: '2026-12-04' });
+    expect(extraction.items[0]?.interpretation).toMatchObject({
+      deadline: '2026-12-04T08:00+09:00',
+      deadlineDayOnly: true,
+    });
+    expect(issues).toEqual([]);
+    expect(extraction.checkSentenceIds).toEqual([]);
+    // 日付として無い日は、ほかの日付と同じく読めない物にする。
+    expect(read(text, { deadline: '2026-12-32' }).issues).toContainEqual({
+      problem: 'badDate',
+      ref: 'r2:i1',
+      detail: '2026-12-32',
+    });
+  });
+
+  it('日だけで読んだ締切でも、文に時刻らしい書き方があれば、読み落としかもしれないので確かめてもらう', () => {
+    for (const text of [
+      '設備の利用は、12月4日（金）17:00までに窓口で申し込んでください。',
+      '12月4日（金）午後五時までに出してください。',
+      '12月4日（金）の夕方までに出してください。',
+      '12月4日（金）の朝、担任に出してください。',
+    ]) {
+      const { extraction, issues } = read(text, { deadline: '2026-12-04' });
+      // 日だけと印を付けたまま（読み落とした時刻を、コードが選んで埋めない）、その文を確かめてもらう。
+      expect(extraction.items[0]?.interpretation).toMatchObject({ deadlineDayOnly: true });
+      expect(issues).toEqual([{ problem: 'unwrittenTime', ref: 'r2:i1', detail: '2026-12-04' }]);
+      expect(extraction.checkSentenceIds).toEqual(['r2#1']);
+    }
+  });
+
   it('漢数字の時刻も、書かれた時刻とする', () => {
     for (const [text, deadline] of [
       ['12月4日（金）午後八時までに出してください。', '2026-12-04T20:00+09:00'],
@@ -703,5 +736,247 @@ describe('書かれていない時刻', () => {
       expect(extraction.items[0]?.interpretation).toMatchObject({ startTime: start, endTime: end });
       expect(issues).toEqual([]);
     }
+  });
+});
+
+describe('通用の「すること」（need）の読み取り', () => {
+  const note = (...texts: string[]) => ({
+    id: 'r3',
+    version: 1,
+    receivedAt: '2026-11-24T19:00+09:00',
+    sender: 'school' as const,
+    language: 'ja' as const,
+    medium: 'text' as const,
+    sentences: texts.map((text, i) => ({ id: `r3#${i + 1}`, text })),
+  });
+  const read = (texts: string[], items: ExtractionOutput['items']) =>
+    toExtraction(
+      { items, unknowns: [], conditions: [], irrelevantSentenceIds: [], ambiguities: [] },
+      note(...texts),
+      { priorItems: [], priorUnknowns: [] },
+    );
+
+  it('同じ文の行事と出席の依頼を別の事項にし、出席は窓の形で、書かれた時刻だけを持つ（だれのためは付けない）', () => {
+    const text =
+      '12月12日（土）13:00〜14:00に地域交流会を行います。各家庭から大人1名、ご参加ください。';
+    const { extraction, issues } = read(
+      [text, '会場は地域交流室です。'],
+      [
+        item({
+          id: 'i1',
+          sentenceIds: ['r3#1'],
+          kind: 'event',
+          written: '12月12日（土）13:00〜14:00に地域交流会を行います。',
+          date: '2026-12-12',
+          writtenWeekday: 'sat',
+          startTime: '13:00',
+          endTime: '14:00',
+          what: '地域交流会',
+        }),
+        item({
+          id: 'i2',
+          sentenceIds: ['r3#1', 'r3#2'],
+          kind: 'need',
+          written: '各家庭から大人1名、ご参加ください。会場は地域交流室です。',
+          date: '2026-12-12',
+          writtenWeekday: 'sat',
+          startTime: '13:00',
+          endTime: '14:00',
+          what: '地域交流会への参加',
+          place: '地域交流室',
+          audience: '各家庭から大人1名',
+          shape: 'window',
+        }),
+      ],
+    );
+    expect(issues).toEqual([]);
+    const need = extraction.items.find((i) => i.kind === 'need');
+    expect(need?.interpretation).toEqual({
+      date: '2026-12-12',
+      writtenWeekday: 6,
+      startTime: '13:00',
+      endTime: '14:00',
+      what: '地域交流会への参加',
+      place: '地域交流室',
+      audience: '各家庭から大人1名',
+      shape: 'window',
+    });
+    expect(need?.interpretation).not.toHaveProperty('forMemberId');
+    // 形は need だけに付ける（ほかの種類に付いても使わない）。
+    const event = extraction.items.find((i) => i.kind === 'event');
+    expect(event?.interpretation).not.toHaveProperty('shape');
+  });
+
+  it('締切の形：日だけの締切は日だけと印を付け、書かれていない時刻を作らない。時刻を確かめられない時は、その文を確かめてもらう', () => {
+    const need = (text: string, deadline: string) =>
+      read(
+        [text],
+        [
+          item({
+            id: 'i1',
+            sentenceIds: ['r3#1'],
+            kind: 'need',
+            written: text,
+            deadline,
+            what: '申し込み',
+            shape: 'by',
+          }),
+        ],
+      );
+    const plain = '印刷機を使う場合は、12月4日（金）までに地区センターの窓口で申し込んでください。';
+    // 「12月4日（金）までに」を日だけで読んだ：日だけと印を付け、確かめは求めない（その日の朝を目安にする）。
+    const dayOnly = need(plain, '2026-12-04');
+    expect(dayOnly.extraction.items[0]?.interpretation).toMatchObject({
+      shape: 'by',
+      deadline: '2026-12-04T08:00+09:00',
+      deadlineDayOnly: true,
+    });
+    expect(dayOnly.issues).toEqual([]);
+    // モデルが書かれていない時刻（00:00）を付けた：その時刻は使わず日だけにし、その文を確かめてもらう。
+    const added = need(plain, '2026-12-04T00:00+09:00');
+    expect(added.extraction.items[0]?.interpretation).toMatchObject({
+      deadline: '2026-12-04T08:00+09:00',
+      deadlineDayOnly: true,
+    });
+    expect(added.issues).toEqual([
+      { problem: 'unwrittenTime', ref: 'r3:i1', detail: '2026-12-04T00:00+09:00' },
+    ]);
+    expect(added.extraction.checkSentenceIds).toEqual(['r3#1']);
+    // 「12月4日（金）17:00までに」：書かれた時刻の締切は、そのまま。
+    const timed = '12月4日（金）17:00までに窓口で申し込んでください。';
+    const right = need(timed, '2026-12-04T17:00+09:00');
+    expect(right.extraction.items[0]?.interpretation.deadline).toBe('2026-12-04T17:00+09:00');
+    expect(right.extraction.items[0]?.interpretation).not.toHaveProperty('deadlineDayOnly');
+    expect(right.issues).toEqual([]);
+    // 日だけで読んだのに、文に時刻か時刻らしい言葉（登校前・朝・放課後）がある：読み落としかもしれないので、
+    // 日だけにして（時刻を作らない）、その文を確かめてもらう。
+    for (const text of [
+      timed,
+      '12月4日（金）の登校前までに欠席を連絡してください。',
+      '12月4日（金）の朝までに提出してください。',
+      '12月4日（金）の放課後までに提出してください。',
+    ]) {
+      const { extraction, issues } = need(text, '2026-12-04');
+      expect(extraction.items[0]?.interpretation).toMatchObject({
+        deadline: '2026-12-04T08:00+09:00',
+        deadlineDayOnly: true,
+      });
+      expect(issues).toContainEqual({
+        problem: 'unwrittenTime',
+        ref: 'r3:i1',
+        detail: '2026-12-04',
+      });
+      expect(extraction.checkSentenceIds).toEqual(['r3#1']);
+    }
+    // 締切の言葉が先に来る書き方も、日だけの締切。
+    for (const text of ['申込みの締切は12月4日（金）です。', '締切：12月4日（金）']) {
+      const { extraction, issues } = need(text, '2026-12-04');
+      expect(extraction.items[0]?.interpretation).toMatchObject({ deadlineDayOnly: true });
+      expect(issues).toEqual([]);
+    }
+    // 締切でない日を締切と読んだ物（候補の日・打ち消した日）は、書き方が数え切れないので、変換では見分けない。読み
+    // のまま残す。お知らせから読んだ「すること」は、家族が元の文と比べて確かめるまで計画に入らない（エンジンと
+    // 命令の層の試験）。
+    for (const text of [
+      '12月4日と12月6日の希望を、12月1日までにお知らせください。',
+      '申込みの締切は12月4日ではなく12月3日ですので、お申し込みください。',
+    ]) {
+      const { extraction } = need(text, '2026-12-04');
+      expect(extraction.items).toHaveLength(1);
+      expect(extraction.items[0]?.interpretation).toMatchObject({
+        deadline: '2026-12-04T08:00+09:00',
+        deadlineDayOnly: true,
+      });
+    }
+  });
+
+  it('「あしたまでに」の締切は、コードが決めた日と違えば「食い違い」にする（日付の書かれた文でも、印を付ける）', () => {
+    // 届いた日は、この組の出典の receivedAt（11/24）。
+    const text = 'あしたまでに地区センターの窓口で申し込んでください。';
+    const base = {
+      id: 'i1',
+      sentenceIds: ['r3#1'],
+      kind: 'need' as const,
+      written: text,
+      relativeDay: 'tomorrow' as const,
+      what: '窓口での申し込み',
+      shape: 'by' as const,
+    };
+    // 届いた日（11/24）の次の日なら取る。
+    const right = read([text], [item({ ...base, deadline: '2026-11-25' })]);
+    expect(right.issues).toEqual([]);
+    expect(right.extraction.items[0]?.interpretation.deadline?.startsWith('2026-11-25')).toBe(true);
+    // 別の日の締切は「食い違い」にする。
+    const wrong = read([text], [item({ ...base, deadline: '2026-11-28' })]);
+    expect(wrong.issues).toContainEqual({
+      problem: 'relativeDayMismatch',
+      ref: 'r3:i1',
+      detail: '2026-11-28',
+    });
+    expect(wrong.extraction.items[0]?.evidence).toBe('conflicting');
+    // 同じ文に候補の日があれば、どの読みでも書かれた日と「あした」が合わないので、「食い違い」にして確かめてもらう
+    // （候補の日を締切と読んでも、確かな物として通さない）。
+    const withDates = '11月28日と11月26日の希望を、あしたまでにお知らせください。';
+    for (const deadline of ['2026-11-28', '2026-11-25']) {
+      const candidate = read([withDates], [item({ ...base, written: withDates, deadline })]);
+      expect(candidate.extraction.items[0]?.evidence).toBe('conflicting');
+      expect(candidate.extraction.checkSentenceIds).toEqual(['r3#1']);
+    }
+  });
+
+  it('形の足りない need は事項を残し、その文を家族に確かめてもらう（時刻を作らない・別の形に変えない）', () => {
+    const text =
+      '12月13日（日）09:00から地域の説明会です。各家庭から大人1人の参加をお願いします。終了時刻は後ほどお知らせします。';
+    const base = {
+      id: 'i1',
+      sentenceIds: ['r3#1'],
+      kind: 'need' as const,
+      written: '各家庭から大人1人の参加をお願いします。',
+      date: '2026-12-13',
+      writtenWeekday: 'sun' as const,
+      what: '説明会への参加',
+    };
+    const cases: [Partial<ExtractionOutput['items'][number]>, string][] = [
+      [{ shape: 'window', startTime: '09:00', endTime: null }, 'window'],
+      // 書かれていない終わりは落ちるので、窓は足りない（12:00 を作らない）。
+      [{ shape: 'window', startTime: '09:00', endTime: '12:00' }, 'window'],
+      [{ shape: 'none', startTime: '09:00' }, 'shape'],
+      [{ shape: 'by', deadline: null }, 'deadline'],
+    ];
+    for (const [over, detail] of cases) {
+      const { extraction, issues } = read([text], [item({ ...base, ...over })]);
+      expect(extraction.items).toHaveLength(1);
+      expect(extraction.items[0]?.interpretation).not.toHaveProperty('endTime');
+      expect(issues.filter((i) => i.problem === 'needIncomplete')).toEqual([
+        { problem: 'needIncomplete', ref: 'r3:i1', detail },
+      ]);
+      expect(extraction.checkSentenceIds).toEqual(['r3#1']);
+    }
+    // 窓の終わりが始まりより前の物も、確かめてもらう。
+    const reversed = read(
+      ['12月13日（日）14:00〜13:00 説明会。各家庭から大人1人の参加をお願いします。'],
+      [
+        item({
+          ...base,
+          written: '各家庭から大人1人の参加をお願いします。',
+          shape: 'window',
+          startTime: '14:00',
+          endTime: '13:00',
+        }),
+      ],
+    );
+    expect(reversed.issues.map((i) => i.detail)).toContain('overnight');
+  });
+
+  it('前の版の録った出力（形の欄が無い）は、形を none として読む', () => {
+    const { shape: _shape, ...v3 } = item({ id: 'i1' });
+    const stored = parseStoredExtraction({
+      items: [v3],
+      unknowns: [],
+      conditions: [],
+      irrelevantSentenceIds: [],
+      ambiguities: [],
+    });
+    expect(stored.items[0]?.shape).toBe('none');
   });
 });

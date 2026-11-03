@@ -1,5 +1,5 @@
 // 条件の式の検査と評価。値が決まっていない時は「分からない」を返す三値の論理。
-import type { ConditionNode, Unknown } from './source';
+import type { ConditionNode, Interpretation, Unknown } from './source';
 
 export type Truth = true | false | 'unknown';
 
@@ -220,4 +220,81 @@ function evaluateNode(
       return result;
     }
   }
+}
+
+/**
+ * 画面に見せる条件の式（家族が読み取りを確かめるため。連結と否定をそのまま持ち、短く言い換えない）。
+ */
+export type ConditionView =
+  | { kind: 'eq'; label: string; value: string; from?: ShownFrom }
+  | { kind: 'not'; child: ConditionView }
+  | { kind: 'and' | 'or'; children: ConditionView[] };
+
+/**
+ * 見せる物（未定の値・置き換える事項）が、確かめる「すること」と別のお知らせの物の時の手がかり：題（あれば）と
+ * 届いた日（家の時区）。同じ名前の物を見分けるため。
+ */
+export interface ShownFrom {
+  title?: string;
+  day: string;
+}
+
+/** 確かめる札に見せる、置き換え・取り消しの先の日時（家の時区で見せる。日だけの締切は時刻を見せない）。 */
+export type ShownWhen = Pick<
+  Interpretation,
+  'date' | 'startTime' | 'endTime' | 'deadline' | 'deadlineDayOnly'
+>;
+
+/** 確かめる札に見せる、置き換え・取り消しの先の事項（何を・いつ・どのお知らせの）。 */
+export interface ShownTarget {
+  type: 'replace' | 'cancel';
+  itemId: string;
+  /** 今の読み取りに見つからない時は無い（作用は今は何もしない。見つかれば、確かめをやり直す）。 */
+  what?: string;
+  when?: ShownWhen;
+  from?: ShownFrom;
+}
+
+/** 家族が読み取りを確かめる時に見せる物（itemShown）。 */
+export interface ItemShown {
+  shown: boolean;
+  condition?: ConditionView;
+  answers: { unknownId: string; label: string; value: string; from?: ShownFrom }[];
+  targets: ShownTarget[];
+}
+
+/**
+ * 条件の式を、見せる形にする。節点が見つからない・値の名前が分からない・深すぎる時は undefined（見せられない
+ * 式を、見せたことにしない）。
+ */
+export function conditionView(
+  rootId: string,
+  nodes: ReadonlyMap<string, ConditionNode>,
+  unknowns: ReadonlyMap<string, { label: string; from?: ShownFrom }>,
+  depth = 0,
+): ConditionView | undefined {
+  if (depth > MAX_CONDITION_NODES) return undefined;
+  const node = nodes.get(rootId);
+  if (!node) return undefined;
+  if (node.kind === 'eq') {
+    const unknown = unknowns.get(node.unknownId);
+    if (unknown === undefined) return undefined;
+    return {
+      kind: 'eq',
+      label: unknown.label,
+      value: node.value,
+      ...(unknown.from ? { from: unknown.from } : {}),
+    };
+  }
+  if (node.kind === 'not') {
+    const child = conditionView(node.childId, nodes, unknowns, depth + 1);
+    return child ? { kind: 'not', child } : undefined;
+  }
+  const children: ConditionView[] = [];
+  for (const id of node.childIds) {
+    const child = conditionView(id, nodes, unknowns, depth + 1);
+    if (!child) return undefined;
+    children.push(child);
+  }
+  return { kind: node.kind, children };
 }

@@ -382,8 +382,12 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
   if (idle.size > 0) care = placeCare(ctx, careEntries, idle);
   for (const entry of items) {
     const { item, rootId, rootSourceId, live, trusted, conditional } = entry;
-    // 推定・食い違いは、家族が確かめるまで要件を作らない。画面は「確かめてください」として出す。
-    if (!trusted) continue;
+    // 推定・食い違いは、家族が確かめるまで要件を作らない。画面は「確かめてください」として出す。お知らせから読んだ
+    // 「すること」は、確かめる札で見比べて直してもらうので、ここでも確かめを待つ要件にする（planNeed。手配は作らない）。
+    if (!trusted) {
+      if (item.kind === 'need' && !ctx.state.statedSources.has(item.sourceId)) needs.push(entry);
+      continue;
+    }
     const placed = care.get(entry);
     if (placed) {
       requirements.push(...placed.requirements);
@@ -995,6 +999,24 @@ function planNeed(
   const { item, rootId, live, conditional } = entry;
   const requirementKey = keys.needRequirement(rootId);
   const arrangementKey = keys.needArrangement(rootId);
+  // お知らせから読んだ「すること」は、家族が確かめる（合っている・直す）まで計画に入れない：家の人がする事か・
+  // いつかを、読み取りだけで決めない（締切の言い方の外で意味が替わる文を、コードは見分けられない）。要件は確かめを
+  // 待つ印で残し（札で元の文と読み取りを見せる）、日時は写さず、手配を作らない。家族の言明は、言った時に確かめた。
+  // 読み取りの日時が過ぎていても、確かめるまで残す（その日時こそ確かめる物で、読み違えた過去の日で、まだ要る
+  // 物を隠さない）。もう要らなければ、家族が札で外す。
+  if (!ctx.state.statedSources.has(item.sourceId) && item.evidence !== 'confirmed') {
+    out.requirements.push({
+      key: requirementKey,
+      kind: 'need',
+      what: item.interpretation.what ?? item.written,
+      nature: 'required',
+      basis: { itemIds: [item.id], requirementKey },
+      live,
+      ...(conditional ? { conditional } : {}),
+      unconfirmed: true,
+    });
+    return;
+  }
   const frame = needFrame(ctx, item);
   const date = frame?.date ?? item.interpretation.date;
   out.requirements.push({
@@ -2427,6 +2449,9 @@ export function requestSnapshot(
           return about === undefined ? {} : { about };
         })()
       : {}),
+    ...(arrangement?.kind === 'childCare' && arrangement.childId
+      ? { childId: arrangement.childId }
+      : {}),
   };
 }
 
@@ -2578,6 +2603,9 @@ function externalRequests(
       snapshot,
       superseded,
     );
+    // だれの分か：控えの子。控えに無い古い依頼は、同じキーの手配が今あれば、その手配の子（キーが子を決める）。
+    const childId =
+      snapshot.childId ?? (arrangement?.kind === 'childCare' ? arrangement.childId : undefined);
     result.push({
       requestId: request.requestId,
       taskKey: request.taskKey,
@@ -2589,6 +2617,7 @@ function externalRequests(
       basis: snapshot.basis,
       ...('window' in snapshot && snapshot.window ? { window: snapshot.window } : {}),
       ...askedNeedOf(snapshot, request.taskKey),
+      ...(childId ? { childId } : {}),
       live,
       ...(needsCheck ? { needsCheck } : {}),
       ...(conditional ? { conditional } : {}),

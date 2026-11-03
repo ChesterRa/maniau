@@ -5,7 +5,14 @@ import type { ExternalRequest, Task } from '@maniau/core';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import i18n from '../src/i18n';
-import { CancelCard, type Ctx, cancelDraft, cancelTwin } from '../src/screens';
+import {
+  askDraft,
+  CancelCard,
+  type Ctx,
+  cancelDraft,
+  cancelNotes,
+  cancelTwin,
+} from '../src/screens';
 import { step } from './fake-fetch';
 
 /** 取り消しの札に要る物だけの画面の材料（DOM の試験では、デモのファイルを読まない）。 */
@@ -198,6 +205,78 @@ describe('取り消しの文を渡す', () => {
     const apart = withRequests([one, later]);
     expect(cancelTwin(apart, one)).toBe(false);
     expect(await card(apart, one)).not.toContain('どのお願いかを書き足して');
+  });
+
+  it('子の居場所の所への取り消しは、依頼の控えの子で書き（家の最初の子にしない）、分からなければ名前を書かずに書き足してもらう', async () => {
+    device({});
+    const withChildren = (children: { id: string; name: string }[]) =>
+      ({
+        ...ctx,
+        household: {
+          ...ctx.household,
+          members: [
+            ...ctx.household.members,
+            ...children.map((c) => ({ ...c, kind: 'child', active: true })),
+          ],
+          places: [{ id: 'gakudo', kind: 'afterSchoolCare', name: 'ひまわり学童' }],
+        },
+      }) as unknown as Ctx;
+    const two = withChildren([
+      { id: 'c1', name: '陽菜' },
+      { id: 'c2', name: '蒼' },
+    ]);
+    const old = { ...request, to: 'gakudo' } as ExternalRequest;
+    const forAoi = { ...old, childId: 'c2' } as ExternalRequest;
+    // 控えの子（蒼）で書く。
+    expect(cancelDraft(two, forAoi)).toBe('12月7日（月）の蒼の利用を取り消します。');
+    expect(cancelNotes(two, forAoi)).toEqual([]);
+    // 控えに子の無い古い依頼で、子が二人：名前を書かず、札で書き足してもらう（今の成員から推さない）。
+    expect(cancelDraft(two, old)).toBe('12月7日（月）の利用を取り消します。');
+    expect(cancelNotes(two, old)).toEqual(['card.cancel.checkChild']);
+    await step(() => root.render(<CancelCard ctx={two} task={task} request={old} />));
+    await step(() => button('伝える文を見る')?.click());
+    expect(host.textContent).toContain('子の名前を書き足して');
+    // 今の家の子が一人でも、頼んだ時の子だという証拠にはならない（その子だと推さず、書き足してもらう）。
+    const one = withChildren([{ id: 'c1', name: '陽菜' }]);
+    expect(cancelDraft(one, old)).toBe('12月7日（月）の利用を取り消します。');
+    expect(cancelNotes(one, old)).toEqual(['card.cancel.checkChild']);
+    expect(cancelDraft(one, { ...old, childId: 'c1' } as ExternalRequest)).toBe(
+      '12月7日（月）の陽菜の利用を取り消します。',
+    );
+    // 人への取り消しは子の名前を書かないので、確かめも要らない。
+    expect(cancelNotes(two, request)).toEqual([]);
+  });
+
+  it('子の居場所を人に頼む文は、手配の子の名前で書く（家の最初の子にしない）', () => {
+    const arrangement = {
+      key: 'arr:childCare:n1:i6:c2',
+      kind: 'childCare',
+      childId: 'c2',
+      start: '2026-12-07T08:10+09:00',
+      end: '2026-12-07T18:15+09:00',
+      options: [],
+      reasons: [],
+    };
+    const two = {
+      ...ctx,
+      household: {
+        ...ctx.household,
+        members: [
+          ...ctx.household.members,
+          { id: 'c1', kind: 'child', name: '陽菜', active: true },
+          { id: 'c2', kind: 'child', name: '蒼', active: true },
+        ],
+      },
+      plan: { ...ctx.plan, arrangements: [arrangement] },
+    } as unknown as Ctx;
+    const ask = {
+      key: 'task:opt-grandma:ask',
+      basis: { itemIds: ['i6'], arrangementKey: arrangement.key, optionKey: 'opt-grandma' },
+      external: { to: 'g', kind: 'helper' },
+    } as unknown as Task;
+    const draft = askDraft(two, ask);
+    expect(draft).toContain('蒼');
+    expect(draft).not.toContain('陽菜');
   });
 
   it('文を開いた後に、共有かコピーで、見せた文と同じ文を渡す', async () => {

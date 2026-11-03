@@ -15,7 +15,7 @@ import {
 import { formatDayTime } from './format';
 import { HouseholdScreen } from './household';
 import { isUiLanguage, rememberedLanguage, rememberLanguage, type UiLanguage } from './i18n';
-import { NeedScreen, StateNeedScreen } from './need';
+import { NeedFixScreen, NeedScreen, StateNeedScreen } from './need';
 import { usePush } from './push';
 import {
   AskScreen,
@@ -346,6 +346,8 @@ function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {
       return <NeedScreen ctx={ctx} arrangementKey={route.key} />;
     case 'stateNeed':
       return <StateNeedScreen ctx={ctx} />;
+    case 'needFix':
+      return <NeedFixScreen ctx={ctx} itemId={route.itemId} />;
     case 'ask':
       return <AskScreen ctx={ctx} taskKey={route.taskKey} />;
     case 'week':

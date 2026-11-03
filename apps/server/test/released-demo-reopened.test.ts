@@ -73,6 +73,7 @@ it('新しいお知らせの作用で不要から戻る時は、承諾を引き�
           conditionNodeId: null,
           inferred: false,
           familyAction: false,
+          shape: 'none' as const,
           effects: [
             { type: 'resolveUnknown', unknownId: 'n1:u1', value: '2026-12-05', itemId: null },
           ],

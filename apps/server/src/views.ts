@@ -1,6 +1,7 @@
 // 画面に渡す見せる物（02-foundation §7.1）。計画はサーバーだけで作り、画面ではエンジンを動かさない。
 import {
   type ChangeSummary,
+  type ConditionView,
   changeOpen,
   changeSummary,
   type DateTime,
@@ -8,6 +9,7 @@ import {
   Extraction,
   formatDateTime,
   type Household,
+  type ItemShown,
   type PlanResult,
   type Source,
   type TodayCard,
@@ -17,6 +19,7 @@ import {
   currentReadings,
   type EngineState,
   foldEvents,
+  itemShown,
   type LiveItem,
   liveItems,
   planFromState,
@@ -39,7 +42,19 @@ export interface View {
   /** 出典ごとの最後の読み取り：読んだモデルと、家族に確かめてほしい文（どの文か分からない時は全体）。 */
   readings: { sourceId: string; model: string; check: string[]; checkAll: boolean }[];
   /** 今の事項（確かめてほしい推定も含む）。条件しだいの事項には、分かる時だけ条件を添える。 */
-  items: (LiveItem & { when?: ItemWhen })[];
+  items: (LiveItem & { when?: ItemWhen } & NeedShown)[];
+}
+
+/**
+ * 「すること」を家族が確かめる時に見せる物（need の事項だけ）：条件の式（答えに依らず、読み取りのまま）、未定の値
+ * への答え（どの値に何と）、置き換え・取り消しの先（何を・いつ・どのお知らせの）。見せられない物・見分けられない物が
+ * あれば unshown（確かめ・直しは、サーバーも断る）。
+ */
+export interface NeedShown {
+  condition?: ConditionView;
+  answers?: ItemShown['answers'];
+  targets?: ItemShown['targets'];
+  unshown?: true;
 }
 
 /**
@@ -92,7 +107,16 @@ function withWhen(state: EngineState): View['items'] {
   return liveItems(state).map((l) => {
     const id = l.item.conditionNodeId;
     const when = l.conditional && !l.doubted && id !== undefined ? whenOf(id) : undefined;
-    return when ? { ...l, when } : l;
+    const base = when ? { ...l, when } : l;
+    if (l.item.kind !== 'need') return base;
+    const shown = itemShown(state, l.item);
+    return {
+      ...base,
+      ...(shown.condition ? { condition: shown.condition } : {}),
+      ...(shown.answers.length > 0 ? { answers: shown.answers } : {}),
+      ...(shown.targets.length > 0 ? { targets: shown.targets } : {}),
+      ...(shown.shown ? {} : { unshown: true as const }),
+    };
   });
 }
 

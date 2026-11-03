@@ -40,7 +40,12 @@ export const ExtractionOutput = z.object({
       endTime: z.string().nullable().describe('HH:MM'),
       what: z.string().nullable().describe('行事・品物・宛先の名前（原文の言葉）'),
       dayType: DayType.nullable(),
-      deadline: z.string().nullable().describe('締切。YYYY-MM-DDTHH:MM+09:00'),
+      deadline: z
+        .string()
+        .nullable()
+        .describe(
+          '締切。時刻が書かれていれば YYYY-MM-DDTHH:MM+09:00、日だけなら YYYY-MM-DD（書かれていない時刻を付けない）',
+        ),
       audience: z.string().nullable(),
       place: z.string().nullable().describe('書かれた場所。無ければ null'),
       relativeDay: z
@@ -52,6 +57,11 @@ export const ExtractionOutput = z.object({
         .boolean()
         .describe(
           '宿題・当番で、家の人がすること（サイン、丸つけ、お茶当番、配車）なら true。子どもだけでする事は false',
+        ),
+      shape: z
+        .enum(['none', 'by', 'window'])
+        .describe(
+          'need の形。by：締切までに済ませる。window：その日のある時間に、家のだれかが要る。need でなければ none',
         ),
       effects: z.array(
         z.object({
@@ -86,15 +96,20 @@ export const ExtractionOutput = z.object({
 export type ExtractionOutput = z.infer<typeof ExtractionOutput>;
 
 /**
- * 録った出力と手で書いた形を、今の形で読む。extract.v2 までの物には familyAction の欄が無い（v3 で足した）。
- * v2 は家の人がすることを分けていなかったので、無い欄は false として読む（録った物そのものは書き換えない）。
+ * 録った出力と手で書いた形を、今の形で読む。extract.v2 までの物には familyAction の欄が無く（v3 で足した）、
+ * extract.v3 までの物には shape の欄が無い（v4 で足した）。前の版は家の人がすることを分けておらず、「すること」
+ * （need）も出さなかったので、無い欄は false と none として読む（録った物そのものは書き換えない）。
  */
 export function parseStoredExtraction(raw: unknown): ExtractionOutput {
   const items = (raw as { items?: unknown }).items;
   return ExtractionOutput.parse({
     ...(raw as object),
     items: Array.isArray(items)
-      ? items.map((item: unknown) => ({ familyAction: false, ...(item as object) }))
+      ? items.map((item: unknown) => ({
+          familyAction: false,
+          shape: 'none',
+          ...(item as object),
+        }))
       : items,
   });
 }
@@ -116,10 +131,18 @@ export interface ReadingIssue {
     /** 指した文に日付が書かれているのに、モデルの日付・期限がどれとも合わない。 */
     | 'dateMismatch'
     /**
-     * 指した文に見つからない時刻（「12月4日まで」から作った 8:00、「午後8時」を 8:00 と読んだ物）。落として
-     * （締切は日だけにして）、その文を家族に確かめてもらう。
+     * 時刻を使えない：指した文に見つからない時刻（「12月4日まで」から作った 8:00、「午後8時」を 8:00 と読んだ物）
+     * は落とす（締切は日だけにする）。日だけで読んだ締切でも、指した文に時刻らしい書き方（読める時刻、朝・夕方
+     * などの言葉）があれば、読み落としかもしれない（日の終わりまでと緩めて黙らない）。どちらも、その文を家族に
+     * 確かめてもらう。
      */
-    | 'unwrittenTime';
+    | 'unwrittenTime'
+    /**
+     * 「すること」（need）の形が足りない：形が無い、窓の日・始まり・終わりのどれかが無い（書かれた時刻だけを数える）、
+     * 終わりが始まりより前、締切の形に締切が無い。事項は残し（家族の用事を落とさない）、計算は家族が確かめて欄を
+     * 埋めるまで作業を作らない（時刻を作らない・別の形に変えない）。その文を家族に確かめてもらう。
+     */
+    | 'needIncomplete';
   ref: string;
   detail?: string;
 }
@@ -234,7 +257,11 @@ export function toExtraction(
       issues.push({ problem: 'badDate', ref: id, detail: raw.date });
       continue;
     }
-    if (raw.deadline !== null && !isValidDateTime(raw.deadline)) {
+    if (
+      raw.deadline !== null &&
+      !isValidDateTime(raw.deadline) &&
+      !isValidLocalDate(raw.deadline)
+    ) {
       issues.push({ problem: 'badDate', ref: id, detail: raw.deadline });
       continue;
     }
@@ -243,6 +270,13 @@ export function toExtraction(
       issues.push({ problem: 'badTime', ref: id, detail: times.join(',') });
       continue;
     }
+    // 指した文（原文の順につなぐ。日付の照らし合わせと、引用の確かめに使う）。
+    const cited = quoteForm(
+      source.sentences
+        .filter((s) => raw.sentenceIds.includes(s.id))
+        .map((s) => s.text)
+        .join(''),
+    );
     // 「あした」は、出典が届いた日の次の日（暦どおり。習い事の金曜の連絡の「あした」は土曜）。
     // 「きょう」は届いた日。書かれた曜日と食い違えば、下で「食い違い」にして家族に確かめてもらう。
     const relativeDay = raw.relativeDay === 'none' ? undefined : raw.relativeDay;
@@ -258,6 +292,17 @@ export function toExtraction(
           : null;
     if (relativeDate !== null && raw.date !== null && raw.date !== relativeDate) {
       issues.push({ problem: 'relativeDayMismatch', ref: id, detail: raw.date });
+      evidence = 'conflicting';
+    }
+    // 締切も同じ：相対の言い方だけで日付の書かれていない文（「あしたまでに」）では、締切の日はコードの日のはず。
+    // 違えば取らずに「食い違い」にする（日付が書かれていれば、下の日付の照らし合わせが締切も見る）。
+    if (
+      relativeDate !== null &&
+      raw.deadline !== null &&
+      raw.deadline.slice(0, 10) !== relativeDate &&
+      writtenDates(cited).length === 0
+    ) {
+      issues.push({ problem: 'relativeDayMismatch', ref: id, detail: raw.deadline });
       evidence = 'conflicting';
     }
     const date = relativeDate ?? raw.date;
@@ -301,13 +346,7 @@ export function toExtraction(
     // 書かれた表現は、指した文の中にそのまま有るはず（空白と全角・半角の違いだけ許す）。無ければ、原文に
     // 無い言葉を根拠にしている。外さずに「食い違い」にして家族に確かめてもらい、作用（取り消し・置き換え）
     // も確かめるまで効かせない。合っても、解釈が正しいことまでは言えない。
-    // 指した文は、原文の順につなぐ（モデルが文を逆の順に挙げても、引用の続きが切れないように）。
-    const cited = quoteForm(
-      source.sentences
-        .filter((s) => raw.sentenceIds.includes(s.id))
-        .map((s) => s.text)
-        .join(''),
-    );
+    // 指した文は、原文の順につなぐ（モデルが文を逆の順に挙げても、引用の続きが切れないように）。上でつないだ物。
     const quote = quoteForm(raw.written);
     if (quote === '' || !cited.includes(quote)) {
       issues.push({ problem: 'quoteMismatch', ref: id });
@@ -316,23 +355,38 @@ export function toExtraction(
     // 時刻も、指した文に書かれた物だけを使う（「12月4日まで」から 8:00 を作らない。書かれた午前・午後は
     // 守らせ、書かれていない時だけ、文の前後からのモデルの読みを許す）。書かれていない始まり・終わりは落とす。締切は、その日の朝（日だけの締切と
     // 同じ目安）にして、日だけが書かれていたと印を付ける（画面は時刻を書かれた物として見せない）。
-    const clocks = writtenClock(
-      source.sentences.filter((s) => raw.sentenceIds.includes(s.id)).map((s) => s.text),
-    );
+    const citedTexts = source.sentences
+      .filter((s) => raw.sentenceIds.includes(s.id))
+      .map((s) => s.text);
+    const clocks = writtenClock(citedTexts);
     const written = (time: string) => clocks.has(clockKey(time));
     const startTime = raw.startTime !== null && written(raw.startTime) ? raw.startTime : null;
     const endTime = raw.endTime !== null && written(raw.endTime) ? raw.endTime : null;
-    const deadlineDayOnly = raw.deadline !== null && !written(raw.deadline.slice(11, 16));
+    // 日だけで読んだ締切（時刻を付けていない）は、指した文に時刻らしい書き方が無い時だけ、確かめを求めない。
+    // 有れば読み落としかもしれない（「17:00までに」を日だけで読むと、日の終わりまでに緩む）。時刻の書き方は数え
+    // 切れないので、無いとは言えない：見つかる書き方だけは見落とさない。
+    const readDayOnly = raw.deadline !== null && isValidLocalDate(raw.deadline);
+    const timeLike =
+      clocks.size > 0 || citedTexts.some((text) => TIME_WORDS.test(text.normalize('NFKC')));
+    const deadlineDayOnly =
+      raw.deadline !== null && (readDayOnly || !written(raw.deadline.slice(11, 16)));
+    // 締切の時刻が確かでない：書かれていない時刻を落とした、または日だけで読んだのに文に時刻らしい書き方がある。
+    // 日だけの締切は、その日の朝を目安にする（早めに出す側に寄せる）。「すること」（need）は、お知らせから読んだ
+    // 物を家族が確かめるまで計画に入れない（エンジン）ので、ここでは読みを残して、確かめる画面に見せる。
+    const unsureTime = deadlineDayOnly && (!readDayOnly || timeLike);
     const deadline =
-      raw.deadline === null || !deadlineDayOnly
-        ? raw.deadline
-        : formatDateTime(zonedToEpochMinutes(raw.deadline.slice(0, 10), '08:00', tz), tz);
+      raw.deadline === null
+        ? null
+        : !deadlineDayOnly
+          ? raw.deadline
+          : formatDateTime(zonedToEpochMinutes(raw.deadline.slice(0, 10), '08:00', tz), tz);
     // 落とした時刻（始まり・終わり・締切）は、その文を家族に確かめてもらう。時刻の書き方は数え切れない
     // （「午後八時」「夕方まで」）ので、見つからないことを「書かれていない」証拠にしない。
     const unwritten = [
       startTime === raw.startTime ? null : raw.startTime,
       endTime === raw.endTime ? null : raw.endTime,
-      deadlineDayOnly ? raw.deadline : null,
+      // 締切の「すること」は、原文から確かめた締切なら、モデルの付けた時刻を落としても確かめを求めない。
+      unsureTime ? raw.deadline : null,
     ].filter((t) => t !== null);
     if (unwritten.length > 0) {
       issues.push({ problem: 'unwrittenTime', ref: id, detail: unwritten.join(',') });
@@ -345,6 +399,25 @@ export function toExtraction(
     if (mentioned.length > 0 && unmentioned !== undefined) {
       issues.push({ problem: 'dateMismatch', ref: id, detail: unmentioned });
       evidence = 'conflicting';
+    }
+    // 「すること」の形は need だけに付ける（ほかの種類に付いても使わない）。形に要る欄は、書かれた物だけで数える
+    // （落とした時刻は無い物として）。足りなければ、その文を家族に確かめてもらう。
+    const shape = raw.kind === 'need' && raw.shape !== 'none' ? raw.shape : undefined;
+    if (raw.kind === 'need') {
+      const missing =
+        shape === undefined
+          ? 'shape'
+          : shape === 'window'
+            ? date === null || startTime === null || endTime === null
+              ? 'window'
+              : startTime >= endTime
+                ? 'overnight'
+                : undefined
+            : deadline === null
+              ? 'deadline'
+              : undefined;
+      if (missing !== undefined)
+        issues.push({ problem: 'needIncomplete', ref: id, detail: missing });
     }
     items.push({
       id,
@@ -360,7 +433,7 @@ export function toExtraction(
         ...(raw.what === null ? {} : { what: raw.what }),
         ...(raw.dayType === null ? {} : { dayType: raw.dayType }),
         ...(deadline === null ? {} : { deadline }),
-        ...(deadlineDayOnly ? { deadlineDayOnly: true as const } : {}),
+        ...(deadline !== null && deadlineDayOnly ? { deadlineDayOnly: true as const } : {}),
         ...(raw.startTime !== null && startTime === null
           ? { startTimeUnconfirmed: true as const }
           : {}),
@@ -372,6 +445,7 @@ export function toExtraction(
         ...(raw.familyAction && (raw.kind === 'homework' || raw.kind === 'duty')
           ? { familyAction: true as const }
           : {}),
+        ...(shape === undefined ? {} : { shape }),
       },
       ...(condition === undefined ? {} : { conditionNodeId: condition }),
       evidence,
@@ -427,6 +501,13 @@ const RANGE = new RegExp(
 );
 const SINGLE = new RegExp(`${MARKER}${HOUR}${UNIT}${SUFFIX}`, 'gi');
 const SUFFIX_ONLY = new RegExp(`${HOUR}\\|?(am|pm|a\\.m\\.|p\\.m\\.)`, 'gi');
+
+/**
+ * 時刻らしい言葉（読める時刻のほか）。日だけで読んだ締切の文にあれば、確かめてもらう。余分に当たる（「朝顔」）
+ * のは確かめが一つ増えるだけで、見落とすより良い。
+ */
+const TIME_WORDS =
+  /午前|午後|正午|朝|昼|夕方|夕刻|夜|放課後|登校|下校|登園|降園|始業|終業|開庁|閉庁|開館|閉館|受付時間|営業時間|時間目|時限|noon|morning|afternoon|evening|night|end of (?:the )?day|close of business/i;
 
 /** 時刻の読みを前から受け継がせない区切り：読点・句点などと、書かれた日付（別の日・別の事の時刻）。 */
 const CLAUSE_BREAK = /[、，,。；;]|(?:\d{1,2}月)?\d{1,2}日|\d{1,2}\/\d{1,2}/g;

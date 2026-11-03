@@ -37,6 +37,7 @@ const noticeReader: NoticeReader = async (request) => {
         conditionNodeId: 'c-join',
         inferred: false,
         familyAction: false,
+        shape: 'none' as const,
         effects: [],
       },
     ],

@@ -1,5 +1,16 @@
 // 事象の列を、計算に使う状態にたたむ（docs/design/01-model.md §2）。同じ列からは、いつも同じ状態になる。
-import { conditionShape, evaluateCondition, mentionsUnknown } from '../schema/condition';
+import {
+  type ConditionView,
+  conditionShape,
+  conditionView,
+  evaluateCondition,
+  type ItemShown,
+  MAX_CONDITION_NODES,
+  mentionsUnknown,
+  type ShownFrom,
+  type ShownTarget,
+  type ShownWhen,
+} from '../schema/condition';
 import type { DomainEvent, ProposalSnapshot, RequestSnapshot, TaskContent } from '../schema/events';
 import type { Household } from '../schema/household';
 import type { CommitmentState, ExternalRequestState } from '../schema/plan';
@@ -11,7 +22,7 @@ import {
   type Source,
   type Unknown,
 } from '../schema/source';
-import { type DateTime, toEpochMinutes } from '../time';
+import { type DateTime, formatDateTime, toEpochMinutes } from '../time';
 
 export interface RequestRecord {
   requestId: string;
@@ -85,6 +96,15 @@ export interface EngineState {
   corrections: Map<string, Interpretation>;
   /** 家族の確かめ（事項の ID → 最後の言明）。confirmed は「家族が確認」、dismissed は「関係ない」。 */
   verdicts: Map<string, 'confirmed' | 'dismissed'>;
+  /**
+   * 読み取りの「すること」（モデルが読んだ need）への家族の確かめ・直し・外しが、どの読み取りに対する物か（事項の
+   * ID → その時に拠っていた読み取りの印。readingSignature）。拠る読み取り（その事項の出典と、条件・答え・置き換える
+   * 物の出典）のどれかを読み直した後は（同じ中身・同じ版の読み直しでも）、前の確かめを当てない（確かめていない
+   * 読み取りは、計画に入れない）。
+   */
+  verdictReading: Map<string, string>;
+  /** 読み取りの「すること」への家族の直し（読み取りごと。読み直しの後は、前の直しを新しい読みに重ねない）。 */
+  needCorrections: Map<string, { reading: string; interpretation: Interpretation }>;
   /**
    * 家族が、当番がうちの番かを言った（事項の ID → 最後の言明と、その時の用件と対象）。読んだ中身の確かめ・
    * 直し・取り下げ（verdicts）とは別に持ち、事項の確かさも作用も変えない。
@@ -172,6 +192,8 @@ export function emptyState(): EngineState {
     extractionSeq: new Map(),
     corrections: new Map(),
     verdicts: new Map(),
+    verdictReading: new Map(),
+    needCorrections: new Map(),
     turns: new Map(),
     escorts: new Map(),
     sourceChangedSeq: new Map(),
@@ -431,7 +453,21 @@ function apply(state: EngineState, event: DomainEvent): void {
         state.rejected.push({ seq: event.seq, reason: '読み取りに無い事項への確かめ' });
         return;
       }
-      if (event.type === 'itemCorrected') {
+      // 読み取りの「すること」への言明は、その時に採っていた読み取りに結ぶ（読み直しの後に当てない）。
+      const read = readNeedOf(state, event.itemId);
+      if (read !== undefined) {
+        state.verdictReading.set(event.itemId, read.reading);
+        if (event.type === 'itemCorrected') {
+          const before = state.needCorrections.get(event.itemId);
+          state.needCorrections.set(event.itemId, {
+            reading: read.reading,
+            interpretation: {
+              ...(before?.reading === read.reading ? before.interpretation : {}),
+              ...event.interpretation,
+            },
+          });
+        }
+      } else if (event.type === 'itemCorrected') {
         const before = state.corrections.get(event.itemId) ?? {};
         state.corrections.set(event.itemId, { ...before, ...event.interpretation });
       }
@@ -659,20 +695,126 @@ function latestAnswers(answers: EngineState['answers']): EngineState['resolved']
 
 const isTrusted = (item: Item) => item.evidence === 'stated' || item.evidence === 'confirmed';
 
+/**
+ * 今の読み取りで、モデルが読んだ「すること」（家族の言明でない出典の need）なら、今それが拠る読み取りの印。
+ */
+function readNeedOf(state: EngineState, itemId: string): { reading: string } | undefined {
+  for (const [sourceId, extraction] of state.extractions) {
+    const item = extraction.items.find((i) => i.id === itemId);
+    if (!item) continue;
+    if (item.kind !== 'need' || state.statedSources.has(sourceId)) return undefined;
+    return { reading: readingSignature(state, item) };
+  }
+  return undefined;
+}
+
+/** 条件の式の節点と、そこに出る未定の値（見つからない節点の先は無い。深さは限る）。 */
+function conditionRefs(rootId: string, nodes: ReadonlyMap<string, ConditionNode>) {
+  const nodeIds = new Set<string>();
+  const unknownIds = new Set<string>();
+  const walk = (id: string, depth: number) => {
+    if (depth > MAX_CONDITION_NODES || nodeIds.has(id)) return;
+    nodeIds.add(id);
+    const node = nodes.get(id);
+    if (node?.kind === 'eq') unknownIds.add(node.unknownId);
+    else if (node?.kind === 'not') walk(node.childId, depth + 1);
+    else if (node) for (const child of node.childIds) walk(child, depth + 1);
+  };
+  walk(rootId, 0);
+  return { nodeIds, unknownIds };
+}
+
+/**
+ * 読み取りの事項が拠る読み取りの印：その事項の出典と、条件の式の節点・そこに出る未定の値・答える未定の値・置き換え
+ * や取り消しの先の事項を持つ出典の、それぞれ採っている読み取りの事象の番号。見つからない物も印に入れる（後で
+ * 見つかれば、見せていない物に効くので、確かめをやり直す）。家族の言明は、言った時の印と今の印が同じ時だけ当てる。
+ */
+function readingSignature(state: EngineState, item: Item): string {
+  const nodes = new Map<string, ConditionNode>();
+  for (const extraction of state.extractions.values()) {
+    for (const node of extraction.conditions) nodes.set(node.id, node);
+  }
+  const refs =
+    item.conditionNodeId === undefined
+      ? { nodeIds: new Set<string>(), unknownIds: new Set<string>() }
+      : conditionRefs(item.conditionNodeId, nodes);
+  const targets = new Set<string>();
+  for (const effect of item.effects) {
+    if (effect.type === 'resolveUnknown') refs.unknownIds.add(effect.unknownId);
+    else targets.add(effect.itemId);
+  }
+  const sources = new Set([item.sourceId]);
+  const found = new Set<string>();
+  for (const [sourceId, extraction] of state.extractions) {
+    const hits = [
+      ...extraction.conditions.filter((n) => refs.nodeIds.has(n.id)).map((n) => `node:${n.id}`),
+      ...extraction.unknowns.filter((u) => refs.unknownIds.has(u.id)).map((u) => `unknown:${u.id}`),
+      ...extraction.items.filter((i) => targets.has(i.id)).map((i) => `item:${i.id}`),
+    ];
+    if (hits.length > 0) sources.add(sourceId);
+    for (const hit of hits) found.add(hit);
+  }
+  const missing = [
+    ...[...refs.nodeIds].map((id) => `node:${id}`),
+    ...[...refs.unknownIds].map((id) => `unknown:${id}`),
+    ...[...targets].map((id) => `item:${id}`),
+  ].filter((key) => !found.has(key));
+  return JSON.stringify([
+    [...sources].sort().map((sourceId) => [sourceId, state.extractionSeq.get(sourceId) ?? 0]),
+    missing.sort(),
+  ]);
+}
+
+/**
+ * 家族の言明（確かめ・外し）のうち、今の読み取りに当たる物。読み取りに結んだ言明（読み取りの「すること」への物）は、
+ * 結んだ読み取りが今の読み取りの時だけ。今、読み取りの「すること」の事項は、結んだ言明だけを当てる（前に別の種類
+ * だった時の言明を当てない）。
+ */
+function verdictOf(state: EngineState, item: Item): 'confirmed' | 'dismissed' | undefined {
+  const bound = state.verdictReading.get(item.id);
+  const readNeed = item.kind === 'need' && !state.statedSources.has(item.sourceId);
+  if (bound !== undefined ? bound !== readingSignature(state, item) : readNeed) return undefined;
+  return state.verdicts.get(item.id);
+}
+
+/**
+ * 読み取りの「すること」で、今の読み取りへの家族の言明（合っている・直す・読み取りが違う）がまだ無い物。計画に
+ * 入れず、作用（置き換え・取り消し・答え）は効くか分からない物にする（確かめた後に効く）。
+ */
+export function awaitingConfirmation(state: EngineState, item: Item): boolean {
+  return (
+    item.kind === 'need' &&
+    !state.statedSources.has(item.sourceId) &&
+    verdictOf(state, item) === undefined
+  );
+}
+
 /** 読み取りの事項に、家族の直しと確かめを重ねた物（確かめた・直した事項は「家族が確認」）。 */
 export function itemsOf(state: EngineState): Item[] {
   return [...state.extractions.values()].flatMap((e) =>
-    e.items.map((item) => {
-      const correction = state.corrections.get(item.id);
-      const verdict = state.verdicts.get(item.id);
-      const interpretation = correction
-        ? { ...item.interpretation, ...correction }
-        : item.interpretation;
-      return verdict === 'confirmed'
-        ? { ...item, interpretation, evidence: 'confirmed' as const }
-        : { ...item, interpretation };
-    }),
+    e.items.map((item) => familyItem(state, item)),
   );
+}
+
+/** 一つの事項に、家族の直しと確かめを重ねた物。 */
+function familyItem(state: EngineState, item: Item): Item {
+  const verdict = verdictOf(state, item);
+  // 読み取りの「すること」（と、そうだった時に結んだ物）の直しは、今の読み取りへの直しだけ（前の直しを、読み
+  // 直した新しい読みに重ねない）。
+  const bound = state.needCorrections.get(item.id);
+  const readNeed = item.kind === 'need' && !state.statedSources.has(item.sourceId);
+  const correction =
+    state.verdictReading.has(item.id) || readNeed
+      ? bound !== undefined && bound.reading === readingSignature(state, item)
+        ? bound.interpretation
+        : undefined
+      : state.corrections.get(item.id);
+  const interpretation = correction
+    ? { ...item.interpretation, ...correction }
+    : item.interpretation;
+  return verdict === 'confirmed'
+    ? { ...item, interpretation, evidence: 'confirmed' as const }
+    : { ...item, interpretation };
 }
 
 /**
@@ -683,7 +825,7 @@ function familyOverrides(state: EngineState, all: readonly Item[]) {
   const excluded = new Set<string>();
   const stale = new Set<string>();
   for (const item of all) {
-    if (state.verdicts.get(item.id) === 'dismissed' || state.withdrawnSources.has(item.sourceId)) {
+    if (verdictOf(state, item) === 'dismissed' || state.withdrawnSources.has(item.sourceId)) {
       excluded.add(item.id);
     }
     const version = state.sources.get(item.sourceId)?.version;
@@ -721,6 +863,123 @@ function activityOf(
  * 今も確かな読み取り：取り下げていない出典の、今の版の文を読んだ物。未定の値の名前と条件の式を家族に
  * 見せる時は、ここからだけ取る（画面の条件の添え書きと、引き受けの控えの条件で、同じ物を使う）。
  */
+/**
+ * 家族が読み取りを確かめる時に見せる物：条件の式、未定の値への答え（どの値に何と）、置き換え・取り消しの先（何を・
+ * いつ）。別のお知らせの物には、そのお知らせ（題と届いた日）を添える。確かめる札と直す画面、確かめる命令の検査が
+ * 同じ物を使う。式の節点・値の名前・出典が見つからない時と、見せる形の同じ別の物（同じ名前の別の問い、同じ名前と
+ * 日時の別の事項）がある時は shown: false（どれに効くか家族に見分けられない物を、確かめたことにしない）。節点と
+ * 値の名前は、採っている読み取りから取る。
+ */
+export function itemShown(state: EngineState, item: Item): ItemShown {
+  const timeZone = state.household?.timeZone;
+  const local = (value: DateTime) =>
+    timeZone === undefined ? value : formatDateTime(toEpochMinutes(value), timeZone);
+  let shown = true;
+  // 別のお知らせの手がかり（そのお知らせが見つからなければ null。見せられない）。
+  const fromOf = (sourceId: string): ShownFrom | undefined | null => {
+    if (sourceId === item.sourceId) return undefined;
+    const source = state.sources.get(sourceId);
+    if (!source) return null;
+    return {
+      ...(source.title ? { title: source.title } : {}),
+      day: local(source.receivedAt).slice(0, 10),
+    };
+  };
+  const fromKey = (from: ShownFrom | undefined | null) =>
+    from === null ? [null] : from ? [from.title ?? '', from.day] : [];
+  const nodes = new Map<string, ConditionNode>();
+  const unknowns = new Map<string, { label: string; from?: ShownFrom; key: string; lost?: true }>();
+  const items = new Map<string, ShownTarget & { key: string; lost?: true }>();
+  for (const [sourceId, extraction] of state.extractions) {
+    const from = fromOf(sourceId);
+    const context = from === null ? { lost: true as const } : from ? { from } : {};
+    for (const node of extraction.conditions) nodes.set(node.id, node);
+    for (const unknown of extraction.unknowns) {
+      unknowns.set(unknown.id, {
+        label: unknown.label,
+        ...context,
+        key: JSON.stringify([unknown.label, ...fromKey(from)]),
+      });
+    }
+    for (const raw of extraction.items) {
+      const target = familyItem(state, raw);
+      const i = target.interpretation;
+      const when: ShownWhen = {
+        ...(i.date ? { date: i.date } : {}),
+        ...(i.startTime ? { startTime: i.startTime } : {}),
+        ...(i.endTime ? { endTime: i.endTime } : {}),
+        ...(i.deadline ? { deadline: i.deadline } : {}),
+        ...(i.deadline && i.deadlineDayOnly === true ? { deadlineDayOnly: true } : {}),
+      };
+      const deadline = i.deadline === undefined ? undefined : local(i.deadline);
+      const what = i.what ?? target.written;
+      items.set(raw.id, {
+        type: 'replace',
+        itemId: raw.id,
+        what,
+        ...(Object.keys(when).length > 0 ? { when } : {}),
+        ...context,
+        // 見せる形（家の時区の日と時刻。日だけの締切は時刻を入れない）。
+        key: JSON.stringify([
+          what,
+          i.date ?? '',
+          i.startTime ?? '',
+          i.endTime ?? '',
+          deadline?.slice(0, 10) ?? '',
+          deadline !== undefined && i.deadlineDayOnly !== true ? deadline.slice(11, 16) : '',
+          ...fromKey(from),
+        ]),
+      });
+    }
+  }
+  // 見せる形ごとの物の数（二つ以上なら、どれか見分けられない）。
+  const count = (keys: Iterable<string>) => {
+    const n = new Map<string, number>();
+    for (const key of keys) n.set(key, (n.get(key) ?? 0) + 1);
+    return n;
+  };
+  const unknownCount = count([...unknowns.values()].map((u) => u.key));
+  const itemCount = count([...items.values()].map((t) => t.key));
+  const shownUnknown = (unknownId: string) => {
+    const unknown = unknowns.get(unknownId);
+    if (unknown === undefined || unknown.lost || (unknownCount.get(unknown.key) ?? 0) > 1) {
+      shown = false;
+    }
+    return unknown;
+  };
+  let condition: ConditionView | undefined;
+  if (item.conditionNodeId !== undefined) {
+    for (const id of conditionRefs(item.conditionNodeId, nodes).unknownIds) shownUnknown(id);
+    condition = conditionView(item.conditionNodeId, nodes, unknowns);
+    if (!condition) shown = false;
+  }
+  const answers: ItemShown['answers'] = [];
+  const targets: ShownTarget[] = [];
+  for (const effect of item.effects) {
+    if (effect.type === 'resolveUnknown') {
+      const unknown = shownUnknown(effect.unknownId);
+      if (unknown !== undefined) {
+        answers.push({
+          unknownId: effect.unknownId,
+          label: unknown.label,
+          value: effect.value,
+          ...(unknown.from ? { from: unknown.from } : {}),
+        });
+      }
+      continue;
+    }
+    const target = items.get(effect.itemId);
+    if (target === undefined) {
+      targets.push({ type: effect.type, itemId: effect.itemId });
+      continue;
+    }
+    if (target.lost || (itemCount.get(target.key) ?? 0) > 1) shown = false;
+    const { key: _key, lost: _lost, ...rest } = target;
+    targets.push({ ...rest, type: effect.type });
+  }
+  return { shown, ...(condition ? { condition } : {}), answers, targets };
+}
+
 export function currentReadings(state: EngineState): Extraction[] {
   return [...state.extractions]
     .filter(([sourceId]) => {
@@ -892,7 +1151,11 @@ function settle(state: EngineState): void {
       .map((item) => item.id);
     return { activity, unstable };
   };
-  const forced = new Set<string>();
+  // 読み取りの「すること」で、家族がまだ確かめていない物の作用は、効くか分からない物にする（先の事項を、消えた
+  // とも変わらないとも言わない。答えにも数えない）。確かめた後に、ふつうに効く。
+  const forced = new Set<string>(
+    items.filter((item) => awaitingConfirmation(state, item)).map((item) => item.id),
+  );
   for (;;) {
     const { activity, unstable } = run(forced);
     if (unstable.length === 0) {

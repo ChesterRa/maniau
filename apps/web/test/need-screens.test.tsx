@@ -2,7 +2,13 @@
 // 確かめられていない時間）、返事を記録する所の控え、頼む文。画面の材料は、サーバーと同じ命令と計算で作る（デモの家・
 // 架空の家族）。場面の言葉を雛形に入れないことを、子の居場所でない例（荷物の受け取り）でも確かめる。押して確かめる
 // 物（選ぶ・足す表）は need-form.test.tsx。
-import type { Command, ExternalRequest, PreviewCommand, Way } from '@maniau/core';
+import {
+  type Command,
+  type ExternalRequest,
+  type PreviewCommand,
+  splitSentences,
+  type Way,
+} from '@maniau/core';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { runCommand } from '../../server/src/commands';
@@ -105,7 +111,52 @@ function family(extraWays: Way[] = []) {
     ).toMatchObject({ status: 'ok' });
     return option;
   };
-  return { run, write, ctx, need, choose, events };
+  /** お知らせを読んだ所まで足す（読み取りは手で書いた形。モデルの出力ではない）。 */
+  const notice = async (text: string, items: readonly Record<string, unknown>[]) => {
+    const source = {
+      id: 'n9',
+      version: 1,
+      receivedAt: NOW,
+      sender: 'school' as const,
+      language: 'ja' as const,
+      medium: 'text' as const,
+      sentences: splitSentences(text, 'n9'),
+    };
+    await store.withHousehold('demo', (log) => {
+      log.append([{ type: 'noticeReceived', source }], 'b', NOW);
+      log.append(
+        [
+          {
+            type: 'modelOutputRecorded',
+            call: 'extract',
+            model: 'hand-written',
+            promptVersion: 'fixture',
+            inputHash: 'n9',
+            sourceId: 'n9',
+            sourceVersion: 1,
+            output: {
+              sourceId: 'n9',
+              items: items.map((item) => ({
+                sourceId: 'n9',
+                sentenceIds: ['n9#1', 'n9#2'],
+                kind: 'need',
+                evidence: 'stated',
+                effects: [],
+                ...item,
+              })),
+              unknowns: [],
+              conditions: [],
+              irrelevantSentenceIds: [],
+              ambiguities: [],
+            },
+          },
+        ] as never,
+        'system',
+        NOW,
+      );
+    });
+  };
+  return { run, write, ctx, need, choose, events, notice };
 }
 
 describe('通用の「すること」の画面', () => {
@@ -397,5 +448,61 @@ describe('通用の「すること」の画面', () => {
     expect(shown).toContain('Ways to use');
     expect(shown).toContain('Covered by: みらい橋病児保育室（架空） (08:30–17:30)');
     expect(shown).toContain('Your family said this');
+  });
+
+  it('お知らせから読んだ「すること」：二人のきょうに確かめる札を出し、読み取りと元の文を見せる（形のそろわない物に「合っている」を出さない）。英語でも同じ', async () => {
+    const app = family();
+    const TEXT =
+      '12月12日（土）13:00〜14:00に地域交流会を行います。各家庭から大人1名、ご参加ください。';
+    await app.notice(TEXT, [
+      {
+        id: 'n9:i1',
+        written: '各家庭から大人1名、ご参加ください。',
+        interpretation: {
+          date: '2026-12-12',
+          startTime: '13:00',
+          endTime: '14:00',
+          what: '地域交流会への参加',
+          shape: 'window',
+        },
+      },
+      {
+        id: 'n9:i2',
+        written: '各家庭から大人1名、ご参加ください。',
+        interpretation: {
+          date: '2026-12-12',
+          startTime: '13:00',
+          what: '片付けの手伝い',
+          shape: 'window',
+        },
+      },
+    ]);
+    for (const member of ['a', 'b']) {
+      const ctx = await app.ctx(member);
+      expect(ctx.today.main.filter((c) => c.kind === 'needCheck')).toHaveLength(2);
+      // 確かめるまでは、手配も作業も無い。
+      expect(ctx.plan.arrangements.filter((a) => a.kind === 'need')).toEqual([]);
+    }
+    const only = (ctx: Ctx): Ctx => ({
+      ...ctx,
+      today: { ...ctx.today, main: ctx.today.main.filter((c) => c.kind === 'needCheck') },
+    });
+    const html = renderToStaticMarkup(<TodayScreen ctx={only(await app.ctx('b'))} />);
+    const ja = text(html);
+    expect(ja).toContain('読み取りを確かめる');
+    expect(ja).toContain('13:00〜14:00、だれかが要る');
+    expect(ja).toContain('終わりの時刻は読み取れていません');
+    // 元の文（文ごとに要素を分けるので、ここでは文ごとに見る）。
+    expect(ja).toContain('12月12日（土）13:00〜14:00に地域交流会を行います。');
+    expect(ja).toContain('各家庭から大人1名、ご参加ください。');
+    expect(ja).toContain('家族が確かめるまで計画に入れません');
+    const labels = [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map(([, label]) => label);
+    expect(labels.filter((label) => label === '合っている')).toHaveLength(1);
+    expect(labels.filter((label) => label === '直す')).toHaveLength(2);
+    const en = text(renderToStaticMarkup(<TodayScreen ctx={only(await app.ctx('b', 'en'))} />));
+    expect(en).toContain('Check the reading');
+    expect(en).toContain('someone is needed on');
+    expect(en).toContain('It is right');
+    expect(en).toContain('Misread (remove)');
   });
 });
