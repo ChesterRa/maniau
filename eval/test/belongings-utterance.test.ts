@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { belongingsCases, fixtureUtterance, runBelongingsCase } from '../belongings-utterance';
 
-test('製品の計画を前提に、架空の七場面を通信せずに再生できる', async () => {
-  assert.equal(belongingsCases.length, 7);
+test('製品の計画を前提に、架空の九場面を通信せずに再生できる', async () => {
+  assert.equal(belongingsCases.length, 9);
   for (const scenario of belongingsCases) {
     let calls = 0;
     const fake = fixtureUtterance(scenario);
@@ -28,11 +28,27 @@ test('製品の計画を前提に、架空の七場面を通信せずに再生�
     if (scenario.id === 'home-correct-no') {
       assert.equal(result.context?.unknowns.find((u) => u.id === 'u-atHome:n1:i5')?.answer, 'yes');
     }
+    if (scenario.id === 'bought-found-home' || scenario.id === 'bought-missing') {
+      assert.equal(result.context?.unknowns.find((u) => u.id === 'u-atHome:n1:i5')?.answer, null);
+    }
     if (scenario.id === 'same-name-dated') {
       assert.ok(result.context?.unknowns.some((u) => u.id === 'u-atHome:n1:i5'));
       assert.ok(result.context?.unknowns.some((u) => u.id === 'u-atHome:u1:i1'));
     }
   }
+});
+
+test('買った後の場面に買った記録がなければ、読み取りを呼ばず未実施とする', async () => {
+  const scenario = belongingsCases.find((entry) => entry.id === 'bought-missing');
+  assert.ok(scenario);
+  let calls = 0;
+  const result = await runBelongingsCase({ ...scenario, stage: 'arrived' }, async () => {
+    calls += 1;
+    throw new Error('読み取りは呼ばない');
+  });
+  assert.equal(calls, 0);
+  assert.equal(result.result, 'incomplete');
+  assert.equal(result.reason, 'fixture_bought');
 });
 
 test('答えを取り違えた候補は合格にせず、確認を実行しない', async () => {

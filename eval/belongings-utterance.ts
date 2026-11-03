@@ -18,7 +18,7 @@ export interface BelongingsCase {
   id: string;
   stage: 'arrived' | 'chase';
   text: string;
-  setup?: 'yes-first' | 'handkerchief' | 'second-shirt';
+  setup?: 'yes-first' | 'bought' | 'handkerchief' | 'second-shirt';
   expected: Expected;
 }
 
@@ -40,6 +40,20 @@ export const belongingsCases: readonly BelongingsCase[] = [
     stage: 'arrived',
     setup: 'yes-first',
     text: 'さっきあると言ったけど、白い長袖シャツはやっぱり家になかった。',
+    expected: { type: 'answer', unknownId: 'u-atHome:n1:i5', what: '白い長袖シャツ', value: 'no' },
+  },
+  {
+    id: 'bought-found-home',
+    stage: 'chase',
+    setup: 'bought',
+    text: '白い長袖シャツは家にありました。',
+    expected: { type: 'answer', unknownId: 'u-atHome:n1:i5', what: '白い長袖シャツ', value: 'yes' },
+  },
+  {
+    id: 'bought-missing',
+    stage: 'chase',
+    setup: 'bought',
+    text: '買った白い長袖シャツが見つからなくなりました。',
     expected: { type: 'answer', unknownId: 'u-atHome:n1:i5', what: '白い長袖シャツ', value: 'no' },
   },
   {
@@ -174,6 +188,15 @@ export async function runBelongingsCase(
 ): Promise<BelongingsObservation> {
   const sessions = demoSessions();
   const sid = sessions.create(test.stage);
+  if (test.setup === 'bought') {
+    const view = await sessions.view(sid, 'b');
+    const requirement = view?.plan.requirements.find(
+      (entry) => entry.atHomeUnknownId === 'u-atHome:n1:i5',
+    );
+    // 買った事実と、その前の「無い」という答えが両方ある場面でなければ、買った後の訂正は測れない。
+    if (!requirement?.bought || requirement.atHome !== 'no')
+      return { caseId: test.id, result: 'incomplete', reason: 'fixture_bought', screen: 'not_run' };
+  }
   if (test.setup === 'yes-first') {
     const view = await sessions.view(sid, 'b');
     if (!view)
@@ -255,8 +278,14 @@ export async function runBelongingsCase(
         const target = done.view.plan.arrangements.find(
           (a) => a.atHomeUnknownId === expected.unknownId,
         );
+        const answer = done.view.plan.requirements.find(
+          (requirement) => requirement.atHomeUnknownId === expected.unknownId,
+        )?.atHome;
         const question = done.view.plan.questions.some((q) => q.unknownId === expected.unknownId);
-        const right = expected.value === 'yes' ? !target : Boolean(target && !question);
+        const right =
+          answer === expected.value &&
+          done.view.plan.throughSeq > heard.view.plan.throughSeq &&
+          (expected.value === 'yes' ? !target : Boolean(target && !question));
         const shown =
           test.setup !== 'handkerchief' ||
           done.view.today.main.some(
