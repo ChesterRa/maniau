@@ -1,0 +1,69 @@
+{
+  "id": "dev-03",
+  "title": "条件つきの申込みと締切",
+  "synthetic": true,
+  "task": "extraction",
+  "source": {
+    "id": "rv4-dev-03",
+    "version": 1,
+    "receivedAt": "2026-11-24T19:00+09:00",
+    "sender": "school",
+    "language": "ja",
+    "medium": "text",
+    "sentences": [
+      {
+        "id": "rv4-dev-03#1",
+        "text": "設備の利用を希望する家庭は、12月4日（金）17:00までに事務局へ電話で申し込んでください。"
+      }
+    ]
+  },
+  "schoolYear": "2026",
+  "priorItems": [],
+  "priorUnknowns": [],
+  "expected": {
+    "checks": [
+      {
+        "id": "dev-03-01",
+        "critical": true,
+        "type": "require",
+        "sentenceId": "rv4-dev-03#1",
+        "kind": "deadline",
+        "label": "申込みの締切",
+        "fields": {
+          "deadline": {
+            "startsWith": "2026-12-04T17:00"
+          }
+        }
+      },
+      {
+        "id": "dev-03-02",
+        "critical": true,
+        "type": "require",
+        "sentenceId": "rv4-dev-03#1",
+        "kind": "need",
+        "label": "家族が電話で申込む",
+        "fields": {
+          "shape": "by",
+          "deadline": {
+            "startsWith": "2026-12-04T17:00"
+          },
+          "conditionNodeId": {
+            "present": true
+          }
+        }
+      }
+    ],
+    "manual": [
+      {
+        "id": "dev-03-M01",
+        "critical": true,
+        "check": "利用希望の場合にだけ申込みが要る条件を、未回答の家庭の決定として残す。"
+      },
+      {
+        "id": "dev-03-M02",
+        "critical": true,
+        "check": "申し込むのは家庭、受付や応答をするのは事務局であり、両者を取り違えない。"
+      }
+    ]
+  }
+}

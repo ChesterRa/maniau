@@ -1,0 +1,70 @@
+{
+  "id": "dev-02",
+  "title": "行事の事実と出席の依頼",
+  "synthetic": true,
+  "task": "extraction",
+  "source": {
+    "id": "rv4-dev-02",
+    "version": 1,
+    "receivedAt": "2026-11-24T19:00+09:00",
+    "sender": "school",
+    "language": "ja",
+    "medium": "text",
+    "sentences": [
+      {
+        "id": "rv4-dev-02#1",
+        "text": "12月12日（土）13:00〜14:00に地域交流会を行います。各家庭から大人1名、ご参加ください。"
+      },
+      {
+        "id": "rv4-dev-02#2",
+        "text": "会場は地域交流室です。"
+      }
+    ]
+  },
+  "schoolYear": "2026",
+  "priorItems": [],
+  "priorUnknowns": [],
+  "expected": {
+    "checks": [
+      {
+        "id": "dev-02-01",
+        "critical": true,
+        "type": "require",
+        "sentenceId": "rv4-dev-02#1",
+        "kind": "event",
+        "label": "地域交流会の事実",
+        "fields": {
+          "date": "2026-12-12",
+          "startTime": "13:00",
+          "endTime": "14:00"
+        }
+      },
+      {
+        "id": "dev-02-02",
+        "critical": true,
+        "type": "require",
+        "sentenceId": "rv4-dev-02#1",
+        "kind": "need",
+        "label": "家族に求める出席",
+        "fields": {
+          "shape": "window",
+          "date": "2026-12-12",
+          "startTime": "13:00",
+          "endTime": "14:00"
+        }
+      }
+    ],
+    "manual": [
+      {
+        "id": "dev-02-M01",
+        "critical": true,
+        "check": "行事と家族の出席要求の両方を別の事実として残し、同じ出席作業を複数作らない。"
+      },
+      {
+        "id": "dev-02-M02",
+        "critical": true,
+        "check": "会場は別の文の原文として保持する。need の place は別の文を根拠にしても、未確定として空でもよい。家庭の場所 ID や参加する家族を推測しない。"
+      }
+    ]
+  }
+}

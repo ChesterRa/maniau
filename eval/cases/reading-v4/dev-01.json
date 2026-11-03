@@ -1,0 +1,169 @@
+{
+  "id": "dev-01",
+  "title": "既存の読み取り種別と家族の行動",
+  "synthetic": true,
+  "task": "extraction",
+  "source": {
+    "id": "rv4-dev-01",
+    "version": 1,
+    "receivedAt": "2026-11-24T19:00+09:00",
+    "sender": "school",
+    "language": "ja",
+    "medium": "text",
+    "sentences": [
+      {
+        "id": "rv4-dev-01#1",
+        "text": "12月10日（木）15:00〜16:00に体育館で学年集会があります。"
+      },
+      {
+        "id": "rv4-dev-01#2",
+        "text": "12月11日（金）のお茶当番は1年生の保護者です。"
+      },
+      {
+        "id": "rv4-dev-01#3",
+        "text": "12月8日（火）までに出欠票を提出してください。"
+      },
+      {
+        "id": "rv4-dev-01#4",
+        "text": "12月10日（木）に室内履きを持ってきてください。"
+      },
+      {
+        "id": "rv4-dev-01#5",
+        "text": "音読カードにおうちの人のサインをお願いします。"
+      },
+      {
+        "id": "rv4-dev-01#6",
+        "text": "12月9日（水）は子どもの図書当番です。"
+      }
+    ]
+  },
+  "schoolYear": "2026",
+  "priorItems": [],
+  "priorUnknowns": [],
+  "expected": {
+    "checks": [
+      {
+        "id": "dev-01-01",
+        "critical": true,
+        "type": "require",
+        "sentenceId": "rv4-dev-01#1",
+        "kind": "event",
+        "label": "学年集会を行事として残す"
+      },
+      {
+        "id": "dev-01-02",
+        "critical": true,
+        "type": "forbid",
+        "sentenceId": "rv4-dev-01#1",
+        "kind": "need",
+        "label": "書かれていない家族の出席を作らない"
+      },
+      {
+        "id": "dev-01-03",
+        "critical": true,
+        "type": "require",
+        "sentenceId": "rv4-dev-01#2",
+        "kind": "duty",
+        "label": "保護者のお茶当番",
+        "fields": {
+          "familyAction": true
+        }
+      },
+      {
+        "id": "dev-01-04",
+        "critical": true,
+        "type": "forbid",
+        "sentenceId": "rv4-dev-01#2",
+        "kind": "need",
+        "label": "当番と同じ作業を重ねない"
+      },
+      {
+        "id": "dev-01-05",
+        "critical": true,
+        "type": "require",
+        "sentenceId": "rv4-dev-01#3",
+        "kind": "submission",
+        "label": "出欠票の提出"
+      },
+      {
+        "id": "dev-01-06",
+        "critical": true,
+        "type": "forbid",
+        "sentenceId": "rv4-dev-01#3",
+        "kind": "need",
+        "label": "提出と同じ作業を重ねない"
+      },
+      {
+        "id": "dev-01-07",
+        "critical": true,
+        "type": "require",
+        "sentenceId": "rv4-dev-01#4",
+        "kind": "belongings",
+        "label": "室内履き"
+      },
+      {
+        "id": "dev-01-08",
+        "critical": true,
+        "type": "forbid",
+        "sentenceId": "rv4-dev-01#4",
+        "kind": "need",
+        "label": "持ち物と同じ作業を重ねない"
+      },
+      {
+        "id": "dev-01-09",
+        "critical": true,
+        "type": "require",
+        "sentenceId": "rv4-dev-01#5",
+        "kind": "homework",
+        "label": "家の人のサイン",
+        "fields": {
+          "familyAction": true
+        }
+      },
+      {
+        "id": "dev-01-10",
+        "critical": true,
+        "type": "forbid",
+        "sentenceId": "rv4-dev-01#5",
+        "kind": "need",
+        "label": "署名と同じ作業を重ねない"
+      },
+      {
+        "id": "dev-01-11",
+        "critical": true,
+        "type": "require",
+        "sentenceId": "rv4-dev-01#6",
+        "kind": "duty",
+        "label": "子どもの図書当番",
+        "fields": {
+          "familyAction": false
+        }
+      },
+      {
+        "id": "dev-01-12",
+        "critical": true,
+        "type": "forbid",
+        "sentenceId": "rv4-dev-01#6",
+        "kind": "need",
+        "label": "子どもの当番を家の人の作業にしない"
+      }
+    ],
+    "manual": [
+      {
+        "id": "dev-01-M01",
+        "critical": true,
+        "check": "それぞれの事項が原文の対象・日付を保ち、一つの義務を二つの作業にしていない。"
+      },
+      {
+        "id": "dev-01-M02",
+        "critical": true,
+        "check": "家の人の当番と子どもの当番を区別し、家族の氏名を推測していない。"
+      },
+      {
+        "id": "dev-01-M03",
+        "critical": true,
+        "check": "出欠票の期限は日だけで、書かれていない時刻を確定にしない。変換後の画面表示も日だけか確かめる。"
+      }
+    ]
+  }
+}

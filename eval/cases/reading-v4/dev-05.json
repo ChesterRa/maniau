@@ -1,0 +1,102 @@
+{
+  "id": "dev-05",
+  "title": "主催者の連絡と子どもの作業",
+  "synthetic": true,
+  "task": "extraction",
+  "source": {
+    "id": "rv4-dev-05",
+    "version": 1,
+    "receivedAt": "2026-11-24T19:00+09:00",
+    "sender": "school",
+    "language": "ja",
+    "medium": "text",
+    "sentences": [
+      {
+        "id": "rv4-dev-05#1",
+        "text": "12月2日（水）までに、事務局から各家庭へ結果をメールします。"
+      },
+      {
+        "id": "rv4-dev-05#2",
+        "text": "12月3日（木）に事務局が資料を配布します。"
+      },
+      {
+        "id": "rv4-dev-05#3",
+        "text": "問い合わせ先は地域事務局です。"
+      },
+      {
+        "id": "rv4-dev-05#4",
+        "text": "12月7日（月）は子どもが日直を担当します。"
+      }
+    ]
+  },
+  "schoolYear": "2026",
+  "priorItems": [],
+  "priorUnknowns": [],
+  "expected": {
+    "checks": [
+      {
+        "id": "dev-05-01",
+        "critical": true,
+        "type": "forbid",
+        "sentenceId": "rv4-dev-05#1",
+        "kind": "need",
+        "label": "事務局からの連絡を家族の仕事にしない"
+      },
+      {
+        "id": "dev-05-02",
+        "critical": true,
+        "type": "forbid",
+        "sentenceId": "rv4-dev-05#2",
+        "kind": "need",
+        "label": "事務局による配布を家族の仕事にしない"
+      },
+      {
+        "id": "dev-05-03",
+        "critical": true,
+        "type": "require",
+        "sentenceId": "rv4-dev-05#3",
+        "kind": "contact",
+        "label": "問い合わせ先"
+      },
+      {
+        "id": "dev-05-04",
+        "critical": true,
+        "type": "forbid",
+        "sentenceId": "rv4-dev-05#3",
+        "kind": "need",
+        "label": "問い合わせ先だけで連絡作業を作らない"
+      },
+      {
+        "id": "dev-05-05",
+        "critical": true,
+        "type": "require",
+        "sentenceId": "rv4-dev-05#4",
+        "kind": "duty",
+        "label": "子どもの日直",
+        "fields": {
+          "familyAction": false
+        }
+      },
+      {
+        "id": "dev-05-06",
+        "critical": true,
+        "type": "forbid",
+        "sentenceId": "rv4-dev-05#4",
+        "kind": "need",
+        "label": "子どもの日直を家族の作業にしない"
+      }
+    ],
+    "manual": [
+      {
+        "id": "dev-05-M01",
+        "critical": true,
+        "check": "主催者側の行動予定と、家族が受け持つ行動を区別する。"
+      },
+      {
+        "id": "dev-05-M02",
+        "critical": true,
+        "check": "問い合わせ先を、連絡を必須とする指示に変えない。"
+      }
+    ]
+  }
+}
