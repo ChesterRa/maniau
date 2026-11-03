@@ -1,0 +1,221 @@
+{
+  "id": "reading-dev-04",
+  "title": "家の人の署名と、家・子どもの当番",
+  "synthetic": true,
+  "task": "extraction",
+  "source": {
+    "id": "eval-family",
+    "version": 1,
+    "receivedAt": "2026-11-25T20:00+09:00",
+    "sender": "school",
+    "language": "ja",
+    "medium": "text",
+    "sentences": [
+      {
+        "id": "eval-family#1",
+        "text": "音読カードにおうちの人のはんこをもらいます。"
+      },
+      {
+        "id": "eval-family#2",
+        "text": "漢字ドリル12ページをしましょう。"
+      },
+      {
+        "id": "eval-family#3",
+        "text": "12月13日（日）8:30〜10:00 お茶当番：陽菜さんのおうち。"
+      },
+      {
+        "id": "eval-family#4",
+        "text": "12月20日（日）8:30〜10:00 お茶当番：さくらさんのおうち。"
+      },
+      {
+        "id": "eval-family#5",
+        "text": "12月9日（水）は保護者全員で教室の清掃をお願いします。"
+      },
+      {
+        "id": "eval-family#6",
+        "text": "来週は子どもたちの給食当番です。"
+      }
+    ]
+  },
+  "context": {
+    "priorItems": [],
+    "priorUnknowns": []
+  },
+  "expected": {
+    "referenceOutput": {
+      "items": [
+        {
+          "id": "signature",
+          "sentenceIds": [
+            "eval-family#1"
+          ],
+          "kind": "homework",
+          "written": "音読カードにおうちの人のはんこをもらいます。",
+          "date": null,
+          "writtenWeekday": "none",
+          "startTime": null,
+          "endTime": null,
+          "what": "音読カードのおうちの人のはんこ",
+          "dayType": null,
+          "deadline": null,
+          "audience": null,
+          "place": null,
+          "relativeDay": "none",
+          "conditionNodeId": null,
+          "inferred": false,
+          "familyAction": true,
+          "effects": []
+        },
+        {
+          "id": "drill",
+          "sentenceIds": [
+            "eval-family#2"
+          ],
+          "kind": "homework",
+          "written": "漢字ドリル12ページをしましょう。",
+          "date": null,
+          "writtenWeekday": "none",
+          "startTime": null,
+          "endTime": null,
+          "what": "漢字ドリル12ページ",
+          "dayType": null,
+          "deadline": null,
+          "audience": null,
+          "place": null,
+          "relativeDay": "none",
+          "conditionNodeId": null,
+          "inferred": false,
+          "familyAction": false,
+          "effects": []
+        },
+        {
+          "id": "duty1",
+          "sentenceIds": [
+            "eval-family#3"
+          ],
+          "kind": "duty",
+          "written": "12月13日（日）8:30〜10:00 お茶当番：陽菜さんのおうち。",
+          "date": "2026-12-13",
+          "writtenWeekday": "sun",
+          "startTime": "08:30",
+          "endTime": "10:00",
+          "what": "お茶当番",
+          "dayType": null,
+          "deadline": null,
+          "audience": "陽菜さんのおうち",
+          "place": null,
+          "relativeDay": "none",
+          "conditionNodeId": null,
+          "inferred": false,
+          "familyAction": true,
+          "effects": []
+        },
+        {
+          "id": "duty2",
+          "sentenceIds": [
+            "eval-family#4"
+          ],
+          "kind": "duty",
+          "written": "12月20日（日）8:30〜10:00 お茶当番：さくらさんのおうち。",
+          "date": "2026-12-20",
+          "writtenWeekday": "sun",
+          "startTime": "08:30",
+          "endTime": "10:00",
+          "what": "お茶当番",
+          "dayType": null,
+          "deadline": null,
+          "audience": "さくらさんのおうち",
+          "place": null,
+          "relativeDay": "none",
+          "conditionNodeId": null,
+          "inferred": false,
+          "familyAction": true,
+          "effects": []
+        },
+        {
+          "id": "cleaning",
+          "sentenceIds": [
+            "eval-family#5"
+          ],
+          "kind": "duty",
+          "written": "12月9日（水）は保護者全員で教室の清掃をお願いします。",
+          "date": "2026-12-09",
+          "writtenWeekday": "wed",
+          "startTime": null,
+          "endTime": null,
+          "what": "教室の清掃",
+          "dayType": null,
+          "deadline": null,
+          "audience": "保護者全員",
+          "place": null,
+          "relativeDay": "none",
+          "conditionNodeId": null,
+          "inferred": false,
+          "familyAction": true,
+          "effects": []
+        },
+        {
+          "id": "school_lunch",
+          "sentenceIds": [
+            "eval-family#6"
+          ],
+          "kind": "duty",
+          "written": "来週は子どもたちの給食当番です。",
+          "date": null,
+          "writtenWeekday": "none",
+          "startTime": null,
+          "endTime": null,
+          "what": "給食当番",
+          "dayType": null,
+          "deadline": null,
+          "audience": "子どもたち",
+          "place": null,
+          "relativeDay": "none",
+          "conditionNodeId": null,
+          "inferred": false,
+          "familyAction": false,
+          "effects": []
+        }
+      ],
+      "unknowns": [],
+      "conditions": [],
+      "irrelevantSentenceIds": [],
+      "ambiguities": [
+        {
+          "sentenceId": "eval-family#6",
+          "note": "来週のどの日かは書かれていない。"
+        }
+      ]
+    },
+    "checks": [
+      {
+        "id": "F1",
+        "critical": true,
+        "check": "音読カードの家の人のはんこを家の人がする宿題として残す。"
+      },
+      {
+        "id": "F2",
+        "critical": true,
+        "check": "漢字ドリルは子どもの宿題であり、家の人がする作業にはしない。"
+      },
+      {
+        "id": "F3",
+        "critical": true,
+        "check": "二つのお茶当番を別々の日・時刻・対象の家として残す。"
+      },
+      {
+        "id": "F4",
+        "critical": true,
+        "check": "保護者全員による清掃を家の人がする当番として残す。"
+      },
+      {
+        "id": "F5",
+        "critical": true,
+        "check": "給食当番は子どもの当番であり、家の人がする作業にはしない。日を勝手に決めない。"
+      }
+    ],
+    "limits": [
+      "これは読み取りの評価であり、家族設定と対象の名前を照らした結果や実際に家でできるかは評価しない。"
+    ]
+  }
+}

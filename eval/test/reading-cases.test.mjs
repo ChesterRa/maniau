@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
 
 const root = new URL('../cases/reading/', import.meta.url);
 const files = (await readdir(root)).filter((name) => name.endsWith('.json')).sort();
 
-test('架空の読み取り場面が3種類あり、根拠と条件をたどれる', async () => {
-  assert.equal(files.length, 3);
+test('架空の読み取り場面が4種類あり、根拠と条件をたどれる', async () => {
+  assert.equal(files.length, 4);
   for (const file of files) {
     const scenario = JSON.parse(await readFile(new URL(file, root), 'utf8'));
     assert.equal(scenario.synthetic, true, file);
@@ -56,6 +57,25 @@ test('架空の読み取り場面が3種類あり、根拠と条件をたどれ�
     };
     for (const id of nodes.keys()) visit(id);
   }
+});
+
+test('家の人の作業と子どもの作業の参照解を分け、書かれていない日を足さない', async () => {
+  const scenario = JSON.parse(await readFile(new URL('04-family-actions.json', root), 'utf8'));
+  const byId = new Map(scenario.expected.referenceOutput.items.map((item) => [item.id, item]));
+  for (const id of ['signature', 'duty1', 'duty2', 'cleaning'])
+    assert.equal(byId.get(id).familyAction, true, id);
+  for (const id of ['drill', 'school_lunch']) assert.equal(byId.get(id).familyAction, false, id);
+  assert.equal(byId.get('signature').date, null);
+  assert.equal(byId.get('school_lunch').date, null);
+  assert.equal(byId.get('duty1').audience, '陽菜さんのおうち');
+  assert.equal(byId.get('duty2').audience, 'さくらさんのおうち');
+  assert.equal(byId.get('cleaning').audience, '保護者全員');
+  const input = JSON.stringify({ source: scenario.source, context: scenario.context, schoolYear: '2026' });
+  assert.equal(
+    createHash('sha256').update(input).digest('hex'),
+    '5fbd6ce03c70de82dc495eb1c59706d080b33623752eecb036fd4925d7e0c93e',
+    '実測時と入力が変わったら、結果の対応を見直す',
+  );
 });
 
 test('条件の参照解は、取消しと振替の条件を取り違えない', async () => {
