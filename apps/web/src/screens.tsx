@@ -7,6 +7,7 @@ import {
   type ChoicePreview,
   type Command,
   type ExternalRequest,
+  formatDateTime,
   type Household,
   type Item,
   isActiveTask,
@@ -15,6 +16,7 @@ import {
   type OptionPlan,
   type PlanResult,
   proposalSnapshot,
+  type Released,
   type Requirement,
   type Source,
   type Task,
@@ -93,6 +95,11 @@ export interface Ctx {
     turn?: 'ours' | 'others' | 'unsure';
     /** turn が、家族の言明（「うちの番です」「うちの番ではない」）による。 */
     turnStated?: true;
+    /** 習い事・クラブの行事だけ：送り迎えの見立て（誰の送り迎えか、どの方が今回要るか。サーバーのエンジン）。 */
+    escort?: {
+      childId: string;
+      legs: { leg: 'to' | 'from'; needed: boolean; stated?: true }[];
+    };
   }[];
   sources: Map<string, Source>;
   readings: Reading[];
@@ -217,14 +224,48 @@ const due = (ctx: Ctx, value: string, itemIds: readonly string[]) =>
     ? dayTime(ctx, value)
     : day(ctx, value);
 
+/** 送り迎えの作業なら、送り（to）か迎え（from）か。 */
+const escortLegOf = (task: Task): 'to' | 'from' | undefined =>
+  task.titleKey === 'task.escortTo'
+    ? 'to'
+    : task.titleKey === 'task.escortFrom'
+      ? 'from'
+      : undefined;
+
 /**
- * 書かれた時刻の決まり（Task.timing。当番、日の書かれていないサイン）の文：書かれた時間・日。書かれていない
- * 終わり・時刻・日は作らず、そう書く。日をまたぐ時は、終わりの日も書く。
+ * 送り迎えの作業の、行事に書かれた時刻（送りは始まり、迎えは終わり）。エンジンは、書かれた時刻の前後に
+ * 同じ長さの往復で置くので、その真ん中。
+ */
+function escortAt(ctx: Ctx, task: Task): string | undefined {
+  const { earliestStart: start, deadline: end } = task;
+  if (!start || !end) return undefined;
+  return formatDateTime((toEpochMinutes(start) + toEpochMinutes(end)) / 2, ctx.tz);
+}
+
+/**
+ * 書かれた時刻の決まり（Task.timing。当番、送り迎え、日の書かれていないサイン）の文：書かれた時間・日。
+ * 書かれていない終わり・時刻・日は作らず、そう書く。日をまたぐ時は、終わりの日も書く。送り迎えは、置いた
+ * 目安の往復ではなく、行事に書かれた始まり・終わりを書く。
  */
 function writtenWhen(ctx: Ctx, task: Task): string | undefined {
   const { timing, earliestStart: start, deadline: end } = task;
-  if (timing === 'undated') return ctx.t('card.timing.undated');
+  if (timing === 'undated') {
+    // 日を決められない迎え：行事の日を、迎えの日としてではなく、どの行事かを見分けるために添える。
+    const eventDate = task.titleParams.eventDate;
+    if (task.timeUnconfirmed && eventDate) {
+      return ctx.t('card.escort.dateUnknown', { day: day(ctx, eventDate) });
+    }
+    return ctx.t(task.timeUnconfirmed ? 'card.timing.undatedUnconfirmed' : 'card.timing.undated');
+  }
   if (!start) return undefined;
+  const leg = escortLegOf(task);
+  const at = leg && timing === 'fixed' ? escortAt(ctx, task) : undefined;
+  if (leg && at) {
+    return ctx.t(leg === 'to' ? 'card.escort.startsAt' : 'card.escort.endsAt', {
+      day: day(ctx, at),
+      at: time(ctx, at),
+    });
+  }
   if (timing === 'day') {
     // 読み取りの始まりを確かめられなかった物は、「書かれていない」と言わない（書き方を読めなかっただけ）。
     return ctx.t(task.timeUnconfirmed ? 'card.timing.dayUnconfirmed' : 'card.timing.day', {
@@ -253,11 +294,16 @@ function writtenWhen(ctx: Ctx, task: Task): string | undefined {
  * 当番の書かれた時間・場所と対象（原文のまま。うちの番か分からない時は、確かめてと添える）。当番には、どれも
  * 「うちの番ではない」を出す（事項を外すと、作業も無くなる。うちの番と読み違えた物も直せる）。置いた作業には、
  * 行き帰りの時間が入っていないことを添える（空いた時間に置いただけで、場所への移動は確かめていない）。
+ * 送り迎えは、往復の時間が目安で道のりを確かめていないこと、根拠（家の決まりか、今回の言明か）を書き、
+ * 「今回は要らない」を出す。
  */
 function WrittenTime({ ctx, task }: { ctx: Ctx; task: Task }) {
   const when = writtenWhen(ctx, task);
   const place = task.titleParams.place;
-  const item = ctx.items.find((l) => task.basis.itemIds.includes(l.item.id))?.item;
+  const entry = ctx.items.find((l) => task.basis.itemIds.includes(l.item.id));
+  const item = entry?.item;
+  const leg = escortLegOf(task);
+  const escort = leg ? entry?.escort?.legs.find((l) => l.leg === leg) : undefined;
   // どのお知らせの物か（同じ題・同じ時間の当番が二つあっても、札を見分けられる）。
   const title = item && ctx.sources.get(item.sourceId)?.title;
   // 当番は、対象の原文を見せ、どれも「うちの番ではない」で外せる（うちの番の読み違いも、札から直す）。
@@ -271,8 +317,38 @@ function WrittenTime({ ctx, task }: { ctx: Ctx; task: Task }) {
       {place && (
         <span className="text-[15px] text-sub">{ctx.t('card.timing.place', { place })}</span>
       )}
-      {fixed && task.start && (
+      {fixed && task.start && !leg && (
         <span className="text-[15px] text-sub">{ctx.t('card.timing.noTravel')}</span>
+      )}
+      {leg && task.timing === 'fixed' && task.earliestStart && task.deadline && (
+        <span className="text-[15px] text-sub">
+          {ctx.t('card.escort.estimate', {
+            from: time(ctx, task.earliestStart),
+            to: time(ctx, task.deadline),
+          })}
+        </span>
+      )}
+      {escort && (
+        <span className="text-[15px]">
+          {escort.stated
+            ? ctx.t('card.escort.stated')
+            : ctx.t('card.escort.rule', { child: nameOf(ctx.household, entry?.escort?.childId) })}
+        </span>
+      )}
+      {leg && escort?.needed && item && (
+        <MoreLink
+          onClick={() =>
+            void ctx.send({
+              type: 'stateEscort',
+              itemId: item.id,
+              leg,
+              needed: false,
+              seen: { throughSeq: ctx.plan.throughSeq },
+            })
+          }
+        >
+          {ctx.t('card.escort.notNeeded')}
+        </MoreLink>
       )}
       {audience && (
         <span className="text-[15px]">
@@ -569,6 +645,8 @@ function ChangeCard({ ctx, change }: { ctx: Ctx; change: ChangeSummary }) {
 
 function cardKey(card: TodayCard): string {
   switch (card.kind) {
+    case 'released':
+      return `${card.kind}:${card.released.taskKey}`;
     case 'cancel':
     case 'proposal':
     case 'todo':
@@ -590,6 +668,8 @@ function cardKey(card: TodayCard): string {
 
 function CardView({ ctx, card }: { ctx: Ctx; card: TodayCard }) {
   switch (card.kind) {
+    case 'released':
+      return <ReleasedCard ctx={ctx} released={card.released} />;
     case 'cancel':
       return <CancelCard ctx={ctx} task={card.task} request={card.request} />;
     case 'backup':
@@ -609,6 +689,72 @@ function CardView({ ctx, card }: { ctx: Ctx; card: TodayCard }) {
     default:
       return null;
   }
+}
+
+/**
+ * 引き受けた作業が、もう要らなくなった（後のお知らせの取り消し、条件が外れた等）。本人に、引き受けた時の用件と
+ * 置いた時間を見せ（今の作業ではなく約束した物）、「分かりました」で引き受けを取り下げる。控えの無い古い
+ * 引き受けは、用件が分からないと書く。
+ */
+function releasedTitle(ctx: Ctx, released: Released): string {
+  const { content } = released;
+  const title = !content
+    ? ctx.t('card.released.unknown')
+    : content.titleKey === 'task.helper.ask'
+      ? // 頼む相手は、もう無い案の物かもしれないので、名前を推さない。
+        ctx.t('card.released.ask')
+      : content.titleKey === 'task.cancelRequest'
+        ? ctx.t('task.cancelRequest', { to: nameOf(ctx.household, content.titleParams.to) })
+        : ctx.t(content.titleKey, content.titleParams);
+  const date = content?.titleParams.date;
+  return date ? ctx.t('task.forDate', { title, date: day(ctx, date) }) : title;
+}
+
+function ReleasedCard({ ctx, released }: { ctx: Ctx; released: Released }) {
+  const { start, end } = released;
+  return (
+    <Card>
+      <Label tone="warn">
+        {ctx.t(
+          released.reason === 'unconfirmed' ? 'card.released.checkLabel' : 'card.released.label',
+        )}
+      </Label>
+      <Title>{releasedTitle(ctx, released)}</Title>
+      {start && (
+        <Text>
+          {ctx.t('card.released.when', {
+            when: end
+              ? ctx.t('card.proposal.when', {
+                  day: day(ctx, start),
+                  from: time(ctx, start),
+                  to: day(ctx, end) === day(ctx, start) ? time(ctx, end) : dayTime(ctx, end),
+                })
+              : dayTime(ctx, start),
+          })}
+        </Text>
+      )}
+      <Text quiet>
+        {ctx.t(
+          released.reason === 'inactive'
+            ? 'card.released.inactive'
+            : released.reason === 'unconfirmed'
+              ? 'card.released.check'
+              : 'card.released.body',
+        )}
+      </Text>
+      <Button
+        onClick={() =>
+          void ctx.send({
+            type: 'acknowledgeReleased',
+            taskKey: released.taskKey,
+            seen: { throughSeq: ctx.plan.throughSeq },
+          })
+        }
+      >
+        {ctx.t('card.released.ok')}
+      </Button>
+    </Card>
+  );
 }
 
 /** 送った後に根拠が分からなくなった・替わった依頼。取り消しとも続けるとも決めず、頼んだ本人に確かめてもらう。 */
@@ -1545,6 +1691,18 @@ export function previewLines(ctx: Ctx, preview: ChoicePreview): string[] {
   for (const request of preview.cancels) {
     lines.push(ctx.t('decide.then.cancel', { to: nameOf(ctx.household, request.to) }));
   }
+  // 選ぶと、だれかが引き受けていた作業が要らなくなる（その人に知らせる）。
+  for (const released of preview.released ?? []) {
+    const what = releasedTitle(ctx, released);
+    lines.push(
+      released.assigneeId === ctx.me.id
+        ? ctx.t('decide.then.releasedYou', { what })
+        : ctx.t('decide.then.released', {
+            name: ctx.t('decide.person', { name: nameOf(ctx.household, released.assigneeId) }),
+            what,
+          }),
+    );
+  }
   if (preview.moved.length > 0) {
     lines.push(ctx.t('decide.then.moved', { count: preview.moved.length }));
   }
@@ -2004,6 +2162,25 @@ export function SourcesScreen(props: { ctx: Ctx; sourceId?: string; highlight?: 
                           {ctx.t('sources.ours', { audience })}
                         </button>
                       ))}
+                      {/* 「今回は要らない」と言った送り迎えも、ここから言い直せる（押し違い・予定の変更）。 */}
+                      {read?.escortsOff.map(({ itemId, leg }) => (
+                        <button
+                          key={`${itemId}:${leg}`}
+                          type="button"
+                          onClick={() =>
+                            void ctx.send({
+                              type: 'stateEscort',
+                              itemId,
+                              leg,
+                              needed: true,
+                              seen: { throughSeq: ctx.plan.throughSeq },
+                            })
+                          }
+                          className="ml-1.5 min-h-11 text-xs font-bold text-accent underline"
+                        >
+                          {ctx.t(leg === 'to' ? 'sources.escortOn.to' : 'sources.escortOn.from')}
+                        </button>
+                      ))}
                     </p>
                   );
                 })}
@@ -2091,6 +2268,8 @@ function sentenceStatus(ctx: Ctx, sourceId: string) {
         status: 'plan' | 'week' | 'notOurs' | 'statedNotOurs' | 'oursUnconfirmed' | 'readOnly';
         dates: string[];
         others: { itemId: string; audience: string }[];
+        /** 今回は要らないと言った送り迎えの方（言い直せるようにする）。 */
+        escortsOff: { itemId: string; leg: 'to' | 'from' }[];
       }
     | undefined => {
     const here = items.filter((e) => e.item.sentenceIds.includes(sentenceId));
@@ -2111,6 +2290,11 @@ function sentenceStatus(ctx: Ctx, sourceId: string) {
       itemId: e.item.id,
       audience: e.item.interpretation.audience ?? '',
     }));
+    const escortsOff = here.flatMap((e) =>
+      (e.escort?.legs ?? [])
+        .filter((l) => l.stated && !l.needed)
+        .map((l) => ({ itemId: e.item.id, leg: l.leg })),
+    );
     const status = here.some((e) => acted.has(e.item.id))
       ? 'plan'
       : here.some((e) => WEEK_KINDS.has(e.item.kind) && e.item.interpretation.date)
@@ -2126,7 +2310,7 @@ function sentenceStatus(ctx: Ctx, sourceId: string) {
               here.some((e) => e.turn === 'ours' && e.turnStated && !e.trusted)
               ? 'oursUnconfirmed'
               : 'readOnly';
-    return { status, dates, others };
+    return { status, dates, others, escortsOff };
   };
 }
 
@@ -2150,6 +2334,8 @@ function needDay(ctx: Ctx, basis: Task['basis']): string | undefined {
  * 作業の要る日。書かれた時刻の決まった作業（当番）は、書かれた時間も添える（同じ日の二回を見分ける）。
  */
 function taskDay(ctx: Ctx, task: Task): string | undefined {
+  // 日の無い作業（日を決められない迎えを含む）に、要件の日を作業の日として添えない。
+  if (task.timing === 'undated') return undefined;
   const start = task.earliestStart;
   if (task.timing === 'fixed' && start && task.deadline) return writtenWhen(ctx, task);
   if (task.timing === 'fixedEndEstimated' && start) {

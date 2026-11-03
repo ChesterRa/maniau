@@ -26,6 +26,16 @@ function otherKinds(): DomainEvent[] {
   const at = '2026-11-26T09:00+09:00';
   const rows: [string, Record<string, unknown>][] = [
     ['b', { type: 'optionDropped', arrangementKey: CARE, optionKey: GRANDMA }],
+    [
+      'b',
+      {
+        type: 'commitmentChanged',
+        taskKey: ASK,
+        assigneeId: 'b',
+        action: 'accept',
+        basisSourceIds: ['n1'],
+      },
+    ],
     ['b', { type: 'cancellationSent', requestId: 'r-1' }],
     ['b', { type: 'requestRecordCorrected', requestId: 'r-1' }],
     [
@@ -51,6 +61,20 @@ function otherKinds(): DomainEvent[] {
         ours: false,
         what: '架空の当番',
         audience: '架空の名前さんのおうち',
+      },
+    ],
+    [
+      'b',
+      {
+        type: 'escortStated',
+        itemId: 'i1',
+        leg: 'from',
+        needed: false,
+        childId: 'c',
+        what: '架空の練習',
+        date: '2026-12-05',
+        at: null,
+        place: '架空のグラウンド',
       },
     ],
     ['b', { type: 'itemCorrected', itemId: 'i1', interpretation: { what: '架空の持ち物' } }],
@@ -125,6 +149,16 @@ describe('乾かす・戻す（§6.2）', () => {
     }
     for (const event of all.filter((e) => e.type === 'turnStated')) {
       expect(dehydrate(event).row.body).toEqual({ itemId: event.itemId });
+    }
+    // 引き受けの根拠のお知らせ（出典の ID）は、行に残す（ID だけ）。
+    expect(
+      all
+        .filter((e) => e.type === 'commitmentChanged' && e.basisSourceIds !== undefined)
+        .map((e) => dehydrate(e).row.body),
+    ).toContainEqual({ taskKey: ASK, assigneeId: 'b', action: 'accept', basisSourceIds: ['n1'] });
+    // 送り迎えの要否と、言った時の子・用件・日・時刻・場所は、行に残さない。
+    for (const event of all.filter((e) => e.type === 'escortStated')) {
+      expect(dehydrate(event).row.body).toEqual({ itemId: event.itemId, leg: event.leg });
     }
   });
 

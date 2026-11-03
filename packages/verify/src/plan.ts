@@ -8,6 +8,7 @@ import {
   type PlanResult,
   type Task,
 } from '@maniau/core';
+import { checkEscort } from './escort';
 import { type FactState, historicalItem } from './facts';
 import { doneContentMatches, type History, otherAnswerPossible } from './history';
 import type { Collector } from './report';
@@ -1472,4 +1473,5 @@ export function checkPlan(
       }
     }
   }
+  checkEscort(household, plan, facts, history, report);
 }

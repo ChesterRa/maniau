@@ -7,12 +7,18 @@ import type {
   OptionPlan,
   PlanResult,
   Question,
+  Released,
   Requirement,
   Task,
 } from '../schema/plan';
 import { addDays, type DateTime, toEpochMinutes } from '../time';
 
 export type TodayCard =
+  /**
+   * 引き受けた作業が、もう要らなくなった（後のお知らせの取り消し、条件が外れた等）。本人だけに、一番上に出し、
+   * 分かったと言う（引き受けの取り下げ）まで残す（約束どおりに動いてしまわないように）。
+   */
+  | { kind: 'released'; released: Released }
   /** 要らなくなった依頼の取り消しを伝える（頼んだ本人に）。 */
   | { kind: 'cancel'; task: Task; request: ExternalRequest }
   /**
@@ -145,6 +151,10 @@ export function todayCards(
   const now = toEpochMinutes(plan.now);
   const requirementOf = (arrangement?: Arrangement) =>
     plan.requirements.find((r) => r.key === arrangement?.requirementKey);
+
+  const released: TodayCard[] = (plan.released ?? [])
+    .filter((r) => r.assigneeId === memberId)
+    .map((r) => ({ kind: 'released', released: r }));
 
   const cancel: TodayCard[] = [];
   for (const task of plan.tasks) {
@@ -310,7 +320,7 @@ export function todayCards(
     .sort((x, y) => x.due - y.due || x.index - y.index)
     .map((x) => x.card);
   return {
-    main: [...cancel, ...check, ...backup, ...decide, ...stuck, ...work, ...question],
+    main: [...released, ...cancel, ...check, ...backup, ...decide, ...stuck, ...work, ...question],
     quiet: [...bring, ...waiting, ...todo],
   };
 }

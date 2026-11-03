@@ -6,6 +6,7 @@ import {
   type Item,
   MAX_CONDITION_NODES,
   type Source,
+  type SourceSender,
   type Truth,
   type Unknown,
   validateConditions,
@@ -15,6 +16,12 @@ import { weekday } from './time';
 
 export interface FactState {
   items: Map<string, Item>;
+  /** 出典の内容を持ち越さず、送り手だけを要件の検査に使う。 */
+  sourceSenders: Map<string, SourceSender>;
+  /** 古い版・型の違う読み取りを除き、各出典で採用された読み取りの通し番号。 */
+  sourceReadingSeq: Map<string, number>;
+  /** 出典の指定された文を照らすためだけに保持する（検証結果に文を出さない）。 */
+  sourceSentences: Map<string, Map<string, string>>;
   active: Map<string, Truth>;
   unknowns: Map<string, Unknown>;
   conditions: Map<string, ConditionNode>;
@@ -23,6 +30,18 @@ export interface FactState {
   corrections: Map<string, Interpretation>;
   /** 有効な大人が当番の帰属を言った時の内容。読み取りの確認とは分ける。 */
   turns: Map<string, { ours: boolean; what: string; audience: string | null }>;
+  /** 送り・迎えの意向。読み取りや事項の作用とは分ける。 */
+  escorts: Map<
+    string,
+    {
+      needed: boolean;
+      childId: string;
+      what: string;
+      date: string;
+      at: string | null;
+      place: string | null;
+    }
+  >;
 }
 
 /** 送信時の根拠は、確かな一対一の置き換えをたどる。競合や循環は決めつけない。 */
@@ -100,6 +119,7 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   const corrections = new Map<string, Interpretation>();
   const verdicts = new Map<string, 'confirmed' | 'dismissed'>();
   const turns = new Map<string, { ours: boolean; what: string; audience: string | null }>();
+  const escorts: FactState['escorts'] = new Map();
   for (const event of events) {
     if (event.type === 'noticeReceived') {
       if (purgedSources.has(event.source.id)) {
@@ -155,7 +175,8 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
       event.type === 'itemConfirmed' ||
       event.type === 'itemCorrected' ||
       event.type === 'itemDismissed' ||
-      event.type === 'turnStated'
+      event.type === 'turnStated' ||
+      event.type === 'escortStated'
     ) {
       if (!seenItems.has(event.itemId)) {
         report.undetermined(
@@ -168,6 +189,17 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
       // 帰属の言明は、読み取りを確認したり、事項の作用を外したりしない。
       if (event.type === 'turnStated') {
         turns.set(event.itemId, { ours: event.ours, what: event.what, audience: event.audience });
+        continue;
+      }
+      if (event.type === 'escortStated') {
+        escorts.set(`${event.itemId}:${event.leg}`, {
+          needed: event.needed,
+          childId: event.childId,
+          what: event.what,
+          date: event.date,
+          at: event.at,
+          place: event.place,
+        });
         continue;
       }
       if (event.type === 'itemCorrected') {
@@ -616,6 +648,20 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   }
   return {
     items,
+    sourceReadingSeq: new Map(extracted.map((entry) => [entry.sourceId, entry.seq])),
+    sourceSenders: new Map(
+      [...sources]
+        .filter(([id]) => !purgedSources.has(id))
+        .map(([id, entry]) => [id, entry.source.sender]),
+    ),
+    sourceSentences: new Map(
+      [...sources]
+        .filter(([id]) => !purgedSources.has(id))
+        .map(([id, entry]) => [
+          id,
+          new Map(entry.source.sentences.map((sentence) => [sentence.id, sentence.text])),
+        ]),
+    ),
     active,
     unknowns,
     conditions: nodes,
@@ -623,5 +669,6 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
     staleItems,
     corrections,
     turns,
+    escorts,
   };
 }

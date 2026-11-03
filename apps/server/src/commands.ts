@@ -6,6 +6,7 @@ import {
   type DateTime,
   DomainEvent,
   formatDateTime,
+  isActiveTask,
   type PlanResult,
   proposalSnapshot,
   sameContent,
@@ -16,6 +17,7 @@ import {
   type EngineState,
   foldEvents,
   itemsOf,
+  liveItems,
   optionStarted,
   planFromState,
   requestSnapshot,
@@ -106,7 +108,15 @@ function handle(
   if (command.type === 'chooseOption' && command.seen !== undefined) {
     const { seen, shown: _shown, ...asked } = command;
     const form = expand({ plan, state, events }, at, asked);
-    const added = 'reason' in form ? [] : asEvents(events, form.bodies, context.memberId, now);
+    const added =
+      'reason' in form
+        ? []
+        : asEvents(
+            events,
+            withReopened({ plan, events }, form.bodies, context.memberId, now),
+            context.memberId,
+            now,
+          );
     const again =
       'reason' in form
         ? undefined
@@ -125,7 +135,9 @@ function handle(
       return { status: 'conflict', reason: 'consequencesChanged', throughSeq: throughSeq() };
     }
   }
-  if (decided.bodies.length > 0) log.append(decided.bodies, context.memberId, now);
+  // 「もう要りません」と出ていた引き受けが、この操作で戻ったら、本人にもう一度頼む（reopened）。
+  const bodies = withReopened({ plan, events }, decided.bodies, context.memberId, now);
+  if (bodies.length > 0) log.append(bodies, context.memberId, now);
   // 何も起きなかった操作も残す（同じ操作の送り直しで、後の別の人の変更を戻さないため。§7.3 の 7）。
   log.recordOperation({
     id: context.operationId,
@@ -133,7 +145,46 @@ function handle(
     digest,
     throughSeq: throughSeq(),
   });
-  return { status: decided.bodies.length > 0 ? 'ok' : 'noop', throughSeq: throughSeq() };
+  return { status: bodies.length > 0 ? 'ok' : 'noop', throughSeq: throughSeq() };
+}
+
+/**
+ * 「もう要りません」「まだ要るか確かめて」と出ていた引き受け（前の計画の released）が、事象を足して戻ったら
+ * （取り消しの取り下げ、答え直し、選び直し、関係ないの取り消し等）、前の引き受けをそのまま当てず、本人に
+ * もう一度頼む（§4.2。本人は札や知らせを見て、予定を変えたかもしれない。見なかったとは確かめられない）。
+ */
+export function reopened(before: PlanResult, after: PlanResult): EventBody[] {
+  return (before.released ?? []).flatMap((r): EventBody[] => {
+    const task = after.tasks.find((t) => t.key === r.taskKey);
+    if (
+      !task?.live ||
+      !isActiveTask(after, task) ||
+      task.commitment !== 'accepted' ||
+      task.assigneeId !== r.assigneeId
+    ) {
+      return [];
+    }
+    return [{ type: 'assignmentProposed', taskKey: r.taskKey, assigneeId: r.assigneeId }];
+  });
+}
+
+/**
+ * 命令の事象に、それで戻った「もう要りません」の引き受けを頼み直す事象（reopened）を足す。書く時・選ぶ前の
+ * 「選んだら」・見せた物の作り直しで、同じ展開を使う（どれかだけが頼み直しを含むと、見せた計画と書いた後の
+ * 計画が違ってしまう）。
+ */
+function withReopened(
+  { plan, events }: Pick<Now, 'plan' | 'events'>,
+  bodies: EventBody[],
+  memberId: string,
+  now: DateTime,
+): EventBody[] {
+  if (bodies.length === 0 || (plan.released?.length ?? 0) === 0) return bodies;
+  const after = planFromState(
+    foldEvents([...events, ...asEvents(events, bodies, memberId, now)]),
+    now,
+  );
+  return [...bodies, ...reopened(plan, after)];
 }
 
 /**
@@ -165,7 +216,12 @@ export function previewCommand(
     command,
   );
   if ('reason' in decided) return decided;
-  const added = asEvents(events, decided.bodies, context.memberId, now);
+  const added = asEvents(
+    events,
+    withReopened({ plan: before, events }, decided.bodies, context.memberId, now),
+    context.memberId,
+    now,
+  );
   return {
     status: 'ok',
     before,
@@ -411,6 +467,13 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       if (!now || !sameProposal(now, command.shown)) {
         return { status: 'conflict', reason: 'proposalChanged' };
       }
+      // 根拠の事項とお知らせを控える（後で作業が無くなった時に、はっきり要らなくなったのか、根拠を消した・
+      // 読み直しで見つからない等で分からないのかを分ける）。
+      const sourceOf = new Map(itemsOf(state).map((i) => [i.id, i.sourceId]));
+      const basisItemIds = [...new Set(task.basis.itemIds)].sort();
+      const basisSourceIds = [
+        ...new Set(basisItemIds.flatMap((id) => sourceOf.get(id) ?? [])),
+      ].sort();
       return {
         bodies: [
           {
@@ -419,6 +482,8 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
             assigneeId: me,
             action: 'accept',
             shown: command.shown,
+            basisItemIds,
+            basisSourceIds,
           },
         ],
       };
@@ -562,15 +627,97 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       if ((state.sourceChangedSeq.get(item.sourceId) ?? 0) > command.seen.throughSeq) {
         return { status: 'conflict', reason: 'itemChanged' };
       }
+      // 「うちの番ではない」で無くなる作業を、ほかの大人が持っていれば断る（本人の引き受けは取り下げる）。
+      const released = command.ours
+        ? []
+        : releaseFor(
+            plan.tasks.find(
+              (t) => t.live && t.titleKey === 'task.duty' && t.basis.itemIds.includes(item.id),
+            ),
+            me,
+          );
+      if (!Array.isArray(released)) return released;
       // 言った時の用件と対象を控える（後で直されたら、もう当てない）。事項の確かさと作用は変えない。
       return {
         bodies: [
+          ...released,
           {
             type: 'turnStated',
             itemId: item.id,
             ours: command.ours,
             what: item.interpretation.what ?? item.written,
             audience: item.interpretation.audience ?? null,
+          },
+        ],
+      };
+    }
+    case 'acknowledgeReleased': {
+      // 見せた計画と今の計画が同じで、その札が今も本人の「要らなくなった引き受け」の時だけ、引き受けを取り
+      // 下げる（見せた後に作業が戻った・また無くなった時に、古い札で今の引き受けを取り下げない）。
+      if (plan.throughSeq !== command.seen.throughSeq) {
+        return { status: 'conflict', reason: 'itemChanged' };
+      }
+      const released = plan.released?.find(
+        (r) => r.taskKey === command.taskKey && r.assigneeId === me,
+      );
+      if (!released) return { status: 'conflict', reason: 'releasedGone' };
+      return {
+        bodies: [
+          {
+            type: 'commitmentChanged',
+            taskKey: released.taskKey,
+            assigneeId: me,
+            action: 'withdraw',
+          },
+        ],
+      };
+    }
+    case 'stateEscort': {
+      const entry = liveItems(state).find((l) => l.item.id === command.itemId);
+      if (!entry) return { status: 'conflict', reason: 'itemGone' };
+      if (state.withdrawnSources.has(entry.item.sourceId)) {
+        return { status: 'conflict', reason: 'sourceWithdrawn' };
+      }
+      // 見せた計画と今の計画の通し番号が同じ時だけ受ける（後に家庭の記録に何か入った古い画面も、今より先の
+      // 番号を付けた誤った画面も断る）。送り迎えの要否は、行事の効き方（ほかの出典の取り消しと、その取り
+      // 下げで元に戻った時も）と家の決まりの両方で変わるので、出典ごとの番号でなく、計画全体の番号で比べる。
+      if (plan.throughSeq !== command.seen.throughSeq) {
+        return { status: 'conflict', reason: 'itemChanged' };
+      }
+      // 言えるのは、今の計画で生きている、確かな習い事・クラブの行事の送り迎えだけ（送り迎えの子が決まる時。
+      // escortFrameOf）。
+      if (!entry.live || !entry.trusted) return { status: 'conflict', reason: 'itemNotLive' };
+      const frame = entry.escort;
+      const leg = frame?.legs.find((l) => l.leg === command.leg);
+      if (!frame || !leg) return { status: 'invalid', reason: 'notAnEscort' };
+      // 同じことを言い直しても、何も足さない。
+      if (leg.stated && leg.needed === command.needed) return { bodies: [] };
+      // 「今回は要らない」で無くなる作業を、ほかの大人が持っていれば断る（本人の引き受けは取り下げる）。
+      const titleKey = command.leg === 'to' ? 'task.escortTo' : 'task.escortFrom';
+      const released = command.needed
+        ? []
+        : releaseFor(
+            plan.tasks.find(
+              (t) => t.live && t.titleKey === titleKey && t.basis.itemIds.includes(entry.item.id),
+            ),
+            me,
+          );
+      if (!Array.isArray(released)) return released;
+      // 言った時の子・用件・日・書かれた時刻・場所を控える（どれかが変われば、もう当てない）。事項の確かさと
+      // 作用は変えない。
+      return {
+        bodies: [
+          ...released,
+          {
+            type: 'escortStated',
+            itemId: entry.item.id,
+            leg: command.leg,
+            needed: command.needed,
+            childId: frame.childId,
+            what: entry.item.interpretation.what ?? entry.item.written,
+            date: leg.date,
+            at: leg.at ?? null,
+            place: entry.item.interpretation.place ?? null,
           },
         ],
       };
@@ -589,6 +736,24 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       return { bodies: [{ type: 'clockAdvanced', to: command.to }] };
     }
   }
+}
+
+/**
+ * 家族の言明（うちの番ではない・今回は要らない）で作業が無くなる時：ほかの大人が引き受けた・済ませた作業は、
+ * 黙って消さない（断る。持った人が言うか、持った人と話してもらう）。言った本人が引き受けていた作業は、引き
+ * 受けを取り下げる（言い直して作業が戻った時に、前の引き受けを当てない）。まだ引き受けていない提案と、担当の
+ * 無い作業は、そのまま無くなる。
+ */
+function releaseFor(
+  task: PlanResult['tasks'][number] | undefined,
+  me: string,
+): EventBody[] | { status: 'conflict'; reason: string } {
+  if (task?.assigneeId === undefined) return [];
+  const held = task.commitment === 'accepted' || task.commitment === 'done';
+  if (task.assigneeId !== me) return held ? { status: 'conflict', reason: 'heldByOther' } : [];
+  return task.commitment === 'accepted'
+    ? [{ type: 'commitmentChanged', taskKey: task.key, assigneeId: me, action: 'withdraw' }]
+    : [];
 }
 
 /** 担当にできるのは、今有効な大人だけ。 */

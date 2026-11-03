@@ -3,6 +3,7 @@ import { collectFacts } from './facts';
 import { checkHistory, checkRequestNeed } from './history';
 import { checkPlan } from './plan';
 import { checkProposals } from './proposal';
+import { checkReleased } from './released';
 import { Collector, type VerificationReport } from './report';
 import { checkSchedule } from './schedule';
 
@@ -74,6 +75,7 @@ export function verifyPlan(input: VerificationInput): VerificationReport {
     );
   }
   const facts = collectFacts(history.events, report);
+  checkReleased(household.data, plan.data, facts, history, report);
   checkProposals(plan.data, history, report);
   checkRequestNeed(plan.data, history, facts, report, household.data.timeZone);
   checkPlan(household.data, plan.data, facts, history, report);

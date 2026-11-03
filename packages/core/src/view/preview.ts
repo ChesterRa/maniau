@@ -1,7 +1,7 @@
 // 選ぶ前に、選んだら何が起きるか（docs/plan/02-product.md「G1 の結果」の決める画面）。サーバーが、選ぶ命令を
 // 書き込まずに事象へ展開し、同じ計算で作った後の計画（after）を、今の計画（before）と比べる。ここは比べる
 // だけで、計画は作らない（画面の文も作らない）。
-import type { ExternalRequest, PlanResult, Task } from '../schema/plan';
+import type { ExternalRequest, PlanResult, Released, Task } from '../schema/plan';
 import { type DateTime, toEpochMinutes } from '../time';
 import { isActiveTask } from './today';
 
@@ -41,6 +41,8 @@ export interface ChoicePreview {
   conflicts: string[];
   /** 選ぶと要らなくなり、取り消しを伝える作業が新しく出る依頼。 */
   cancels: ExternalRequest[];
+  /** 選ぶと、だれかが引き受けていた作業が要らなくなる（その人に知らせる）。今の計画に無かった物だけ。 */
+  released: Released[];
   /**
    * 選んだ後の計画を、独立した検証器で確かめて、今の計画に無かった違反（符号）。重なり（task_overlap）は、
    * ほかの作業と両方を置けていないこと。空なら、確かめた範囲で新しい違反は無い（サーバーが付ける）。
@@ -99,6 +101,12 @@ export function choicePreview(
   const cancels = after.tasks
     .filter((t) => t.live && t.cancels !== undefined && !cancelling.has(t.cancels))
     .flatMap((t) => after.requests.filter((r) => r.requestId === t.cancels));
+  const releasedBefore = new Set(
+    (before.released ?? []).map((r) => `${r.taskKey}:${r.assigneeId}`),
+  );
+  const released = (after.released ?? []).filter(
+    (r) => !releasedBefore.has(`${r.taskKey}:${r.assigneeId}`),
+  );
   const moved = after.tasks.flatMap((t) => {
     if (!t.live || t.basis.optionKey === optionKey || t.start === undefined) return [];
     if (!isActiveTask(after, t)) return [];
@@ -128,6 +136,7 @@ export function choicePreview(
       ? {}
       : { decisionDeadline: option.decisionDeadline }),
     cancels,
+    released,
     conflicts,
     moved,
   };

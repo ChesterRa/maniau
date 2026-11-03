@@ -19,7 +19,8 @@
       "id": "c",
       "kind": "child",
       "name": "陽菜",
-      "grade": "小1"
+      "grade": "小1",
+      "clubEscort": { "to": true, "from": true }
     },
     {
       "id": "g",

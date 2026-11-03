@@ -32,6 +32,8 @@ export type NotificationKind = 'decisionApproaching' | 'question' | 'cancellatio
 
 /** 一つの知らせの文。 */
 export type NotificationTitle =
+  | 'notify.released'
+  | 'notify.releasedCheck'
   | 'notify.cancel'
   | 'notify.check'
   | 'notify.backup'
@@ -70,6 +72,9 @@ export const NOTIFICATION_TEXT: Record<
 > = {
   ja: {
     'notify.app': 'まにあう',
+    'notify.released': '引き受けたことが、もう要らなくなりました。確かめてください。',
+    'notify.releasedCheck':
+      '引き受けたことが、今の計画に見つかりません。まだ要るか確かめてください。',
     'notify.cancel': 'もう要らない頼み事があります。相手に取り消しを伝えてください。',
     'notify.check': '頼み事が、まだ要るか確かめてください。',
     'notify.backup': '返事を待つ間に、予備の案を押さえるか決める時が近づいています。',
@@ -82,6 +87,9 @@ export const NOTIFICATION_TEXT: Record<
   },
   en: {
     'notify.app': 'Maniau',
+    'notify.released': 'Something you took on is no longer needed. Please check.',
+    'notify.releasedCheck':
+      'Something you took on is no longer in the plan. Please check whether it is still needed.',
     'notify.cancel': 'A request is no longer needed. Please let them know.',
     'notify.check': 'Please check whether a request is still needed.',
     'notify.backup': "While you wait for a reply, it's nearly time to decide on a backup.",
@@ -183,6 +191,27 @@ function intentOf(
   history: NotificationHistory,
 ): Draft | undefined {
   switch (card.kind) {
+    case 'released': {
+      // 引き受けた作業が要らなくなった：本人が動き始める時（置いた始まり）の前の知らせ始める幅から、終わるまで
+      // 知らせる（約束どおりに出かけてしまわないように。始まった後に中止が届いても、移動を止められる）。夜に
+      // 待つかは始まりで決め、終わったら送らない。時刻の無い物は、いつ動くか分からないので、出たら知らせる
+      // （夜は朝まで待つ）。外への取り消しの連絡とは別。
+      // 根拠のお知らせを消した等で、要らなくなったとは言えない物は、まだ要るか確かめてと知らせる。
+      const { released } = card;
+      const check = released.reason === 'unconfirmed';
+      const until = released.end ?? released.start;
+      const actBy = released.start;
+      const from = actBy ?? until;
+      if (from !== undefined && toEpochMinutes(from) - now > URGENT_LEAD_MIN) return undefined;
+      return {
+        key: `${check ? 'releasedCheck' : 'released'}:${released.taskKey}`,
+        subject: { type: 'task', id: released.taskKey },
+        kind: 'assignment',
+        titleKey: check ? 'notify.releasedCheck' : 'notify.released',
+        ...(until ? { until } : {}),
+        ...(actBy && actBy !== until ? { actBy } : {}),
+      };
+    }
     case 'cancel':
     case 'check': {
       // 頼んだ時間が終わるまでは伝える意味がある（始まった後でも、残りの時間がある）。相手が動き始め

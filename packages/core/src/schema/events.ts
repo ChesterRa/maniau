@@ -210,6 +210,13 @@ export const DomainEvent = z.discriminatedUnion('type', [
     /** 引き受けた時に見た提案の控え（accept の時だけ）。 */
     shown: ProposalSnapshot.optional(),
     /**
+     * 引き受けた時の作業の根拠の事項と、そのお知らせ（事項・出典の ID。accept の時だけ）。後で作業が計画から
+     * 無くなった時に、はっきり要らなくなったのか（取り消し・関係ない・取り下げ・家族の決まりの変更）、根拠を
+     * 消した・読み直しで見つからない等で分からないのかを分ける。無いのは古い事象。
+     */
+    basisItemIds: z.array(Id).optional(),
+    basisSourceIds: z.array(Id).optional(),
+    /**
      * 済んだと記録した時に見せた用件（done の時だけ）。今の作業の用件と違えば、この済みは今の作業に
      * 当てない（直されて別の物になった）。無いのは古い事象。
      */
@@ -290,6 +297,26 @@ export const DomainEvent = z.discriminatedUnion('type', [
     ours: z.boolean(),
     what: z.string(),
     audience: z.string().nullable(),
+  }),
+  /**
+   * 家族が、習い事・クラブの行事の送り（to）か迎え（from）が、今回要るか（needed）を言った。家の決まり
+   * （子の clubEscort）より、今回の言明を先に使う。言った時の子・用件・日・書かれた時刻・場所を控え、どれかが
+   * 変われば（決まりのある子が替わった、場所が直された）もう当てない。事項の確かさも作用も変えない（要らない
+   * と言っても、行事の置き換え・取り消しを戻さない）。
+   */
+  z.object({
+    ...envelope,
+    type: z.literal('escortStated'),
+    itemId: Id,
+    leg: z.enum(['to', 'from']),
+    needed: z.boolean(),
+    childId: Id,
+    what: z.string(),
+    /** その方の日（迎えは、終わりが次の日と読めれば次の日）。 */
+    date: z.string(),
+    /** 書かれた時刻。時刻の無い方（その日の作業）は null。 */
+    at: z.string().nullable(),
+    place: z.string().nullable(),
   }),
   /**
    * 家族が「このお知らせはもう当てはまらない」と言った（取り下げ）。事項は全て生きていない扱いになり、

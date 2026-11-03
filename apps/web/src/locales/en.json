@@ -41,7 +41,8 @@
     "expired": "The demo session expired. Please restart.",
     "close": "Close",
     "uncertain": "We couldn't confirm whether it was sent (the connection dropped). “Send again” checks it as the same action.",
-    "retry": "Send again"
+    "retry": "Send again",
+    "heldByOther": "Someone else is in charge of this task. Please check with them."
   },
   "today": {
     "title": "Today",
@@ -170,7 +171,28 @@
       "audience": "For: {{audience}} (please check it's your turn)",
       "notOurs": "Not our turn",
       "audienceKnown": "For: {{audience}}",
-      "from": "{{day}} from {{from}}"
+      "from": "{{day}} from {{from}}",
+      "undatedUnconfirmed": "Please check the date and time in the original text"
+    },
+    "escort": {
+      "startsAt": "Starts {{day}} at {{at}}",
+      "endsAt": "Ends {{day}} at {{at}}",
+      "estimate": "{{from}}–{{to}} is an estimate (a 30-minute trip each way; the route is not checked)",
+      "rule": "From {{child}}'s drop-off and pick-up rule (assuming they go)",
+      "stated": "You said it is needed this time",
+      "notNeeded": "Not needed this time",
+      "dateUnknown": "Pick-up for the event on {{day}}. Please check the pick-up date and time in the original text"
+    },
+    "released": {
+      "label": "No longer needed",
+      "when": "You had agreed to do it {{when}}.",
+      "body": "You took this on, but a notice or a family answer has changed and it is no longer needed. Please check before you head out.",
+      "unknown": "A task you took on (no record of what it was)",
+      "ask": "Asking someone",
+      "ok": "Got it",
+      "inactive": "You took this on, but the family chose another way (or the main plan was confirmed), so this step will not go ahead. Please check before you head out.",
+      "checkLabel": "Please check",
+      "check": "A task you took on is no longer in the plan (for example, its notice was deleted). Please check whether it is still needed."
     }
   },
   "answer": {
@@ -226,7 +248,9 @@
       "issues_other": "The plan has {{count}} points that need checking",
       "conflict": "We can't find times for the tasks of {{options}} that don't overlap other tasks your family is doing, so they stay without a time (review the options, who does them, or the times)",
       "handOver": "It no longer fits your time. Choosing proposes the tasks to {{name}}",
-      "later": "{{name}} could still make it if they start by {{when}}"
+      "later": "{{name}} could still make it if they start by {{when}}",
+      "released": "“{{what}}”, which {{name}} took on, will no longer be needed (they will be told)",
+      "releasedYou": "“{{what}}”, which you took on, will no longer be needed"
     },
     "reversible": "You can change this later. If you do, Maniau shows what needs cancelling or asking again as tasks (your family does the contacting).",
     "conflicted": "We couldn't find times for the tasks of {{options}} that don't overlap another task the same person is doing, so they have no time yet. Review the options, who does them, or the times.",
@@ -293,7 +317,11 @@
     },
     "statusOn": "{{status}} · {{dates}}",
     "toToday": "See Today",
-    "ours": "“{{audience}}” is our turn"
+    "ours": "“{{audience}}” is our turn",
+    "escortOn": {
+      "to": "Drop-off is needed (marked not needed this time)",
+      "from": "Pick-up is needed (marked not needed this time)"
+    }
   },
   "condition": {
     "if": "if {{label}} is {{value}}",
@@ -359,7 +387,9 @@
     "bento": {
       "shop": "Shop for the packed lunch",
       "make": "Make the packed lunch"
-    }
+    },
+    "escortTo": "Drop-off for {{what}}",
+    "escortFrom": "Pick-up from {{what}}"
   },
   "push": {
     "enable": "Get notifications",

@@ -364,6 +364,7 @@ export function toExtraction(
         ...(raw.startTime !== null && startTime === null
           ? { startTimeUnconfirmed: true as const }
           : {}),
+        ...(raw.endTime !== null && endTime === null ? { endTimeUnconfirmed: true as const } : {}),
         ...(raw.audience === null ? {} : { audience: raw.audience }),
         ...(raw.place === null ? {} : { place: raw.place }),
         ...(relativeDay === undefined ? {} : { relativeDay }),

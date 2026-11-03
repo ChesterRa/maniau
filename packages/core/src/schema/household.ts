@@ -25,6 +25,13 @@ export const Member = z.object({
   addressAs: z.string().optional(),
   /** 子の学年（例：小1）。 */
   grade: z.string().optional(),
+  /**
+   * 子だけ：習い事・クラブ（お知らせの送り手が club）の行事に、大人が送るか（to）・迎えるか（from）。家族が
+   * 決めて家族の情報に入れた家の決まりで、行事ごとの送り迎えの作業の根拠になる（書かれていない送り迎えを、
+   * 推し量りで作らない）。無ければ作らない。今は、家庭の子が一人の時だけ使う（お知らせがどの子の物かを、
+   * まだ結べないので）。
+   */
+  clubEscort: z.object({ to: z.boolean(), from: z.boolean() }).optional(),
   /** 止めた成員は、権限を持たない（§2.1）。 */
   active: z.boolean().default(true),
 });

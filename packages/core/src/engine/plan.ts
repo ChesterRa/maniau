@@ -22,6 +22,7 @@ import type {
   PlanStatus,
   Question,
   Reason,
+  Released,
   Requirement,
   Task,
 } from '../schema/plan';
@@ -81,6 +82,8 @@ export const keys = {
   submissionTask: (rootId: string) => `task:submit:${rootId}`,
   dutyRequirement: (rootId: string) => `req:duty:${rootId}`,
   dutyTask: (rootId: string) => `task:duty:${rootId}`,
+  escortRequirement: (rootId: string) => `req:escort:${rootId}`,
+  escortTask: (rootId: string, leg: 'to' | 'from') => `task:escort:${leg}:${rootId}`,
   purchaseArrangement: (rootId: string) => `arr:purchase:${rootId}`,
   option: (arrangementKey: string, templateId: string) => `opt:${arrangementKey}:${templateId}`,
   task: (optionKey: string, stepId: string) => `task:${optionKey}:${stepId}`,
@@ -131,6 +134,140 @@ export interface LiveItem {
   turn?: DutyTurn;
   /** turn が、家族の言明（今も当たる物）による。 */
   turnStated?: true;
+  /** 習い事・クラブの行事だけ：送り迎えの今の見立て（escortFrameOf。エンジンと画面は、これを使う）。 */
+  escort?: EscortFrame;
+}
+
+/** 送り（to）か迎え（from）の一方。 */
+export interface EscortLeg {
+  leg: 'to' | 'from';
+  /** その方の日（迎えは、終わりが次の日と読めれば次の日）。 */
+  date: LocalDate;
+  /**
+   * 書かれた時刻（送りは始まり、迎えは終わり）。書かれていない・確かめられない・日を決められない時は無し
+   * （その日の作業にする）。
+   */
+  at?: string;
+  /** 時刻が書かれていたが、読み取りで確かめられないか、どの日の時刻か決められない（元の文で確かめる）。 */
+  timeUnconfirmed?: true;
+  /**
+   * 迎えの日を決められない（「翌日」と書かれた終わり等）。date は行事の日（言明を結ぶため）で、迎えの日では
+   * ない。作業には日も時刻も付けない（行事の日を迎えの日として見せない）。
+   */
+  dateUnconfirmed?: true;
+  /** 今回要るか。家族の言明（今も当たる物）があればそれ、無ければ家の決まり。 */
+  needed: boolean;
+  /** needed が、家族の言明による。 */
+  stated?: true;
+}
+
+/** 習い事・クラブの行事の送り迎えの見立て：誰の送り迎えか、どの方が要るか。 */
+export interface EscortFrame {
+  childId: string;
+  legs: EscortLeg[];
+}
+
+/**
+ * 習い事・クラブの行事（送り手が club の行事）の送り迎えの見立て。家庭の有効な子が一人だけで、その子に家の
+ * 決まり（clubEscort）があり、日が書かれた時だけ作る（子が二人以上なら、決まりのある子が一人でも、どの子の
+ * 行事か分からない。決まりは、その子をどう送り迎えするかで、お知らせがその子の物という根拠ではない。決まりが
+ * 無ければ、書かれていない送り迎えを推し量らない）。家族の言明は、言った時の子・用件・その方の日・書かれた
+ * 時刻・場所が今と同じ時だけ当てる。
+ * - 送りは書かれた始まり、迎えは書かれた終わり。終わりの日は当番と同じ決まりで決める（endOf：終わりが
+ *   始まり以前の時刻か「翌日」などと書かれていれば、長さが 12 時間までの時だけ次の日）。決められない終わりと、
+ *   始まりの無い時の終わりは、日も時刻も付けない（dateUnconfirmed。行事の日を迎えの日として見せない）。
+ *   読み取りが落とした終わりと、終わりが書かれていないのに「翌日」などとある時も、次の日だったかもしれない
+ *   ので同じ（dateUnconfirmed）。読み取りが落とした始まりは、行事の日のどこか（timeUnconfirmed）。
+ * - 時刻の書かれていない方も入れる（時刻を付けない。その日の作業にし、送り迎えを黙って落とさない）。
+ * - ほかの行事を取り消す事項（中止のお知らせ）には作らない。
+ */
+export function escortFrameOf(state: EngineState, item: Item): EscortFrame | undefined {
+  const household = state.household;
+  if (!household || item.kind !== 'event' || state.sources.get(item.sourceId)?.sender !== 'club') {
+    return undefined;
+  }
+  // ほかの行事を取り消すだけの事項（「雨のため中止」）は、出かける行事ではない。
+  if (item.effects.some((e) => e.type === 'cancel')) return undefined;
+  const children = household.members.filter((m) => m.kind === 'child' && m.active);
+  const child = children.length === 1 ? children[0] : undefined;
+  const rule = child?.clubEscort;
+  const { date, startTime, endTime, place, startTimeUnconfirmed, endTimeUnconfirmed } =
+    item.interpretation;
+  if (child === undefined || rule === undefined || date === undefined) return undefined;
+  const what = item.interpretation.what ?? item.written;
+  const tz = household.timeZone;
+  const when = (
+    leg: 'to' | 'from',
+  ): Pick<EscortLeg, 'date' | 'at' | 'timeUnconfirmed' | 'dateUnconfirmed'> => {
+    if (leg === 'to') {
+      if (startTime !== undefined) return { date, at: startTime };
+      return startTimeUnconfirmed ? { date, timeUnconfirmed: true } : { date };
+    }
+    if (endTime === undefined) {
+      // 読み取りが落とした終わりは、次の日の時刻（「翌日午前1時まで」）だったかもしれない。書かれていなくても、
+      // 「翌日」などとあれば次の日かもしれない。どちらも日を決めず、元の文で確かめてもらう。
+      if (endTimeUnconfirmed || nextDayWritten(state, item)) {
+        return { date, timeUnconfirmed: true, dateUnconfirmed: true };
+      }
+      return { date };
+    }
+    // 始まりが無ければ、終わりがその日か次の日か（「翌日01:00終了」）を決められない（読み取りは終わりの日を
+    // 持たない）。日も時刻も付けず、元の文で確かめてもらう。
+    if (startTime === undefined) return { date, timeUnconfirmed: true, dateUnconfirmed: true };
+    // 終わりの日を決められなければ、日も時刻も付けない（行事の日を迎えの日として見せない）。
+    const end = endOf(state, item, date, startTime, endTime, tz);
+    return end
+      ? { date: end.date, at: endTime }
+      : { date, timeUnconfirmed: true, dateUnconfirmed: true };
+  };
+  const legs = (['to', 'from'] as const).map((leg): EscortLeg => {
+    const at = when(leg);
+    const said = state.escorts.get(`${item.id}:${leg}`);
+    const applies =
+      said !== undefined &&
+      said.childId === child.id &&
+      said.what === what &&
+      said.date === at.date &&
+      said.at === (at.at ?? null) &&
+      said.place === (place ?? null);
+    return applies
+      ? { leg, ...at, needed: said.needed, stated: true }
+      : { leg, ...at, needed: rule[leg] };
+  });
+  return { childId: child.id, legs };
+}
+
+/** 次の日を言う言葉（終わりが次の日かもしれない）。 */
+const NEXT_DAY = /翌日|翌朝|翌晩|次の日|次の朝|明朝|next day|following day/i;
+
+/** 事項の引用か、指した元の文（引用は文の一部のことがある）に、次の日を言う言葉があるか。 */
+function nextDayWritten(state: EngineState, item: Item): boolean {
+  const sentences = state.sources.get(item.sourceId)?.sentences ?? [];
+  const cited = sentences.filter((s) => item.sentenceIds.includes(s.id)).map((s) => s.text);
+  return [item.written, ...cited].some((text) => NEXT_DAY.test(text));
+}
+
+/**
+ * 書かれた始まりと終わり（時刻だけ）から、終わりの日を決める。終わりが始まりより後ならその日。ただし指した文に
+ * 「翌日」などがあれば、その日とは決めない（「9:00から翌日10:00まで」）。終わりが始まり以前の時刻（か「翌日」）
+ * なら、次の日の終わりと読める時（長さが 12 時間まで）だけ次の日。ほかは決められない（無し）。
+ */
+function endOf(
+  state: EngineState,
+  item: Item,
+  date: LocalDate,
+  startTime: string,
+  endTime: string,
+  tz: string,
+): { date: LocalDate; at: EpochMinutes } | undefined {
+  const start = zonedToEpochMinutes(date, startTime, tz);
+  const sameDay = zonedToEpochMinutes(date, endTime, tz);
+  if (sameDay > start && !nextDayWritten(state, item)) return { date, at: sameDay };
+  const nextDate = addDays(date, 1);
+  const nextDay = zonedToEpochMinutes(nextDate, endTime, tz);
+  return nextDay > start && nextDay - start <= OVERNIGHT_MAX_MINUTES
+    ? { date: nextDate, at: nextDay }
+    : undefined;
 }
 
 /** 今の事項と、適用されるか・条件しだいか・確かか。 */
@@ -158,6 +295,8 @@ export function liveItems(state: EngineState): LiveItem[] {
   if (!household) return all;
   const evidence = all.filter((l) => l.live && l.trusted && !l.conditional).map((l) => l.item);
   return all.map((l) => {
+    const escort = escortFrameOf(state, l.item);
+    if (escort) return { ...l, escort };
     if (l.item.kind !== 'duty' || !l.item.interpretation.familyAction) return l;
     const stated = state.turns.get(l.item.id);
     return {
@@ -206,6 +345,13 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
     live: boolean;
     conditional: boolean;
     unsure: boolean;
+  }[] = [];
+  const escorts: {
+    item: Item;
+    rootId: string;
+    live: boolean;
+    conditional: boolean;
+    frame: EscortFrame;
   }[] = [];
 
   // 子の居場所の手配は、家族が進める案どうしを一緒に置いてから（joint.ts）、お知らせの順に並べる。
@@ -259,6 +405,11 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
         duties.push({ item, rootId, live, conditional, unsure: turn === 'unsure' });
       }
     }
+    // 習い事・クラブの行事（送り手が club）は、家の決まり（子の clubEscort）か、今回の家族の言明がある時だけ、
+    // 送り・迎えの作業にする（書かれていない送り迎えを推し量りで作らない。escortFrameOf）。
+    if (entry.escort) {
+      escorts.push({ item, rootId, live, conditional, frame: entry.escort });
+    }
   }
   const requests = externalRequests(ctx, tasks, arrangements, items);
   // 提出物の作業は、ほかの作業と依頼がそろった後に置く（持った人の、選んだ案のほかの作業と重ならない
@@ -280,7 +431,11 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
   for (const d of duties) {
     duty(ctx, d, requirements, tasks, { arrangements, requests });
   }
+  for (const e of escorts) {
+    escort(ctx, e, requirements, tasks, { arrangements, requests });
+  }
   tasks.push(...cancellationTasks(ctx, requests));
+  const released = releasedTasks(ctx, tasks, { arrangements, requests });
 
   return {
     householdId: household.id,
@@ -291,8 +446,87 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
     tasks,
     requests,
     questions,
+    ...(released.length > 0 ? { released } : {}),
   };
 }
+
+/**
+ * 計画に無くなった作業が、はっきり要らなくなったか：根拠のお知らせを家族が取り下げたか、根拠の事項がどれも、
+ * 後のお知らせで取り消された・家族が関係ないとしたか。読み直しで見つからない事項（§4.1）と、今も残る事項は、
+ * 要らなくなったとは言えない（確かめてもらう）。引き受けた後に根拠のお知らせを読み直していれば、同じ ID の
+ * 事項が引き受けた時と同じ物とは言えないので、取り消し・関係ないも当てない（取り下げは出典ごとなので当てる）。
+ */
+function definitelyGone(
+  state: EngineState,
+  basis: { itemIds: readonly string[]; sourceIds: readonly string[]; seq: number },
+): boolean {
+  if (basis.sourceIds.some((id) => state.withdrawnSources.has(id))) return true;
+  if (rereadSince(state, basis)) return false;
+  // 根拠の事項が今も残るのに作業が無くなった（読み直しで同じ ID が別の種類になった、家の決まりや子の数が
+  // 変わった等）時は、要らなくなったとは言えない（同じ ID は同じ事項の証拠ではない。§4.1）。
+  return (
+    basis.itemIds.length > 0 &&
+    basis.itemIds.every(
+      (id) => state.verdicts.get(id) === 'dismissed' || itemFate(state, id).status === 'cancelled',
+    )
+  );
+}
+
+/**
+ * 引き受けたのに、もう要らなくなった作業（Released）。今の引き受けが「引き受けた」のまま、担当が有効な大人で、
+ * 今の計画に無いか、生きていないか、もう進めない（家族が別の案を選んだ等。isActiveTask）物。用件と時刻は、本人が引き受けた時の控え（後で作業が変わっていても、約束した
+ * 物で知らせ、終わったかを決める）。控えの無い古い引き受けは、用件も時刻も分からないとする。時刻のある物は、
+ * 終わり（無ければ始まり）が過ぎたら出さない（もう動かない）。時刻の無い物は、本人が分かったと言うまで出す。
+ * 外への取り消しの連絡（cancellationTasks）とは別（家族の中の約束）。
+ */
+function releasedTasks(
+  ctx: Context,
+  tasks: readonly Task[],
+  plan: Pick<PlanResult, 'arrangements' | 'requests'>,
+): Released[] {
+  const released: Released[] = [];
+  for (const [taskKey, commitment] of ctx.state.commitments) {
+    if (commitment !== 'accepted') continue;
+    const assigneeId = ctx.state.assignees.get(taskKey);
+    const adult = ctx.household.members.find((m) => m.id === assigneeId);
+    if (assigneeId === undefined || adult?.kind !== 'adult' || !adult.active) continue;
+    const current = tasks.find((t) => t.key === taskKey);
+    if (current?.live && isActiveTask(plan, current)) continue;
+    // 根拠のお知らせを消していたら、要らなくなったとは言わず、中身も時刻も出さない（消した物を見せない）。
+    // 根拠の分からない古い引き受けは、家庭のどれかのお知らせを消していれば、消した物かもしれないとする。
+    const basis = ctx.state.acceptedBasis.get(taskKey);
+    const purged =
+      basis === undefined
+        ? [...ctx.state.purgedSources.values()].includes('all')
+        : basis.sourceIds.some((id) => ctx.state.purgedSources.get(id) === 'all');
+    // 生きていない作業も、引き受けた後に根拠を読み直していれば、同じ事項の条件が外れたとは言えない。
+    const reason: Released['reason'] = current
+      ? current.live
+        ? 'inactive'
+        : basis !== undefined && rereadSince(ctx.state, basis)
+          ? 'unconfirmed'
+          : 'notLive'
+      : !purged && basis !== undefined && definitelyGone(ctx.state, basis)
+        ? 'gone'
+        : 'unconfirmed';
+    const shown = purged ? undefined : ctx.state.shown.get(taskKey);
+    const last = shown?.end ?? shown?.start;
+    if (last !== undefined && toEpochMinutes(last) <= ctx.now) continue;
+    released.push({
+      taskKey,
+      assigneeId,
+      ...(shown ? { content: { titleKey: shown.titleKey, titleParams: shown.titleParams } } : {}),
+      ...(shown?.start === undefined ? {} : { start: shown.start }),
+      ...(shown?.end === undefined ? {} : { end: shown.end }),
+      reason,
+    });
+  }
+  return released;
+}
+
+/** 引き受けた後に、根拠のお知らせを読み直したか（同じ ID が同じ事項か、確かめられない。§4.1）。 */
+const rereadSince = (state: EngineState, basis: { sourceIds: readonly string[]; seq: number }) =>
+  basis.sourceIds.some((id) => (state.extractionSeq.get(id) ?? 0) > basis.seq);
 
 const noSchool = (item: Item) =>
   item.kind === 'dayChange' && item.interpretation.dayType === 'noSchool';
@@ -777,6 +1011,20 @@ function task(
     commitment: options.reopen && commitment === 'done' ? 'accepted' : commitment,
   };
   if (built.commitment !== 'accepted') return built;
+  // 引き受けた後に「もう要らなくなった」と本人に知らせていれば（はっきりした取り消し。§4.2）、作業が戻っても
+  // 前の引き受けをそのまま当てず、見せ直す（本人は、要らなくなったと思って予定を変えたかもしれない）。
+  const released = ctx.state.releasedNotified.get(key);
+  const acceptedAt = (ctx.state.commitmentLog.get(key) ?? [])
+    .filter((c) => c.state === 'accepted')
+    .at(-1)?.seq;
+  if (
+    released !== undefined &&
+    released.memberId === built.assigneeId &&
+    acceptedAt !== undefined &&
+    released.seq > acceptedAt
+  ) {
+    return { ...built, reconfirm: true };
+  }
   // 引き受けた時に見た提案と、今の提案が同じでなければ、見せ直す（控えの無い古い形も同じ）。
   const shown = ctx.state.shown.get(key);
   const now = proposalSnapshot(built);
@@ -1107,12 +1355,13 @@ function submission(
 
 /** 当番の終わりの時刻が書かれていない時の長さ（分。目安）。 */
 const DUTY_DEFAULT_MINUTES = 60;
-/** 終わりが始まりより前の時刻なら、次の日の終わりと読む。その時の長さの上限（分）。 */
-const DUTY_OVERNIGHT_MAX_MINUTES = 12 * 60;
+/** 終わりが始まりより前の時刻なら、次の日の終わりと読む。その時の長さの上限（分。当番と送り迎え）。 */
+const OVERNIGHT_MAX_MINUTES = 12 * 60;
 
 /**
- * 当番の書かれた時間。始まりが無ければ無し。終わりが始まり以前の時刻なら、次の日の終わりと読める時
- * （長さが 12 時間まで。23:00〜1:00）だけ次の日にし、ほかは読めない終わりとして目安の長さにする。
+ * 当番の書かれた時間。始まりが無ければ無し。終わりの日は endOf で決め（終わりが始まり以前の時刻か、「翌日」
+ * などと書かれていれば、次の日と読める時（長さが 12 時間まで。23:00〜1:00）だけ次の日）、決められない終わりは
+ * 読めない終わりとして目安の長さにする。
  */
 function dutyWindow(
   ctx: Context,
@@ -1121,15 +1370,11 @@ function dutyWindow(
   const { date, startTime, endTime } = item.interpretation;
   if (date === undefined || startTime === undefined) return undefined;
   const start = zonedToEpochMinutes(date, startTime, ctx.tz);
-  if (endTime !== undefined) {
-    const sameDay = zonedToEpochMinutes(date, endTime, ctx.tz);
-    if (sameDay > start) return { start, end: sameDay, endEstimated: false };
-    const nextDay = zonedToEpochMinutes(addDays(date, 1), endTime, ctx.tz);
-    if (nextDay > start && nextDay - start <= DUTY_OVERNIGHT_MAX_MINUTES) {
-      return { start, end: nextDay, endEstimated: false };
-    }
-  }
-  return { start, end: start + DUTY_DEFAULT_MINUTES, endEstimated: true };
+  const end =
+    endTime === undefined ? undefined : endOf(ctx.state, item, date, startTime, endTime, ctx.tz);
+  return end
+    ? { start, end: end.at, endEstimated: false }
+    : { start, end: start + DUTY_DEFAULT_MINUTES, endEstimated: true };
 }
 
 /**
@@ -1214,15 +1459,40 @@ function duty(
     );
     return;
   }
+  fixedTask(ctx, key, common, window, tasks, chosen);
+}
+
+/**
+ * 書かれた時間に決まった作業を一つ作る（当番・送り迎え）。持った人のふだんの予定の空き（家・外出の区間）が、
+ * その時間をそのまま含み、ほかの作業とも重ならない時だけ置く。前や後にずらさない。場所と行き帰りは入れない。
+ */
+function fixedTask(
+  ctx: Context,
+  key: string,
+  common: {
+    titleKey: string;
+    titleParams: Record<string, string>;
+    basis: Task['basis'];
+    after: Task['after'];
+    live: boolean;
+    turnUnconfirmed?: true;
+  },
+  window: { start: EpochMinutes; end: EpochMinutes; endEstimated: boolean },
+  tasks: Task[],
+  chosen: Chosen,
+): void {
   const assignee = ctx.state.assignees.get(key);
-  const commitment = commitmentOf(ctx, key, { titleKey: 'task.duty', titleParams });
+  const commitment = commitmentOf(ctx, key, {
+    titleKey: common.titleKey,
+    titleParams: common.titleParams,
+  });
   const durationMin = window.end - window.start;
   const segments: Task['segments'] = ['home', 'away'];
   const candidate =
-    assignee === undefined || !live || NOT_DOING.has(commitment) || commitment === 'done'
+    assignee === undefined || !common.live || NOT_DOING.has(commitment) || commitment === 'done'
       ? undefined
       : placeStep(
-          { id: 'duty', titleKey: 'task.duty', durationMin, segments, waitAfterMin: 0 },
+          { id: 'fixed', titleKey: common.titleKey, durationMin, segments, waitAfterMin: 0 },
           assignee,
           ctx.household,
           ctx.now,
@@ -1242,6 +1512,111 @@ function duty(
       ...(placed ? { start: ctx.fmt(placed.start), end: ctx.fmt(placed.end) } : {}),
     }),
   );
+}
+
+/** 送り迎えの片道の目安（分）。確かめた道のりではない（画面もそう書く）。 */
+export const ESCORT_ESTIMATE_MINUTES = 30;
+
+/**
+ * 習い事・クラブの行事の送り迎え。根拠は家の決まり（子の clubEscort）か今回の家族の言明で（escortFrameOf）、
+ * 行事に書かれた日・時刻・場所に結ぶ。
+ * - 送り（to）は書かれた始まりの、迎え（from）は書かれた終わりの前後に、片道の目安（30 分）ずつの往復で
+ *   決まった作業（大人は、その時刻に行事の場所にいる。行って帰る間は、ほかの作業をしない）。書かれた時刻を
+ *   ずらさない。時刻の無い方は、その日の作業（時刻に置かない。確かめられない時刻は timeUnconfirmed）。
+ * - 行事が短く、送りと迎えの往復が重なる時は、同じ大人が両方を持つと、後の方を置けない（待つ間を、まだ
+ *   作業にしていない）。
+ * - 要らない（家の決まりに無い、今回は要らないと言った）方は作らない。どちらも要らなければ要件も作らない。
+ * - 行事の条件しだい（雨天中止など）。用件に日・書かれた時刻・場所を入れる（直されたら、前の引き受けや
+ *   済みを当てない）。
+ */
+function escort(
+  ctx: Context,
+  entry: { item: Item; rootId: string; live: boolean; conditional: boolean; frame: EscortFrame },
+  requirements: Requirement[],
+  tasks: Task[],
+  chosen: Chosen,
+): void {
+  const { item, rootId, live, conditional, frame } = entry;
+  const { date, place } = item.interpretation;
+  const legs = frame.legs.filter((l) => l.needed);
+  if (date === undefined || legs.length === 0) return;
+  const what = item.interpretation.what ?? item.written;
+  const requirementKey = keys.escortRequirement(rootId);
+  const basis = { itemIds: [item.id], requirementKey };
+  // 送り迎えの往復の始まり（時刻の無い方は、その日の始まり。日を決められない方は、行事の日の始まり）。
+  const startOf = (l: EscortLeg) =>
+    l.at === undefined
+      ? zonedToEpochMinutes(l.date, '00:00', ctx.tz)
+      : zonedToEpochMinutes(l.date, l.at, ctx.tz) - ESCORT_ESTIMATE_MINUTES;
+  requirements.push({
+    key: requirementKey,
+    kind: 'escort',
+    what,
+    date,
+    // 要件の期限は、いちばん早い送り迎えの、目安の出発（時刻の無い方は、その日の始まり）。
+    by: ctx.fmt(Math.min(...legs.map(startOf))),
+    nature: 'required',
+    basis,
+    live,
+    ...(conditional ? { conditional } : {}),
+  });
+  for (const l of legs) {
+    const key = keys.escortTask(rootId, l.leg);
+    const common = {
+      titleKey: l.leg === 'to' ? 'task.escortTo' : 'task.escortFrom',
+      titleParams: {
+        what,
+        // 日を決められない迎えには、その方の日を付けず、行事の日（eventDate）だけを添える。
+        ...(l.dateUnconfirmed ? { eventDate: l.date } : { date: l.date }),
+        ...(l.at === undefined ? {} : { at: l.at }),
+        ...(place === undefined ? {} : { place }),
+      },
+      basis,
+      after: [],
+      live,
+    };
+    if (l.dateUnconfirmed) {
+      // 日を決められない方：日も時刻も付けない（締切を作らない。知らせの時機も決められない）。
+      tasks.push(
+        task(ctx, key, {
+          ...common,
+          durationMin: 0,
+          segments: ['home', 'away'],
+          timing: 'undated',
+          timeUnconfirmed: true,
+        }),
+      );
+      continue;
+    }
+    if (l.at === undefined) {
+      // 時刻の無い方：その日の作業（時刻に置かない）。
+      tasks.push(
+        task(ctx, key, {
+          ...common,
+          durationMin: 0,
+          segments: ['home', 'away'],
+          timing: 'day',
+          earliestStart: ctx.fmt(zonedToEpochMinutes(l.date, '00:00', ctx.tz)),
+          deadline: ctx.fmt(zonedToEpochMinutes(addDays(l.date, 1), '00:00', ctx.tz)),
+          ...(l.timeUnconfirmed ? { timeUnconfirmed: true as const } : {}),
+        }),
+      );
+      continue;
+    }
+    const written = zonedToEpochMinutes(l.date, l.at, ctx.tz);
+    fixedTask(
+      ctx,
+      key,
+      common,
+      {
+        start: written - ESCORT_ESTIMATE_MINUTES,
+        end: written + ESCORT_ESTIMATE_MINUTES,
+        endEstimated: false,
+      },
+      tasks,
+      chosen,
+    );
+  }
 }
 
 function purchase(

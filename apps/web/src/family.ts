@@ -156,7 +156,8 @@ export type SendResult =
  * できなかった。expired：デモの家庭が古くなった。uncertain：返事が届かず、届いたか分からない
  * （送り直しは、同じ操作 ID で同じ操作として確かめる）。
  */
-export type Notice = 'changed' | 'refused' | 'expired' | 'uncertain';
+/** heldByOther：もう一人が担当した（引き受けた・済ませた）作業を、言明で外そうとした（担当した人に確かめる）。 */
+export type Notice = 'changed' | 'heldByOther' | 'refused' | 'expired' | 'uncertain';
 
 /**
  * 一つの操作（画面の一回の押下）。送り直す時も、同じ家庭・同じ大人・同じ ID・同じ中身で送る
@@ -357,8 +358,9 @@ export function useServerView(where: Where | undefined) {
         // 断られても、返った新しい見せる物で見せ直す。
         show(at, body.view);
         const { status } = body.result;
-        if (status === 'conflict') setNotice('changed');
-        else if (status === 'forbidden' || status === 'invalid') setNotice('refused');
+        if (status === 'conflict') {
+          setNotice(body.result.reason === 'heldByOther' ? 'heldByOther' : 'changed');
+        } else if (status === 'forbidden' || status === 'invalid') setNotice('refused');
         else setNotice(undefined);
         return body.result;
       } catch {

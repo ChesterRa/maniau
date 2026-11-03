@@ -30,6 +30,18 @@ export interface RequestRecord {
  */
 export type EffectActivity = 'on' | 'off' | 'unknown';
 
+/** 送り・迎えが今回要るかの、家族の言明と、言った時の子・用件・日・書かれた時刻・場所。 */
+export interface EscortStatement {
+  needed: boolean;
+  childId: string;
+  what: string;
+  /** その方の日（迎えは、終わりが次の日と読めれば次の日）。 */
+  date: string;
+  /** 書かれた時刻。時刻の無い方は null。 */
+  at: string | null;
+  place: string | null;
+}
+
 export interface EngineState {
   household?: Household;
   sources: Map<string, Source>;
@@ -66,6 +78,8 @@ export interface EngineState {
   sourceSeq: Map<string, number>;
   /** 出典ごとの、今の読み取りが読んだ文の版。出典の版より古ければ、書き起こしを直す前の読み取り。 */
   extractionVersion: Map<string, number>;
+  /** 出典ごとの、今の読み取りを記録した seq（読み直すと進む。同じ ID が同じ事項かを確かめる手がかり）。 */
+  extractionSeq: Map<string, number>;
   /** 家族が直した解釈（事項の ID → 直した欄を重ねた物）。 */
   corrections: Map<string, Interpretation>;
   /** 家族の確かめ（事項の ID → 最後の言明）。confirmed は「家族が確認」、dismissed は「関係ない」。 */
@@ -75,6 +89,11 @@ export interface EngineState {
    * 直し・取り下げ（verdicts）とは別に持ち、事項の確かさも作用も変えない。
    */
   turns: Map<string, { ours: boolean; what: string; audience: string | null }>;
+  /**
+   * 家族が、習い事・クラブの行事の送り・迎えが今回要るかを言った（「事項の ID:to|from」→ 最後の言明と、
+   * その時の子・用件・日・書かれた時刻・場所）。事項の確かさも作用も変えない。
+   */
+  escorts: Map<string, EscortStatement>;
   /**
    * 出典ごとに、その出典の文・読み取り・事項・答え・うちの番かの言明が最後に替わった事象の通し番号。画面が
    * 見せた時より後に替わっていれば、その画面からの言明（うちの番です・ではない）を断る（元に戻った時も含む）。
@@ -93,6 +112,8 @@ export interface EngineState {
   purgedSources: Map<string, 'photo' | 'all'>;
   /** 引き受けた時に見た提案の控え（作業の key → 控え）。 */
   shown: Map<string, ProposalSnapshot>;
+  /** 引き受けた時の作業の根拠（作業の key → 事項と出典の ID と、引き受けた seq）。無いのは古い事象の引き受け。 */
+  acceptedBasis: Map<string, { itemIds: string[]; sourceIds: string[]; seq: number }>;
   /** 済んだと記録した時に見せた用件（作業の key → 用件）。無いのは古い事象の済み。 */
   doneContent: Map<string, TaskContent>;
   primary: Map<string, string>;
@@ -114,6 +135,11 @@ export interface EngineState {
   /** これまでに使った依頼の ID（押し間違いを直して消した物も含む。同じ ID は二度使わない）。 */
   sentRequestIds: Set<string>;
   notified: Set<string>;
+  /**
+   * 引き受けた作業が「もう要らなくなった」と本人に知らせた（作業の key → 最後に知らせた事象の通し番号と
+   * 相手）。はっきりした取り消し（§4.2）なので、その後に作業が戻っても、前の引き受けをそのまま当てない。
+   */
+  releasedNotified: Map<string, { seq: number; memberId: string }>;
   /** 時計（試験とデモで進めた時刻）。無ければ、呼ぶ側の now を使う。 */
   clock?: number;
   lastSeq: number;
@@ -132,9 +158,11 @@ export function emptyState(): EngineState {
     seenItemIds: new Set(),
     sourceSeq: new Map(),
     extractionVersion: new Map(),
+    extractionSeq: new Map(),
     corrections: new Map(),
     verdicts: new Map(),
     turns: new Map(),
+    escorts: new Map(),
     sourceChangedSeq: new Map(),
     withdrawnSources: new Set(),
     correctedSources: new Set(),
@@ -151,6 +179,8 @@ export function emptyState(): EngineState {
     requests: new Map(),
     sentRequestIds: new Set(),
     notified: new Set(),
+    releasedNotified: new Map(),
+    acceptedBasis: new Map(),
     lastSeq: 0,
     rejected: [],
   };
@@ -171,6 +201,7 @@ function touchedSources(state: EngineState, event: DomainEvent): string[] {
     case 'itemCorrected':
     case 'itemDismissed':
     case 'turnStated':
+    case 'escortStated':
       return [...state.extractions]
         .filter(([, e]) => e.items.some((i) => i.id === event.itemId))
         .map(([sourceId]) => sourceId);
@@ -197,6 +228,7 @@ const FAMILY_ONLY = new Set<DomainEvent['type']>([
   'itemCorrected',
   'itemDismissed',
   'turnStated',
+  'escortStated',
   'sourceWithdrawn',
   'transcriptionCorrected',
   'requestRecordCorrected',
@@ -270,6 +302,7 @@ function apply(state: EngineState, event: DomainEvent): void {
         return;
       }
       state.extractionVersion.set(sourceId, version);
+      state.extractionSeq.set(sourceId, event.seq);
       state.extractions.set(sourceId, parsed.data);
       const declared = state.declaredUnknowns.get(sourceId) ?? new Set<string>();
       for (const unknown of parsed.data.unknowns) declared.add(unknown.id);
@@ -360,6 +393,20 @@ function apply(state: EngineState, event: DomainEvent): void {
         audience: event.audience,
       });
       return;
+    case 'escortStated':
+      if (!state.seenItemIds.has(event.itemId)) {
+        state.rejected.push({ seq: event.seq, reason: '読み取りに無い事項への言明' });
+        return;
+      }
+      state.escorts.set(`${event.itemId}:${event.leg}`, {
+        needed: event.needed,
+        childId: event.childId,
+        what: event.what,
+        date: event.date,
+        at: event.at,
+        place: event.place,
+      });
+      return;
     case 'sourceWithdrawn':
       if (!state.sources.has(event.sourceId)) {
         state.rejected.push({ seq: event.seq, reason: '届いていない出典の取り下げ' });
@@ -433,6 +480,15 @@ function apply(state: EngineState, event: DomainEvent): void {
       if (event.action === 'accept') {
         if (event.shown) state.shown.set(event.taskKey, event.shown);
         else state.shown.delete(event.taskKey);
+        if (event.basisItemIds && event.basisSourceIds) {
+          state.acceptedBasis.set(event.taskKey, {
+            itemIds: event.basisItemIds,
+            sourceIds: event.basisSourceIds,
+            seq: event.seq,
+          });
+        } else {
+          state.acceptedBasis.delete(event.taskKey);
+        }
       }
       if (event.action === 'done' && event.content)
         state.doneContent.set(event.taskKey, event.content);
@@ -484,11 +540,30 @@ function apply(state: EngineState, event: DomainEvent): void {
         return;
       }
       state.notified.add(event.notificationKey);
+      {
+        const taskKey = releasedTaskKey(event.notificationKey, event.toMemberId);
+        if (taskKey !== undefined) {
+          state.releasedNotified.set(taskKey, { seq: event.seq, memberId: event.toMemberId });
+        }
+      }
       return;
     case 'clockAdvanced':
       state.clock = toEpochMinutes(event.to);
       return;
   }
+}
+
+/**
+ * 「もう要らなくなった」の知らせのキー（released:作業の key:相手#回）から、作業の key を読む（view/notify の
+ * 作り方と同じ）。ほかの知らせなら無し。
+ */
+function releasedTaskKey(notificationKey: string, memberId: string): string | undefined {
+  const base = notificationKey.replace(/#\d+$/, '');
+  const prefix = 'released:';
+  const suffix = `:${memberId}`;
+  if (!base.startsWith(prefix) || !base.endsWith(suffix)) return undefined;
+  const taskKey = base.slice(prefix.length, base.length - suffix.length);
+  return taskKey.length > 0 ? taskKey : undefined;
 }
 
 function setCommitment(

@@ -39,7 +39,7 @@ const KEEP: Record<DomainEvent['type'], readonly string[]> = {
   optionChosen: ['arrangementKey', 'optionKey', 'role'],
   optionDropped: ['arrangementKey', 'optionKey'],
   assignmentProposed: ['taskKey', 'assigneeId'],
-  commitmentChanged: ['taskKey', 'assigneeId', 'action'],
+  commitmentChanged: ['taskKey', 'assigneeId', 'action', 'basisItemIds', 'basisSourceIds'],
   externalRequestSent: ['taskKey', 'requestId', 'snapshot.to', 'snapshot.kind', 'snapshot.basis'],
   externalReplyRecorded: ['requestId', 'reply'],
   cancellationSent: ['requestId'],
@@ -50,6 +50,8 @@ const KEEP: Record<DomainEvent['type'], readonly string[]> = {
   itemDismissed: ['itemId', 'reason'],
   // うちの番かと、言った時の用件・対象（名前の入りうる文）は、payloads に置く。
   turnStated: ['itemId'],
+  // 送り迎えの要否と、言った時の子・用件・日・時刻・場所は、payloads に置く。
+  escortStated: ['itemId', 'leg'],
   sourceWithdrawn: ['sourceId'],
   sourceContentPurged: ['sourceId', 'scope'],
   transcriptionCorrected: ['sourceId', 'sourceVersion'],

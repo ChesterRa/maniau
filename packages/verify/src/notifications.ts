@@ -14,6 +14,8 @@ type Title =
   | 'notify.decide'
   | 'notify.proposal'
   | 'notify.changed'
+  | 'notify.released'
+  | 'notify.releasedCheck'
   | 'notify.unowned'
   | 'notify.question';
 type Subject = {
@@ -39,6 +41,8 @@ const titles: Record<Title, string> = {
   'notify.decide': 'decisionApproaching',
   'notify.proposal': 'assignment',
   'notify.changed': 'assignment',
+  'notify.released': 'assignment',
+  'notify.releasedCheck': 'assignment',
   'notify.unowned': 'assignment',
   'notify.question': 'question',
 };
@@ -122,6 +126,8 @@ function expectedKey(intent: Intent): string | undefined {
       break;
     case 'notify.proposal':
     case 'notify.changed':
+    case 'notify.released':
+    case 'notify.releasedCheck':
     case 'notify.unowned':
       if (subject.type !== 'task') return undefined;
       base = `${titleKey.slice('notify.'.length)}:${subject.id}`;
@@ -201,6 +207,14 @@ function checkTiming(
     intent.subject.type === 'task'
       ? plan.tasks.find((entry) => entry.key === intent.subject.id)
       : undefined;
+  // 不要になった引き受けは、始まる前の 26 時間以内に知らせる。すでに始まっていても、
+  // 終わるまではまだ家族が動いている可能性がある。時刻の無い物は本人が確認するまで。
+  if (intent.titleKey === 'notify.released' || intent.titleKey === 'notify.releasedCheck') {
+    const by = intent.actBy ?? intent.until;
+    if (by && toEpochMinutes(by) > now && !inWindow(by))
+      out.violation('notification_wrong_time', intent.key, '知らせる時機ではない。');
+    return;
+  }
   if (
     ['notify.decide', 'notify.backup', 'notify.question', 'notify.unowned'].includes(
       intent.titleKey,
@@ -239,6 +253,18 @@ function checkSubject(intent: Intent, plan: Plan, timeZone: string, out: Collect
     out.violation('notification_subject_mismatch', intent.key, 'この人に出す根拠が計画にない。');
     return undefined;
   };
+  if (titleKey === 'notify.released' || titleKey === 'notify.releasedCheck') {
+    if (subject.type !== 'task') return wrong();
+    const release = plan.released?.find(
+      (entry) => entry.taskKey === subject.id && entry.assigneeId === member,
+    );
+    if (!release) return wrong();
+    if ((release.reason === 'unconfirmed') !== (titleKey === 'notify.releasedCheck'))
+      return wrong();
+    const until = release.end ?? release.start;
+    checkTime(intent, until, sameTime(release.start, until) ? undefined : release.start, out);
+    return;
+  }
   if (titleKey === 'notify.cancel' || titleKey === 'notify.check') {
     if (subject.type !== 'request') return wrong();
     const request = plan.requests.find((r) => r.requestId === subject.id);
@@ -491,6 +517,9 @@ const safeText: Record<'ja' | 'en', Record<Title | 'notify.app' | 'notify.many',
     'notify.decide': '決めることがあります。決め時が近づいています。',
     'notify.proposal': 'おねがいが届いています。引き受けられるか確かめてください。',
     'notify.changed': '引き受けたことの中身が変わりました。確かめてください。',
+    'notify.released': '引き受けたことが、もう要らなくなりました。確かめてください。',
+    'notify.releasedCheck':
+      '引き受けたことが、今の計画に見つかりません。まだ要るか確かめてください。',
     'notify.unowned': 'まだだれもやると決めていないことがあります。期限が近づいています。',
     'notify.question': '段取りについて、聞きたいことがあります。',
     'notify.many': '確かめてほしいことが {{count}} 件あります。',
@@ -503,6 +532,9 @@ const safeText: Record<'ja' | 'en', Record<Title | 'notify.app' | 'notify.many',
     'notify.decide': 'Something needs deciding. The decision deadline is coming up.',
     'notify.proposal': "There's a request for you. Can you take it on?",
     'notify.changed': 'Something you took on has changed. Please check it.',
+    'notify.released': 'Something you took on is no longer needed. Please check.',
+    'notify.releasedCheck':
+      'Something you took on is no longer in the plan. Please check whether it is still needed.',
     'notify.unowned': 'Something still has no one to do it, and its deadline is coming up.',
     'notify.question': "There's a question about your plans.",
     'notify.many': '{{count}} things need your attention.',

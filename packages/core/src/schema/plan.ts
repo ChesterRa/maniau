@@ -75,7 +75,7 @@ export type Basis = z.infer<typeof Basis>;
 export const Requirement = z.object({
   /** 安定したキー：種類と、置き換えをたどった元の事項の ID から作る。時刻や担当は入れない。 */
   key: z.string().min(1),
-  kind: z.enum(['childCare', 'belongings', 'attendance', 'submission']),
+  kind: z.enum(['childCare', 'belongings', 'attendance', 'submission', 'escort']),
   /** 品物・行事の名前（原文の言葉）。 */
   what: z.string().min(1),
   /** 子の居場所なら、その日。持ち物なら、書かれた使う日（持って行く日。書かれていなければ無し）。 */
@@ -329,6 +329,33 @@ export const Question = z.object({
 });
 export type Question = z.infer<typeof Question>;
 
+/**
+ * 引き受けた作業が、もう要らなくなった（後のお知らせの取り消し、条件が外れた、事項を外した、家の決まりが
+ * 変わった等で、今の計画に無いか、生きていない）。本人に知らせ、本人が分かったと言う（引き受けの取り下げ）
+ * まで出す。用件と時刻は、本人が引き受けた時の控え（後で作業が変わっていても、約束した物を見せる）。控えの
+ * 無い古い引き受けは、用件も時刻も分からないとする（今の作業を、前の約束として見せない）。時刻のある物は、
+ * その時刻が過ぎたら出さない。
+ */
+export const Released = z.object({
+  taskKey: z.string().min(1),
+  assigneeId: Id,
+  /** 引き受けた時の用件。無ければ、控えが無く分からない。 */
+  content: z
+    .object({ titleKey: z.string().min(1), titleParams: z.record(z.string(), z.string()) })
+    .optional(),
+  /** 引き受けた時に置いた始まり・終わり（時刻なしで引き受けた物と、控えの無い物は無し）。 */
+  start: DateTime.optional(),
+  end: DateTime.optional(),
+  /**
+   * gone：今の計画に無い（取り消し・取り下げ・外した等で、はっきり要らない）。notLive：あるが生きていない
+   * （条件が外れた等）。inactive：生きているが、家族が別の案を選んだ・本命が決まった等で、その案の作業を
+   * もう進めない（isActiveTask）。unconfirmed：今の計画に無いが、根拠のお知らせを消した・根拠が分からない
+   * （古い引き受け）ので、要らなくなったとは言えない（まだ要るか確かめてもらう。消したお知らせの中身は出さない）。
+   */
+  reason: z.enum(['gone', 'notLive', 'inactive', 'unconfirmed']),
+});
+export type Released = z.infer<typeof Released>;
+
 /** 前の計画との差分（§4）。安定したキーで比べる。 */
 export const Diff = z.object({
   added: z.array(z.string()),
@@ -348,6 +375,8 @@ export const PlanResult = z.object({
   tasks: z.array(Task),
   requests: z.array(ExternalRequest),
   questions: z.array(Question),
+  /** 引き受けたのに、もう要らなくなった作業（本人が分かったと言うまで）。無ければ無し。 */
+  released: z.array(Released).optional(),
   diff: Diff.optional(),
 });
 export type PlanResult = z.infer<typeof PlanResult>;

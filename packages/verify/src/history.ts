@@ -62,7 +62,15 @@ export interface History {
   complete: boolean;
   requests: Map<string, SentRequest>;
   selections: Map<string, Selection>;
-  approvals: Map<string, { assigneeId: string; shown?: ProposalSnapshot }>;
+  approvals: Map<
+    string,
+    {
+      assigneeId: string;
+      shown?: ProposalSnapshot;
+      basisItemIds?: string[];
+      basisSourceIds?: string[];
+    }
+  >;
   commitments: Map<string, string>;
   /** 最後の有効な担当・引き受け変更の通し番号。 */
   commitmentSeq: Map<string, number>;
@@ -138,7 +146,15 @@ export function checkHistory(
   const commitmentChanges: { taskKey: string; state: string; seq: number; requestId?: string }[] =
     [];
   const correctedRequests = new Set<string>();
-  const approvals = new Map<string, { assigneeId: string; shown?: ProposalSnapshot }>();
+  const approvals = new Map<
+    string,
+    {
+      assigneeId: string;
+      shown?: ProposalSnapshot;
+      basisItemIds?: string[];
+      basisSourceIds?: string[];
+    }
+  >();
   const requests = new Map<string, SentRequest>();
   const seenRequests = new Set<string>();
   const selections = new Map<string, Selection>();
@@ -160,6 +176,7 @@ export function checkHistory(
       event.type === 'itemCorrected' ||
       event.type === 'itemDismissed' ||
       event.type === 'turnStated' ||
+      event.type === 'escortStated' ||
       event.type === 'sourceWithdrawn' ||
       event.type === 'transcriptionCorrected' ||
       event.type === 'requestRecordCorrected'
@@ -271,6 +288,8 @@ export function checkHistory(
         approvals.set(event.taskKey, {
           assigneeId: event.assigneeId,
           ...(event.shown ? { shown: event.shown } : {}),
+          ...(event.basisItemIds === undefined ? {} : { basisItemIds: event.basisItemIds }),
+          ...(event.basisSourceIds === undefined ? {} : { basisSourceIds: event.basisSourceIds }),
         });
       } else approvals.delete(event.taskKey);
       const states = {

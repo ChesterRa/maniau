@@ -58,6 +58,30 @@ afterEach(async () => {
   demo = undefined;
 });
 
+describe('断られた時の知らせ', () => {
+  it('もう一人が担当した作業を外そうとして断られたら、内容が変わったとは言わず、担当した人に確かめてと示す', async () => {
+    await step(() => take(isView('a')).respond(200, view(12)));
+    const held = send();
+    await step(() =>
+      take(isCommand).respond(200, {
+        result: { status: 'conflict', reason: 'heldByOther', throughSeq: 12 },
+        view: view(12),
+      }),
+    );
+    expect(held.result()).toMatchObject({ status: 'conflict', reason: 'heldByOther' });
+    expect(demo?.notice).toBe('heldByOther');
+    const changed = send();
+    await step(() =>
+      take(isCommand).respond(200, {
+        result: { status: 'conflict', reason: 'itemChanged', throughSeq: 13 },
+        view: view(13),
+      }),
+    );
+    expect(changed.result()).toMatchObject({ status: 'conflict' });
+    expect(demo?.notice).toBe('changed');
+  });
+});
+
 describe('画面の返事の行き違い', () => {
   it('A→B→A と戻っても、替える前に送った命令の返事は使わず、移る等もさせない（読み直す）', async () => {
     await step(() => take(isView('a')).respond(200, view(12)));

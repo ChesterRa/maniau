@@ -21,8 +21,8 @@ import {
   type UtteranceRefs,
   type UtteranceReply,
 } from '@maniau/core';
-import { currentItems, foldEvents } from '@maniau/core/engine';
-import { type CommandGuard, type CommandResult, runCommand } from './commands';
+import { computePlan, currentItems, foldEvents } from '@maniau/core/engine';
+import { type CommandGuard, type CommandResult, reopened, runCommand } from './commands';
 import { DEMO_STAGES, type DemoStageId, demoEvents } from './demo';
 import { previewChoices } from './preview';
 import {
@@ -362,6 +362,7 @@ export function demoSessions(
         // 読む間に大人でなくなった時も、前提が変わったとする（呼んだ分は数えたまま）。
         const now = contextOf(log.events(), memberId, session.now);
         if (!now || JSON.stringify(now) !== JSON.stringify(prior)) return { status: 'stale' };
+        const before = computePlan(log.events(), session.now);
         log.append([{ type: 'noticeReceived', source }], memberId, prior.at);
         log.append(
           [
@@ -379,6 +380,9 @@ export function demoSessions(
           'system',
           prior.at,
         );
+        // 新しいお知らせで、「もう要りません」と出ていた引き受けが戻ったら、本人にもう一度頼む。
+        const back = reopened(before, computePlan(log.events(), session.now));
+        if (back.length > 0) log.append(back, 'system', prior.at);
         const view = viewFor(log.events(), memberId, session.now);
         // 足し終えてから、操作を済みにする（途中で投げて戻した時に、済みと答えない）。
         session.operations.set(input.operationId, { digest, state: 'done', sourceId, check });

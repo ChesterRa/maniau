@@ -241,6 +241,24 @@ describe('当番の時刻', () => {
     expect(task?.placeId).toBeUndefined();
   });
 
+  it('「翌日」と書かれた終わりは、時刻の大小だけで同じ日にせず、終わりを目安にする', () => {
+    const events = withNotice((items) =>
+      items.map((i) =>
+        i.id === 'd1'
+          ? {
+              ...i,
+              written: '12月13日(日)8:30から翌日10:00まで お茶当番：陽菜さん・ゆいさんのおうち',
+            }
+          : i,
+      ),
+    ).events;
+    expect(taskOf(events, 'task:duty:d1')).toMatchObject({
+      timing: 'fixedEndEstimated',
+      earliestStart: '2026-12-13T08:30+09:00',
+      deadline: '2026-12-13T09:30+09:00',
+    });
+  });
+
   it('持った人がその時間に仕事なら、前や後にずらさず、置かない', () => {
     const events = withNotice().add('assignmentProposed', '2026-11-25T20:06+09:00', 'a', {
       taskKey: 'task:duty:d4',

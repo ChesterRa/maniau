@@ -325,6 +325,34 @@ describe('うちの番の言明を命令で動かす', () => {
     expect((await h.plan(NOW)).tasks.some((t) => t.key === DUTY)).toBe(true);
   });
 
+  it('もう一人が引き受けた当番は、「うちの番ではない」で黙って消さない（持った人が言う）', async () => {
+    const h = await setup();
+    await h.run('b', NOW, { type: 'proposeAssignment', taskKey: DUTY, assigneeId: 'b' });
+    const proposed = await h.task(DUTY, NOW);
+    const shown = proposalSnapshot(proposed);
+    if (!shown) throw new Error('控えが無い');
+    expect((await h.run('b', NOW, { type: 'accept', taskKey: DUTY, shown })).status).toBe('ok');
+    const seen = async () => ({ throughSeq: (await h.view('a', NOW)).throughSeq });
+    const refused = await h.run('a', NOW, {
+      type: 'stateTurn',
+      itemId: 'n3:d1',
+      ours: false,
+      seen: await seen(),
+    });
+    expect(refused).toMatchObject({ status: 'conflict', reason: 'heldByOther' });
+    expect((await h.task(DUTY, NOW)).commitment).toBe('accepted');
+    const own = await h.run('b', NOW, {
+      type: 'stateTurn',
+      itemId: 'n3:d1',
+      ours: false,
+      seen: await seen(),
+    });
+    expect(own.status).toBe('ok');
+    expect((await h.plan(NOW)).tasks.some((t) => t.key === DUTY)).toBe(false);
+    await h.run('a', NOW, { type: 'stateTurn', itemId: 'n3:d1', ours: true, seen: await seen() });
+    expect((await h.task(DUTY, NOW)).commitment).not.toBe('accepted');
+  });
+
   it('当番でない事項には、うちの番かを言えない', async () => {
     const h = await setup();
     const seen = { throughSeq: (await h.view('a', NOW)).throughSeq };

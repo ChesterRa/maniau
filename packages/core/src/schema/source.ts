@@ -93,6 +93,11 @@ export const Interpretation = z.object({
    * 書かれているかもしれない）。画面は「書かれていない」と言わず、元の文で確かめてもらう。
    */
   startTimeUnconfirmed: z.literal(true).optional(),
+  /**
+   * 読み取りの終わりの時刻が、指した文に見つからず、落とした（startTimeUnconfirmed と同じ。送り迎えの迎えは、
+   * 「時刻は書かれていない」と言わず、元の文で確かめてもらう）。
+   */
+  endTimeUnconfirmed: z.literal(true).optional(),
   /** 対象（例：1年生、陽菜さん・ゆいさんのおうち）。 */
   audience: z.string().optional(),
   /** 書かれた場所（例：若洲のグラウンド）。 */

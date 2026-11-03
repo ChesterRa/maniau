@@ -114,6 +114,24 @@ export const Command = z.discriminatedUnion('type', [
    * 事項の確かさも作用（ほかのお知らせの置き換え・取り消し）も変えない。サーバーが今の用件と対象を控える。
    */
   z.object({ type: z.literal('stateTurn'), itemId: Id, ours: z.boolean(), seen: ItemSeen }),
+  /**
+   * 習い事・クラブの行事の送り・迎えが、今回要るか（「今回は要らない」）。家の決まりとは別の、今回の言明。
+   * 事項の確かさも作用も変えない。サーバーが今の子・用件・日・書かれた時刻・場所を控える。seen は見せた
+   * 計画の通し番号で、その後に何か入っていれば断る（ほかの出典の取り消しと、その取り下げも含む）。
+   */
+  /**
+   * 引き受けた作業が「もう要りません」「まだ要るか確かめて」と出た札で、本人が分かったと言う（引き受けを
+   * 取り下げる）。seen は見せた計画の通し番号で、今と違えば断る（その間に作業が戻った・別の札になった時に、
+   * 戻った引き受けを取り下げない）。
+   */
+  z.object({ type: z.literal('acknowledgeReleased'), taskKey: z.string().min(1), seen: ItemSeen }),
+  z.object({
+    type: z.literal('stateEscort'),
+    itemId: Id,
+    leg: z.enum(['to', 'from']),
+    needed: z.boolean(),
+    seen: ItemSeen,
+  }),
   z.object({ type: z.literal('withdrawSource'), sourceId: Id }),
   /** 時計を進める。デモの家庭だけ。 */
   z.object({ type: z.literal('advanceClock'), to: DateTime }),

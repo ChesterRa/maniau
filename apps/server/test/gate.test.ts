@@ -11,6 +11,8 @@ import { describe, expect, it } from 'vitest';
 import { messageGate } from '../src/gate';
 
 const kinds: Record<NotificationTitle, NotificationIntent['kind']> = {
+  'notify.released': 'assignment',
+  'notify.releasedCheck': 'assignment',
   'notify.cancel': 'cancellation',
   'notify.check': 'question',
   'notify.backup': 'decisionApproaching',
