@@ -36,6 +36,7 @@ import {
   toEpochMinutes,
   zonedToEpochMinutes,
 } from '../time';
+import { type DutyTurn, dutyTurn, statedTurn } from '../view/ours';
 import { isActiveTask } from '../view/today';
 import { noAdultAtHome } from './availability';
 import { type Busy, optionDeadline, placeStep } from './deadline';
@@ -78,6 +79,8 @@ export const keys = {
   belongingsRequirement: (rootId: string) => `req:belongings:${rootId}`,
   submissionRequirement: (rootId: string) => `req:submission:${rootId}`,
   submissionTask: (rootId: string) => `task:submit:${rootId}`,
+  dutyRequirement: (rootId: string) => `req:duty:${rootId}`,
+  dutyTask: (rootId: string) => `task:duty:${rootId}`,
   purchaseArrangement: (rootId: string) => `arr:purchase:${rootId}`,
   option: (arrangementKey: string, templateId: string) => `opt:${arrangementKey}:${templateId}`,
   task: (optionKey: string, stepId: string) => `task:${optionKey}:${stepId}`,
@@ -124,13 +127,17 @@ export interface LiveItem {
   doubted: boolean;
   /** 記載か家族の確認。推定・食い違いは、家族が確かめるまで要件を作らない（02-foundation §1 の2）。 */
   trusted: boolean;
+  /** 家の人の当番だけ：うちの番か（dutyTurn。エンジンと画面は、これを使う）。 */
+  turn?: DutyTurn;
+  /** turn が、家族の言明（今も当たる物）による。 */
+  turnStated?: true;
 }
 
 /** 今の事項と、適用されるか・条件しだいか・確かか。 */
 export function liveItems(state: EngineState): LiveItem[] {
   const nodes: ConditionNode[] = [...state.extractions.values()].flatMap((e) => e.conditions);
   const assignment = new Map([...state.resolved].map(([id, r]) => [id, r.value]));
-  return currentItems(state).map(({ item, rootId, rootSourceId, doubted }) => {
+  const all = currentItems(state).map(({ item, rootId, rootSourceId, doubted }) => {
     const truth = item.conditionNodeId
       ? evaluateCondition(item.conditionNodeId, nodes, assignment)
       : true;
@@ -142,6 +149,21 @@ export function liveItems(state: EngineState): LiveItem[] {
       conditional: doubted || truth === 'unknown',
       doubted,
       trusted: item.evidence === 'stated' || item.evidence === 'confirmed',
+    };
+  });
+  // 当番がうちの番かは、同じお知らせのほかの行も見て決める（当番表の、うちの行）。ほかの家の番と言う根拠には、
+  // 今も効いていて、確かで、条件の無い行だけを使う（条件で外れた・条件しだい・確かでない行を根拠に、残る行を
+  // 隠さない）。
+  const household = state.household;
+  if (!household) return all;
+  const evidence = all.filter((l) => l.live && l.trusted && !l.conditional).map((l) => l.item);
+  return all.map((l) => {
+    if (l.item.kind !== 'duty' || !l.item.interpretation.familyAction) return l;
+    const stated = state.turns.get(l.item.id);
+    return {
+      ...l,
+      turn: dutyTurn(household, l.item, evidence, stated),
+      ...(statedTurn(l.item, stated) === undefined ? {} : { turnStated: true as const }),
     };
   });
 }
@@ -171,7 +193,20 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
   const arrangements: Arrangement[] = [];
   const tasks: Task[] = [];
   const questions: Question[] = [];
-  const submissions: { item: Item; rootId: string; live: boolean; conditional: boolean }[] = [];
+  const submissions: {
+    item: Item;
+    rootId: string;
+    live: boolean;
+    conditional: boolean;
+    titleKey: string;
+  }[] = [];
+  const duties: {
+    item: Item;
+    rootId: string;
+    live: boolean;
+    conditional: boolean;
+    unsure: boolean;
+  }[] = [];
 
   // 子の居場所の手配は、家族が進める案どうしを一緒に置いてから（joint.ts）、お知らせの順に並べる。
   // 本命が決まって、もう進めない予備（「きょう」に出ない。isActiveTask）は、一緒に置く鎖から外して置き直す
@@ -208,16 +243,42 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
         questions,
       );
     }
-    if (item.kind === 'submission') submissions.push({ item, rootId, live, conditional });
+    if (item.kind === 'submission') {
+      submissions.push({ item, rootId, live, conditional, titleKey: 'task.submit' });
+    }
+    // 宿題のうち、家の人がすること（音読カードのサイン、丸つけ）は、家族の作業にする（出す日の書かれた物は、
+    // 提出物と同じ置き方）。子どもだけでする宿題は作業にしない（読んだだけ。勉強のしかたには口を出さない）。
+    if (item.kind === 'homework' && item.interpretation.familyAction) {
+      submissions.push({ item, rootId, live, conditional, titleKey: 'task.familyAction' });
+    }
+    // 家の人の当番（お茶当番、配車）。ほかの家の番と読めた物だけ作業にしない。うちの番か分からない物は、
+    // 作業にして確かめてもらう（dutyTurn）。
+    if (item.kind === 'duty' && item.interpretation.familyAction) {
+      const turn = entry.turn ?? 'unsure';
+      if (turn !== 'others') {
+        duties.push({ item, rootId, live, conditional, unsure: turn === 'unsure' });
+      }
+    }
   }
   const requests = externalRequests(ctx, tasks, arrangements, items);
   // 提出物の作業は、ほかの作業と依頼がそろった後に置く（持った人の、選んだ案のほかの作業と重ならない
   // ように）。提出物は外の相手が無いので、依頼には影響しない。
   for (const s of submissions) {
-    submission(ctx, s.item, s.rootId, s.live, s.conditional, requirements, tasks, {
-      arrangements,
-      requests,
-    });
+    submission(
+      ctx,
+      s.item,
+      s.rootId,
+      s.live,
+      s.conditional,
+      requirements,
+      tasks,
+      { arrangements, requests },
+      s.titleKey,
+    );
+  }
+  // 当番は、ほかの作業と提出物を置いた後に（決まった時刻に、持った人のほかの作業と重ならない時だけ置く）。
+  for (const d of duties) {
+    duty(ctx, d, requirements, tasks, { arrangements, requests });
   }
   tasks.push(...cancellationTasks(ctx, requests));
 
@@ -957,7 +1018,10 @@ function busyOf(tasks: readonly Task[], memberId: string, chosen: Chosen): Busy[
  * 提出物：出す日（締切）までに、家で用意して出す作業を一つ作る（書く・印を押す等の手順には分けない）。
  * 誰がするかの決まりが無いので、初めは担当を付けず、二人の「きょう」に出す（誰かが持つ）。持った人が
  * いれば、その人の家の時間の中で、締切までに終わる最も遅い所に置く（今より前と、その人のほかの作業の
- * 時間には置かない）。出す日の分からない物は、要件だけにする（作業は作らない）。
+ * 時間には置かない）。出す日の分からない物は、要件だけにする（作業は作らない。「後日配ります」のように、
+ * まだ出せない物がある）。宿題のうち家の人がすること（サイン、丸つけ）も、同じ置き方で、題だけを替えて
+ * 作る（titleKey）。こちらは今する事なので、出す日が書かれていなくても作業にする（締切を作らず、時刻なしで
+ * 引き受ける。Task.timing の undated）。
  */
 function submission(
   ctx: Context,
@@ -968,6 +1032,7 @@ function submission(
   requirements: Requirement[],
   tasks: Task[],
   chosen: Chosen,
+  titleKey = 'task.submit',
 ): void {
   const what = item.interpretation.what ?? item.written;
   // 日付だけの時は、その日の朝、学校へ持って行く前に（物の要る日と同じ扱い）。
@@ -988,10 +1053,26 @@ function submission(
     live,
     ...(conditional ? { conditional } : {}),
   });
-  if (by === undefined) return;
   const key = keys.submissionTask(rootId);
+  if (by === undefined) {
+    if (titleKey === 'task.familyAction') {
+      tasks.push(
+        task(ctx, key, {
+          titleKey,
+          titleParams: { what },
+          basis,
+          durationMin: SUBMIT_MINUTES,
+          after: [],
+          segments: ['home'],
+          timing: 'undated',
+          live,
+        }),
+      );
+    }
+    return;
+  }
   const assignee = ctx.state.assignees.get(key);
-  const commitment = commitmentOf(ctx, key, { titleKey: 'task.submit', titleParams: { what } });
+  const commitment = commitmentOf(ctx, key, { titleKey, titleParams: { what } });
   const placed =
     assignee === undefined || !live || NOT_DOING.has(commitment) || commitment === 'done'
       ? undefined
@@ -1005,7 +1086,7 @@ function submission(
         );
   tasks.push(
     task(ctx, key, {
-      titleKey: 'task.submit',
+      titleKey,
       titleParams: { what },
       basis,
       durationMin: SUBMIT_MINUTES,
@@ -1020,6 +1101,145 @@ function submission(
           }
         : {}),
       live,
+    }),
+  );
+}
+
+/** 当番の終わりの時刻が書かれていない時の長さ（分。目安）。 */
+const DUTY_DEFAULT_MINUTES = 60;
+/** 終わりが始まりより前の時刻なら、次の日の終わりと読む。その時の長さの上限（分）。 */
+const DUTY_OVERNIGHT_MAX_MINUTES = 12 * 60;
+
+/**
+ * 当番の書かれた時間。始まりが無ければ無し。終わりが始まり以前の時刻なら、次の日の終わりと読める時
+ * （長さが 12 時間まで。23:00〜1:00）だけ次の日にし、ほかは読めない終わりとして目安の長さにする。
+ */
+function dutyWindow(
+  ctx: Context,
+  item: Item,
+): { start: EpochMinutes; end: EpochMinutes; endEstimated: boolean } | undefined {
+  const { date, startTime, endTime } = item.interpretation;
+  if (date === undefined || startTime === undefined) return undefined;
+  const start = zonedToEpochMinutes(date, startTime, ctx.tz);
+  if (endTime !== undefined) {
+    const sameDay = zonedToEpochMinutes(date, endTime, ctx.tz);
+    if (sameDay > start) return { start, end: sameDay, endEstimated: false };
+    const nextDay = zonedToEpochMinutes(addDays(date, 1), endTime, ctx.tz);
+    if (nextDay > start && nextDay - start <= DUTY_OVERNIGHT_MAX_MINUTES) {
+      return { start, end: nextDay, endEstimated: false };
+    }
+  }
+  return { start, end: start + DUTY_DEFAULT_MINUTES, endEstimated: true };
+}
+
+/**
+ * 家の人の当番（お茶当番、配車、読み聞かせ）：書かれた日に、家族の誰かがする作業を一つ作る。初めは担当を
+ * 付けず、二人の「きょう」に出す（誰かが持つ）。
+ * - 時刻が書かれていれば、その時間に決まっている（timing の fixed。終わりが無ければ目安の長さで
+ *   fixedEndEstimated）。持った人のふだんの予定の空き（家・外出の区間）が、その時間をそのまま含み、ほかの
+ *   作業とも重ならない時だけ置く。前や後にずらさない。場所と行き帰りは入れない（空いている区間の場所は、
+ *   当番をする所ではない。atPlaceId を付けない）。
+ * - 日だけなら、その日のどこか（day）。日も無ければ undated。どちらも時刻に置かず、時刻なしで引き受ける
+ *   （仕組みが時刻を作らない）。読み取りの始まりを確かめられずに落とした物は、timeUnconfirmed を付ける。
+ * - 用件には、書かれた日・時刻・場所を入れる（別の日の当番は別の用件。直されたら、前の済みや引き受けを
+ *   当てない）。
+ * - うちの番か分からない物（unsure）には、turnUnconfirmed を付ける（画面が対象を添えて確かめてもらう）。
+ */
+function duty(
+  ctx: Context,
+  entry: { item: Item; rootId: string; live: boolean; conditional: boolean; unsure: boolean },
+  requirements: Requirement[],
+  tasks: Task[],
+  chosen: Chosen,
+): void {
+  const { item, rootId, live, conditional, unsure } = entry;
+  const what = item.interpretation.what ?? item.written;
+  const { date, startTime, endTime, place } = item.interpretation;
+  const requirementKey = keys.dutyRequirement(rootId);
+  const basis = { itemIds: [item.id], requirementKey };
+  const window = dutyWindow(ctx, item);
+  const dayStart = date === undefined ? undefined : zonedToEpochMinutes(date, '00:00', ctx.tz);
+  requirements.push({
+    key: requirementKey,
+    kind: 'attendance',
+    what,
+    ...(date === undefined ? {} : { date }),
+    // 要件の期限は、当番が始まる時（時刻の無い物は、その日の始まり）。
+    ...(window
+      ? { by: ctx.fmt(window.start) }
+      : dayStart === undefined
+        ? {}
+        : { by: ctx.fmt(dayStart) }),
+    nature: 'required',
+    basis,
+    live,
+    ...(conditional ? { conditional } : {}),
+  });
+  const key = keys.dutyTask(rootId);
+  const titleParams: Record<string, string> = {
+    what,
+    ...(date === undefined ? {} : { date }),
+    ...(startTime === undefined ? {} : { start: startTime }),
+    ...(endTime === undefined ? {} : { end: endTime }),
+    ...(place === undefined ? {} : { place }),
+  };
+  const common = {
+    titleKey: 'task.duty',
+    titleParams,
+    basis,
+    after: [],
+    live,
+    ...(unsure ? { turnUnconfirmed: true as const } : {}),
+  };
+  if (!window) {
+    // 時刻の無い当番：その日（または日も分からない）。時刻に置かない。
+    const nextDay =
+      date === undefined ? undefined : zonedToEpochMinutes(addDays(date, 1), '00:00', ctx.tz);
+    tasks.push(
+      task(ctx, key, {
+        ...common,
+        durationMin: 0,
+        segments: ['home', 'away'],
+        ...(dayStart === undefined || nextDay === undefined
+          ? { timing: 'undated' as const }
+          : {
+              timing: 'day' as const,
+              earliestStart: ctx.fmt(dayStart),
+              deadline: ctx.fmt(nextDay),
+              ...(item.interpretation.startTimeUnconfirmed
+                ? { timeUnconfirmed: true as const }
+                : {}),
+            }),
+      }),
+    );
+    return;
+  }
+  const assignee = ctx.state.assignees.get(key);
+  const commitment = commitmentOf(ctx, key, { titleKey: 'task.duty', titleParams });
+  const durationMin = window.end - window.start;
+  const segments: Task['segments'] = ['home', 'away'];
+  const candidate =
+    assignee === undefined || !live || NOT_DOING.has(commitment) || commitment === 'done'
+      ? undefined
+      : placeStep(
+          { id: 'duty', titleKey: 'task.duty', durationMin, segments, waitAfterMin: 0 },
+          assignee,
+          ctx.household,
+          ctx.now,
+          window.end,
+          busyOf(tasks, assignee, chosen),
+        );
+  // 書かれた時間にそのまま入る時だけ置く（もっと前の空きに置かない）。
+  const placed = candidate && candidate.start === window.start ? candidate : undefined;
+  tasks.push(
+    task(ctx, key, {
+      ...common,
+      durationMin,
+      earliestStart: ctx.fmt(window.start),
+      deadline: ctx.fmt(window.end),
+      segments,
+      timing: window.endEstimated ? 'fixedEndEstimated' : 'fixed',
+      ...(placed ? { start: ctx.fmt(placed.start), end: ctx.fmt(placed.end) } : {}),
     }),
   );
 }

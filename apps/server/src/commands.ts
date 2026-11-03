@@ -547,6 +547,34 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         ],
       };
     }
+    case 'stateTurn': {
+      // うちの番かを言えるのは、今の読み取りにあり、取り下げていない出典の、家の人の当番だけ。
+      const item = itemsOf(state).find((i) => i.id === command.itemId);
+      if (!item) return { status: 'conflict', reason: 'itemGone' };
+      if (state.withdrawnSources.has(item.sourceId)) {
+        return { status: 'conflict', reason: 'sourceWithdrawn' };
+      }
+      if (item.kind !== 'duty' || item.interpretation.familyAction !== true) {
+        return { status: 'invalid', reason: 'notADuty' };
+      }
+      // 見せた後に、その出典の文・事項・答え・言明が替わっていれば（もう一人が直した・言った。替わって元に
+      // 戻った時も）、古い画面から決めさせない。
+      if ((state.sourceChangedSeq.get(item.sourceId) ?? 0) > command.seen.throughSeq) {
+        return { status: 'conflict', reason: 'itemChanged' };
+      }
+      // 言った時の用件と対象を控える（後で直されたら、もう当てない）。事項の確かさと作用は変えない。
+      return {
+        bodies: [
+          {
+            type: 'turnStated',
+            itemId: item.id,
+            ours: command.ours,
+            what: item.interpretation.what ?? item.written,
+            audience: item.interpretation.audience ?? null,
+          },
+        ],
+      };
+    }
     case 'withdrawSource':
       if (!state.sources.has(command.sourceId)) return { status: 'conflict', reason: 'sourceGone' };
       // 取り下げ済みなら何も足さない（操作は記録する）。

@@ -48,6 +48,8 @@ const KEEP: Record<DomainEvent['type'], readonly string[]> = {
   itemConfirmed: ['itemId'],
   itemCorrected: ['itemId'],
   itemDismissed: ['itemId', 'reason'],
+  // うちの番かと、言った時の用件・対象（名前の入りうる文）は、payloads に置く。
+  turnStated: ['itemId'],
   sourceWithdrawn: ['sourceId'],
   sourceContentPurged: ['sourceId', 'scope'],
   transcriptionCorrected: ['sourceId', 'sourceVersion'],

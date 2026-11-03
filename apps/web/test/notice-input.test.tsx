@@ -243,6 +243,273 @@ describe('お知らせの文を入れる', () => {
     expect(host.textContent).toContain('1文を確かめてください');
   });
 
+  it('当番表で、うちの行が別にある時のほかの家の行は、ほかの家の当番と示し、「うちの番です」で直せる', async () => {
+    const source = {
+      id: 'u2',
+      version: 1,
+      receivedAt: '2026-11-25T19:31+09:00',
+      sender: 'club',
+      language: 'ja',
+      medium: 'text',
+      title: '（架空）当番表',
+      sentences: [
+        { id: 'u2#1', text: '12月13日 お茶当番：さくらさん・みおさんのおうち' },
+        { id: 'u2#2', text: '来週は給食当番です。' },
+        { id: 'u2#3', text: '12月20日 お茶当番：陽菜さんのおうち' },
+        { id: 'u2#4', text: '12月27日 お茶当番：保護者のみなさん' },
+      ],
+    };
+    const duty = (id: string, sentence: string, interpretation: object) => ({
+      item: {
+        id,
+        sourceId: 'u2',
+        sentenceIds: [sentence],
+        kind: 'duty',
+        written: '',
+        interpretation,
+        evidence: 'stated',
+        effects: [],
+      },
+      live: true,
+      conditional: false,
+      trusted: true,
+    });
+    const sent: unknown[] = [];
+    const ctx = {
+      ...baseCtx(),
+      send: async (command: unknown) => {
+        sent.push(command);
+        return { status: 'ok' };
+      },
+      household: {
+        members: [{ id: 'c', kind: 'child', name: '陽菜', active: true }],
+      },
+      plan: { requirements: [], tasks: [], arrangements: [], questions: [], throughSeq: 7 },
+      sources: new Map([['u2', source]]),
+      readings: [{ sourceId: 'u2', origin: 'live', model: 'm', check: [], checkAll: false }],
+      items: [
+        {
+          ...duty('u2:d1', 'u2#1', {
+            what: 'お茶当番',
+            date: '2026-12-13',
+            audience: 'さくらさん・みおさんのおうち',
+            familyAction: true,
+          }),
+          // うちの番かは、サーバーのエンジンが決めて渡す。
+          turn: 'others',
+        },
+        // 子の当番（家の人がすることではない）は、ほかの家の当番とは言わない。
+        duty('u2:d2', 'u2#2', { what: '給食当番' }),
+        {
+          ...duty('u2:d3', 'u2#3', {
+            what: 'お茶当番',
+            date: '2026-12-20',
+            audience: '陽菜さんのおうち',
+            familyAction: true,
+          }),
+          turn: 'ours',
+        },
+        {
+          ...duty('u2:d4', 'u2#4', {
+            what: 'お茶当番',
+            date: '2026-12-27',
+            audience: '保護者のみなさん',
+            familyAction: true,
+          }),
+          turn: 'unsure',
+        },
+      ],
+    } as unknown as Ctx;
+    await step(() => root.render(<SourcesScreen ctx={ctx} />));
+    const line = (text: string) =>
+      [...host.querySelectorAll('p')].find((p) => p.textContent?.startsWith(text));
+    expect(line('12月13日 お茶当番')?.textContent).toContain('ほかの家の当番として読みました');
+    expect(line('来週は給食当番')?.textContent).toContain('読んだだけ（まだ知らせません）');
+    expect(line('12月27日 お茶当番')?.textContent).not.toContain('ほかの家の当番');
+    const ours = [...(line('12月13日 お茶当番')?.querySelectorAll('button') ?? [])].find(
+      (b) => b.textContent === '「さくらさん・みおさんのおうち」は、うちの番です',
+    );
+    await step(() => ours?.click());
+    expect(sent).toEqual([
+      { type: 'stateTurn', itemId: 'u2:d1', ours: true, seen: { throughSeq: 7 } },
+    ]);
+  });
+
+  it('一つの文から、うちの番とほかの家の番を読んだ時も、ほかの家の番の事項を直せる', async () => {
+    const text = 'お茶当番は12/13が陽菜さんのおうち、12/20が田中さんのおうち';
+    const source = {
+      id: 'u3',
+      version: 1,
+      receivedAt: '2026-11-25T19:31+09:00',
+      sender: 'club',
+      language: 'ja',
+      medium: 'text',
+      title: '（架空）当番表',
+      sentences: [{ id: 'u3#1', text }],
+    };
+    const row = (id: string, interpretation: object) => ({
+      item: {
+        id,
+        sourceId: 'u3',
+        sentenceIds: ['u3#1'],
+        kind: 'duty',
+        written: '',
+        interpretation: { what: 'お茶当番', familyAction: true, ...interpretation },
+        evidence: 'stated',
+        effects: [],
+      },
+      live: true,
+      conditional: false,
+      trusted: true,
+    });
+    const sent: unknown[] = [];
+    const task = {
+      key: 'task:duty:u3:a',
+      live: true,
+      basis: { itemIds: ['u3:a'], requirementKey: 'req:duty:u3:a' },
+    };
+    const ctx = {
+      ...baseCtx(),
+      send: async (command: unknown) => {
+        sent.push(command);
+        return { status: 'ok' };
+      },
+      household: { members: [{ id: 'c', kind: 'child', name: '陽菜', active: true }] },
+      plan: {
+        requirements: [{ key: 'req:duty:u3:a', live: true, basis: { itemIds: ['u3:a'] } }],
+        tasks: [task],
+        arrangements: [],
+        questions: [],
+        throughSeq: 9,
+      },
+      sources: new Map([['u3', source]]),
+      readings: [{ sourceId: 'u3', origin: 'live', model: 'm', check: [], checkAll: false }],
+      items: [
+        { ...row('u3:a', { date: '2026-12-13', audience: '陽菜さんのおうち' }), turn: 'ours' },
+        { ...row('u3:b', { date: '2026-12-20', audience: '田中さんのおうち' }), turn: 'others' },
+      ],
+    } as unknown as Ctx;
+    await step(() => root.render(<SourcesScreen ctx={ctx} />));
+    const ours = [...host.querySelectorAll('button')].find(
+      (b) => b.textContent === '「田中さんのおうち」は、うちの番です',
+    );
+    expect(ours).toBeDefined();
+    await step(() => ours?.click());
+    expect(sent).toEqual([
+      { type: 'stateTurn', itemId: 'u3:b', ours: true, seen: { throughSeq: 9 } },
+    ]);
+  });
+
+  it('「うちの番ではない」と言った当番は、そう示し、元の文の所から「うちの番です」で戻せる', async () => {
+    const text = '12月16日(水) 教室の清掃：保護者全員';
+    const sent: unknown[] = [];
+    const ctx = {
+      ...baseCtx(),
+      send: async (command: unknown) => {
+        sent.push(command);
+        return { status: 'ok' };
+      },
+      household: { members: [{ id: 'c', kind: 'child', name: '陽菜', active: true }] },
+      plan: { requirements: [], tasks: [], arrangements: [], questions: [], throughSeq: 12 },
+      sources: new Map([
+        [
+          'u4',
+          {
+            id: 'u4',
+            version: 1,
+            receivedAt: '2026-11-25T19:31+09:00',
+            sender: 'school',
+            language: 'ja',
+            medium: 'text',
+            title: '（架空）学級だより',
+            sentences: [{ id: 'u4#1', text }],
+          },
+        ],
+      ]),
+      readings: [{ sourceId: 'u4', origin: 'live', model: 'm', check: [], checkAll: false }],
+      // 言明は事項を外さない。事項は生きたままで、家族の言明でほかの家の番になる。
+      items: [
+        {
+          item: {
+            id: 'u4:d',
+            sourceId: 'u4',
+            sentenceIds: ['u4#1'],
+            kind: 'duty',
+            written: text,
+            interpretation: { what: '教室の清掃', audience: '保護者全員', familyAction: true },
+            evidence: 'stated',
+            effects: [],
+          },
+          live: true,
+          conditional: false,
+          trusted: true,
+          turn: 'others',
+          turnStated: true,
+        },
+      ],
+    } as unknown as Ctx;
+    await step(() => root.render(<SourcesScreen ctx={ctx} />));
+    expect(host.textContent).toContain('うちの番ではないとしました');
+    expect(host.textContent).not.toContain('ほかの家の当番として読みました');
+    const back = [...host.querySelectorAll('button')].find(
+      (b) => b.textContent === '「保護者全員」は、うちの番です',
+    );
+    await step(() => back?.click());
+    expect(sent).toEqual([
+      { type: 'stateTurn', itemId: 'u4:d', ours: true, seen: { throughSeq: 12 } },
+    ]);
+  });
+
+  it('推定の行に「うちの番です」と言った時は、まだ計画に入れていないと示す', async () => {
+    const text = 'さくらさんのおうちもお茶当番です（日付は別途）。';
+    const ctx = {
+      ...baseCtx(),
+      household: { members: [{ id: 'c', kind: 'child', name: '陽菜', active: true }] },
+      plan: { requirements: [], tasks: [], arrangements: [], questions: [], throughSeq: 3 },
+      sources: new Map([
+        [
+          'u5',
+          {
+            id: 'u5',
+            version: 1,
+            receivedAt: '2026-11-25T19:31+09:00',
+            sender: 'school',
+            language: 'ja',
+            medium: 'text',
+            title: '（架空）連絡帳',
+            sentences: [{ id: 'u5#1', text }],
+          },
+        ],
+      ]),
+      readings: [{ sourceId: 'u5', origin: 'live', model: 'm', check: [], checkAll: false }],
+      items: [
+        {
+          item: {
+            id: 'u5:g',
+            sourceId: 'u5',
+            sentenceIds: ['u5#1'],
+            kind: 'duty',
+            written: text,
+            interpretation: {
+              what: 'お茶当番',
+              audience: 'さくらさんのおうち',
+              familyAction: true,
+            },
+            evidence: 'inferred',
+            effects: [],
+          },
+          live: true,
+          conditional: false,
+          trusted: false,
+          turn: 'ours',
+          turnStated: true,
+        },
+      ],
+    } as unknown as Ctx;
+    await step(() => root.render(<SourcesScreen ctx={ctx} />));
+    expect(host.textContent).toContain('うちの番（推定のため保留）');
+  });
+
   it('読み取りの使えない画面（鍵の無いサーバー・家族の家庭）では、入れる欄を出さない', async () => {
     await step(() => root.render(<SourcesScreen ctx={baseCtx()} />));
     expect(host.querySelector('textarea')).toBeNull();

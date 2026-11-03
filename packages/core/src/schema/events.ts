@@ -2,7 +2,7 @@
 import { z } from 'zod';
 import { DateTime, toEpochMinutes } from '../time';
 import { ExternalKind, Household, Id } from './household';
-import { Basis, type Task } from './plan';
+import { Basis, type Task, untimed } from './plan';
 import { Interpretation, Sentence, Source } from './source';
 
 /** 事象の共通の欄。 */
@@ -44,8 +44,9 @@ export type RequestSnapshot = z.infer<typeof RequestSnapshot>;
  * accept は古い形で、今の作業を確かめたことにはしない。今の提案と違えば、確かめ直しが要る。
  */
 export const ProposalSnapshot = z.object({
-  start: DateTime,
-  end: DateTime,
+  /** 置いた時刻。無いのは、時刻なしで引き受ける作業（書かれた時刻の無い当番など。Task.timing）だけ。 */
+  start: DateTime.optional(),
+  end: DateTime.optional(),
   /** 寄り道で遅れる到家の時刻（帰り道の寄り道の時だけ）。 */
   delayedArrival: DateTime.optional(),
   /** 用件（画面の文言のキーと値）。 */
@@ -70,8 +71,8 @@ export type ProposalSnapshot = z.infer<typeof ProposalSnapshot>;
 export function sameProposal(a: ProposalSnapshot, b: ProposalSnapshot): boolean {
   const key = (p: ProposalSnapshot) =>
     JSON.stringify([
-      toEpochMinutes(p.start),
-      toEpochMinutes(p.end),
+      p.start === undefined ? null : toEpochMinutes(p.start),
+      p.end === undefined ? null : toEpochMinutes(p.end),
       p.delayedArrival === undefined ? null : toEpochMinutes(p.delayedArrival),
       p.titleKey,
       Object.entries(p.titleParams).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)),
@@ -107,13 +108,16 @@ export function sameContent(a: TaskContent, b: TaskContent): boolean {
 
 /**
  * 引き受けの時に見せる提案の控え（02-foundation §5.5）。置けていない作業（時刻が無い）には作れない。
+ * ただし、時刻なしで引き受ける作業（Task.timing の day・undated）は、時刻の無い控えにする。
  * 画面はこの控えを見せ、引き受けの命令はこれを付ける。
  */
 export function proposalSnapshot(task: Task): ProposalSnapshot | undefined {
-  if (task.start === undefined || task.end === undefined) return undefined;
+  // 時刻に置けていない作業は引き受けられない（置けない理由を見せる）。書かれた時刻の無い当番などは、
+  // 時刻なしで引き受ける（仕組みが時刻を作らない）。
+  if (!untimed(task) && (task.start === undefined || task.end === undefined)) return undefined;
   return {
-    start: task.start,
-    end: task.end,
+    ...(task.start === undefined ? {} : { start: task.start }),
+    ...(task.end === undefined ? {} : { end: task.end }),
     ...(task.detour ? { delayedArrival: task.detour.delayedArrival } : {}),
     titleKey: task.titleKey,
     titleParams: task.titleParams,
@@ -272,6 +276,20 @@ export const DomainEvent = z.discriminatedUnion('type', [
     type: z.literal('itemDismissed'),
     itemId: Id,
     reason: z.enum(['notOurs', 'misread', 'other']),
+  }),
+  /**
+   * 家族が、当番がうちの番か（ours）を言った。言った時の用件と対象（今の解釈）を控え、後で用件か対象が直され
+   * たら、もう当てない。読んだ中身の確かめ・取り下げとは別の事実で、事項の確かさも作用も変えない（「うちの番
+   * ではない」で、ほかのお知らせへの置き換えを戻さない。「うちの番です」で、推定の日を確かな物にしない）。
+   * 同じ事項への後の言明が、前の言明に代わる。
+   */
+  z.object({
+    ...envelope,
+    type: z.literal('turnStated'),
+    itemId: Id,
+    ours: z.boolean(),
+    what: z.string(),
+    audience: z.string().nullable(),
   }),
   /**
    * 家族が「このお知らせはもう当てはまらない」と言った（取り下げ）。事項は全て生きていない扱いになり、

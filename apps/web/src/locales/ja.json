@@ -91,7 +91,9 @@
       },
       "ask": "{{name}}さんに頼む",
       "doneAlready": "「{{what}}」をもう済ませていれば、「{{label}}」で記録できます。変わる前の内容の分を済ませただけなら、押さないでください。",
-      "sentAlready": "「{{label}}」で、今の頼む文を開きます。同じ文をもう送っていれば、そこで送ったと記録できます。"
+      "sentAlready": "「{{label}}」で、今の頼む文を開きます。同じ文をもう送っていれば、そこで送ったと記録できます。",
+      "fixedBusy": "書かれた時間に、ふだんの予定（仕事など）かほかの作業が入っています。無理なら、ほかの人に頼んでください。",
+      "fixedPast": "書かれた時間を過ぎました。済んでいたら「済んだ」を押してください。"
     },
     "backup": {
       "label": "念のため",
@@ -155,6 +157,20 @@
       "purchase": "{{date}}までに要りますが、登録した帰り道と店では、買える時が見つかりませんでした。ほかの手で用意できたら、「用意できた」を押してください。",
       "childCare": "{{child}}をどうするか、登録した手立てと決め時では、決められませんでした。ほかの手を家族で考えてください。",
       "ready": "用意できた"
+    },
+    "timing": {
+      "fixed": "{{day}} {{from}}〜{{to}}",
+      "fixedOvernight": "{{day}} {{from}}〜{{endDay}} {{to}}",
+      "fixedEndEstimated": "{{day}} {{from}}から（終わりの時刻は確かめられません。1時間を目安にしています）",
+      "day": "{{day}}（時刻は書かれていません）",
+      "dayUnconfirmed": "{{day}}（時刻は、元の文で確かめてください）",
+      "undated": "いつまでか、書かれていません",
+      "place": "場所：{{place}}",
+      "noTravel": "行き帰りの時間は、入っていません。",
+      "audience": "対象：{{audience}}（うちの番か、確かめてください）",
+      "notOurs": "うちの番ではない",
+      "audienceKnown": "対象：{{audience}}",
+      "from": "{{day}} {{from}}から"
     }
   },
   "answer": {
@@ -266,10 +282,14 @@
       "check": "要確認",
       "plan": "計画に入れました",
       "week": "よていに出します",
-      "readOnly": "読んだだけ（まだ知らせません）"
+      "readOnly": "読んだだけ（まだ知らせません）",
+      "notOurs": "ほかの家の当番として読みました",
+      "statedNotOurs": "うちの番ではないとしました",
+      "oursUnconfirmed": "うちの番（推定のため保留）"
     },
     "statusOn": "{{status}}・{{dates}}",
-    "toToday": "きょうを見る"
+    "toToday": "きょうを見る",
+    "ours": "「{{audience}}」は、うちの番です"
   },
   "condition": {
     "if": "{{label}}が{{value}}なら",
@@ -285,7 +305,8 @@
     "conditional": "{{what}}（{{when}}）",
     "unconfirmed": "{{what}}（未確認）",
     "unconfirmedConditional": "{{what}}（未確認・{{when}}）",
-    "taskReconfirm": "{{name}}：{{what}} {{time}}（確かめ直し）"
+    "taskReconfirm": "{{name}}：{{what}} {{time}}（確かめ直し）",
+    "taskDay": "{{name}}：{{what}}（時刻なし）"
   },
   "missing": {
     "title": "見つかりません",
@@ -321,6 +342,8 @@
     "cancelRequest": "{{to}}に取り消しを伝える",
     "buy": "{{what}}を買う",
     "submit": "{{what}}を用意して出す",
+    "familyAction": "{{what}}",
+    "duty": "{{what}}",
     "gakudoForm": {
       "write": "学童の申込書を書く",
       "submit": "学童に申込書を出す"
@@ -398,6 +421,7 @@
     "whichUnknown": "どれのことか決められませんでした。日付や相手を入れて、もう一度伝えてください。",
     "lookAlike": "見分けのつかない候補があったので、選べるようにしていません。日時や相手を添えて、もう一度伝えてください。",
     "sameTarget": "同じ品物を同じ日に求めるお知らせがほかにもあり、どれに答えるか見分けられません。「きょう」の札で、どのお知らせの物かを見て答えてください。",
+    "sameTask": "同じ名前で同じ日の作業がほかにもあり、どれを記録するか見分けられません。「きょう」の札で、どのお知らせの物かを見て記録してください。",
     "requestFor": "{{what}}",
     "requestFor_dated": "{{what}}・{{date}}",
     "requestStep": "{{step}}：{{what}}",

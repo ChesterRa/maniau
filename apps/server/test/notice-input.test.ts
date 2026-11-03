@@ -1,7 +1,7 @@
 // デモの家庭に、お知らせの文を入れる（貼る・話す）。読み取りは偽物（録った応答の文 ID を付け替えた物）で、
 // Claude の API は呼ばない。読めて、読む間に前提が変わらなかった時だけ、出典と読み取りを一度に足す。
 import { readFileSync } from 'node:fs';
-import { type ExtractionOutput, ExtractionOutput as Output } from '@maniau/core';
+import { type ExtractionOutput, parseStoredExtraction } from '@maniau/core';
 import { describe, expect, it } from 'vitest';
 import { createApp, type FamilyBackend } from '../src/app';
 import {
@@ -18,7 +18,7 @@ const fromRepo = (path: string) =>
 const POSTPONED = fromRepo('data/demo/notices/2026-12-04-enki.txt');
 const recorded = JSON.parse(fromRepo('data/demo/recorded/n2.extract.json')).output;
 const readingAs = (sourceId: string) =>
-  Output.parse(JSON.parse(JSON.stringify(recorded).replaceAll('"n2#', `"${sourceId}#`)));
+  parseStoredExtraction(JSON.parse(JSON.stringify(recorded).replaceAll('"n2#', `"${sourceId}#`)));
 
 const answer = (request: ExtractRequest, output: ExtractionOutput, model = 'test-model') => ({
   output,

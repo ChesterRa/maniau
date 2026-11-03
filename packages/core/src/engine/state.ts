@@ -70,6 +70,16 @@ export interface EngineState {
   corrections: Map<string, Interpretation>;
   /** 家族の確かめ（事項の ID → 最後の言明）。confirmed は「家族が確認」、dismissed は「関係ない」。 */
   verdicts: Map<string, 'confirmed' | 'dismissed'>;
+  /**
+   * 家族が、当番がうちの番かを言った（事項の ID → 最後の言明と、その時の用件と対象）。読んだ中身の確かめ・
+   * 直し・取り下げ（verdicts）とは別に持ち、事項の確かさも作用も変えない。
+   */
+  turns: Map<string, { ours: boolean; what: string; audience: string | null }>;
+  /**
+   * 出典ごとに、その出典の文・読み取り・事項・答え・うちの番かの言明が最後に替わった事象の通し番号。画面が
+   * 見せた時より後に替わっていれば、その画面からの言明（うちの番です・ではない）を断る（元に戻った時も含む）。
+   */
+  sourceChangedSeq: Map<string, number>;
   /** 家族が取り下げた出典。 */
   withdrawnSources: Set<string>;
   /** 書き起こしを直した事のある出典（読んだ版の無い読み取りは、もう使わない）。 */
@@ -124,6 +134,8 @@ export function emptyState(): EngineState {
     extractionVersion: new Map(),
     corrections: new Map(),
     verdicts: new Map(),
+    turns: new Map(),
+    sourceChangedSeq: new Map(),
     withdrawnSources: new Set(),
     correctedSources: new Set(),
     declaredUnknowns: new Map(),
@@ -144,6 +156,33 @@ export function emptyState(): EngineState {
   };
 }
 
+/** 事象が替える出典（文・読み取り・事項の言明・その出典の未定の値への答え）。 */
+function touchedSources(state: EngineState, event: DomainEvent): string[] {
+  switch (event.type) {
+    case 'noticeReceived':
+      return [event.source.id];
+    case 'modelOutputRecorded':
+      return event.sourceId ? [event.sourceId] : [];
+    case 'sourceWithdrawn':
+    case 'sourceContentPurged':
+    case 'transcriptionCorrected':
+      return [event.sourceId];
+    case 'itemConfirmed':
+    case 'itemCorrected':
+    case 'itemDismissed':
+    case 'turnStated':
+      return [...state.extractions]
+        .filter(([, e]) => e.items.some((i) => i.id === event.itemId))
+        .map(([sourceId]) => sourceId);
+    case 'answered':
+      return [...state.extractions]
+        .filter(([, e]) => e.unknowns.some((u) => u.id === event.unknownId))
+        .map(([sourceId]) => sourceId);
+    default:
+      return [];
+  }
+}
+
 export function foldEvents(events: readonly DomainEvent[]): EngineState {
   const state = emptyState();
   const ordered = [...events].sort((a, b) => a.seq - b.seq);
@@ -157,6 +196,7 @@ const FAMILY_ONLY = new Set<DomainEvent['type']>([
   'itemConfirmed',
   'itemCorrected',
   'itemDismissed',
+  'turnStated',
   'sourceWithdrawn',
   'transcriptionCorrected',
   'requestRecordCorrected',
@@ -164,6 +204,9 @@ const FAMILY_ONLY = new Set<DomainEvent['type']>([
 
 function apply(state: EngineState, event: DomainEvent): void {
   state.lastSeq = Math.max(state.lastSeq, event.seq);
+  for (const sourceId of touchedSources(state, event)) {
+    state.sourceChangedSeq.set(sourceId, event.seq);
+  }
   if (FAMILY_ONLY.has(event.type)) {
     const member = state.household?.members.find((m) => m.id === event.actorId);
     if (member?.kind !== 'adult' || !member.active) {
@@ -306,6 +349,17 @@ function apply(state: EngineState, event: DomainEvent): void {
       state.verdicts.set(event.itemId, event.type === 'itemDismissed' ? 'dismissed' : 'confirmed');
       return;
     }
+    case 'turnStated':
+      if (!state.seenItemIds.has(event.itemId)) {
+        state.rejected.push({ seq: event.seq, reason: '読み取りに無い事項への言明' });
+        return;
+      }
+      state.turns.set(event.itemId, {
+        ours: event.ours,
+        what: event.what,
+        audience: event.audience,
+      });
+      return;
     case 'sourceWithdrawn':
       if (!state.sources.has(event.sourceId)) {
         state.rejected.push({ seq: event.seq, reason: '届いていない出典の取り下げ' });

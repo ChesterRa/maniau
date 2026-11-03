@@ -2,7 +2,7 @@
 // もう一度呼ばずに同じ文を返し、数の上限と、同時に読む数を守る。書き起こした文は、家族が見比べて直して
 // から、写真の印を付けて読む。書き起こしと読み取りは偽物で、Claude の API は呼ばない。
 import { readFileSync } from 'node:fs';
-import { ExtractionOutput as Output } from '@maniau/core';
+import { parseStoredExtraction } from '@maniau/core';
 import { describe, expect, it } from 'vitest';
 import { createApp, type FamilyBackend, MAX_JSON_BODY, MAX_PHOTO_BODY } from '../src/app';
 import {
@@ -21,7 +21,7 @@ const POSTPONED = fromRepo('data/demo/notices/2026-12-04-enki.txt');
 const recorded = JSON.parse(fromRepo('data/demo/recorded/n2.extract.json')).output;
 
 const reader: NoticeReader = async (request) => ({
-  output: Output.parse(
+  output: parseStoredExtraction(
     JSON.parse(JSON.stringify(recorded).replaceAll('"n2#', `"${request.source.id}#`)),
   ),
   model: 'test-model',

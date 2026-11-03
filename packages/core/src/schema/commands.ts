@@ -8,6 +8,14 @@ import { CommitmentState, ExternalRequestState } from './plan';
 import { Interpretation } from './source';
 
 /**
+ * 画面が見せた時の、事象の通し番号（View の throughSeq）。うちの番かを家族が言う命令（stateTurn）に付ける。
+ * その後に、その事項の出典の文・読み取り・事項・答え・うちの番かの言明が替わっていれば（もう一人が直した・
+ * 確かめた・外した・言った、読み直した。替わってまた元に戻った時も）、サーバーは断り、画面は今の中身を見せ直す。
+ */
+export const ItemSeen = z.object({ throughSeq: z.number().int().nonnegative() });
+export type ItemSeen = z.infer<typeof ItemSeen>;
+
+/**
  * 画面が見せた作業の担当と状態。二人が同じ札を見る時に、もう一人が先に持った・引き受けた後の古い操作で、
  * それを黙って替えないために付ける（替わっていれば、断って見せ直す）。
  */
@@ -101,6 +109,11 @@ export const Command = z.discriminatedUnion('type', [
     itemId: Id,
     reason: z.enum(['notOurs', 'misread', 'other']),
   }),
+  /**
+   * 当番が、うちの番か（「うちの番です」「うちの番ではない」）。読んだ中身の確かめ・取り下げとは別の言明で、
+   * 事項の確かさも作用（ほかのお知らせの置き換え・取り消し）も変えない。サーバーが今の用件と対象を控える。
+   */
+  z.object({ type: z.literal('stateTurn'), itemId: Id, ours: z.boolean(), seen: ItemSeen }),
   z.object({ type: z.literal('withdrawSource'), sourceId: Id }),
   /** 時計を進める。デモの家庭だけ。 */
   z.object({ type: z.literal('advanceClock'), to: DateTime }),

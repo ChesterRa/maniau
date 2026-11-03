@@ -21,6 +21,8 @@ export interface FactState {
   changes: Map<string, { kind: 'replace' | 'cancel'; itemId: string; active: Truth }[]>;
   staleItems: Set<string>;
   corrections: Map<string, Interpretation>;
+  /** 有効な大人が当番の帰属を言った時の内容。読み取りの確認とは分ける。 */
+  turns: Map<string, { ours: boolean; what: string; audience: string | null }>;
 }
 
 /** 送信時の根拠は、確かな一対一の置き換えをたどる。競合や循環は決めつけない。 */
@@ -97,6 +99,7 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   const invalidExtractions: { eventId: string; sourceId?: string }[] = [];
   const corrections = new Map<string, Interpretation>();
   const verdicts = new Map<string, 'confirmed' | 'dismissed'>();
+  const turns = new Map<string, { ours: boolean; what: string; audience: string | null }>();
   for (const event of events) {
     if (event.type === 'noticeReceived') {
       if (purgedSources.has(event.source.id)) {
@@ -151,7 +154,8 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
     if (
       event.type === 'itemConfirmed' ||
       event.type === 'itemCorrected' ||
-      event.type === 'itemDismissed'
+      event.type === 'itemDismissed' ||
+      event.type === 'turnStated'
     ) {
       if (!seenItems.has(event.itemId)) {
         report.undetermined(
@@ -159,6 +163,11 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
           event.id,
           '操作する事項を確認できない。',
         );
+        continue;
+      }
+      // 帰属の言明は、読み取りを確認したり、事項の作用を外したりしない。
+      if (event.type === 'turnStated') {
+        turns.set(event.itemId, { ours: event.ours, what: event.what, audience: event.audience });
         continue;
       }
       if (event.type === 'itemCorrected') {
@@ -613,5 +622,6 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
     changes: itemChanges,
     staleItems,
     corrections,
+    turns,
   };
 }

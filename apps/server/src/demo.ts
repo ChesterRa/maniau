@@ -6,8 +6,8 @@ import {
   type DateTime,
   DomainEvent,
   type Extraction,
-  ExtractionOutput,
   Household,
+  parseStoredExtraction,
   proposalSnapshot,
   type ReadingIssue,
   type Source,
@@ -80,7 +80,7 @@ export function loadDemoData(): DemoData {
     const raw = JSON.parse(
       read(recorded ? recordedPath : `data/demo/expected/${notice.id}.output.json`),
     );
-    const output = ExtractionOutput.parse(raw.output);
+    const output = parseStoredExtraction(raw.output);
     const { extraction, issues } = toExtraction(output, source, {
       priorItems: extractions.flatMap((e) => e.items),
       priorUnknowns: extractions.flatMap((e) => e.unknowns),

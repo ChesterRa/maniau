@@ -20,6 +20,7 @@ import {
   type Task,
   type TodayCard,
   toEpochMinutes,
+  untimed,
 } from '@maniau/core';
 import type { TFunction } from 'i18next';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -88,6 +89,10 @@ export interface Ctx {
     trusted: boolean;
     /** 条件しだいの時、一つの値で決まるなら、その条件。 */
     when?: ItemWhen;
+    /** 家の人の当番だけ：うちの番か（サーバーのエンジンが決めた物）。 */
+    turn?: 'ours' | 'others' | 'unsure';
+    /** turn が、家族の言明（「うちの番です」「うちの番ではない」）による。 */
+    turnStated?: true;
   }[];
   sources: Map<string, Source>;
   readings: Reading[];
@@ -205,11 +210,104 @@ const time = (ctx: Ctx, value: string) => formatTime(value, ctx.lang, ctx.tz);
  * 日だけ（書かれていない時刻を見せない）。
  */
 const due = (ctx: Ctx, value: string, itemIds: readonly string[]) =>
-  itemIds.some(
-    (id) => ctx.items.find((l) => l.item.id === id)?.item.interpretation.deadline !== undefined,
-  )
+  itemIds.some((id) => {
+    const interpretation = ctx.items.find((l) => l.item.id === id)?.item.interpretation;
+    return interpretation?.deadline !== undefined && interpretation.deadlineDayOnly !== true;
+  })
     ? dayTime(ctx, value)
     : day(ctx, value);
+
+/**
+ * 書かれた時刻の決まり（Task.timing。当番、日の書かれていないサイン）の文：書かれた時間・日。書かれていない
+ * 終わり・時刻・日は作らず、そう書く。日をまたぐ時は、終わりの日も書く。
+ */
+function writtenWhen(ctx: Ctx, task: Task): string | undefined {
+  const { timing, earliestStart: start, deadline: end } = task;
+  if (timing === 'undated') return ctx.t('card.timing.undated');
+  if (!start) return undefined;
+  if (timing === 'day') {
+    // 読み取りの始まりを確かめられなかった物は、「書かれていない」と言わない（書き方を読めなかっただけ）。
+    return ctx.t(task.timeUnconfirmed ? 'card.timing.dayUnconfirmed' : 'card.timing.day', {
+      day: day(ctx, start),
+    });
+  }
+  if (timing === 'fixedEndEstimated') {
+    return ctx.t('card.timing.fixedEndEstimated', { day: day(ctx, start), from: time(ctx, start) });
+  }
+  if (timing !== 'fixed' || !end) return undefined;
+  return day(ctx, end) === day(ctx, start)
+    ? ctx.t('card.timing.fixed', {
+        day: day(ctx, start),
+        from: time(ctx, start),
+        to: time(ctx, end),
+      })
+    : ctx.t('card.timing.fixedOvernight', {
+        day: day(ctx, start),
+        from: time(ctx, start),
+        endDay: day(ctx, end),
+        to: time(ctx, end),
+      });
+}
+
+/**
+ * 当番の書かれた時間・場所と対象（原文のまま。うちの番か分からない時は、確かめてと添える）。当番には、どれも
+ * 「うちの番ではない」を出す（事項を外すと、作業も無くなる。うちの番と読み違えた物も直せる）。置いた作業には、
+ * 行き帰りの時間が入っていないことを添える（空いた時間に置いただけで、場所への移動は確かめていない）。
+ */
+function WrittenTime({ ctx, task }: { ctx: Ctx; task: Task }) {
+  const when = writtenWhen(ctx, task);
+  const place = task.titleParams.place;
+  const item = ctx.items.find((l) => task.basis.itemIds.includes(l.item.id))?.item;
+  // どのお知らせの物か（同じ題・同じ時間の当番が二つあっても、札を見分けられる）。
+  const title = item && ctx.sources.get(item.sourceId)?.title;
+  // 当番は、対象の原文を見せ、どれも「うちの番ではない」で外せる（うちの番の読み違いも、札から直す）。
+  const duty = task.titleKey === 'task.duty';
+  const audience = duty ? item?.interpretation.audience : undefined;
+  const fixed = task.timing === 'fixed' || task.timing === 'fixedEndEstimated';
+  if (!when && !place && !audience && !duty) return null;
+  return (
+    <div className="flex flex-col gap-1 rounded-xl bg-paper px-3 py-2.5">
+      {when && <span className="font-bold tabular-nums">{when}</span>}
+      {place && (
+        <span className="text-[15px] text-sub">{ctx.t('card.timing.place', { place })}</span>
+      )}
+      {fixed && task.start && (
+        <span className="text-[15px] text-sub">{ctx.t('card.timing.noTravel')}</span>
+      )}
+      {audience && (
+        <span className="text-[15px]">
+          {ctx.t(task.turnUnconfirmed ? 'card.timing.audience' : 'card.timing.audienceKnown', {
+            audience,
+          })}
+        </span>
+      )}
+      {duty && item && (
+        <MoreLink
+          onClick={() =>
+            void ctx.send({
+              type: 'stateTurn',
+              itemId: item.id,
+              ours: false,
+              seen: { throughSeq: ctx.plan.throughSeq },
+            })
+          }
+        >
+          {ctx.t('card.timing.notOurs')}
+        </MoreLink>
+      )}
+      {/* 書かれた時間・場所・対象は、元の文で確かめられるようにする（読めない終わりも、原文には書いてある）。 */}
+      {item && (
+        <MoreLink
+          onClick={() =>
+            ctx.go({ name: 'sources', sourceId: item.sourceId, highlight: item.sentenceIds })
+          }
+        >
+          {title ? ctx.t('card.question.sourceTitled', { title }) : ctx.t('card.question.source')}
+        </MoreLink>
+      )}
+    </div>
+  );
+}
 
 // ── 外に出す文（頼む・取り消す） ──────────────────────────────
 
@@ -723,6 +821,8 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
   // ようにする（時刻の無い物を、時刻のある提案として引き受けさせない）。
   const standalone =
     task.basis.optionKey === undefined && task.external === undefined && task.cancels === undefined;
+  // 書かれた時間に決まった作業（当番）が置けない時は、ずらさずに、その時間がふさがっていると書く。
+  const fixedTime = task.timing === 'fixed' || task.timing === 'fixedEndEstimated';
   // 一緒に置く中で、ほかに進める手の作業と重ならない時刻を見つけられなかった手の作業（時刻を置いていない）。
   // ふだんの予定に空きが無いのとは違うので、そう書かず、決める画面で見直せるようにする。
   const arrangement = arrangementOf(ctx, task.basis.arrangementKey);
@@ -738,8 +838,12 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
     !shown || (task.start !== undefined && toEpochMinutes(task.start) <= toEpochMinutes(ctx.now));
   // 引き受けた後に変わった物（時刻が過ぎて置き直した、日が直された等）も、今の用件そのものをもう済ませて
   // いれば記録できる。記録するのは今の札の用件で、変わる前の用件を済ませた事ではない。
+  // 時刻なしで引き受ける作業（書かれた時刻の無い当番、日の無いサイン）は、引き受けと一緒に、もう済んだ
+  // ことも記録できる。
   const fact =
-    task.assigneeId === ctx.me.id && task.cancels === undefined && (due || task.reconfirm === true)
+    task.assigneeId === ctx.me.id &&
+    task.cancels === undefined &&
+    (due || task.reconfirm === true || untimed(task))
       ? finishOf(ctx, task)
       : undefined;
   // 置ける時間が無い時は、その場でもう一人に頼めるようにする（断ってから探し直させない）。本人しか
@@ -769,7 +873,9 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
       <Label tone="accent">{ctx.t('card.proposal.label')}</Label>
       <Title>{taskTitle(ctx, task)}</Title>
       <ConditionLine ctx={ctx} basis={task.basis} />
-      {task.start && task.end && (
+      {/* 書かれた時刻の決まった作業は、置けていなくても書かれた時間を見せる（置いた時刻と同じ）。 */}
+      {task.timing !== undefined && <WrittenTime ctx={ctx} task={task} />}
+      {task.timing === undefined && task.start && task.end && (
         <div className="flex flex-col gap-1 rounded-xl bg-paper px-3 py-2.5">
           <span className="font-bold tabular-nums">
             {ctx.t('card.proposal.when', {
@@ -824,9 +930,13 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
               ? 'card.proposal.handoff'
               : conflicted
                 ? 'card.proposal.conflicted'
-                : standalone
-                  ? 'card.proposal.unplacedDue'
-                  : 'card.proposal.unplaced',
+                : fixedTime
+                  ? toEpochMinutes(task.earliestStart ?? ctx.now) > toEpochMinutes(ctx.now)
+                    ? 'card.proposal.fixedBusy'
+                    : 'card.proposal.fixedPast'
+                  : standalone
+                    ? 'card.proposal.unplacedDue'
+                    : 'card.proposal.unplaced',
           )}
         </Text>
       )}
@@ -913,8 +1023,10 @@ function UnownedCard({
           {ctx.t('card.unowned.deadline', { deadline: dayTime(ctx, option.decisionDeadline) })}
         </Text>
       )}
-      {/* 案の無い作業（提出物）は、外の締切の日を出す（朝の時刻は目安なので、日だけ）。 */}
-      {!option && task.deadline && (
+      {/* 案の無い作業（提出物）は、外の締切の日を出す（朝の時刻は目安なので、日だけ）。書かれた時刻の決まり
+          のある作業（当番）は、締切ではなく、書かれた時間・場所を出す。 */}
+      {task.timing !== undefined && <WrittenTime ctx={ctx} task={task} />}
+      {task.timing === undefined && !option && task.deadline && (
         <Text>
           {ctx.t('card.unowned.by', { date: due(ctx, task.deadline, task.basis.itemIds) })}
         </Text>
@@ -1135,8 +1247,12 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
       <div className={`flex items-center gap-3 py-2.5 ${border}`}>
         <span className="flex min-w-0 flex-1 flex-col">
           <span>{taskTitle(ctx, task)}</span>
-          {task.start && (
-            <span className="text-sm text-sub tabular-nums">{dayTime(ctx, task.start)}</span>
+          {task.timing !== undefined ? (
+            <span className="text-sm text-sub tabular-nums">{writtenWhen(ctx, task)}</span>
+          ) : (
+            task.start && (
+              <span className="text-sm text-sub tabular-nums">{dayTime(ctx, task.start)}</span>
+            )
           )}
           {condition && (
             <span className="text-sm text-sub">{condition.when ?? ctx.t('say.conditional')}</span>
@@ -1693,6 +1809,18 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
       }
     }
     for (const task of ctx.plan.tasks) {
+      if (!task.live || task.commitment !== 'accepted') continue;
+      // 日だけの当番は、時刻なしで、その日に出す。
+      if (task.timing !== 'day' || !task.earliestStart) continue;
+      if (localDate(task.earliestStart, ctx.tz) !== date) continue;
+      lines.push(
+        ctx.t('week.taskDay', {
+          name: nameOf(ctx.household, task.assigneeId),
+          what: taskTitle(ctx, task),
+        }),
+      );
+    }
+    for (const task of ctx.plan.tasks) {
       if (!task.live || !task.start || localDate(task.start, ctx.tz) !== date) continue;
       if (task.commitment !== 'accepted' && task.commitment !== 'done') continue;
       // 引き受けた後に中身が変わった作業は、確かめ直すまで、決まった予定として見せない。
@@ -1857,6 +1985,25 @@ export function SourcesScreen(props: { ctx: Ctx; sourceId?: string; highlight?: 
                             : ctx.t(`sources.status.${status}`)}
                         </span>
                       )}
+                      {/* ほかの家の番の事項ごとに直せるようにする（同じ文のほかの事項を計画に入れていても。
+                          「うちの番ではない」の押し違いも、ここから戻す）。 */}
+                      {read?.others.map(({ itemId, audience }) => (
+                        <button
+                          key={itemId}
+                          type="button"
+                          onClick={() =>
+                            void ctx.send({
+                              type: 'stateTurn',
+                              itemId,
+                              ours: true,
+                              seen: { throughSeq: ctx.plan.throughSeq },
+                            })
+                          }
+                          className="ml-1.5 min-h-11 text-xs font-bold text-accent underline"
+                        >
+                          {ctx.t('sources.ours', { audience })}
+                        </button>
+                      ))}
                     </p>
                   );
                 })}
@@ -1890,6 +2037,9 @@ const STATUS_TONE = {
   plan: 'text-accent',
   week: 'text-accent',
   readOnly: 'text-sub',
+  notOurs: 'text-sub',
+  statedNotOurs: 'text-sub',
+  oursUnconfirmed: 'text-warn',
 } as const;
 
 /** よていに出す事項の種類（日付があれば）。 */
@@ -1936,7 +2086,13 @@ function sentenceStatus(ctx: Ctx, sourceId: string) {
   const items = ctx.items.filter((e) => e.live && e.item.sourceId === sourceId);
   return (
     sentenceId: string,
-  ): { status: 'plan' | 'week' | 'readOnly'; dates: string[] } | undefined => {
+  ):
+    | {
+        status: 'plan' | 'week' | 'notOurs' | 'statedNotOurs' | 'oursUnconfirmed' | 'readOnly';
+        dates: string[];
+        others: { itemId: string; audience: string }[];
+      }
+    | undefined => {
     const here = items.filter((e) => e.item.sentenceIds.includes(sentenceId));
     if (here.length === 0) return undefined;
     const dates = [
@@ -1949,12 +2105,28 @@ function sentenceStatus(ctx: Ctx, sourceId: string) {
     ]
       .filter((d): d is string => d !== undefined)
       .sort();
+    // うちの番かは、サーバーのエンジンが決めた物（同じお知らせのほかの行と、家族の言明を見た結果）を使う。
+    const othersHere = here.filter((e) => e.turn === 'others');
+    const others = othersHere.map((e) => ({
+      itemId: e.item.id,
+      audience: e.item.interpretation.audience ?? '',
+    }));
     const status = here.some((e) => acted.has(e.item.id))
       ? 'plan'
       : here.some((e) => WEEK_KINDS.has(e.item.kind) && e.item.interpretation.date)
         ? 'week'
-        : 'readOnly';
-    return { status, dates };
+        : // 家の人の当番でも、ほかの家の番の物は作業にしない。そう読んだ（家族がそう言った）と見せ、うちの
+          // 番なら直せるようにする（読んだ決まりは推し量りで、家族の言明にも押し違いがあるので）。
+          othersHere.some((e) => !e.turnStated)
+          ? 'notOurs'
+          : othersHere.length > 0
+            ? 'statedNotOurs'
+            : // 「うちの番です」と言っても、読み取りが推定のままの物は作業にしない（推定の日を確かな物に
+              // しない）。そう見せる。
+              here.some((e) => e.turn === 'ours' && e.turnStated && !e.trusted)
+              ? 'oursUnconfirmed'
+              : 'readOnly';
+    return { status, dates, others };
   };
 }
 
@@ -1972,6 +2144,18 @@ function needDay(ctx: Ctx, basis: Task['basis']): string | undefined {
   const requirement = ctx.plan.requirements.find((r) => r.key === basis.requirementKey);
   const date = requirement?.date ?? requirement?.by;
   return date ? day(ctx, date) : undefined;
+}
+
+/**
+ * 作業の要る日。書かれた時刻の決まった作業（当番）は、書かれた時間も添える（同じ日の二回を見分ける）。
+ */
+function taskDay(ctx: Ctx, task: Task): string | undefined {
+  const start = task.earliestStart;
+  if (task.timing === 'fixed' && start && task.deadline) return writtenWhen(ctx, task);
+  if (task.timing === 'fixedEndEstimated' && start) {
+    return ctx.t('card.timing.from', { day: day(ctx, start), from: time(ctx, start) });
+  }
+  return needDay(ctx, task.basis);
 }
 
 /** 日付があれば日付つきの文言（{{date}}）を使う（文をつないで作らない）。 */
@@ -2080,7 +2264,7 @@ function proposalLabel(ctx: Ctx, proposal: ShownProposal): string {
       // 要る日は dated が添えるので、題には日を重ねない。
       const what = task ? baseTitle(ctx, task) : '';
       const action = command.type === 'recordSent' ? 'sent' : command.action;
-      return dated(ctx, `say.do.${action}`, { what }, task && needDay(ctx, task.basis));
+      return dated(ctx, `say.do.${action}`, { what }, task && taskDay(ctx, task));
     }
     case 'recordReply':
     case 'recordCancellationSent': {
@@ -2179,7 +2363,7 @@ function SayAnswer({
                   : ctx.t('say.unassigned'),
                 state: ctx.t(`say.taskState.${task.commitment}`),
               },
-              needDay(ctx, task.basis),
+              taskDay(ctx, task),
             )}
           </li>
         ))}
@@ -2229,13 +2413,23 @@ export function SayReply({
     reply.kind === 'clarify'
       ? reply.proposals.map((proposal) => ({ proposal, label: proposalLabel(ctx, proposal) }))
       : [];
-  // 一つだけの候補でも、同じ文になる別の対象（同じ品物を同じ日に求める「家にあるか」）があれば、どれが
-  // 記録されるか分からないので記録させない（札から答えてもらう）。
-  const sameAsOther = (proposal: ShownProposal) => {
+  // 一つだけの候補でも、同じ文になる別の対象があれば、どれが記録されるか分からないので記録させない（札から
+  // 記録してもらう）。同じ品物を同じ日に求める「家にあるか」と、同じ題・同じ日（当番は同じ時間）の別の作業。
+  // 返すのは、記録させない訳を書く文言のキー。
+  const sameAsOther = (proposal: ShownProposal): string | undefined => {
     const { command } = proposal;
-    if (command.type !== 'answer') return false;
     const label = proposalLabel(ctx, proposal);
-    return ctx.plan.requirements.some(
+    if (command.type === 'commitment' || command.type === 'recordSent') {
+      const twin = ctx.plan.tasks.some(
+        (t) =>
+          t.live &&
+          t.key !== command.taskKey &&
+          proposalLabel(ctx, { ...proposal, command: { ...command, taskKey: t.key } }) === label,
+      );
+      return twin ? 'say.sameTask' : undefined;
+    }
+    if (command.type !== 'answer') return undefined;
+    const twin = ctx.plan.requirements.some(
       (r) =>
         r.live &&
         r.atHomeUnknownId !== undefined &&
@@ -2245,6 +2439,7 @@ export function SayReply({
           command: { ...command, unknownId: r.atHomeUnknownId },
         }) === label,
     );
+    return twin ? 'say.sameTarget' : undefined;
   };
   const choices = labeled.filter(
     (c) => labeled.filter((o) => o.label === c.label).length === 1 && !sameAsOther(c.proposal),
@@ -2256,7 +2451,7 @@ export function SayReply({
           const blocked = sameAsOther(proposal);
           return (
             <div key={proposal.id} className="flex flex-col gap-2">
-              <Text quiet>{ctx.t(blocked ? 'say.sameTarget' : 'say.confirm')}</Text>
+              <Text quiet>{ctx.t(blocked ?? 'say.confirm')}</Text>
               <Title>{proposalLabel(ctx, proposal)}</Title>
               <Row>
                 {!blocked && (
@@ -2296,7 +2491,8 @@ export function SayReply({
           {labeled.length > choices.length && (
             <Text>
               {ctx.t(
-                labeled.some((c) => sameAsOther(c.proposal)) ? 'say.sameTarget' : 'say.lookAlike',
+                labeled.map((c) => sameAsOther(c.proposal)).find((key) => key !== undefined) ??
+                  'say.lookAlike',
               )}
             </Text>
           )}

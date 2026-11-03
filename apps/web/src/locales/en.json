@@ -91,7 +91,9 @@
       },
       "ask": "Ask {{name}}",
       "doneAlready": "If you’ve already done “{{what}}”, record it with “{{label}}”. If you only did the version from before the change, don’t press it.",
-      "sentAlready": "“{{label}}” opens the current request. If you already sent that same request, record it as sent there."
+      "sentAlready": "“{{label}}” opens the current request. If you already sent that same request, record it as sent there.",
+      "fixedBusy": "Your usual schedule (work, etc.) or another task overlaps the written time. If you can't do it, please ask someone else.",
+      "fixedPast": "The written time has passed. If it's done, tap Done."
     },
     "backup": {
       "label": "Just in case",
@@ -155,6 +157,20 @@
       "purchase": "It's needed by {{date}}, but no time to buy it was found on your registered routes and stores. If you get it another way, tap \"Got it\".",
       "childCare": "No way was found to arrange {{child}} with your registered options and deadlines. Please think of another way together.",
       "ready": "Got it"
+    },
+    "timing": {
+      "fixed": "{{day}} {{from}}–{{to}}",
+      "fixedOvernight": "{{day}} {{from}} – {{endDay}} {{to}}",
+      "fixedEndEstimated": "{{day}} from {{from}} (end time unclear; assuming 1 hour)",
+      "day": "{{day}} (no time written)",
+      "dayUnconfirmed": "{{day}} (please check the time in the original text)",
+      "undated": "No due date written",
+      "place": "Where: {{place}}",
+      "noTravel": "Travel time is not included.",
+      "audience": "For: {{audience}} (please check it's your turn)",
+      "notOurs": "Not our turn",
+      "audienceKnown": "For: {{audience}}",
+      "from": "{{day}} from {{from}}"
     }
   },
   "answer": {
@@ -270,10 +286,14 @@
       "check": "Check",
       "plan": "Added to the plan",
       "week": "Shown in Schedule",
-      "readOnly": "Read only (no reminders yet)"
+      "readOnly": "Read only (no reminders yet)",
+      "notOurs": "Read as another family's duty",
+      "statedNotOurs": "Marked as not our turn",
+      "oursUnconfirmed": "Our turn (a guess, on hold)"
     },
     "statusOn": "{{status}} · {{dates}}",
-    "toToday": "See Today"
+    "toToday": "See Today",
+    "ours": "“{{audience}}” is our turn"
   },
   "condition": {
     "if": "if {{label}} is {{value}}",
@@ -289,7 +309,8 @@
     "conditional": "{{what}} ({{when}})",
     "unconfirmed": "{{what}} (unconfirmed)",
     "unconfirmedConditional": "{{what}} (unconfirmed; {{when}})",
-    "taskReconfirm": "{{name}}: {{what}} {{time}} (check again)"
+    "taskReconfirm": "{{name}}: {{what}} {{time}} (check again)",
+    "taskDay": "{{name}}: {{what}} (no time)"
   },
   "missing": {
     "title": "Not found",
@@ -326,6 +347,8 @@
     "cancelRequest": "Tell {{to}} it's cancelled",
     "buy": "Buy {{what}}",
     "submit": "Prepare and hand in {{what}}",
+    "familyAction": "{{what}}",
+    "duty": "{{what}}",
     "gakudoForm": {
       "write": "Fill in the after-school care form",
       "submit": "Hand in the after-school care form"
@@ -403,6 +426,7 @@
     "whichUnknown": "We couldn't tell which one you mean. Please say it again with the date or the person.",
     "lookAlike": "Some matches look the same, so they aren't offered. Please say it again with the date, time, or person.",
     "sameTarget": "Another notice asks for the same item on the same day, so we can't tell which one this answers. On Today, check which notice each card comes from and answer there.",
+    "sameTask": "Another task has the same name on the same day, so we can't tell which one to record. On Today, check which notice each card comes from and record it there.",
     "requestFor": "{{what}}",
     "requestFor_dated": "{{what}}, {{date}}",
     "requestStep": "{{step}}: {{what}}",

@@ -5,7 +5,23 @@ import type { Collector } from './report';
 import { instantMinute } from './time';
 
 export function proposalMatches(task: Task, shown: ProposalSnapshot): boolean | undefined {
-  if (!task.start || !task.end) return undefined;
+  let sameTime: boolean;
+  if (task.start === undefined || task.end === undefined) {
+    // 日だけ・日も無しの作業は、時刻を決めずに引き受けられる。それ以外の未配置は照らせない。
+    if (
+      (task.timing !== 'day' && task.timing !== 'undated') ||
+      task.start !== undefined ||
+      task.end !== undefined
+    )
+      return undefined;
+    sameTime = shown.start === undefined && shown.end === undefined;
+  } else {
+    sameTime =
+      shown.start !== undefined &&
+      shown.end !== undefined &&
+      instantMinute(task.start) === instantMinute(shown.start) &&
+      instantMinute(task.end) === instantMinute(shown.end);
+  }
   const keys = Object.keys(task.titleParams);
   const sameParams =
     keys.length === Object.keys(shown.titleParams).length &&
@@ -15,8 +31,7 @@ export function proposalMatches(task: Task, shown: ProposalSnapshot): boolean | 
     );
   const late = task.detour?.delayedArrival;
   return (
-    instantMinute(task.start) === instantMinute(shown.start) &&
-    instantMinute(task.end) === instantMinute(shown.end) &&
+    sameTime &&
     (late === undefined
       ? shown.delayedArrival === undefined
       : shown.delayedArrival !== undefined &&

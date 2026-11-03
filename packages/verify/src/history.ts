@@ -159,6 +159,7 @@ export function checkHistory(
       event.type === 'itemConfirmed' ||
       event.type === 'itemCorrected' ||
       event.type === 'itemDismissed' ||
+      event.type === 'turnStated' ||
       event.type === 'sourceWithdrawn' ||
       event.type === 'transcriptionCorrected' ||
       event.type === 'requestRecordCorrected'

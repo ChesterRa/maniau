@@ -83,12 +83,27 @@ export const Interpretation = z.object({
   what: z.string().optional(),
   dayType: DayType.optional(),
   deadline: DateTime.optional(),
+  /**
+   * 締切の時刻が、指した文に見つからない（「12月4日まで」。書き方を読み取れなかった時もある）。deadline の
+   * 時刻は、その日の朝の目安（仕組みが決めた物）で、画面は日だけを見せる。
+   */
+  deadlineDayOnly: z.literal(true).optional(),
+  /**
+   * 読み取りの始まりの時刻が、指した文に見つからず、落とした（書き方を読み取れなかっただけで、時刻は
+   * 書かれているかもしれない）。画面は「書かれていない」と言わず、元の文で確かめてもらう。
+   */
+  startTimeUnconfirmed: z.literal(true).optional(),
   /** 対象（例：1年生、陽菜さん・ゆいさんのおうち）。 */
   audience: z.string().optional(),
   /** 書かれた場所（例：若洲のグラウンド）。 */
   place: z.string().optional(),
   /** 「あした」「きょう」のように書かれていた時。日付はコードが、出典の日から決める。 */
   relativeDay: z.enum(['today', 'tomorrow']).optional(),
+  /**
+   * 家の人がすること（音読カードのサイン、丸つけ、お茶当番、配車）。宿題（homework）と当番（duty）で、
+   * これがある物だけを家族の作業にする。子どもだけでする宿題や子の当番には無い（読んだだけ）。
+   */
+  familyAction: z.literal(true).optional(),
 });
 export type Interpretation = z.infer<typeof Interpretation>;
 

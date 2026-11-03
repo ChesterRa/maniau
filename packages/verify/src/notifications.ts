@@ -76,6 +76,29 @@ function sameTime(a: string | undefined, b: string | undefined): boolean {
   return a === undefined || b === undefined ? a === b : toEpochMinutes(a) === toEpochMinutes(b);
 }
 
+/** 固定の当番は開始、開始を確かめられない当番は念のためその日の始まりまでに見る。 */
+function dutyActionTime(task: Task): string | undefined {
+  return task.timing === 'fixed' ||
+    task.timing === 'fixedEndEstimated' ||
+    (task.timing === 'day' && task.timeUnconfirmed === true)
+    ? task.earliestStart
+    : undefined;
+}
+
+/** 目安の午前0時を過ぎてから届いた時も、その日の終わりまでは確かめられる。 */
+function uncertainDutyDayInProgress(task: Task | undefined, now: number): boolean {
+  if (
+    task?.timing !== 'day' ||
+    task.timeUnconfirmed !== true ||
+    !task.earliestStart ||
+    !task.deadline
+  )
+    return false;
+  const start = toEpochMinutes(task.earliestStart);
+  const remaining = toEpochMinutes(task.deadline) - now;
+  return start <= now && remaining > 0 && remaining <= 26 * 60;
+}
+
 function checkTime(
   intent: Intent,
   until: string | undefined,
@@ -174,16 +197,23 @@ function checkTiming(
     const remaining = toEpochMinutes(deadline) - now;
     return remaining > 0 && remaining <= 26 * 60;
   };
+  const subjectTask =
+    intent.subject.type === 'task'
+      ? plan.tasks.find((entry) => entry.key === intent.subject.id)
+      : undefined;
   if (
     ['notify.decide', 'notify.backup', 'notify.question', 'notify.unowned'].includes(
       intent.titleKey,
     ) &&
-    !inWindow(intent.until)
+    !inWindow(
+      intent.titleKey === 'notify.unowned' ? (intent.actBy ?? intent.until) : intent.until,
+    ) &&
+    !(intent.titleKey === 'notify.unowned' && uncertainDutyDayInProgress(subjectTask, now))
   ) {
     out.violation('notification_wrong_time', intent.key, '知らせる時機ではない。');
   }
   if (intent.titleKey !== 'notify.proposal' || intent.subject.type !== 'task') return;
-  const task = plan.tasks.find((entry) => entry.key === intent.subject.id);
+  const task = subjectTask;
   if (!task) return; // 元の作業が無いことは checkSubject が報告する。
   const proposed = events.findLast(
     (event) => event.type === 'assignmentProposed' && event.taskKey === task.key,
@@ -193,7 +223,10 @@ function checkTiming(
   } else if (proposed === undefined || proposed.actorId === 'system') {
     const arrangement = plan.arrangements.find((entry) => entry.key === task.basis.arrangementKey);
     const option = arrangement?.options.find((entry) => entry.key === task.basis.optionKey);
-    if (!inWindow(option?.decisionDeadline ?? task.deadline ?? task.start)) {
+    if (
+      !inWindow(option?.decisionDeadline ?? dutyActionTime(task) ?? task.deadline ?? task.start) &&
+      !uncertainDutyDayInProgress(task, now)
+    ) {
       out.violation('notification_wrong_time', intent.key, '仕組みの提案を早く知らせている。');
     }
   }
@@ -243,7 +276,9 @@ function checkSubject(intent: Intent, plan: Plan, timeZone: string, out: Collect
         : task.commitment !== 'accepted' || !task.reconfirm)
     )
       return wrong();
-    checkTime(intent, task.start ?? task.deadline, undefined, out);
+    const until = task.start ?? task.deadline;
+    const actBy = task.start ?? dutyActionTime(task);
+    checkTime(intent, until, sameTime(actBy, until) ? undefined : actBy, out);
     return;
   }
   if (titleKey === 'notify.unowned') {
@@ -287,7 +322,7 @@ function checkSubject(intent: Intent, plan: Plan, timeZone: string, out: Collect
       option && !option.expired && option.decisionDeadline
         ? option.decisionDeadline
         : task.deadline;
-    checkTime(intent, deadline, undefined, out);
+    checkTime(intent, deadline, option ? undefined : dutyActionTime(task), out);
     return;
   }
   if (titleKey === 'notify.question') {

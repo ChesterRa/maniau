@@ -8,7 +8,7 @@
 // 文はロック画面に出るので、子・学校・人の名前を入れない。
 import type { DomainEvent } from '../schema/events';
 import type { Household } from '../schema/household';
-import type { PlanResult } from '../schema/plan';
+import type { PlanResult, Task } from '../schema/plan';
 import {
   addDays,
   type DateTime,
@@ -147,6 +147,35 @@ const NO_HISTORY = notificationHistory([]);
 
 type Draft = Omit<NotificationIntent, 'toMemberId'>;
 
+/**
+ * 本人が動く時：書かれた時刻の決まった作業（当番）は、その始まり（終わりまでに済めば良いのではない）。日だけの
+ * 当番は始まりが書かれていないので作らず、その日の終わり（締切）で決める。ただし、読み取りの始まりを確かめ
+ * られなかった当番（timeUnconfirmed）は、朝早くかもしれないので、その日の始まり（0 時）を目安にする（書かれた
+ * 始まりとはしない。画面にも出さない。急ぐかと、夜に朝まで待つかを決めるだけ）。ほかの作業は無し。
+ */
+const actByOf = (task: Task): DateTime | undefined =>
+  task.timing === 'fixed' ||
+  task.timing === 'fixedEndEstimated' ||
+  (task.timing === 'day' && task.timeUnconfirmed)
+    ? task.earliestStart
+    : undefined;
+
+/**
+ * 急ぐか：本人が動く時（無ければ期限）が近い。始まりを確かめられなかった当番は、目安（0 時）を過ぎた後も
+ * （その日に届いた等）、その日の終わりが近ければ急ぐ（過ぎた目安で、知らせを止めない）。
+ */
+const due = (
+  task: Task,
+  actBy: DateTime | undefined,
+  deadline: DateTime | undefined,
+  now: EpochMinutes,
+): boolean =>
+  urgent(actBy ?? deadline, now) ||
+  (task.timeUnconfirmed === true &&
+    actBy !== undefined &&
+    toEpochMinutes(actBy) <= now &&
+    urgent(deadline, now));
+
 function intentOf(
   card: TodayCard,
   memberId: string,
@@ -217,9 +246,18 @@ function intentOf(
       if (!changed && by === memberId) return undefined;
       // 仕組みの提案（勧めた買い物を、通る人に。提案の事象が無いか、仕組みが書いた物）は、日ごとに
       // 置き直すので、決め時が近い時だけ。大人が頼んだ物は、頼まれた時に知らせる（引き受けるまで追う）。
+      // 書かれた時刻の決まった当番だけ、始まりで急ぐかを決める（ほかの作業は、これまでどおり締切から）。
+      const actBy = actByOf(task);
       if (!changed && (by === undefined || by === 'system')) {
         const option = card.arrangement?.options.find((o) => o.key === task.basis.optionKey);
-        if (!urgent(option?.decisionDeadline ?? task.deadline ?? task.start, now)) return undefined;
+        const decideBy = option?.decisionDeadline;
+        if (
+          decideBy !== undefined
+            ? !urgent(decideBy, now)
+            : !due(task, actBy, task.deadline ?? task.start, now)
+        ) {
+          return undefined;
+        }
       }
       // 出ている間に時刻などが替わっても、知らせ直さない（開けば今の中身を見せる）。引き受け直して
       // 消えた後に、また替われば、次の回として知らせる。
@@ -230,25 +268,30 @@ function intentOf(
         kind: 'assignment',
         titleKey: changed ? 'notify.changed' : 'notify.proposal',
         ...(until ? { until } : {}),
+        ...(actBy && actBy !== until ? { actBy } : {}),
       };
     }
     case 'unowned': {
       // だれも持っていない作業は、二人の「きょう」に出し続け、期限が近づいた時だけ二人に知らせる
       // （届いた時は、画面で足りる）。期限は、案の手順なら案の決め時（過ぎて始めた案なら作業の締切）、
       // それ以外は作業の締切（提出物は出す日）。
+      // 書かれた時刻の決まった当番は、終わりではなく始まりまでに誰かが持つ（急ぐか・夜に待つかも始まりで
+      // 決める。終わるまでは、知らせる意味がある）。
       const { task } = card;
       const option = card.arrangement?.options.find((o) => o.key === task.basis.optionKey);
       const deadline =
         option && !option.expired && option.decisionDeadline !== undefined
           ? option.decisionDeadline
           : task.deadline;
-      if (!urgent(deadline, now)) return undefined;
+      const actBy = option ? undefined : actByOf(task);
+      if (!due(task, actBy, deadline, now)) return undefined;
       return {
         key: `unowned:${task.key}`,
         subject: { type: 'task', id: task.key },
         kind: 'assignment',
         titleKey: 'notify.unowned',
         ...(deadline ? { until: deadline } : {}),
+        ...(actBy ? { actBy } : {}),
       };
     }
     case 'question':

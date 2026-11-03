@@ -21,6 +21,7 @@ const item = (
   relativeDay: 'none',
   conditionNodeId: null,
   inferred: false,
+  familyAction: false,
   effects: [],
   ...over,
 });
@@ -433,5 +434,274 @@ describe('「あした」とモデルの日付', () => {
     expect(issues.map((i) => i.problem)).toEqual(['relativeDayMismatch']);
     expect(extraction.items[0]?.evidence).toBe('conflicting');
     expect(extraction.items[0]?.interpretation.date).toBe('2026-11-28');
+  });
+});
+
+describe('家の人がすること（familyAction）', () => {
+  const note = {
+    id: 'r1',
+    version: 1,
+    receivedAt: '2026-11-25T18:00+09:00',
+    sender: 'school' as const,
+    language: 'ja' as const,
+    medium: 'text' as const,
+    sentences: [
+      { id: 'r1#1', text: 'あした、音読カードにサインをお願いします。' },
+      { id: 'r1#2', text: '漢字ドリル12ページ。' },
+      { id: 'r1#3', text: '体操服を持ってきてください。' },
+    ],
+  };
+
+  it('宿題と当番の物だけに残す（ほかの種類に付いても外す）。無い・false なら付けない', () => {
+    const { extraction, issues } = toExtraction(
+      {
+        items: [
+          item({
+            id: 'i1',
+            sentenceIds: ['r1#1'],
+            kind: 'homework',
+            written: 'あした、音読カードにサインをお願いします。',
+            relativeDay: 'tomorrow',
+            what: '音読カードのサイン',
+            familyAction: true,
+          }),
+          item({
+            id: 'i2',
+            sentenceIds: ['r1#2'],
+            kind: 'homework',
+            written: '漢字ドリル12ページ。',
+            what: '漢字ドリル12ページ',
+          }),
+          item({
+            id: 'i3',
+            sentenceIds: ['r1#3'],
+            kind: 'belongings',
+            written: '体操服を持ってきてください。',
+            what: '体操服',
+            familyAction: true,
+          }),
+        ],
+        unknowns: [],
+        conditions: [],
+        irrelevantSentenceIds: [],
+        ambiguities: [],
+      },
+      note,
+      { priorItems: [], priorUnknowns: [] },
+    );
+    expect(issues).toEqual([]);
+    const byId = new Map(extraction.items.map((i) => [i.id, i.interpretation]));
+    expect(byId.get('r1:i1')?.familyAction).toBe(true);
+    expect(byId.get('r1:i2')).not.toHaveProperty('familyAction');
+    expect(byId.get('r1:i3')).not.toHaveProperty('familyAction');
+  });
+});
+
+describe('書かれていない時刻', () => {
+  const note = (text: string) => ({
+    id: 'r2',
+    version: 1,
+    receivedAt: '2026-11-25T18:00+09:00',
+    sender: 'school' as const,
+    language: 'ja' as const,
+    medium: 'text' as const,
+    sentences: [{ id: 'r2#1', text }],
+  });
+  const read = (text: string, over: Partial<ExtractionOutput['items'][number]>) =>
+    toExtraction(
+      {
+        items: [
+          item({ id: 'i1', sentenceIds: ['r2#1'], kind: 'submission', written: text, ...over }),
+        ],
+        unknowns: [],
+        conditions: [],
+        irrelevantSentenceIds: [],
+        ambiguities: [],
+      },
+      note(text),
+      { priorItems: [], priorUnknowns: [] },
+    );
+
+  it('日だけの締切に付けた時刻は、その日の朝の目安にして日だけと印を付け、その文を確かめてもらう', () => {
+    const text = '個人面談の出欠票は12月4日までに出してください。';
+    const { extraction, issues } = read(text, { deadline: '2026-12-04T17:00+09:00' });
+    expect(extraction.items[0]?.interpretation).toMatchObject({
+      deadline: '2026-12-04T08:00+09:00',
+      deadlineDayOnly: true,
+    });
+    expect(issues).toEqual([
+      { problem: 'unwrittenTime', ref: 'r2:i1', detail: '2026-12-04T17:00+09:00' },
+    ]);
+    // 時刻の書き方は数え切れないので、見つからないだけでは「書かれていない」と言わない（確かめてもらう）。
+    expect(extraction.checkSentenceIds).toEqual(['r2#1']);
+    expect(extraction.items[0]?.evidence).toBe('stated');
+  });
+
+  it('漢数字の時刻も、書かれた時刻とする', () => {
+    for (const [text, deadline] of [
+      ['12月4日（金）午後八時までに出してください。', '2026-12-04T20:00+09:00'],
+      ['12月4日（金）十二時半までに出してください。', '2026-12-04T12:30+09:00'],
+      ['12月4日（金）十時十五分までに出してください。', '2026-12-04T10:15+09:00'],
+    ] as const) {
+      const { extraction, issues } = read(text, { deadline });
+      expect(extraction.items[0]?.interpretation.deadline).toBe(deadline);
+      expect(issues).toEqual([]);
+    }
+  });
+
+  it('書かれた時刻はそのまま。午前・午後の書かれていない時は、どちらの読みも許す', () => {
+    for (const [text, deadline] of [
+      ['12月4日8時半までに出してください。', '2026-12-04T08:30+09:00'],
+      ['12月4日 午後8時までに出してください。', '2026-12-04T20:00+09:00'],
+      ['12月4日 13:00までに出してください。', '2026-12-04T13:00+09:00'],
+      ['12月4日 1時までに出してください。', '2026-12-04T13:00+09:00'],
+      ['12月4日 正午までに出してください。', '2026-12-04T12:00+09:00'],
+    ] as const) {
+      const { extraction, issues } = read(text, { deadline });
+      expect(extraction.items[0]?.interpretation.deadline).toBe(deadline);
+      expect(extraction.items[0]?.interpretation).not.toHaveProperty('deadlineDayOnly');
+      expect(issues).toEqual([]);
+    }
+  });
+
+  it('文に時刻があるのに合わない締切の時刻は、日だけにして、その文を確かめてもらう', () => {
+    for (const [text, deadline] of [
+      ['12月4日 午後8時までに出してください。', '2026-12-04T08:00+09:00'],
+      ['12月4日 午前8時までに出してください。', '2026-12-04T20:00+09:00'],
+      ['12月4日 13:00までに出してください。', '2026-12-04T01:00+09:00'],
+    ] as const) {
+      const { extraction, issues } = read(text, { deadline });
+      expect(extraction.items[0]?.interpretation).toMatchObject({ deadlineDayOnly: true });
+      expect(issues).toEqual([{ problem: 'unwrittenTime', ref: 'r2:i1', detail: deadline }]);
+      expect(extraction.checkSentenceIds).toEqual(['r2#1']);
+    }
+  });
+
+  it('書かれていない始まり・終わりは落とし（書かれた方は残す）、その文を確かめてもらう', () => {
+    const text = '12月13日(日)8:30から お茶当番';
+    const { extraction, issues } = read(text, {
+      kind: 'duty',
+      date: '2026-12-13',
+      writtenWeekday: 'sun',
+      startTime: '08:30',
+      endTime: '10:00',
+    });
+    const interpretation = extraction.items[0]?.interpretation;
+    expect(interpretation?.startTime).toBe('08:30');
+    expect(interpretation).not.toHaveProperty('endTime');
+    expect(issues).toEqual([{ problem: 'unwrittenTime', ref: 'r2:i1', detail: '10:00' }]);
+    expect(extraction.checkSentenceIds).toEqual(['r2#1']);
+  });
+
+  it('範囲の前の午前・午後は後ろにも効く。空白の前後の数はつなげない', () => {
+    const cases = [
+      // [原文, 始まり, 終わり, 書かれた物か]
+      ['12月13日（日）午後1〜3時 お茶当番', '13:00', '03:00', false],
+      ['12月13日（日）午後1時〜3時 お茶当番', '13:00', '03:00', false],
+      ['12月13日（日）午後1時〜3時 お茶当番', '13:00', '15:00', true],
+      ['12月13日（日）午前9〜11時 お茶当番', '09:00', '23:00', false],
+      ['12月13日（日）午前10時〜1時 お茶当番', '10:00', '13:00', true],
+      ['12/13 9:00〜10:00 お茶当番', '09:00', '10:00', true],
+      ['12/13 午後 8時から お茶当番', '08:00', null, false],
+    ] as const;
+    for (const [text, start, end, ok] of cases) {
+      const { issues } = read(text, {
+        kind: 'duty',
+        date: '2026-12-13',
+        startTime: start,
+        endTime: end,
+      });
+      expect([text, start, end, issues.length === 0]).toEqual([text, start, end, ok]);
+    }
+  });
+
+  it('つなぎの言葉が何でも（から・まで、–）、前の午前・午後から外れた読みを書かれたとしない', () => {
+    const cases = [
+      // [原文, 始まり, 終わり, 書かれた物か]
+      ['12月13日 午前9時から10時まで お茶当番', '09:00', '22:00', false],
+      ['12月13日 午前9時から10時まで お茶当番', '09:00', '10:00', true],
+      ['12月13日 午前9時–10時 お茶当番', '09:00', '22:00', false],
+      ['12月13日 午前9–10時 お茶当番', '09:00', '10:00', true],
+      ['12月13日 午後1時から3時まで お茶当番', '13:00', '03:00', false],
+      ['12月13日 午後1時から3時まで お茶当番', '13:00', '15:00', true],
+      ['12月13日 正午から2時まで お茶当番', '12:00', '02:00', false],
+      ['12月13日 正午から2時まで お茶当番', '12:00', '14:00', true],
+      // 前に午前・午後の書かれていない時は、どちらの読みも許す（文の前後からのモデルの読みに任せる）。
+      ['12月13日 9時から10時まで お茶当番', '09:00', '10:00', true],
+    ] as const;
+    for (const [text, start, end, ok] of cases) {
+      const { issues } = read(text, {
+        kind: 'duty',
+        date: '2026-12-13',
+        startTime: start,
+        endTime: end,
+      });
+      expect([text, start, end, issues.length === 0]).toEqual([text, start, end, ok]);
+    }
+  });
+
+  it('別の日・別の句の時刻からは受け継がない。24 時制で書いた時刻は書いたままにする', () => {
+    const cases = [
+      // [原文, 日, 始まり, 終わり, 書かれた物か]
+      // 前の日の「15時」から午後を受けて、次の日の 9 時・10 時を消さない。
+      [
+        '12月4日の講習は15時に終了、12月5日の保護者のお茶当番は9時から10時です。',
+        '2026-12-05',
+        '09:00',
+        '10:00',
+        true,
+      ],
+      // 読点で区切った後の時刻は、前の午後を受けない（どちらの読みも許す）。
+      ['12月13日 午後3時に解散、集合は8時です。', '2026-12-13', '08:00', null, true],
+      // 前に 0 を付けた時刻は 24 時制。午後の読みは無い。続く時刻も書いたまま。
+      ['12月13日のお茶当番は09:00〜10:00です。', '2026-12-13', '21:00', '22:00', false],
+      ['12月13日のお茶当番は09:00〜10:00です。', '2026-12-13', '09:00', '22:00', false],
+      ['12月13日のお茶当番は09:00〜10:00です。', '2026-12-13', '09:00', '10:00', true],
+      ['12月13日 08:30〜10:00 お茶当番', '2026-12-13', '08:30', '10:00', true],
+      // 同じ句の 24 時制の後の時刻も、書いたまま（午後と読まない）。
+      ['12月13日 15時終了 9時から10時 お茶当番', '2026-12-13', '09:00', '10:00', true],
+      ['12月13日 15時終了 9時から10時 お茶当番', '2026-12-13', '21:00', '22:00', false],
+    ] as const;
+    for (const [text, date, start, end, ok] of cases) {
+      const { issues } = read(text, { kind: 'duty', date, startTime: start, endTime: end });
+      expect([text, start, end, issues.length === 0]).toEqual([text, start, end, ok]);
+    }
+  });
+
+  it('始まりの時刻を落とした時は、確かめていないと印を付ける（書かれていないとは言わない）', () => {
+    const text = '12月13日のお茶当番は09:00〜10:00です。';
+    const dropped = read(text, {
+      kind: 'duty',
+      date: '2026-12-13',
+      startTime: '21:00',
+      endTime: null,
+    }).extraction.items[0]?.interpretation;
+    expect(dropped).toMatchObject({ startTimeUnconfirmed: true });
+    expect(dropped).not.toHaveProperty('startTime');
+    const kept = read(text, {
+      kind: 'duty',
+      date: '2026-12-13',
+      startTime: '09:00',
+      endTime: '10:00',
+    }).extraction.items[0]?.interpretation;
+    expect(kept).not.toHaveProperty('startTimeUnconfirmed');
+  });
+
+  it('「9〜10時」のように時をまとめて書いた範囲も、両方を書かれた時刻とする', () => {
+    for (const [text, start, end] of [
+      ['12月13日（日）9〜10時 お茶当番', '09:00', '10:00'],
+      ['12月13日（日）午後1〜3時 お茶当番', '13:00', '15:00'],
+      ['12月13日（日）9時〜10時半 お茶当番', '09:00', '10:30'],
+    ] as const) {
+      const { extraction, issues } = read(text, {
+        kind: 'duty',
+        date: '2026-12-13',
+        writtenWeekday: 'sun',
+        startTime: start,
+        endTime: end,
+      });
+      expect(extraction.items[0]?.interpretation).toMatchObject({ startTime: start, endTime: end });
+      expect(issues).toEqual([]);
+    }
   });
 });

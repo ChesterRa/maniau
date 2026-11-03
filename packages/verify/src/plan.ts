@@ -17,6 +17,7 @@ import {
   instantMinute,
   localMinute,
   matchesArrangementDay,
+  timeOfDay,
   weekday,
 } from './time';
 
@@ -33,6 +34,40 @@ function indexUnique<T>(
     else result.set(id, item);
   }
   return result;
+}
+
+/** 家族の否定した当番を、要件や作業として扱っていないか。 */
+function checkDutyTurn(
+  itemId: string,
+  subject: string,
+  facts: FactState,
+  history: History,
+  report: Collector,
+): void {
+  const item = facts.items.get(itemId);
+  const turn = facts.turns.get(itemId);
+  if (
+    item?.kind !== 'duty' ||
+    item.interpretation.familyAction !== true ||
+    turn?.ours !== false ||
+    turn.what !== (item.interpretation.what ?? item.written) ||
+    turn.audience !== (item.interpretation.audience ?? null)
+  )
+    return;
+  // 言った後の事象が欠けていれば、後から「うちの番」と答え直した可能性を除けない。
+  if (!history.complete || facts.staleItems.has(itemId) || facts.active.get(itemId) !== true) {
+    report.undetermined(
+      'duty_turn_unverified',
+      subject,
+      '当番の帰属の言明が現在も有効か確かめられない。',
+    );
+  } else {
+    report.violation(
+      'duty_turn_conflict',
+      subject,
+      '家族がうちの番ではないと言った当番を、家族の要件や作業にしている。',
+    );
+  }
 }
 
 function checkBasis(
@@ -731,6 +766,8 @@ export function checkPlan(
       for (const id of requirement.basis.itemIds) {
         const item = facts.items.get(id);
         const correction = facts.corrections.get(id);
+        if (requirement.basis.itemIds.length === 1 && requirement.kind === 'attendance')
+          checkDutyTurn(id, requirement.key, facts, history, report);
         if (facts.staleItems.has(id) && requirement.conditional !== true) {
           report.violation(
             'stale_item_unmarked',
@@ -744,7 +781,12 @@ export function checkPlan(
           requirement.basis.itemIds.length === 1 &&
           item &&
           ((requirement.kind === 'belongings' && item.kind === 'belongings') ||
-            (requirement.kind === 'submission' && item.kind === 'submission')) &&
+            (requirement.kind === 'submission' &&
+              (item.kind === 'submission' ||
+                (item.kind === 'homework' && item.interpretation.familyAction === true))) ||
+            (requirement.kind === 'attendance' &&
+              item.kind === 'duty' &&
+              item.interpretation.familyAction === true)) &&
           requirement.what !== (item.interpretation.what ?? item.written)
         ) {
           if (facts.staleItems.has(id) || facts.active.get(id) !== true)
@@ -763,7 +805,10 @@ export function checkPlan(
         if (
           requirement.basis.itemIds.length === 1 &&
           ((requirement.kind === 'childCare' && item?.kind === 'dayChange') ||
-            (requirement.kind === 'belongings' && item?.kind === 'belongings')) &&
+            (requirement.kind === 'belongings' && item?.kind === 'belongings') ||
+            (requirement.kind === 'attendance' &&
+              item?.kind === 'duty' &&
+              item.interpretation.familyAction === true)) &&
           requirement.date &&
           item.interpretation.date &&
           requirement.date !== item.interpretation.date
@@ -791,6 +836,41 @@ export function checkPlan(
             'requirement_date_unverified',
             requirement.key,
             '持ち物を使う日が元の事項に明記されていない。',
+          );
+        }
+        if (
+          requirement.basis.itemIds.length === 1 &&
+          requirement.kind === 'attendance' &&
+          item?.kind === 'duty' &&
+          item.interpretation.familyAction === true &&
+          item.interpretation.date !== undefined &&
+          requirement.date === undefined
+        ) {
+          if (facts.staleItems.has(id) || facts.active.get(id) !== true)
+            report.undetermined(
+              'requirement_date_unverified',
+              requirement.key,
+              '元の事項の適用や読み取りを確かめられず、要件の日を照らせない。',
+            );
+          else
+            report.violation(
+              'requirement_date_mismatch',
+              requirement.key,
+              '当番の日が元の事項にあるのに、要件から欠けている。',
+            );
+        }
+        if (
+          requirement.basis.itemIds.length === 1 &&
+          requirement.kind === 'attendance' &&
+          item?.kind === 'duty' &&
+          item.interpretation.familyAction === true &&
+          item.interpretation.date === undefined &&
+          requirement.date !== undefined
+        ) {
+          report.undetermined(
+            'requirement_date_unverified',
+            requirement.key,
+            '当番の日を元の事項から確かめられない。',
           );
         }
         if (
@@ -1129,7 +1209,9 @@ export function checkPlan(
       task.live &&
       requirement?.live &&
       ((task.titleKey === 'task.buy' && requirement.kind === 'belongings') ||
-        (task.titleKey === 'task.submit' && requirement.kind === 'submission')) &&
+        ((task.titleKey === 'task.submit' || task.titleKey === 'task.familyAction') &&
+          requirement.kind === 'submission') ||
+        (task.titleKey === 'task.duty' && requirement.kind === 'attendance')) &&
       task.titleParams.what !== requirement.what
     ) {
       report.violation(
@@ -1137,6 +1219,117 @@ export function checkPlan(
         task.key,
         '作業の用件が、今の要件に書かれた物と違う。',
       );
+    }
+    // 当番の用件には、後から変わると別の作業になる日・時刻・場所も入る。
+    // 作業と承諾の控えの両方に同じ古い値を入れた場合も、元の事項と照らせる。
+    if (task.live && task.titleKey === 'task.duty' && task.basis.itemIds.length === 1) {
+      const id = task.basis.itemIds[0];
+      const item = id ? facts.items.get(id) : undefined;
+      if (id) checkDutyTurn(id, task.key, facts, history, report);
+      if (id && item?.kind === 'duty' && item.interpretation.familyAction === true) {
+        // 書かれた始まりを確かめられなかった印を落とすと、札が「時刻は書かれていない」と言い、
+        // 通知も当日の終わりまで待ってしまう。後から始まりを確かめた物には適用しない。
+        if (
+          item.interpretation.date !== undefined &&
+          item.interpretation.startTimeUnconfirmed === true &&
+          item.interpretation.startTime === undefined &&
+          task.timeUnconfirmed !== true
+        ) {
+          if (!history.complete || facts.staleItems.has(id) || facts.active.get(id) !== true) {
+            report.undetermined(
+              'duty_time_confidence_unverified',
+              task.key,
+              '当番の元の開始時刻を確かめられない。',
+            );
+          } else {
+            report.violation(
+              'duty_time_confidence_mismatch',
+              task.key,
+              '確かめられなかった開始時刻を、作業に示していない。',
+            );
+          }
+        }
+        const expected: Record<string, string | undefined> = {
+          date: item.interpretation.date,
+          start: item.interpretation.startTime,
+          end: item.interpretation.endTime,
+          place: item.interpretation.place,
+        };
+        const differs = Object.entries(expected).some(
+          ([key, value]) => task.titleParams[key] !== value,
+        );
+        if (differs) {
+          if (facts.staleItems.has(id) || facts.active.get(id) !== true) {
+            report.undetermined(
+              'duty_content_unverified',
+              task.key,
+              '当番の元の内容を確かめられない。',
+            );
+          } else {
+            report.violation(
+              'duty_content_mismatch',
+              task.key,
+              '当番の用件の日・時刻・場所が、今の事項と違う。',
+            );
+          }
+        }
+      }
+    }
+    // 担当が決まる前の開始・終了も含め、決まった時刻の当番を元の事項と照らす。
+    if (task.live && task.titleKey === 'task.duty' && task.basis.itemIds.length === 1) {
+      const id = task.basis.itemIds[0];
+      const item = id ? facts.items.get(id) : undefined;
+      if (id && item?.kind === 'duty' && item.interpretation.familyAction === true) {
+        const { date, startTime, endTime } = item.interpretation;
+        if (date && startTime) {
+          const expectedStart = dateIndex(date) + timeOfDay(startTime);
+          const localIndex = (value: string) =>
+            localMinute(instantMinute(value), household.timeZone).localIndex;
+          const endMinute = endTime === undefined ? undefined : timeOfDay(endTime);
+          const startMinute = timeOfDay(startTime);
+          const nextDayLength =
+            endMinute === undefined ? undefined : 1440 - startMinute + endMinute;
+          // 日をまたぐと書かれた時刻を、同日終了や翌日終了と勝手に取り違えない。
+          const expectedEnd =
+            endMinute === undefined
+              ? undefined
+              : endMinute > startMinute
+                ? dateIndex(date) + endMinute
+                : nextDayLength !== undefined && nextDayLength <= 12 * 60
+                  ? dateIndex(date) + 1440 + endMinute
+                  : undefined;
+          const startsDiffer =
+            task.earliestStart === undefined ||
+            localIndex(task.earliestStart) !== expectedStart ||
+            (task.start !== undefined && localIndex(task.start) !== expectedStart);
+          const endsDiffer =
+            expectedEnd !== undefined &&
+            (task.deadline === undefined ||
+              localIndex(task.deadline) !== expectedEnd ||
+              (task.end !== undefined && localIndex(task.end) !== expectedEnd));
+          if (startsDiffer || endsDiffer) {
+            if (facts.staleItems.has(id) || facts.active.get(id) !== true) {
+              report.undetermined(
+                'duty_time_unverified',
+                task.key,
+                '当番の元の時刻を確かめられない。',
+              );
+            } else {
+              report.violation(
+                'duty_time_mismatch',
+                task.key,
+                '当番の開始・終了が、元の事項に書かれた時刻と違う。',
+              );
+            }
+          }
+          if (endTime && expectedEnd === undefined)
+            report.undetermined(
+              'duty_time_unverified',
+              task.key,
+              '当番の終了が同日か翌日か確かめられない。',
+            );
+        }
+      }
     }
     if (
       task.live &&

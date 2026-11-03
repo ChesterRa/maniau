@@ -15,11 +15,13 @@ import {
 } from '../schema/source';
 import {
   addDays,
+  formatDateTime,
   isValidDateTime,
   isValidLocalDate,
   localDateOf,
   toEpochMinutes,
   weekdayOf,
+  zonedToEpochMinutes,
 } from '../time';
 
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
@@ -46,6 +48,11 @@ export const ExtractionOutput = z.object({
         .describe('「あした」「きょう」と書かれ、日付が無い時。日付はコードが決める'),
       conditionNodeId: z.string().nullable().describe('適用の条件の根の節点の ID'),
       inferred: z.boolean().describe('原文に書かれておらず推定した事なら true'),
+      familyAction: z
+        .boolean()
+        .describe(
+          '宿題・当番で、家の人がすること（サイン、丸つけ、お茶当番、配車）なら true。子どもだけでする事は false',
+        ),
       effects: z.array(
         z.object({
           type: z.enum(['resolveUnknown', 'replace', 'cancel']),
@@ -78,6 +85,20 @@ export const ExtractionOutput = z.object({
 });
 export type ExtractionOutput = z.infer<typeof ExtractionOutput>;
 
+/**
+ * 録った出力と手で書いた形を、今の形で読む。extract.v2 までの物には familyAction の欄が無い（v3 で足した）。
+ * v2 は家の人がすることを分けていなかったので、無い欄は false として読む（録った物そのものは書き換えない）。
+ */
+export function parseStoredExtraction(raw: unknown): ExtractionOutput {
+  const items = (raw as { items?: unknown }).items;
+  return ExtractionOutput.parse({
+    ...(raw as object),
+    items: Array.isArray(items)
+      ? items.map((item: unknown) => ({ familyAction: false, ...(item as object) }))
+      : items,
+  });
+}
+
 export interface ReadingIssue {
   problem:
     | 'unknownSentence'
@@ -93,7 +114,12 @@ export interface ReadingIssue {
     /** 書かれた表現が、指した文に無い（原文に無い言葉を根拠にしている）。 */
     | 'quoteMismatch'
     /** 指した文に日付が書かれているのに、モデルの日付・期限がどれとも合わない。 */
-    | 'dateMismatch';
+    | 'dateMismatch'
+    /**
+     * 指した文に見つからない時刻（「12月4日まで」から作った 8:00、「午後8時」を 8:00 と読んだ物）。落として
+     * （締切は日だけにして）、その文を家族に確かめてもらう。
+     */
+    | 'unwrittenTime';
   ref: string;
   detail?: string;
 }
@@ -220,10 +246,8 @@ export function toExtraction(
     // 「あした」は、出典が届いた日の次の日（暦どおり。習い事の金曜の連絡の「あした」は土曜）。
     // 「きょう」は届いた日。書かれた曜日と食い違えば、下で「食い違い」にして家族に確かめてもらう。
     const relativeDay = raw.relativeDay === 'none' ? undefined : raw.relativeDay;
-    const receivedOn = localDateOf(
-      toEpochMinutes(source.receivedAt),
-      context.timeZone ?? 'Asia/Tokyo',
-    );
+    const tz = context.timeZone ?? 'Asia/Tokyo';
+    const receivedOn = localDateOf(toEpochMinutes(source.receivedAt), tz);
     // 相対の言い方があれば、日付はコードが決める。モデルが別の日付を返したら、取らずに「食い違い」にする
     // （プロンプトで date を空にさせても、守られるとは限らないため）。
     const relativeDate =
@@ -289,6 +313,30 @@ export function toExtraction(
       issues.push({ problem: 'quoteMismatch', ref: id });
       evidence = 'conflicting';
     }
+    // 時刻も、指した文に書かれた物だけを使う（「12月4日まで」から 8:00 を作らない。書かれた午前・午後は
+    // 守らせ、書かれていない時だけ、文の前後からのモデルの読みを許す）。書かれていない始まり・終わりは落とす。締切は、その日の朝（日だけの締切と
+    // 同じ目安）にして、日だけが書かれていたと印を付ける（画面は時刻を書かれた物として見せない）。
+    const clocks = writtenClock(
+      source.sentences.filter((s) => raw.sentenceIds.includes(s.id)).map((s) => s.text),
+    );
+    const written = (time: string) => clocks.has(clockKey(time));
+    const startTime = raw.startTime !== null && written(raw.startTime) ? raw.startTime : null;
+    const endTime = raw.endTime !== null && written(raw.endTime) ? raw.endTime : null;
+    const deadlineDayOnly = raw.deadline !== null && !written(raw.deadline.slice(11, 16));
+    const deadline =
+      raw.deadline === null || !deadlineDayOnly
+        ? raw.deadline
+        : formatDateTime(zonedToEpochMinutes(raw.deadline.slice(0, 10), '08:00', tz), tz);
+    // 落とした時刻（始まり・終わり・締切）は、その文を家族に確かめてもらう。時刻の書き方は数え切れない
+    // （「午後八時」「夕方まで」）ので、見つからないことを「書かれていない」証拠にしない。
+    const unwritten = [
+      startTime === raw.startTime ? null : raw.startTime,
+      endTime === raw.endTime ? null : raw.endTime,
+      deadlineDayOnly ? raw.deadline : null,
+    ].filter((t) => t !== null);
+    if (unwritten.length > 0) {
+      issues.push({ problem: 'unwrittenTime', ref: id, detail: unwritten.join(',') });
+    }
     // 指した文に「12月5日」「8日」「12/5」と書かれていれば、モデルの日付と期限の日は、そのどれかと合うはず
     // （曜日の同じ別の週に読み違えるのを、曜日の検査は見つけない）。合っても、正しく読めたとまでは言えない。
     const mentioned = writtenDates(cited);
@@ -307,14 +355,22 @@ export function toExtraction(
       interpretation: {
         ...(date === null ? {} : { date }),
         ...(writtenWeekday === undefined ? {} : { writtenWeekday }),
-        ...(raw.startTime === null ? {} : { startTime: raw.startTime }),
-        ...(raw.endTime === null ? {} : { endTime: raw.endTime }),
+        ...(startTime === null ? {} : { startTime }),
+        ...(endTime === null ? {} : { endTime }),
         ...(raw.what === null ? {} : { what: raw.what }),
         ...(raw.dayType === null ? {} : { dayType: raw.dayType }),
-        ...(raw.deadline === null ? {} : { deadline: raw.deadline }),
+        ...(deadline === null ? {} : { deadline }),
+        ...(deadlineDayOnly ? { deadlineDayOnly: true as const } : {}),
+        ...(raw.startTime !== null && startTime === null
+          ? { startTimeUnconfirmed: true as const }
+          : {}),
         ...(raw.audience === null ? {} : { audience: raw.audience }),
         ...(raw.place === null ? {} : { place: raw.place }),
         ...(relativeDay === undefined ? {} : { relativeDay }),
+        // 家の人がすることは、宿題と当番の物だけを使う（ほかの種類に付いても、作業は作らない）。
+        ...(raw.familyAction && (raw.kind === 'homework' || raw.kind === 'duty')
+          ? { familyAction: true as const }
+          : {}),
       },
       ...(condition === undefined ? {} : { conditionNodeId: condition }),
       evidence,
@@ -356,6 +412,137 @@ function writtenDates(text: string): { month?: number; day: number }[] {
   }
   return found;
 }
+
+/** 午前・午後を表す言葉（前に付く物と、後ろに付く am・pm）。 */
+const MARKER = '(午前|午後|朝|夜|夕方)?\\|?';
+const SUFFIX = '\\|?(am|pm|a\\.m\\.|p\\.m\\.)?';
+/** 時刻の数（前の数字の続きや、分を時と読まない）。 */
+const HOUR = '(?<![\\d:])(\\d{1,2})';
+/** 時の後ろ：「:30」「時」「時30分」「時半」。 */
+const UNIT = '(?::(\\d{2})|時(?:(\\d{1,2})分|(半))?)';
+const RANGE = new RegExp(
+  `${MARKER}${HOUR}${UNIT}?\\|?[〜~\\-ー―‐–—]\\|?${MARKER}${HOUR}${UNIT}${SUFFIX}`,
+  'gi',
+);
+const SINGLE = new RegExp(`${MARKER}${HOUR}${UNIT}${SUFFIX}`, 'gi');
+const SUFFIX_ONLY = new RegExp(`${HOUR}\\|?(am|pm|a\\.m\\.|p\\.m\\.)`, 'gi');
+
+/** 時刻の読みを前から受け継がせない区切り：読点・句点などと、書かれた日付（別の日・別の事の時刻）。 */
+const CLAUSE_BREAK = /[、，,。；;]|(?:\d{1,2}月)?\d{1,2}日|\d{1,2}\/\d{1,2}/g;
+
+/**
+ * 文に書かれた時刻（0〜23 時の「時:分」）。「8:30」「8時半」「8時30分」「13時」「午後8時」「朝8時」「正午」
+ * 「8pm」「9〜10時」「午後1時〜3時」。
+ * - 午前・午後（朝・夜・夕方、am・pm、正午）の付いた時刻は、その時刻だけ。
+ * - 24 時制で書いた時刻（「09:00」のような前の 0、13〜23 時、0 時）は、書いたままの時刻だけ。
+ * - 印の無い 1〜12 時は、同じ句（読点・句点・日付で区切る）の前に、印のある時刻か 24 時制の時刻があれば、
+ *   それに合わせる。印なら午前・午後を受け（前より早くなれば半日後。「午前9時から10時まで」の 10 時は
+ *   10:00 だけ）、24 時制なら書いたままにする（「08:30〜10:00」の 10 時は 10:00 だけ）。つなぎの言葉を
+ *   見分けられなくても、外れた読みを書かれたとしない。別の日・別の句の時刻からは受けない。
+ * - 前に何も無い 1〜12 時は、午前と午後の両方にする（どちらかは、文の前後からのモデルの読みに任せる）。
+ * 文は全角・半角をそろえ、空白は一つにした形で読む（空白を除くと、「12/13 9:00」の数がつながる）。
+ */
+function writtenClock(sentences: readonly string[]): Set<string> {
+  const found = new Set<string>();
+  const half = (word: string | undefined) =>
+    word === undefined || word === '' ? undefined : /午前|朝|am|a\.m\./i.test(word) ? 'am' : 'pm';
+  const minuteOf = (colon?: string, minutes?: string, halfHour?: string) =>
+    colon ? Number(colon) : minutes ? Number(minutes) : halfHour ? 30 : 0;
+  const put = (minute: number) => found.add(clock(Math.floor(minute / 60), minute % 60));
+  /** 前に 0 を付けた時（「09」）。24 時制で書いた印。 */
+  const zero = (hour: string | undefined) => hour !== undefined && /^0\d$/.test(hour);
+  type Written = {
+    at: number;
+    hour: number;
+    minute: number;
+    which: 'am' | 'pm' | undefined;
+    twentyFour: boolean;
+  };
+  for (const sentence of sentences) {
+    // 空白の前後の数がつながらないよう、空白のあった所には区切り（|）を残す。漢数字（八時、十二時半）は数字に
+    // する。
+    let text = arabic(sentence.normalize('NFKC').replace(/\s+/g, '|'));
+    /** 文の中の位置と、書かれた時・分・午前か午後（書かれていれば）・24 時制で書いたか。 */
+    const times: Written[] = [];
+    const written = (at: number, hour: string, minute: number, which: 'am' | 'pm' | undefined) =>
+      times.push({
+        at,
+        hour: Number(hour),
+        minute,
+        which,
+        twentyFour: zero(hour) || Number(hour) === 0 || Number(hour) >= 13,
+      });
+    for (const m of text.matchAll(RANGE)) {
+      const [, m1, h1 = '', c1, n1, half1, m2, h2 = '', c2, n2, half2, suffix] = m;
+      // 後ろだけに付いた am・pm は、前にも効く（「9-10am」）。前に付いた午前・午後は、後ろが受ける（下で）。
+      written(
+        m.index,
+        h1,
+        minuteOf(c1, n1, half1),
+        half(m1) ?? (m2 === undefined ? half(suffix) : undefined),
+      );
+      written(m.index + m[0].length - 1, h2, minuteOf(c2, n2, half2), half(m2) ?? half(suffix));
+      // 範囲の数を、一つの時刻として読み直さない。
+      text = `${text.slice(0, m.index)}${' '.repeat(m[0].length)}${text.slice(m.index + m[0].length)}`;
+    }
+    for (const m of text.matchAll(SINGLE)) {
+      written(m.index, m[2] ?? '', minuteOf(m[3], m[4], m[5]), half(m[1]) ?? half(m[6]));
+    }
+    for (const m of text.matchAll(SUFFIX_ONLY)) written(m.index, m[1] ?? '', 0, half(m[2]));
+    for (const m of text.matchAll(/正午/g)) written(m.index, '12', 0, 'pm');
+    const breaks = [...text.matchAll(CLAUSE_BREAK)].map((m) => m.index);
+    // 文の順に読む。anchor は、同じ句の前の時刻のうち、午前・午後か 24 時制の分かった物（0 時からの分）。
+    let anchor: { minute: number; twentyFour: boolean } | undefined;
+    let at = 0;
+    for (const t of times.sort((a, b) => a.at - b.at)) {
+      if (breaks.some((b) => b >= at && b < t.at)) anchor = undefined;
+      at = t.at;
+      if (t.hour > 24 || t.minute >= 60) continue;
+      if (t.which !== undefined) {
+        anchor = {
+          minute: ((t.hour % 12) + (t.which === 'pm' ? 12 : 0)) * 60 + t.minute,
+          twentyFour: false,
+        };
+        put(anchor.minute);
+      } else if (t.twentyFour || anchor?.twentyFour) {
+        // 24 時制の続きは、書いたままの時刻。
+        anchor = { minute: (t.hour % 24) * 60 + t.minute, twentyFour: true };
+        put(anchor.minute);
+      } else if (anchor !== undefined) {
+        // 前の午前・午後を受ける。前より早くなる時は、半日後（「午前10時〜1時」の 1 時は 13 時）。日をまたぐ
+        // 物は見つけない（書かれたとしないので、確かめてもらう）。
+        const same = (t.hour % 12) * 60 + (anchor.minute >= 720 ? 720 : 0) + t.minute;
+        const later = same > anchor.minute ? same : same + 720;
+        if (later < 1440) {
+          anchor = { minute: later, twentyFour: false };
+          put(later);
+        }
+      } else {
+        put((t.hour % 12) * 60 + t.minute);
+        put(((t.hour % 12) + 12) * 60 + t.minute);
+      }
+    }
+  }
+  return found;
+}
+
+/** 漢数字（〇〜五十九）を数字にする（時と分に使う範囲だけ）。 */
+function arabic(text: string): string {
+  const digit = '〇一二三四五六七八九';
+  return text.replace(/[〇一二三四五六七八九十]+/g, (word) => {
+    const ones = (c: string | undefined) => (c === undefined ? 0 : digit.indexOf(c));
+    if (!word.includes('十')) {
+      return [...word].map((c) => digit.indexOf(c)).join('');
+    }
+    const [tens, rest] = word.split('十');
+    if (rest === undefined || rest.length > 1 || (tens ?? '').length > 1) return word;
+    return String((tens === '' ? 1 : ones(tens)) * 10 + ones(rest === '' ? undefined : rest));
+  });
+}
+
+const clock = (hour: number, minute: number) => `${hour}:${minute}`;
+/** 時刻（HH:MM）を、書かれた時刻と比べる形にする。 */
+const clockKey = (time: string) => clock(Number(time.slice(0, 2)), Number(time.slice(3, 5)));
 
 const sameDay = (mention: { month?: number; day: number }, date: string) =>
   Number(date.slice(8, 10)) === mention.day &&

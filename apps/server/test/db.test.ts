@@ -42,6 +42,17 @@ function otherKinds(): DomainEvent[] {
       },
     ],
     ['b', { type: 'itemConfirmed', itemId: 'i1' }],
+    // うちの番かの言明は、言った時の用件と対象を持つ（名前の入りうる文なので、事象の行には置かない）。
+    [
+      'b',
+      {
+        type: 'turnStated',
+        itemId: 'i1',
+        ours: false,
+        what: '架空の当番',
+        audience: '架空の名前さんのおうち',
+      },
+    ],
     ['b', { type: 'itemCorrected', itemId: 'i1', interpretation: { what: '架空の持ち物' } }],
     ['b', { type: 'itemDismissed', itemId: 'i1', reason: 'misread' }],
     ['b', { type: 'sourceWithdrawn', sourceId: 'n1' }],
@@ -101,15 +112,19 @@ describe('乾かす・戻す（§6.2）', () => {
       ),
       '架空の名前',
       '架空の持ち物',
+      '架空の当番',
     ].filter((s) => s.length >= 2);
     expect(secrets.length).toBeGreaterThan(10);
     for (const event of all) {
       const shown = JSON.stringify(dehydrate(event).row);
       for (const secret of secrets) expect(shown).not.toContain(secret);
     }
-    // 答えの値も、事象の行には置かない。
+    // 答えの値も、うちの番かも、事象の行には置かない。
     for (const event of all.filter((e) => e.type === 'answered')) {
       expect(dehydrate(event).row.body).toEqual({ unknownId: event.unknownId });
+    }
+    for (const event of all.filter((e) => e.type === 'turnStated')) {
+      expect(dehydrate(event).row.body).toEqual({ itemId: event.itemId });
     }
   });
 

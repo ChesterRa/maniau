@@ -288,8 +288,33 @@ export const Task = z.object({
    * 時刻を置かない（零分で手渡せるとは言わない）。同じ人が続けてするか、家族が受け渡しを決める。
    */
   handoff: z.boolean().optional(),
+  /**
+   * お知らせに書かれた時刻の決まり（家の人の当番と、日の書かれていない家の人がすること）。無ければ、仕組みが
+   * 締切までの空いた時間に置く作業。
+   * - fixed：書かれた時刻にする（earliestStart から deadline まで、その時間。前にも後にもずらさない）。
+   * - fixedEndEstimated：始まりだけが書かれ、終わりは書かれていない（読めない）。deadline は目安の長さ。
+   * - day：日だけが書かれ、時刻が無い（その日のどこか）。時刻に置かず、時刻なしで引き受ける。
+   * - undated：日も書かれていない。時刻に置かず、時刻なしで引き受ける（締切を作らない）。
+   * 決まった時刻の作業を置く時も、場所と行き帰りは入れない（atPlaceId を付けない。地図で確かめる前）。
+   */
+  timing: z.enum(['fixed', 'fixedEndEstimated', 'day', 'undated']).optional(),
+  /**
+   * 当番の対象に家の子の名前が無く、うちの番か分からない（保護者全員、名字、呼び名など）。対象の原文を
+   * 添えて見せ、家族が「うちの番ではない」と言えるようにする。家族が「うちの番です」と言えば付けない。
+   */
+  turnUnconfirmed: z.literal(true).optional(),
+  /**
+   * 日だけの当番のうち、読み取りの始まりの時刻を確かめられなかった物（書き方を読み取れなかっただけで、
+   * 書かれているかもしれない）。画面は「書かれていない」と言わず、元の文で確かめてもらう。知らせは、
+   * その日の始まりまでに誰かが持つように早める（書かれた始まりとしては扱わない）。
+   */
+  timeUnconfirmed: z.literal(true).optional(),
 });
 export type Task = z.infer<typeof Task>;
+
+/** 時刻なしで引き受ける作業（書かれた時刻が無い。仕組みが時刻を作らない）。 */
+export const untimed = (task: Pick<Task, 'timing'>): boolean =>
+  task.timing === 'day' || task.timing === 'undated';
 
 /** 問い（§6）：答えで決め方が変わる時だけ、決め時より前に聞く。 */
 export const Question = z.object({

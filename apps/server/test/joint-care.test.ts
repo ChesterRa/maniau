@@ -581,7 +581,7 @@ it('済ませた後に残る手順に、過ぎた時刻を置かない（済ま�
   const shown = earlier && proposalSnapshot(earlier);
   if (!shown) throw new Error('控えが無い');
   const now = '2026-11-30T18:15+09:00';
-  expect(Date.parse(shown.start)).toBeLessThan(Date.parse(now));
+  expect(Date.parse(shown.start ?? '')).toBeLessThan(Date.parse(now));
   expect((await h.done(now)).status).toBe('ok');
   const result = await h.state(now);
   const submit = result.plan.tasks.find((t) => t.key === h.submit);
@@ -636,7 +636,7 @@ it('引き受けた時刻が過ぎたら、過ぎた時刻のまま出さず見�
   const writing = late.tasks.find((t) => t.key === keys.task(option, 'write'));
   expect(writing).toMatchObject({ commitment: 'accepted', reconfirm: true });
   expect(notPast(writing, lateAt)).toBe(true);
-  expect(Date.parse(write.start)).toBeLessThan(Date.parse(lateAt));
+  expect(Date.parse(write.start ?? '')).toBeLessThan(Date.parse(lateAt));
   expect(
     todayCards(late, 'a').main.some(
       (c) => c.kind === 'proposal' && c.task.key === keys.task(option, 'write'),
@@ -649,7 +649,7 @@ it('引き受けた時刻が過ぎたら、過ぎた時刻のまま出さず見�
   const submitting = after.tasks.find((t) => t.key === h.submit);
   expect(submitting?.commitment).toBe('accepted');
   expect(notPast(submitting, later)).toBe(true);
-  expect(Date.parse(submit.start)).toBeLessThan(Date.parse(later));
+  expect(Date.parse(submit.start ?? '')).toBeLessThan(Date.parse(later));
   const arrangement = after.arrangements.find((a) => a.key === first);
   if (!arrangement) throw new Error('手配が無い');
   expect(
@@ -684,7 +684,7 @@ it('引き受けた頼み事（祖母へ）の時刻が過ぎても、過ぎた�
   const shown = proposed && proposalSnapshot(proposed);
   if (!shown) throw new Error('控えが無い');
   expect((await h.run('a', before, { type: 'accept', taskKey: ask, shown })).status).toBe('ok');
-  const later = new Date(Date.parse(shown.start) + 60_000);
+  const later = new Date(Date.parse(shown.start ?? '') + 60_000);
   const at = `${later.toISOString().slice(0, 16)}+00:00`;
   const plan = (await h.state(at)).plan;
   const asking = plan.tasks.find((t) => t.key === ask);

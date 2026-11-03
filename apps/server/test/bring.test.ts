@@ -30,6 +30,7 @@ const socksReader: NoticeReader = async (request) => {
           relativeDay: 'none',
           conditionNodeId: null,
           inferred: false,
+          familyAction: false,
           effects: [],
         },
       ],
