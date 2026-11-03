@@ -24,9 +24,14 @@ export interface FactState {
   sourceSentences: Map<string, Map<string, string>>;
   active: Map<string, Truth>;
   unknowns: Map<string, Unknown>;
+  /** 条件付きの作用もたどり、事象から一意と確認できた答えだけ。 */
+  resolvedValues: Map<string, string>;
+  /** 名前や事項の内容が今と異なり、使えないと確認できた答えの通し番号。 */
+  inapplicableAnswers: Set<number>;
   conditions: Map<string, ConditionNode>;
   changes: Map<string, { kind: 'replace' | 'cancel'; itemId: string; active: Truth }[]>;
   staleItems: Set<string>;
+  staleUnknowns: Set<string>;
   corrections: Map<string, Interpretation>;
   /** 有効な大人が当番の帰属を言った時の内容。読み取りの確認とは分ける。 */
   turns: Map<string, { ours: boolean; what: string; audience: string | null }>;
@@ -72,6 +77,27 @@ interface Extracted extends Extraction {
   eventId: string;
   source: Source | undefined;
   sourceVersion: number;
+}
+
+/** JSON の値を、オブジェクトの欄の順に依らず照らす。中身を検証結果には出さない。 */
+function sameValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) && Array.isArray(right))
+    return left.length === right.length && left.every((value, i) => sameValue(value, right[i]));
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+  const a = left as Record<string, unknown>;
+  const b = right as Record<string, unknown>;
+  const keys = Object.keys(a)
+    .filter((key) => a[key] !== undefined)
+    .sort();
+  return (
+    sameValue(
+      keys,
+      Object.keys(b)
+        .filter((key) => b[key] !== undefined)
+        .sort(),
+    ) && keys.every((key) => sameValue(a[key], b[key]))
+  );
 }
 
 function checkCoverage(
@@ -299,10 +325,12 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
     .filter((entry) => !purgedSources.has(entry.sourceId))
     .sort((a, b) => a.sourceSeq - b.sourceSeq);
   const staleItems = new Set<string>();
+  const staleUnknowns = new Set<string>();
   for (const extraction of extracted) {
     const currentVersion = sources.get(extraction.sourceId)?.source.version;
     if (currentVersion !== undefined && extraction.sourceVersion < currentVersion) {
       for (const entry of extraction.items) staleItems.add(entry.id);
+      for (const entry of extraction.unknowns) staleUnknowns.add(entry.id);
     }
   }
   // 再読は通知を新しくしない。家族の後の答えを、再読しただけで上書きしない。
@@ -403,8 +431,9 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   }
   // 未定値ごとに、最後に効く可能性のある答えを列挙する。条件が不明なら「効く」と「効かない」の両方を
   // 残す。値の集合を全候補から徐々に絞るので、出典の後に家族が条件へ答えても作用を再評価できる。
-  type Candidate = { value: string; seq: number; order: number; item?: Item };
+  type Candidate = { value: string; seq: number; order: number; item?: Item; validity?: Truth };
   const candidates = new Map<string, Candidate[]>();
+  const inapplicableAnswers = new Set<number>();
   let order = 0;
   const addCandidate = (id: string, candidate: Candidate) => {
     const list = candidates.get(id) ?? [];
@@ -422,7 +451,101 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
         );
         continue;
       }
-      addCandidate(event.unknownId, { value: event.value, seq: event.seq, order: order++ });
+      let validity: Truth = true;
+      const unknown = unknowns.get(event.unknownId);
+      if (unknown?.kind === 'family') {
+        // 以前の答えに問いの控えがあれば、今と明らかに違う名前・候補・事項には当てない。
+        // 中身を比較できない控えや、その後の読み直し等で条件が変わったか不明な時は決めつけない。
+        let about: unknown;
+        if (event.about !== undefined) {
+          try {
+            about = JSON.parse(event.about) as unknown;
+          } catch {
+            about = undefined;
+          }
+        }
+        const snapshot =
+          about && typeof about === 'object' && !Array.isArray(about)
+            ? (about as Record<string, unknown>)
+            : undefined;
+        if (snapshot && typeof snapshot.label === 'string' && Array.isArray(snapshot.values)) {
+          if (snapshot.label !== unknown.label || !sameValue(snapshot.values, unknown.values)) {
+            validity = false;
+          } else if (Array.isArray(snapshot.items)) {
+            for (const entry of snapshot.items) {
+              if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                validity = 'unknown';
+                break;
+              }
+              const saved = entry as Record<string, unknown>;
+              const current = typeof saved.id === 'string' ? items.get(saved.id) : undefined;
+              if (!current) {
+                validity = 'unknown';
+                break;
+              }
+              if (
+                saved.kind !== current.kind ||
+                saved.written !== current.written ||
+                !sameValue(saved.interpretation, current.interpretation)
+              ) {
+                validity = false;
+                break;
+              }
+              // 控えが単純な等式で、今も単純な等式なら、値や対象の違いを独立に確かめられる。
+              // 複雑な式や読めない控えの同値性は決めつけない。
+              if (typeof saved.condition === 'string' && current.conditionNodeId) {
+                try {
+                  const previous = JSON.parse(saved.condition) as unknown;
+                  const node = nodes.get(current.conditionNodeId);
+                  if (
+                    Array.isArray(previous) &&
+                    previous.length === 3 &&
+                    previous[0] === 'eq' &&
+                    node?.kind === 'eq' &&
+                    (previous[1] !== node.unknownId || previous[2] !== node.value)
+                  ) {
+                    validity = false;
+                    break;
+                  }
+                } catch {
+                  validity = 'unknown';
+                }
+              }
+            }
+          } else {
+            validity = 'unknown';
+          }
+        } else if (event.about !== undefined) {
+          validity = 'unknown';
+        }
+        if (
+          validity === true &&
+          events.some(
+            (later) =>
+              later.seq > event.seq &&
+              (later.type === 'modelOutputRecorded' ||
+                later.type === 'itemCorrected' ||
+                later.type === 'transcriptionCorrected' ||
+                later.type === 'sourceWithdrawn' ||
+                later.type === 'sourceContentPurged'),
+          )
+        )
+          validity = 'unknown';
+        if (staleUnknowns.has(event.unknownId) && validity === true) validity = 'unknown';
+        if (validity === 'unknown')
+          report.undetermined(
+            'family_answer_basis_unverified',
+            event.unknownId,
+            '前の答えが今の問いにも当てはまるか確認できない。',
+          );
+        if (validity === false) inapplicableAnswers.add(event.seq);
+      }
+      addCandidate(event.unknownId, {
+        value: event.value,
+        seq: event.seq,
+        order: order++,
+        validity,
+      });
     }
   }
   for (const extraction of extracted) {
@@ -536,7 +659,9 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
         const candidate = list[index];
         index += 1;
         if (!candidate) continue;
-        const truth: Truth = candidate.item ? sourceActivity(candidate.item) : true;
+        const truth: Truth = candidate.item
+          ? sourceActivity(candidate.item)
+          : (candidate.validity ?? true);
         if (truth === false) continue;
         possible.add(candidate.value);
         if (truth === true) certainAtThisSeq = true;
@@ -664,9 +789,12 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
     ),
     active,
     unknowns,
+    resolvedValues: assignments,
+    inapplicableAnswers,
     conditions: nodes,
     changes: itemChanges,
     staleItems,
+    staleUnknowns,
     corrections,
     turns,
     escorts,

@@ -14,7 +14,9 @@ import {
   toEpochMinutes,
 } from '@maniau/core';
 import {
+  currentReadings,
   type EngineState,
+  familyQuestionBasis,
   foldEvents,
   itemsOf,
   liveItems,
@@ -291,6 +293,37 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       if (declared && !declared.values.includes(command.value)) {
         return { status: 'invalid', reason: 'undeclaredValue' };
       }
+      // 家族が決める値は、見せた計画の通し番号が今と同じ時だけ受ける（問いの中身・値ごとの要る物・もう一人の
+      // 答え・読み直しが、見せた後に替わっていれば断って見せ直す。前に戻った時も、先の番号も）。
+      if (declared?.kind === 'family') {
+        if (command.seen === undefined) return { status: 'invalid', reason: 'seenRequired' };
+        // 文を直して、読み直す前は答えない（問いの名前が今の文と合っているか分からない。問いも出さない）。
+        if (!currentReadings(state).some((e) => e.unknowns.some((u) => u.id === declared.id))) {
+          return { status: 'conflict', reason: 'rereadPending' };
+        }
+        if (command.seen.throughSeq !== plan.throughSeq) {
+          return { status: 'conflict', reason: 'proposalChanged' };
+        }
+        // 問いの札からの答えは、今の時刻で作った問いが、見せた物と同じ時だけ（期限が過ぎて消えた・変わった問い
+        // の古い札を断る。事象が無くても、時が進めば問いは変わる）。
+        const shown = command.seen.question;
+        if (shown) {
+          const current = plan.questions.find(
+            (q) => q.key === shown.key && q.unknownId === command.unknownId,
+          );
+          const sameUntil =
+            current?.until === undefined || shown.until === undefined
+              ? current?.until === shown.until
+              : toEpochMinutes(current.until) === toEpochMinutes(shown.until);
+          const sameAffects =
+            current !== undefined &&
+            JSON.stringify([...current.affects].sort()) ===
+              JSON.stringify([...shown.affects].sort());
+          if (!current || !sameUntil || !sameAffects) {
+            return { status: 'conflict', reason: 'proposalChanged' };
+          }
+        }
+      }
       // 仕組みが作る値（家にあるか）は「ある・ない」だけ。
       if (!declared && command.value !== 'yes' && command.value !== 'no') {
         return { status: 'invalid', reason: 'undeclaredValue' };
@@ -318,7 +351,13 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
             type: 'answered',
             unknownId: command.unknownId,
             value: command.value,
-            ...(atHome && command.seen ? { about: command.seen.what } : {}),
+            // 家にあるかは見せた品物、家族が決める値は今の問いの形（名前・値・使う事項の中身と条件の式）を控える
+            // （読み直しや直しで別の問い・別の日の行事・逆の条件になったら、この答えを当てない）。
+            ...(atHome && command.seen
+              ? { about: command.seen.what }
+              : declared?.kind === 'family'
+                ? { about: familyQuestionBasis(state, declared) }
+                : {}),
           },
         ],
       };

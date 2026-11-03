@@ -319,6 +319,23 @@ function checkSubject(intent: Intent, plan: Plan, timeZone: string, out: Collect
     )
       return wrong();
     const arrangement = plan.arrangements.find((entry) => entry.key === task.basis.arrangementKey);
+    const requirementKeys = [task.basis.requirementKey, arrangement?.requirementKey].filter(
+      (key): key is string => key !== undefined,
+    );
+    if (
+      plan.questions.some(
+        (question) =>
+          question.family !== undefined &&
+          question.affects.some((key) => requirementKeys.includes(key)),
+      )
+    ) {
+      out.violation(
+        'notification_family_unanswered',
+        intent.key,
+        '家族の答えで変わる作業を、先に担当なしとして知らせている。',
+      );
+      return;
+    }
     const option = arrangement?.options.find((entry) => entry.key === task.basis.optionKey);
     const sent = plan.requests.filter(
       (entry) => entry.basis.optionKey === option?.key && entry.state !== 'cancelled',
@@ -357,7 +374,26 @@ function checkSubject(intent: Intent, plan: Plan, timeZone: string, out: Collect
       (q) => q.unknownId === subject.id && (q.toMemberId === undefined || q.toMemberId === member),
     );
     if (!question) return wrong();
-    checkTime(intent, question.askBy, undefined, out);
+    if (!question.family) {
+      const requirementKeys = plan.arrangements
+        .filter((entry) => question.affects.includes(entry.key))
+        .map((entry) => entry.requirementKey);
+      if (
+        plan.questions.some(
+          (entry) => entry.family && entry.affects.some((key) => requirementKeys.includes(key)),
+        )
+      ) {
+        out.violation(
+          'notification_family_unanswered',
+          intent.key,
+          '家族の答えで変わる持ち物を、先に家にあるか聞いている。',
+        );
+        return;
+      }
+    }
+    const deadline = question.family ? question.until : question.askBy;
+    if (deadline === undefined) return wrong();
+    checkTime(intent, deadline, undefined, out);
     return;
   }
   if (subject.type !== 'arrangement' || !subject.optionId) return wrong();

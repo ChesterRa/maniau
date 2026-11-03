@@ -2,7 +2,13 @@
 // v0：要件 → 手配 → 案と決め時（逆算の目安）→ 問い → 買い物の置き場所 → 取り消しの連絡。
 // 子の居場所の手配で家族が進める案どうしは、同じ人の時間が重ならないように一緒に置く（joint.ts。少数の手配の
 // 並べ方を試す）。買い物・提出物を含めた計画全体の求解（§5 の2）と、最小の組み直し（§8）は、まだ無い。
-import { conditionShape, evaluateCondition, NO_CONDITION } from '../schema/condition';
+import {
+  conditionShape,
+  evaluateCondition,
+  mentionsUnknown,
+  NO_CONDITION,
+  type Truth,
+} from '../schema/condition';
 import {
   type DomainEvent,
   proposalSnapshot,
@@ -26,7 +32,7 @@ import type {
   Requirement,
   Task,
 } from '../schema/plan';
-import type { ConditionNode, Item } from '../schema/source';
+import type { ConditionNode, Item, Unknown } from '../schema/source';
 import {
   addDays,
   type DateTime,
@@ -50,6 +56,7 @@ import {
   foldEvents,
   itemFate,
   type RequestRecord,
+  retiredUnknowns,
 } from './state';
 
 /** 代償の重みの初期値（家族が変えられる。§8）。安い案ほど小さい。 */
@@ -435,6 +442,8 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
     escort(ctx, e, requirements, tasks, { arrangements, requests });
   }
   tasks.push(...cancellationTasks(ctx, requests));
+  // 家族が決める値の問いは、要件が全部そろった後に（どの要件が答えで変わるかを見る）。
+  questions.push(...familyQuestions(ctx, items, requirements));
   const released = releasedTasks(ctx, tasks, { arrangements, requests });
 
   return {
@@ -522,6 +531,93 @@ function releasedTasks(
     });
   }
   return released;
+}
+
+/**
+ * 家族が決める値の問い（§6）：お知らせが家族に決めさせる値（参加するか等。kind が family）で、まだ答えが無く、
+ * 値によって要件が要るかが変わる時だけ聞く。値ごとに代入して、その値を使う事項の条件を三値で求め、どの値でも
+ * 同じ確かな結果（全部 true か全部 false）の事項には効かないとする（ほかの未定の値のために結果が分からない
+ * 時は、効くかもしれないので聞く）。効くか分からない作用の先にある事項（doubted）は、条件が真でも「しだい」に
+ * する。作用（ほかの事項の取り消し・未定の値の答え）を通じてだけ効く値は、まだ問いにしない（その作業は隠さず、
+ * 条件しだいのまま見せる）。答えが要る最後の時（until）は、変わる要件のまだ過ぎていない最も早い期限。過ぎた
+ * 要件しか無ければ聞かない。安全な既定の答えは無い（fallbackValue を付けない）。名前は今も確かな読み取り
+ * （currentReadings）からだけ取る：取り下げ・消したお知らせの値と、文を直して読み直す前の読み取りの値は
+ * 聞かない。前の答えが、問いや事項が替わって使えなくなった時は、その値を添えて聞き直す。
+ */
+function familyQuestions(
+  ctx: Context,
+  items: readonly LiveItem[],
+  requirements: readonly Requirement[],
+): Question[] {
+  const { state } = ctx;
+  const nodes = [...state.extractions.values()].flatMap((e) => e.conditions);
+  const assignment = new Map([...state.resolved].map(([id, r]) => [id, r.value]));
+  const retired = retiredUnknowns(state);
+  const declared = new Map<string, Unknown>();
+  for (const extraction of currentReadings(state)) {
+    for (const unknown of extraction.unknowns) {
+      if (unknown.kind === 'family' && !retired.has(unknown.id)) declared.set(unknown.id, unknown);
+    }
+  }
+  const questions: Question[] = [];
+  for (const unknown of declared.values()) {
+    if (state.resolved.has(unknown.id)) continue;
+    // 事項ごとの、値ごとの条件の結果（効くかもしれない事項だけ）。
+    const truths = new Map<string, Truth[]>();
+    for (const entry of items) {
+      const nodeId = entry.item.conditionNodeId;
+      if (!entry.live || nodeId === undefined || !mentionsUnknown(nodeId, unknown.id, nodes)) {
+        continue;
+      }
+      const each = unknown.values.map((value): Truth => {
+        const truth = evaluateCondition(
+          nodeId,
+          nodes,
+          new Map([...assignment, [unknown.id, value]]),
+        );
+        return truth === true && entry.doubted ? 'unknown' : truth;
+      });
+      const settled = each[0] !== 'unknown' && each.every((t) => t === each[0]);
+      if (!settled) truths.set(entry.item.id, each);
+    }
+    if (truths.size === 0) continue;
+    const affected = requirements.filter(
+      (r) =>
+        r.live &&
+        r.basis.itemIds.some((id) => truths.has(id)) &&
+        (r.by === undefined || toEpochMinutes(r.by) > ctx.now),
+    );
+    if (affected.length === 0) continue;
+    const deadlines = affected.flatMap((r) => (r.by === undefined ? [] : [toEpochMinutes(r.by)]));
+    const until = deadlines.length > 0 ? Math.min(...deadlines) : undefined;
+    // 値ごとに、その値なら要る（または要るかもしれない）要件と、そのうちほかの条件しだいの物。
+    const keysWhere = (i: number, match: (truth: Truth | undefined) => boolean) =>
+      affected
+        .filter((r) => r.basis.itemIds.some((id) => match(truths.get(id)?.[i])))
+        .map((r) => r.key);
+    const choices = unknown.values.map((value, i) => {
+      const needed = keysWhere(i, (t) => t === true);
+      return {
+        value,
+        requirementKeys: keysWhere(i, (t) => t === true || t === 'unknown'),
+        conditionalKeys: keysWhere(i, (t) => t === 'unknown').filter((k) => !needed.includes(k)),
+      };
+    });
+    // 答えが入っているのに使えない（問いや事項が答えた後に替わった。§5.3）なら、その値を添えて聞き直す。
+    const previous = state.answers.findLast((a) => a.unknownId === unknown.id && a.by === 'family');
+    questions.push({
+      key: keys.question(unknown.id),
+      unknownId: unknown.id,
+      ...(until === undefined ? {} : { until: ctx.fmt(until) }),
+      affects: affected.map((r) => r.key).sort(),
+      family: {
+        label: unknown.label,
+        choices,
+        ...(previous ? { previous: previous.value } : {}),
+      },
+    });
+  }
+  return questions;
 }
 
 /** 引き受けた後に、根拠のお知らせを読み直したか（同じ ID が同じ事項か、確かめられない。§4.1）。 */

@@ -413,8 +413,10 @@ export function demoSessions(
         : command;
     }
     if (command.type === 'answer') {
+      // 家にあるかには品物を、家族が決める値には見せた位置を付ける（サーバーが、今と同じ時だけ受ける。ほかの
+      // 値では使わない）。
       const what = plan.requirements.find((r) => r.atHomeUnknownId === command.unknownId)?.what;
-      return what === undefined ? command : { ...command, seen: { what, throughSeq } };
+      return { ...command, seen: what === undefined ? { throughSeq } : { what, throughSeq } };
     }
     return command;
   };

@@ -36,12 +36,26 @@ export const Command = z.discriminatedUnion('type', [
     unknownId: Id,
     value: z.string().min(1),
     /**
-     * 札で見せた品物と、見せた計画の事象の位置（家にあるかの値に答える時は必ず付ける）。今の品物と違うか、
-     * 見せた後にその値への答えが入っていれば、断って見せ直す（直された後の古い札で別の品物を「ある」に
-     * しない。もう一人の新しい答えを、古い札や候補で上書きしない）。
+     * 札で見せた品物と、見せた計画の事象の位置（家にあるかの値と、家族が決める値に答える時は必ず付ける）。
+     * 家にあるかは、今の品物と違うか、見せた後にその値への答えが入っていれば、断って見せ直す（直された後の
+     * 古い札で別の品物を「ある」にしない。もう一人の新しい答えを、古い札や候補で上書きしない）。家族が決める
+     * 値は、見せた計画の通し番号が今と同じ時だけ受ける（問いの中身・ほかの人の答え・読み直しが替われば断る）。
+     * 問いの札から答える時は、見せた問い（key・until・affects）も付け、今の時刻で作った問いと同じ時だけ受ける
+     * （事象が無くても、期限が過ぎて消えた・変わった問いの古い札では答えない）。一言などの札でない答えには
+     * 付けない（家族が言った決めごとは、問いが消えた後も記録する）。
      */
     seen: z
-      .object({ what: z.string().min(1), throughSeq: z.number().int().nonnegative() })
+      .object({
+        what: z.string().min(1).optional(),
+        throughSeq: z.number().int().nonnegative(),
+        question: z
+          .object({
+            key: z.string().min(1),
+            until: DateTime.optional(),
+            affects: z.array(z.string()),
+          })
+          .optional(),
+      })
       .optional(),
   }),
   /**

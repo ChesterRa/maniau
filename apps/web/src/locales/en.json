@@ -68,7 +68,20 @@
       "atHome": "Do you have {{what}} at home?",
       "body": "Needed by {{by}}.",
       "source": "See the original text",
-      "sourceTitled": "See the original: {{title}}"
+      "sourceTitled": "See the original: {{title}}",
+      "family": {
+        "label": "For the family to decide",
+        "if": "If {{value}}: {{needs}}",
+        "ifConditional": "If {{value}}: depending on other conditions in the notice, {{maybe}}",
+        "ifBoth": "If {{value}}: {{needs}}; depending on other conditions in the notice, {{maybe}}",
+        "ifNothing": "If {{value}}: no tasks needed because of this answer",
+        "previous": "You answered “{{value}}” before, but the reading of the notice has been corrected since. Please decide again.",
+        "needBy": "{{what}} (by {{by}})",
+        "by": "Please decide by {{by}}.",
+        "hidden": "Until you decide, related tasks won't be listed for someone to take on.",
+        "yes": "Yes",
+        "no": "No"
+      }
     },
     "proposal": {
       "label": "A request for you",

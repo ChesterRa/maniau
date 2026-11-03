@@ -230,9 +230,14 @@ export function todayCards(
     stuck.push({ kind: 'stuck', arrangement, ...(requirement ? { requirement } : {}) });
   }
 
+  // 家族が決める値の問いで変わる要件の作業は、答えるまで「だれがやるか」に出さない（決まっていない事を
+  // 割り振らない。問いの札に、値ごとに要る物を書く）。もう持った人がいる作業は、そのまま出す。
+  const undecided = new Set(plan.questions.flatMap((q) => (q.family ? q.affects : [])));
   const unowned: TodayCard[] = [];
   for (const task of plan.tasks) {
     if (!task.live || task.cancels !== undefined || !isActiveTask(plan, task)) continue;
+    if (task.basis.requirementKey !== undefined && undecided.has(task.basis.requirementKey))
+      continue;
     const nobody =
       task.assigneeId === undefined ||
       task.commitment === 'declined' ||
@@ -260,12 +265,14 @@ export function todayCards(
     }
   }
 
+  // 家にあるかの問いも、その持ち物が家族の決める値しだいなら、決めるまで聞かない（先に決める方を聞く）。
   const question: TodayCard[] = plan.questions
     .filter((q) => q.toMemberId === undefined || q.toMemberId === memberId)
-    .map((q) => {
+    .flatMap((q): TodayCard[] => {
       const arrangement = plan.arrangements.find((a) => q.affects.includes(a.key));
       const requirement = requirementOf(arrangement);
-      return { kind: 'question', question: q, ...(requirement ? { requirement } : {}) };
+      if (!q.family && requirement && undecided.has(requirement.key)) return [];
+      return [{ kind: 'question', question: q, ...(requirement ? { requirement } : {}) }];
     });
 
   const bring: TodayCard[] = [];

@@ -1,5 +1,5 @@
 // 事象の列を、計算に使う状態にたたむ（docs/design/01-model.md §2）。同じ列からは、いつも同じ状態になる。
-import { evaluateCondition } from '../schema/condition';
+import { conditionShape, evaluateCondition, mentionsUnknown } from '../schema/condition';
 import type { DomainEvent, ProposalSnapshot, RequestSnapshot, TaskContent } from '../schema/events';
 import type { Household } from '../schema/household';
 import type { CommitmentState, ExternalRequestState } from '../schema/plan';
@@ -9,6 +9,7 @@ import {
   type Interpretation,
   type Item,
   type Source,
+  type Unknown,
 } from '../schema/source';
 import { type DateTime, toEpochMinutes } from '../time';
 
@@ -675,6 +676,45 @@ export function currentReadings(state: EngineState): Extraction[] {
 }
 
 /**
+ * 家族が決める値の問いを、家族が見た形で書き表す（答えに about として控え、今と同じ時だけその答えを使う。
+ * §5.3）：値の名前と値の並び、その値を条件に使う事項の中身（家族の直しを重ねた物）と条件の式の形。読み直し
+ * や直しでどれかが替われば、前の答えは別の問い・別の日の行事への答えになり得る（式が替われば、答えで要る物が
+ * 見せた物と逆になり得る）ので使わず、聞き直す。時が進んだだけ・確かめただけ・ほかの事項が取り消しただけでは
+ * 変わらない。
+ */
+export function familyQuestionBasis(
+  state: EngineState,
+  unknown: Unknown,
+  items: readonly Item[] = itemsOf(state),
+): string {
+  const nodes = [...state.extractions.values()].flatMap((e) => e.conditions);
+  const using = items
+    .filter(
+      (item) =>
+        item.conditionNodeId !== undefined &&
+        mentionsUnknown(item.conditionNodeId, unknown.id, nodes),
+    )
+    .map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      written: item.written,
+      interpretation: item.interpretation,
+      condition: conditionShape(item.conditionNodeId, nodes),
+    }))
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return canonical({ label: unknown.label, values: unknown.values, items: using });
+}
+
+/** 鍵の並びによらない JSON（同じ中身なら同じ文字列）。 */
+function canonical(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : v,
+  );
+}
+
+/**
  * 取り下げた・消した出典が出した未定の値。家族の答えも含めて答えを使わない（他の出典の事項が
  * その値を条件にしていれば、条件しだいに残る。02-foundation §5.1・§5.3）。
  */
@@ -699,7 +739,21 @@ function settle(state: EngineState): void {
   const items = itemsOf(state);
   const overrides = familyOverrides(state, items);
   const retired = retiredUnknowns(state);
-  const usable = state.answers.filter((a) => !retired.has(a.unknownId));
+  // 家族が決める値への家族の答えは、答えた時に控えた問い（about：名前・値・その値を使う事項の中身と条件の式）が
+  // 今と同じで、値が今の宣言にある時だけ使う（読み直しで同じ ID が別の問いになった、行事の日が直された等の後に、
+  // 前の答えを当てない。§4.1・§5.3。当てなければ、まだ答えの無い値として聞き直す）。ほかの値（家にあるか等）は
+  // 使う所で確かめる。
+  const declared = new Map<string, Unknown>();
+  for (const extraction of state.extractions.values()) {
+    for (const unknown of extraction.unknowns) declared.set(unknown.id, unknown);
+  }
+  const usable = state.answers.filter((a) => {
+    if (retired.has(a.unknownId)) return false;
+    const unknown = a.by === 'family' ? declared.get(a.unknownId) : undefined;
+    if (unknown?.kind !== 'family') return true;
+    if (!unknown.values.includes(a.value)) return false;
+    return a.about === undefined || a.about === familyQuestionBasis(state, unknown, items);
+  });
   const nodes = [...state.extractions.values()].flatMap((e) => e.conditions);
   const counted = (activity: ReadonlyMap<string, EffectActivity>) =>
     usable.filter(

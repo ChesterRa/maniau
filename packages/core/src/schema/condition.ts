@@ -161,6 +161,31 @@ export function evaluateCondition(
   return evaluate(nodeId);
 }
 
+/** 条件（その節点から下）が、その未定の値を使うか。 */
+export function mentionsUnknown(
+  nodeId: string,
+  unknownId: string,
+  nodes: readonly ConditionNode[],
+): boolean {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const seen = new Set<string>();
+  const visit = (id: string): boolean => {
+    if (seen.has(id)) return false;
+    seen.add(id);
+    const node = byId.get(id);
+    if (!node) return false;
+    switch (node.kind) {
+      case 'eq':
+        return node.unknownId === unknownId;
+      case 'not':
+        return visit(node.childId);
+      default:
+        return node.childIds.some(visit);
+    }
+  };
+  return visit(nodeId);
+}
+
 function evaluateNode(
   node: ConditionNode,
   evaluate: (id: string) => Truth,

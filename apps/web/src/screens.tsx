@@ -681,7 +681,11 @@ function CardView({ ctx, card }: { ctx: Ctx; card: TodayCard }) {
     case 'unowned':
       return <UnownedCard ctx={ctx} task={card.task} arrangement={card.arrangement} />;
     case 'question':
-      return <QuestionCard ctx={ctx} card={card} />;
+      return card.question.family ? (
+        <FamilyQuestionCard ctx={ctx} card={card} />
+      ) : (
+        <QuestionCard ctx={ctx} card={card} />
+      );
     case 'check':
       return <CheckCard ctx={ctx} request={card.request} />;
     case 'stuck':
@@ -855,6 +859,116 @@ function QuestionCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind
         <Button kind="secondary" onClick={() => answer('no')}>
           {ctx.t('answer.no')}
         </Button>
+      </Row>
+    </Card>
+  );
+}
+
+/**
+ * 家族が決める値の問い（参加するか等）。お知らせの言葉の名前と、値ごとに要る物（期限つき）を並べ、値を
+ * 選んでもらう。見せた計画の通し番号を付ける（問いの中身やもう一人の答えが替わった後の古い札では答えない）。
+ * yes・no の値は「はい・いいえ」、ほかの値はお知らせの言葉のまま。
+ */
+function FamilyQuestionCard({
+  ctx,
+  card,
+}: {
+  ctx: Ctx;
+  card: Extract<TodayCard, { kind: 'question' }>;
+}) {
+  const { question } = card;
+  const family = question.family;
+  if (!family) return null;
+  const affected = ctx.plan.requirements.filter((r) => question.affects.includes(r.key));
+  const itemIds = affected.flatMap((r) => r.basis.itemIds);
+  const item = ctx.items.find((l) => itemIds.includes(l.item.id))?.item;
+  const title = item && ctx.sources.get(item.sourceId)?.title;
+  const valueLabel = (value: string) =>
+    value === 'yes' || value === 'no' ? ctx.t(`card.question.family.${value}`) : value;
+  const needs = (keys: readonly string[]) =>
+    new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(
+      affected
+        .filter((r) => keys.includes(r.key))
+        .map((r) =>
+          r.by
+            ? ctx.t('card.question.family.needBy', {
+                what: r.what,
+                by: due(ctx, r.by, r.basis.itemIds),
+              })
+            : r.what,
+        ),
+    );
+  // 値ごとの行：確かに要る物と、その値でもほかの条件しだいの物を分けて書く。何も無ければ、この答えで要る
+  // 作業が無いとだけ言う（同じお知らせのほかの作業は、問いに関わらず出ている）。
+  const consequence = (choice: (typeof family.choices)[number]) => {
+    const value = valueLabel(choice.value);
+    const sure = choice.requirementKeys.filter((k) => !choice.conditionalKeys.includes(k));
+    const maybe = choice.conditionalKeys;
+    if (sure.length > 0 && maybe.length > 0) {
+      return ctx.t('card.question.family.ifBoth', {
+        value,
+        needs: needs(sure),
+        maybe: needs(maybe),
+      });
+    }
+    if (sure.length > 0) return ctx.t('card.question.family.if', { value, needs: needs(sure) });
+    if (maybe.length > 0) {
+      return ctx.t('card.question.family.ifConditional', { value, maybe: needs(maybe) });
+    }
+    return ctx.t('card.question.family.ifNothing', { value });
+  };
+  // 決める期限の書き方（時刻を見せるか）は、その期限を作った要件の物だけで決める（ほかの要件に書かれた
+  // 時刻を借りて、日だけの締切に時刻を足さない）。
+  const until = question.until;
+  const untilItems = affected
+    .filter((r) => until && r.by && toEpochMinutes(r.by) === toEpochMinutes(until))
+    .flatMap((r) => r.basis.itemIds);
+  // 見せた問い（key・until・affects）も付ける（期限が過ぎて消えた・変わった問いの古い札で答えない）。
+  const answer = (value: string) =>
+    void ctx.send({
+      type: 'answer',
+      unknownId: question.unknownId,
+      value,
+      seen: {
+        throughSeq: ctx.plan.throughSeq,
+        question: {
+          key: question.key,
+          ...(question.until ? { until: question.until } : {}),
+          affects: question.affects,
+        },
+      },
+    });
+  return (
+    <Card>
+      <Label tone="accent">{ctx.t('card.question.family.label')}</Label>
+      <Title>{family.label}</Title>
+      {family.previous && (
+        <Text>
+          {ctx.t('card.question.family.previous', { value: valueLabel(family.previous) })}
+        </Text>
+      )}
+      {family.choices.map((choice) => (
+        <Text key={choice.value}>{consequence(choice)}</Text>
+      ))}
+      {until && (
+        <Text quiet>{ctx.t('card.question.family.by', { by: due(ctx, until, untilItems) })}</Text>
+      )}
+      <Text quiet>{ctx.t('card.question.family.hidden')}</Text>
+      {item && (
+        <MoreLink
+          onClick={() =>
+            ctx.go({ name: 'sources', sourceId: item.sourceId, highlight: item.sentenceIds })
+          }
+        >
+          {title ? ctx.t('card.question.sourceTitled', { title }) : ctx.t('card.question.source')}
+        </MoreLink>
+      )}
+      <Row>
+        {family.choices.map((choice) => (
+          <Button key={choice.value} kind="secondary" onClick={() => answer(choice.value)}>
+            {valueLabel(choice.value)}
+          </Button>
+        ))}
       </Row>
     </Card>
   );

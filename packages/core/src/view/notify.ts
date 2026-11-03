@@ -323,15 +323,19 @@ function intentOf(
         ...(actBy ? { actBy } : {}),
       };
     }
-    case 'question':
-      if (!urgent(card.question.askBy, now)) return undefined;
+    case 'question': {
+      // 家にあるかの問いは、聞く目安（askBy）の前に。家族が決める値の問いは、答えが要る最後の時（until）の
+      // 前に（期限の分からない問いは知らせない。札だけ）。
+      const by = card.question.family ? card.question.until : card.question.askBy;
+      if (!urgent(by, now)) return undefined;
       return {
         key: `question:${card.question.unknownId}`,
         subject: { type: 'question', id: card.question.unknownId },
         kind: 'question',
         titleKey: 'notify.question',
-        until: card.question.askBy,
+        ...(by ? { until: by } : {}),
       };
+    }
     default:
       return undefined;
   }

@@ -68,7 +68,20 @@
       "atHome": "{{what}}はありますか？",
       "body": "{{by}}までに要ります。",
       "source": "元の文を見る",
-      "sourceTitled": "「{{title}}」の文を見る"
+      "sourceTitled": "「{{title}}」の文を見る",
+      "family": {
+        "label": "家族で決めること",
+        "if": "{{value}}なら：{{needs}}",
+        "ifConditional": "{{value}}なら：ほかの条件しだいで、{{maybe}}",
+        "ifBoth": "{{value}}なら：{{needs}}。ほかの条件しだいで、{{maybe}}",
+        "ifNothing": "{{value}}なら：この答えで要る作業はありません",
+        "previous": "前は「{{value}}」と答えましたが、その後お知らせの読み取りが直されました。もう一度決めてください。",
+        "needBy": "{{what}}（{{by}}まで）",
+        "by": "{{by}}までに決めてください。",
+        "hidden": "決めるまで、これに関わる作業は「だれがやるか」に出しません。",
+        "yes": "はい",
+        "no": "いいえ"
+      }
     },
     "proposal": {
       "label": "おねがい",

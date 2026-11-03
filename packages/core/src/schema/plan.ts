@@ -316,16 +316,44 @@ export type Task = z.infer<typeof Task>;
 export const untimed = (task: Pick<Task, 'timing'>): boolean =>
   task.timing === 'day' || task.timing === 'undated';
 
-/** 問い（§6）：答えで決め方が変わる時だけ、決め時より前に聞く。 */
+/** 家族が決める値の、値ごとに要る要件（その値なら要る、または要るかもしれない要件の key）。 */
+export const QuestionChoice = z.object({
+  value: z.string().min(1),
+  /** この値なら要る（要るかもしれない）要件。 */
+  requirementKeys: z.array(z.string()),
+  /** requirementKeys のうち、この値でもほかの条件（ほかの未定の値・効くか分からない作用）しだいの物。 */
+  conditionalKeys: z.array(z.string()),
+});
+export type QuestionChoice = z.infer<typeof QuestionChoice>;
+
+/**
+ * 問い（§6）：答えで決め方が変わる時だけ、決め時より前に聞く。家にあるか（持ち物）の問いは askBy と
+ * fallbackValue を持ち、affects は手配の key。家族が決める値（参加するか等）の問いは family を持ち、askBy と
+ * fallbackValue は持たない（安全な既定は無い）。affects は要件の key、until は答えが要る最後の時。
+ */
 export const Question = z.object({
   key: z.string().min(1),
   unknownId: Id,
   toMemberId: Id.optional(),
-  askBy: DateTime,
-  /** 期限までに答えが無い時に進む側（間に合わなくならない側）。 */
-  fallbackValue: z.string().min(1),
+  /** 聞く目安の時（家にあるかの問い）。 */
+  askBy: DateTime.optional(),
+  /** 答えが要る最後の時（答えで変わる要件の、まだ過ぎていない最も早い期限）。無ければ期限の分からない問い。 */
+  until: DateTime.optional(),
+  /** 期限までに答えが無い時に進む側（間に合わなくならない側）。家族が決める値には無い。 */
+  fallbackValue: z.string().min(1).optional(),
   /** 答えで変わる手配・要件の key。 */
   affects: z.array(z.string()),
+  /**
+   * 家族が決める値：お知らせの言葉の名前と、値ごとに要る要件（「参加するなら：申込書（11/30まで）」）。
+   * previous は、前に答えたが、答えた後に問いや事項が替わって使わなくなった値（聞き直す時に添える）。
+   */
+  family: z
+    .object({
+      label: z.string().min(1),
+      choices: z.array(QuestionChoice).min(2),
+      previous: z.string().min(1).optional(),
+    })
+    .optional(),
 });
 export type Question = z.infer<typeof Question>;
 

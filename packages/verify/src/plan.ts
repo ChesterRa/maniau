@@ -10,6 +10,7 @@ import {
 } from '@maniau/core';
 import { checkEscort } from './escort';
 import { type FactState, historicalItem } from './facts';
+import { checkFamilyQuestions } from './family-question';
 import { doneContentMatches, type History, otherAnswerPossible } from './history';
 import type { Collector } from './report';
 import {
@@ -1419,6 +1420,18 @@ export function checkPlan(
     const purchases = plan.arrangements.filter(
       (entry) => entry.kind === 'purchase' && entry.atHomeUnknownId === question.unknownId,
     );
+    if ((owners.length > 0 || purchases.length > 0) && question.askBy === undefined)
+      report.violation(
+        'purchase_question_ask_by_missing',
+        question.key,
+        '持ち物の問いに聞く期限がない。',
+      );
+    if ((owners.length > 0 || purchases.length > 0) && question.fallbackValue !== 'no')
+      report.violation(
+        'purchase_question_default_invalid',
+        question.key,
+        '持ち物の問いの既定の答えが「ない」でない。',
+      );
     const ownerInactive =
       owners.length > 0
         ? owners.every((entry) => !entry.live)
@@ -1454,6 +1467,7 @@ export function checkPlan(
         );
         const expiredBeforeQuestion = options.filter(
           (option) =>
+            question.askBy !== undefined &&
             option.decisionDeadline &&
             instantMinute(question.askBy) > instantMinute(option.decisionDeadline),
         );
@@ -1473,5 +1487,6 @@ export function checkPlan(
       }
     }
   }
+  checkFamilyQuestions(plan, facts, history, report);
   checkEscort(household, plan, facts, history, report);
 }
