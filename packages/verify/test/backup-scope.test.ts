@@ -260,6 +260,18 @@ describe('本命の返事と予備の通常の手順', () => {
     }
   });
 
+  it('予備が同時に必要か未判定の重なりでも、相手の作業を示す', () => {
+    const report = example('yes', { incompleteHistory: true });
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        kind: 'undetermined',
+        code: 'task_overlap_scope_unknown',
+        subject: 'backup-step',
+        related: 'submission',
+      }),
+    );
+  });
+
   it('本命が確定しても、実際に済ませた予備の作業は時間を使う', () => {
     expect(overlaps(example('yes', { backupDone: true })).length).toBeGreaterThan(0);
     expect(

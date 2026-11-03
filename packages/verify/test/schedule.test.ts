@@ -72,6 +72,50 @@ describe('時刻と場所', () => {
     );
   });
 
+  it('同じ作業が別の作業と重なる時、相手を識別でき、入力順が逆でも同じ組と分かる', () => {
+    const overlap = (keys: readonly string[]) => {
+      const report = verifyPlan({
+        household: household(),
+        plan: plan({ tasks: keys.map((key) => task(key)) }),
+        events: [],
+      });
+      const issue = report.issues.find((entry) => entry.code === 'task_overlap');
+      if (!issue) throw new Error('重なりがない');
+      return issue;
+    };
+    const before = overlap(['subject', 'old']);
+    const after = overlap(['subject', 'new']);
+    const reversed = overlap(['new', 'subject']);
+    expect(before).toMatchObject({ subject: 'subject', related: 'old' });
+    expect(after).toMatchObject({ subject: 'subject', related: 'new' });
+    expect([after.subject, after.related].sort()).toEqual(
+      [reversed.subject, reversed.related].sort(),
+    );
+  });
+
+  it('比較中の候補と実際の作業の重なりが未判定の時も、相手を示す', () => {
+    const candidate = task('candidate', {
+      basis: { itemIds: [], arrangementKey: 'arrangement', optionKey: 'one' },
+    });
+    const report = verifyPlan({
+      household: household(),
+      plan: plan({
+        requirements: [requirement()],
+        arrangements: [arrangement({ options: [option('one', { taskKeys: ['candidate'] })] })],
+        tasks: [task('active'), candidate],
+      }),
+      events: [],
+    });
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        kind: 'undetermined',
+        code: 'candidate_overlap_unknown',
+        subject: 'active',
+        related: 'candidate',
+      }),
+    );
+  });
+
   it('店の営業時間は買い物の時間だけで判定し、移動の目安は未確認とする', () => {
     const shop = task('shop', {
       durationMin: 20,

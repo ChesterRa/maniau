@@ -8,7 +8,9 @@ import { verifyPlan } from '@maniau/verify';
 const result = verifyPlan({ household, plan, events });
 ```
 
-`status` は次の三つで、`issues` の `code`・`subject`・`detail` は個別の理由を示す。
+`status` は次の三つで、`issues` の `code`・`subject`・`detail` は個別の理由を示す。作業どうしの
+重なりでは `related` に相手の作業のキーも入る。`subject` と `related` の順序は計画内の作業の順に
+よって変わるので、同じ重なりかを比べる時は二つのキーを並べ替えてから照らす。
 
 | 状態           | 意味                                                   |
 | -------------- | ------------------------------------------------------ |

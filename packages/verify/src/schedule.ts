@@ -319,6 +319,7 @@ export function checkSchedule(
             'task_overlap_scope_unknown',
             current.task.key,
             '重なる作業が同時に必要か分からない。',
+            other.task.key,
           );
         } else if (
           sameOption ||
@@ -334,12 +335,14 @@ export function checkSchedule(
             'task_overlap',
             current.task.key,
             `同じ担当の作業 ${other.task.key} と重なる。`,
+            other.task.key,
           );
         } else if (currentScope === 'active' || otherScope === 'active') {
           report.undetermined(
             'candidate_overlap_unknown',
             current.task.key,
             '比較中の案が既存の作業と両立するか分からない。',
+            other.task.key,
           );
         }
       }

@@ -6,6 +6,8 @@ export interface VerificationIssue {
   code: string;
   subject: string;
   detail: string;
+  /** 二つの作業の重なりなら、subject と対になるもう一つの作業のキー。 */
+  related?: string;
 }
 
 export interface VerificationReport {
@@ -16,12 +18,24 @@ export interface VerificationReport {
 export class Collector {
   readonly issues: VerificationIssue[] = [];
 
-  violation(code: string, subject: string, detail: string): void {
-    this.issues.push({ kind: 'violation', code, subject, detail });
+  violation(code: string, subject: string, detail: string, related?: string): void {
+    this.issues.push({
+      kind: 'violation',
+      code,
+      subject,
+      detail,
+      ...(related === undefined ? {} : { related }),
+    });
   }
 
-  undetermined(code: string, subject: string, detail: string): void {
-    this.issues.push({ kind: 'undetermined', code, subject, detail });
+  undetermined(code: string, subject: string, detail: string, related?: string): void {
+    this.issues.push({
+      kind: 'undetermined',
+      code,
+      subject,
+      detail,
+      ...(related === undefined ? {} : { related }),
+    });
   }
 
   result(): VerificationReport {
