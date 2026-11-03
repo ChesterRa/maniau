@@ -293,17 +293,24 @@ export function todayCards(
     )
     .map((request) => ({ kind: 'waiting', request }));
 
+  // 担当の決まっていない作業と、引き受けを待つ作業は、要る時の早い順に並べる（遠い日の当日の準備で、明日の
+  // 作業を下に押しやらない。初めに見せる札の数は限られる）。要る時：置いた時刻、無ければ始められる時、締切、
+  // 案の決め時の順。分からない物は後。同じなら、担当の決まっていない物を先に（元の順を保つ）。
+  const dueOf = (card: TodayCard): number => {
+    if (card.kind !== 'unowned' && card.kind !== 'proposal') return Number.POSITIVE_INFINITY;
+    const { task } = card;
+    const option = plan.arrangements
+      .find((a) => a.key === task.basis.arrangementKey)
+      ?.options.find((o) => o.key === task.basis.optionKey);
+    const when = task.start ?? task.earliestStart ?? task.deadline ?? option?.decisionDeadline;
+    return when === undefined ? Number.POSITIVE_INFINITY : toEpochMinutes(when);
+  };
+  const work = [...unowned, ...proposal]
+    .map((card, index) => ({ card, index, due: dueOf(card) }))
+    .sort((x, y) => x.due - y.due || x.index - y.index)
+    .map((x) => x.card);
   return {
-    main: [
-      ...cancel,
-      ...check,
-      ...backup,
-      ...decide,
-      ...stuck,
-      ...unowned,
-      ...proposal,
-      ...question,
-    ],
+    main: [...cancel, ...check, ...backup, ...decide, ...stuck, ...work, ...question],
     quiet: [...bring, ...waiting, ...todo],
   };
 }
