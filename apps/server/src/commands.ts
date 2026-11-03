@@ -375,11 +375,34 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       const task = taskOf(command.taskKey);
       if (!task?.external) return { status: 'conflict', reason: 'taskGone' };
       if (task.assigneeId !== me) return { status: 'forbidden', reason: 'notTheAssignee' };
-      // 依頼の ID は、押し間違いを直して消した物も含めて、二度使わない。同じ作業の依頼は一通だけ。
+      // 依頼の ID は、押し間違いを直して消した物も含めて、二度使わない。
       if (state.sentRequestIds.has(command.requestId)) {
         return { status: 'invalid', reason: 'requestIdTaken' };
       }
-      if ([...state.requests.values()].some((r) => r.taskKey === task.key)) {
+      const snapshot = requestSnapshot(events, context.now, task.key);
+      // 頼む時間のある依頼（子の居場所）は、画面で見せた頼む時間が今の控えと同じ時だけ受ける（見せた後に日や
+      // 時間が直されていたら、記録せず見せ直す。古い画面の「送った」で、新しい日を送ったことにしない）。
+      if (snapshot.window) {
+        if (!command.window) return { status: 'invalid', reason: 'windowRequired' };
+        if (
+          toEpochMinutes(command.window.start) !== toEpochMinutes(snapshot.window.start) ||
+          toEpochMinutes(command.window.end) !== toEpochMinutes(snapshot.window.end)
+        ) {
+          return { status: 'conflict', reason: 'proposalChanged' };
+        }
+      }
+      // 同じ作業の依頼は、同じ日の分につき一通（日が直されたら、新しい日の分を頼み直せる）。時間で頼まない
+      // 依頼は一通だけ。控えの時刻は家庭の時区で書いてある（日をそのまま読める）。取り消しを伝えた依頼は
+      // 数えない（日が戻ったり、案を選び直したりしたら、同じ日の分を頼み直せる）。
+      const day = (window: { start: DateTime } | undefined) => window?.start.slice(0, 10);
+      if (
+        [...state.requests.values()].some(
+          (r) =>
+            r.taskKey === task.key &&
+            r.state !== 'cancelled' &&
+            day(r.snapshot?.window) === day(snapshot.window),
+        )
+      ) {
         return { status: 'conflict', reason: 'alreadySent' };
       }
       return {
@@ -388,7 +411,7 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
             type: 'externalRequestSent',
             taskKey: task.key,
             requestId: command.requestId,
-            snapshot: requestSnapshot(events, context.now, task.key),
+            snapshot,
           },
         ],
       };

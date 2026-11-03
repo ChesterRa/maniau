@@ -235,6 +235,7 @@ describe('決め時', () => {
 
   it('本命を断られて予備も推薦もない時、手配を成立としない', () => {
     const basis = { itemIds: [], arrangementKey: 'arrangement', optionKey: 'one' };
+    const window = { start: '2026-12-07T08:10+09:00', end: '2026-12-07T18:15+09:00' };
     const events = [
       event(1, {
         type: 'optionChosen',
@@ -243,7 +244,12 @@ describe('決め時', () => {
         role: 'primary',
       }),
       event(2, { type: 'assignmentProposed', taskKey: 't', assigneeId: 'a' }),
-      event(3, { type: 'externalRequestSent', taskKey: 't', requestId: 'r' }),
+      event(3, {
+        type: 'externalRequestSent',
+        taskKey: 't',
+        requestId: 'r',
+        snapshot: { to: 'helper', kind: 'reply', basis, window },
+      }),
       event(4, { type: 'externalReplyRecorded', requestId: 'r', reply: 'no' }),
     ];
     const report = verifyPlan({
@@ -273,6 +279,7 @@ describe('決め時', () => {
             sentBy: 'a',
             state: 'turnedDown',
             basis,
+            window,
             live: true,
           },
         ],

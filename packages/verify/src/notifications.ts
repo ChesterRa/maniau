@@ -4,6 +4,7 @@
 import type { Household as Family, PlanResult as Plan, Task } from '@maniau/core';
 import { DateTime, DomainEvent, Household, PlanResult, toEpochMinutes } from '@maniau/core';
 import { Collector, type VerificationReport } from './report';
+import { matchesArrangementDay, matchesArrangementWindow } from './time';
 
 const ALL = '$all';
 type Title =
@@ -115,7 +116,7 @@ function expectedKey(intent: Intent): string | undefined {
   return `${base}:${toMemberId}`;
 }
 
-function activeTask(task: Task, plan: Plan): boolean {
+function activeTask(task: Task, plan: Plan, timeZone: string): boolean {
   const { arrangementKey, optionKey } = task.basis;
   if (arrangementKey === undefined || optionKey === undefined) return true;
   const arrangement = plan.arrangements.find((a) => a.key === arrangementKey);
@@ -124,12 +125,33 @@ function activeTask(task: Task, plan: Plan): boolean {
   if (arrangement.chosenOptionKey === optionKey) return true;
   if (arrangement.backupOptionKeys.includes(optionKey)) {
     const primary = arrangement.chosenOptionKey;
-    const primaryRequests = plan.requests.filter((r) => r.live && r.basis.optionKey === primary);
+    const primaryRequests = plan.requests.filter(
+      (r) =>
+        r.live &&
+        r.state !== 'cancelled' &&
+        r.basis.arrangementKey === arrangement.key &&
+        r.basis.optionKey === primary,
+    );
+    const current = primaryRequests.filter(
+      (r) => matchesArrangementDay(r.window, arrangement, timeZone) === true,
+    );
+    const unknownWindow = primaryRequests.some(
+      (r) =>
+        ['confirmed', 'awaitingReply', 'turnedDown'].includes(r.state) &&
+        matchesArrangementDay(r.window, arrangement, timeZone) === undefined,
+    );
     const primaryConfirmed =
       primary !== undefined &&
+      !unknownWindow &&
       arrangement.inUseOptionKey === primary &&
-      primaryRequests.some((r) => r.state === 'confirmed') &&
-      !primaryRequests.some((r) => r.state === 'awaitingReply');
+      current.some((r) => r.state === 'confirmed') &&
+      !current.some(
+        (r) =>
+          r.state === 'awaitingReply' ||
+          r.needsCheck ||
+          (arrangement.kind === 'childCare' &&
+            matchesArrangementWindow(r.window, arrangement) === false),
+      );
     return arrangement.inUseOptionKey === optionKey || !primaryConfirmed;
   }
   return (
@@ -178,7 +200,7 @@ function checkTiming(
 }
 
 /** 出典のある札が、その人の今の計画に本当にあるかを、知らせの生成関数を使わずに照らす。 */
-function checkSubject(intent: Intent, plan: Plan, out: Collector): undefined {
+function checkSubject(intent: Intent, plan: Plan, timeZone: string, out: Collector): undefined {
   const { subject, titleKey, toMemberId: member } = intent;
   const wrong = (): undefined => {
     out.violation('notification_subject_mismatch', intent.key, 'この人に出す根拠が計画にない。');
@@ -215,7 +237,7 @@ function checkSubject(intent: Intent, plan: Plan, out: Collector): undefined {
       !task?.live ||
       task.cancels !== undefined ||
       task.assigneeId !== member ||
-      !activeTask(task, plan) ||
+      !activeTask(task, plan, timeZone) ||
       (titleKey === 'notify.proposal'
         ? task.commitment !== 'proposed'
         : task.commitment !== 'accepted' || !task.reconfirm)
@@ -232,18 +254,35 @@ function checkSubject(intent: Intent, plan: Plan, out: Collector): undefined {
       task.cancels !== undefined ||
       ['done', 'cancelled'].includes(task.commitment) ||
       (task.assigneeId !== undefined && !['declined', 'withdrawn'].includes(task.commitment)) ||
-      !activeTask(task, plan)
+      !activeTask(task, plan, timeZone)
     )
       return wrong();
     const arrangement = plan.arrangements.find((entry) => entry.key === task.basis.arrangementKey);
     const option = arrangement?.options.find((entry) => entry.key === task.basis.optionKey);
+    const sent = plan.requests.filter(
+      (entry) => entry.basis.optionKey === option?.key && entry.state !== 'cancelled',
+    );
     const started =
       option !== undefined &&
+      arrangement !== undefined &&
       (plan.tasks.some(
         (entry) => entry.basis.optionKey === option.key && entry.commitment === 'done',
       ) ||
-        plan.requests.some((entry) => entry.basis.optionKey === option.key));
-    if (option?.expired && !started) return wrong();
+        sent.some((entry) => matchesArrangementDay(entry.window, arrangement, timeZone) === true));
+    if (option?.expired && !started) {
+      if (
+        !arrangement ||
+        !sent.some(
+          (entry) => matchesArrangementDay(entry.window, arrangement, timeZone) === undefined,
+        )
+      )
+        return wrong();
+      out.undetermined(
+        'notification_started_unverified',
+        intent.key,
+        '以前の依頼の日が分からず、今の案を始めたか確かめられない。',
+      );
+    }
     const deadline =
       option && !option.expired && option.decisionDeadline
         ? option.decisionDeadline
@@ -396,7 +435,7 @@ export function verifyNotifications(input: NotificationVerificationInput): Verif
         intent.key,
         'キーに家庭の名前または場所が含まれる。',
       );
-    checkSubject(intent, plan.data, out);
+    checkSubject(intent, plan.data, household.data.timeZone, out);
     checkTiming(intent, plan.data, events, out);
     out.undetermined(
       'notification_round_unverified',

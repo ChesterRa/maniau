@@ -261,6 +261,7 @@ describe('事象と外への依頼', () => {
   it('本命の依頼が確定すると、出していた予備への取消しが必要になる', () => {
     const primary = { itemIds: [], arrangementKey: 'arrangement', optionKey: 'one' };
     const backup = { itemIds: [], arrangementKey: 'arrangement', optionKey: 'two' };
+    const window = { start: '2026-12-07T08:10+09:00', end: '2026-12-07T18:15+09:00' };
     const events = [
       event(1, {
         type: 'optionChosen',
@@ -275,9 +276,19 @@ describe('事象と外への依頼', () => {
         role: 'backup',
       }),
       event(3, { type: 'assignmentProposed', taskKey: 'primary', assigneeId: 'a' }),
-      event(4, { type: 'externalRequestSent', taskKey: 'primary', requestId: 'r1' }),
+      event(4, {
+        type: 'externalRequestSent',
+        taskKey: 'primary',
+        requestId: 'r1',
+        snapshot: { to: 'helper', kind: 'reply', basis: primary, window },
+      }),
       event(5, { type: 'assignmentProposed', taskKey: 'backup', assigneeId: 'a' }),
-      event(6, { type: 'externalRequestSent', taskKey: 'backup', requestId: 'r2' }),
+      event(6, {
+        type: 'externalRequestSent',
+        taskKey: 'backup',
+        requestId: 'r2',
+        snapshot: { to: 'helper', kind: 'reply', basis: backup, window },
+      }),
       event(7, { type: 'externalReplyRecorded', requestId: 'r1', reply: 'yes' }),
     ];
     const makePlan = (cancel: boolean) =>
@@ -321,6 +332,7 @@ describe('事象と外への依頼', () => {
             sentBy: 'a',
             state: 'confirmed',
             basis: primary,
+            window,
             live: true,
           },
           {
@@ -332,6 +344,7 @@ describe('事象と外への依頼', () => {
             sentBy: 'a',
             state: 'awaitingReply',
             basis: backup,
+            window,
             live: !cancel,
           },
         ],
@@ -617,6 +630,7 @@ describe('事象と外への依頼', () => {
   it('本命が断られて予備へ移った場合、予備の返事待ちを確定扱いしない', () => {
     const one = { itemIds: [], arrangementKey: 'arrangement', optionKey: 'one' };
     const two = { itemIds: [], arrangementKey: 'arrangement', optionKey: 'two' };
+    const window = { start: '2026-12-07T08:10+09:00', end: '2026-12-07T18:15+09:00' };
     const events = [
       event(1, {
         type: 'optionChosen',
@@ -631,10 +645,20 @@ describe('事象と外への依頼', () => {
         role: 'backup',
       }),
       event(3, { type: 'assignmentProposed', taskKey: 't1', assigneeId: 'a' }),
-      event(4, { type: 'externalRequestSent', taskKey: 't1', requestId: 'r1' }),
+      event(4, {
+        type: 'externalRequestSent',
+        taskKey: 't1',
+        requestId: 'r1',
+        snapshot: { to: 'helper', kind: 'reply', basis: one, window },
+      }),
       event(5, { type: 'externalReplyRecorded', requestId: 'r1', reply: 'no' }),
       event(6, { type: 'assignmentProposed', taskKey: 't2', assigneeId: 'a' }),
-      event(7, { type: 'externalRequestSent', taskKey: 't2', requestId: 'r2' }),
+      event(7, {
+        type: 'externalRequestSent',
+        taskKey: 't2',
+        requestId: 'r2',
+        snapshot: { to: 'helper', kind: 'reply', basis: two, window },
+      }),
     ];
     const current = plan({
       throughSeq: 7,
@@ -673,6 +697,7 @@ describe('事象と外への依頼', () => {
           sentBy: 'a',
           state: 'turnedDown',
           basis: one,
+          window,
           live: true,
         },
         {
@@ -684,6 +709,7 @@ describe('事象と外への依頼', () => {
           sentBy: 'a',
           state: 'awaitingReply',
           basis: two,
+          window,
           live: true,
         },
       ],

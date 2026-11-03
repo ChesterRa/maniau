@@ -74,8 +74,17 @@ export const Command = z.discriminatedUnion('type', [
     /** 札で見せた用件（済んだと記録する時は必ず付ける）。今の用件と違えば断って見せ直す。 */
     seen: TaskContent.optional(),
   }),
-  /** 外の相手に頼んだと記録する。控えはサーバーが今の計画から作る。 */
-  z.object({ type: z.literal('recordSent'), taskKey: z.string().min(1), requestId: Id }),
+  /**
+   * 外の相手に頼んだと記録する。控えはサーバーが今の計画から作る。頼む時間のある依頼（子の居場所）は、画面で
+   * 見せた頼む時間（window）を必ず付ける。今の控えと違えば断って見せ直す（日が直された後の古い画面から、
+   * 新しい日を送ったことにしない）。
+   */
+  z.object({
+    type: z.literal('recordSent'),
+    taskKey: z.string().min(1),
+    requestId: Id,
+    window: z.object({ start: DateTime, end: DateTime }).optional(),
+  }),
   z.object({ type: z.literal('correctSentRecord'), requestId: Id }),
   z.object({ type: z.literal('recordReply'), requestId: Id, reply: z.enum(['yes', 'no']) }),
   z.object({ type: z.literal('recordCancellationSent'), requestId: Id }),

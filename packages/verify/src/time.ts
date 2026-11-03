@@ -12,6 +12,34 @@ export function instantMinute(value: string): number {
   return Date.parse(value) / 60_000;
 }
 
+/** 子の居場所への依頼が今の日の分か。家庭の時区の日で照らし、控えの無い古い依頼は未判定。
+ * 子の居場所以外の依頼は、時段を当期の条件にしない。
+ */
+export function matchesArrangementDay(
+  window: { start: string; end: string } | undefined,
+  arrangement: { start: string; kind: string },
+  timeZone: string,
+): boolean | undefined {
+  if (arrangement.kind !== 'childCare') return true;
+  if (!window) return undefined;
+  return (
+    localMinute(instantMinute(window.start), timeZone).date ===
+    localMinute(instantMinute(arrangement.start), timeZone).date
+  );
+}
+
+/** 送信時の時段が今の手配と同じか。時刻の違いは同じ日でも要確認。 */
+export function matchesArrangementWindow(
+  window: { start: string; end: string } | undefined,
+  arrangement: { start: string; end: string },
+): boolean | undefined {
+  if (window === undefined) return undefined;
+  return (
+    instantMinute(window.start) === instantMinute(arrangement.start) &&
+    instantMinute(window.end) === instantMinute(arrangement.end)
+  );
+}
+
 export function timeOfDay(value: string): number {
   return Number(value.slice(0, 2)) * 60 + Number(value.slice(3, 5));
 }

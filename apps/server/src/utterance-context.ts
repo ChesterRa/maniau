@@ -201,7 +201,11 @@ function contextFrom(
       assigneeId: t.assigneeId ?? null,
       commitment: t.commitment,
       external: t.external ? { to: nameOf(household, t.external.to), kind: t.external.kind } : null,
-      sent: plan.requests.some((r) => r.taskKey === t.key),
+      // 送った依頼が今も効いているか（済みで、取り消していない）。日が直された・取り消した後に戻った作業は、
+      // 頼み直せるように送っていないとする（命令と同じ見方）。
+      sent:
+        t.commitment === 'done' &&
+        plan.requests.some((r) => r.taskKey === t.key && r.state !== 'cancelled'),
       cancels: t.cancels ?? null,
     })),
     // 要る頼み事と、要らなくなって取り消しを伝える作業が出ている頼み事。日は送ったと記録した時の控えの日

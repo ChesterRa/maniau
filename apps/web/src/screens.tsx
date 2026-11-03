@@ -209,6 +209,22 @@ const due = (ctx: Ctx, value: string, itemIds: readonly string[]) =>
 
 // ── 外に出す文（頼む・取り消す） ──────────────────────────────
 
+/**
+ * 外へ出した（頼んだ・届けを出した）と記録する命令。子の居場所の手配は、画面で見せた頼む時間（手配の区間。
+ * 頼む文と同じ）を付ける。
+ */
+export function sentCommand(ctx: Ctx, task: Task): Command {
+  const arrangement = arrangementOf(ctx, task.basis.arrangementKey);
+  return {
+    type: 'recordSent',
+    taskKey: task.key,
+    requestId: requestId(),
+    ...(arrangement?.kind === 'childCare'
+      ? { window: { start: arrangement.start, end: arrangement.end } }
+      : {}),
+  };
+}
+
 function helperOf(ctx: Ctx, task: Task): Member | undefined {
   const id = task.external?.to;
   return ctx.household.members.find((m) => m.id === id);
@@ -1054,7 +1070,7 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
       ask
         ? ctx.go({ name: 'ask', taskKey: task.key })
         : external
-          ? void ctx.send({ type: 'recordSent', taskKey: task.key, requestId: requestId() })
+          ? void ctx.send(sentCommand(ctx, task))
           : void ctx.send(doneCommand(task));
     return (
       <div className={`flex items-center gap-3 py-2.5 ${border}`}>
@@ -1297,13 +1313,10 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
   if (!task) return <Missing ctx={ctx} />;
   const helper = helperOf(ctx, task);
   const draft = askDraft(ctx, task);
-  // 送ったと記録する。控え（相手・根拠・条件・時間）は、サーバーが今の計画から作る。
+  // 送ったと記録する。控え（相手・根拠・条件・時間）は、サーバーが今の計画から作る。見せた文の頼む時間を
+  // 付ける（見せた後に日が直されていたら、サーバーが断る）。
   const sent = async () => {
-    const result = await ctx.send({
-      type: 'recordSent',
-      taskKey: task.key,
-      requestId: requestId(),
-    });
+    const result = await ctx.send(sentCommand(ctx, task));
     if (succeeded(result)) ctx.go({ name: 'today' });
   };
   return (

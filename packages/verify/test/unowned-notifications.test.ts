@@ -119,6 +119,66 @@ describe('担当のいない作業への知らせ', () => {
     expect(violations(check([{ ...intent, until: taskDeadline }], started))).toEqual([]);
   });
 
+  it('前の日の依頼では、期限を過ぎた新しい日の案を始めたことにはしない', () => {
+    const work = {
+      ...unowned,
+      deadline: taskDeadline,
+      basis: { itemIds: [], arrangementKey: 'arrangement', optionKey: 'one' },
+    };
+    const chosen = option('one', {
+      decisionDeadline: due,
+      deadlineCertainty: 'estimate',
+      expired: true,
+      taskKeys: ['work'],
+    });
+    const request = {
+      requestId: 'r',
+      taskKey: 'other',
+      to: 'helper',
+      kind: 'reply',
+      sentAt: now,
+      sentBy: 'a',
+      state: 'awaitingReply',
+      live: true,
+      basis: work.basis,
+      window: { start: '2026-11-30T08:10+09:00', end: '2026-11-30T18:15+09:00' },
+    };
+    const current = (entry: object) =>
+      plan({
+        now: '2026-12-07T11:00+09:00',
+        tasks: [work],
+        arrangements: [
+          arrangement({ chosenOptionKey: 'one', inUseOptionKey: 'one', options: [chosen] }),
+        ],
+        requests: [{ ...request, ...entry }],
+      });
+    const sent = { ...intent, until: taskDeadline };
+    expect(violations(check([sent], current({})))).toContain('notification_subject_mismatch');
+    expect(
+      violations(
+        check(
+          [sent],
+          current({
+            window: { start: '2026-12-07T08:10+09:00', end: '2026-12-07T18:15+09:00' },
+          }),
+        ),
+      ),
+    ).toEqual([]);
+    const cancelled = current({
+      state: 'cancelled',
+      window: { start: '2026-12-07T08:10+09:00', end: '2026-12-07T18:15+09:00' },
+    });
+    expect(violations(check([sent], cancelled))).toContain('notification_subject_mismatch');
+    const uncertain = check([sent], current({ window: undefined }));
+    expect(violations(uncertain)).toEqual([]);
+    expect(uncertain.issues).toContainEqual(
+      expect.objectContaining({
+        kind: 'undetermined',
+        code: 'notification_started_unverified',
+      }),
+    );
+  });
+
   it('本命の確定後に使っていない予備と、出番のない当日準備は知らせない', () => {
     const work = {
       ...unowned,
@@ -145,6 +205,7 @@ describe('担当のいない作業への知らせ', () => {
       sentBy: 'a',
       state: 'confirmed',
       live: true,
+      window: { start: '2026-12-07T08:10+09:00', end: '2026-12-07T18:15+09:00' },
       basis: { itemIds: [], arrangementKey: 'arrangement', optionKey: 'one' },
     };
     const confirmed = plan({ now, tasks: [work], arrangements: [setup], requests: [request] });
@@ -170,6 +231,42 @@ describe('担当のいない作業への知らせ', () => {
       requests: [{ ...request, state: 'turnedDown' }],
     });
     expect(violations(check([intent], switched))).toEqual([]);
+
+    // 旧日の肯定と見せた時刻が変わった肯定は、現在の予備を不要にしない。
+    const old = { start: '2026-11-30T08:10+09:00', end: '2026-11-30T18:15+09:00' };
+    const changedTime = { start: '2026-12-07T09:10+09:00', end: '2026-12-07T18:15+09:00' };
+    const same = { start: '2026-12-06T23:10+00:00', end: '2026-12-07T09:15+00:00' };
+    const withRequest = (extra: object) =>
+      plan({ now, tasks: [work], arrangements: [setup], requests: [{ ...request, ...extra }] });
+    expect(violations(check([intent], withRequest({ window: old })))).toEqual([]);
+    expect(violations(check([intent], withRequest({ window: changedTime })))).toEqual([]);
+    expect(violations(check([intent], withRequest({ window: same, needsCheck: true })))).toEqual(
+      [],
+    );
+    expect(violations(check([intent], withRequest({ window: undefined })))).toEqual([]);
+    const uncertainAndNew = plan({
+      now,
+      tasks: [work],
+      arrangements: [setup],
+      requests: [
+        { ...request, window: undefined },
+        { ...request, requestId: 'r2', window: same },
+      ],
+    });
+    expect(violations(check([intent], uncertainAndNew))).toEqual([]);
+    const cancelledAndNew = plan({
+      now,
+      tasks: [work],
+      arrangements: [setup],
+      requests: [
+        { ...request, state: 'cancelled', needsCheck: true },
+        { ...request, requestId: 'r2', window: same },
+      ],
+    });
+    expect(violations(check([intent], cancelledAndNew))).toContain('notification_subject_mismatch');
+    expect(violations(check([intent], withRequest({ window: same })))).toContain(
+      'notification_subject_mismatch',
+    );
 
     // 同じ範囲の判定を、以前からある本人への提案にも適用する。
     const assigned = { ...work, assigneeId: 'a', start: due, end: '2026-12-07T10:30+09:00' };

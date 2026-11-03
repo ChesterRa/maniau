@@ -20,6 +20,8 @@ const CARE = 'arr:childCare:n1:i6:c';
 const GRANDMA = `opt:${CARE}:opt-grandma`;
 const GAKUDO = `opt:${CARE}:opt-gakudo`;
 const ASK = `task:${GRANDMA}:ask`;
+// デモの 12/7 の頼む時間（子の居場所の手配の区間）。送ったの記録には、画面で見せた頼む時間を付ける。
+const DEMO_WINDOW = { start: '2026-12-07T08:10+09:00', end: '2026-12-07T18:15+09:00' };
 const ITEM = 'n1:i6';
 const endpointOf = (memberId: string) => `https://web.push.apple.com/test-${memberId}`;
 
@@ -214,7 +216,12 @@ describe('知らせの仕事', () => {
       assigneeId: 'b',
     });
     await t.command('b', { type: 'accept', taskKey: ASK, shown: await t.shown(ASK) });
-    await t.command('b', { type: 'recordSent', taskKey: ASK, requestId: 'r-1' });
+    await t.command('b', {
+      type: 'recordSent',
+      taskKey: ASK,
+      requestId: 'r-1',
+      window: DEMO_WINDOW,
+    });
     await t.jobs.run(H);
     expect(t.sent).toEqual([]);
     // うちの子に関係ないと外すと、頼んだ依頼が要らなくなる。
@@ -243,7 +250,12 @@ describe('知らせの仕事', () => {
       assigneeId: 'b',
     });
     await t.command('b', { type: 'accept', taskKey: ASK, shown: await t.shown(ASK) });
-    await t.command('b', { type: 'recordSent', taskKey: ASK, requestId: 'r-1' });
+    await t.command('b', {
+      type: 'recordSent',
+      taskKey: ASK,
+      requestId: 'r-1',
+      window: DEMO_WINDOW,
+    });
     await t.command('b', { type: 'dismissItem', itemId: ITEM, reason: 'notOurs' });
     // 取り消しの一回目を数えた後、送る前の確かめの前に、戻して（確かめて）また外す。
     t.afterLock(async () => {

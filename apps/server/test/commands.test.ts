@@ -14,6 +14,8 @@ const CARE = 'arr:childCare:n1:i6:c';
 const GRANDMA = `opt:${CARE}:opt-grandma`;
 const GAKUDO = `opt:${CARE}:opt-gakudo`;
 const ASK = `task:${GRANDMA}:ask`;
+// デモの 12/7 の頼む時間（子の居場所の手配の区間）。送ったの記録には、画面で見せた頼む時間を付ける。
+const DEMO_WINDOW = { start: '2026-12-07T08:10+09:00', end: '2026-12-07T18:15+09:00' };
 
 function setup(now: string = NOW) {
   const store = memoryStore(new Map([['h', demoEvents('arrived')]]));
@@ -54,9 +56,10 @@ describe('命令', () => {
     const shown = proposalSnapshot(await task(ASK));
     if (!shown) throw new Error('置けていない');
     await run('b', { type: 'accept', taskKey: ASK, shown });
-    expect((await run('b', { type: 'recordSent', taskKey: ASK, requestId: 'r1' })).status).toBe(
-      'ok',
-    );
+    expect(
+      (await run('b', { type: 'recordSent', taskKey: ASK, requestId: 'r1', window: DEMO_WINDOW }))
+        .status,
+    ).toBe('ok');
     const sent = (await events()).at(-1);
     expect(sent?.type === 'externalRequestSent' && sent.snapshot).toMatchObject({
       to: 'g',
@@ -295,7 +298,7 @@ describe('命令', () => {
     const shown = proposalSnapshot(await task(ASK));
     if (!shown) throw new Error('置けていない');
     await run('b', { type: 'accept', taskKey: ASK, shown });
-    await run('b', { type: 'recordSent', taskKey: ASK, requestId: 'r1' });
+    await run('b', { type: 'recordSent', taskKey: ASK, requestId: 'r1', window: DEMO_WINDOW });
     const now = await plan();
     const seenOption = {
       tasks: now.tasks
@@ -358,18 +361,23 @@ describe('命令', () => {
     const shown = proposalSnapshot(await task(ASK));
     if (!shown) throw new Error('置けていない');
     await run('b', { type: 'accept', taskKey: ASK, shown });
-    await run('b', { type: 'recordSent', taskKey: ASK, requestId: 'r1' });
+    await run('b', { type: 'recordSent', taskKey: ASK, requestId: 'r1', window: DEMO_WINDOW });
     await run('b', { type: 'correctSentRecord', requestId: 'r1' });
     expect(await task(ASK)).toMatchObject({ commitment: 'accepted' });
-    expect(await run('b', { type: 'recordSent', taskKey: ASK, requestId: 'r1' })).toMatchObject({
+    expect(
+      await run('b', { type: 'recordSent', taskKey: ASK, requestId: 'r1', window: DEMO_WINDOW }),
+    ).toMatchObject({
       status: 'invalid',
       reason: 'requestIdTaken',
     });
-    expect((await run('b', { type: 'recordSent', taskKey: ASK, requestId: 'r2' })).status).toBe(
-      'ok',
-    );
+    expect(
+      (await run('b', { type: 'recordSent', taskKey: ASK, requestId: 'r2', window: DEMO_WINDOW }))
+        .status,
+    ).toBe('ok');
     // 同じ作業の依頼は一通だけ（二通目は、押し間違いを直してから）。
-    expect(await run('b', { type: 'recordSent', taskKey: ASK, requestId: 'r3' })).toMatchObject({
+    expect(
+      await run('b', { type: 'recordSent', taskKey: ASK, requestId: 'r3', window: DEMO_WINDOW }),
+    ).toMatchObject({
       status: 'conflict',
       reason: 'alreadySent',
     });

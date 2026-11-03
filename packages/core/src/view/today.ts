@@ -95,22 +95,46 @@ export function isActiveTask(
   );
 }
 
-/** 本命の案が、外の相手の「はい」で決まった（返事を待つ依頼が無く、確定の依頼がある）。 */
-function primaryConfirmed(plan: Pick<PlanResult, 'requests'>, arrangement: Arrangement): boolean {
-  const chosen = arrangement.chosenOptionKey;
-  if (chosen === undefined || arrangement.inUseOptionKey !== chosen) return false;
-  const requests = plan.requests.filter((r) => r.live && r.basis.optionKey === chosen);
+/**
+ * 依頼が、今の手配の日の分か（エンジンと同じ見方：子の居場所の手配は、控えの頼んだ日が今の日と同じ物だけ。
+ * 控えに時間の無い古い事象は、時間からは決めない。時刻は家庭の時区で書いてあるので、日をそのまま読める）。
+ * 日が直されたら、前の日の返事で今の日を決めない。
+ */
+function forDay(request: ExternalRequest, arrangement: Arrangement): boolean {
   return (
-    requests.some((r) => r.state === 'confirmed') &&
-    !requests.some((r) => r.state === 'awaitingReply')
+    arrangement.kind !== 'childCare' ||
+    request.window === undefined ||
+    request.window.start.slice(0, 10) === arrangement.start.slice(0, 10)
   );
 }
 
-/** 案を始めたか（手順を一つでも済ませた・依頼を送った）。手配の「決め時を過ぎても始めていない」と同じ見方。 */
-function started(plan: PlanResult, optionKey: string): boolean {
+/**
+ * 本命の案が、外の相手の「はい」で決まった（今の日の分で、返事を待つ依頼も、確かめの要る依頼も無く、確定の
+ * 依頼がある）。「はい」の後に疑いが生じた依頼は、確かめるまで決まったとしない（予備をたたまない）。
+ */
+function primaryConfirmed(plan: Pick<PlanResult, 'requests'>, arrangement: Arrangement): boolean {
+  const chosen = arrangement.chosenOptionKey;
+  if (chosen === undefined || arrangement.inUseOptionKey !== chosen) return false;
+  const requests = plan.requests.filter(
+    (r) =>
+      r.live && r.state !== 'cancelled' && r.basis.optionKey === chosen && forDay(r, arrangement),
+  );
+  return (
+    requests.some((r) => r.state === 'confirmed') &&
+    !requests.some((r) => r.state === 'awaitingReply' || r.needsCheck === true)
+  );
+}
+
+/**
+ * 案を始めたか（手順を一つでも済ませた・今の日の分の依頼を送った）。手配の「決め時を過ぎても始めていない」と
+ * 同じ見方。取り消しを伝えた依頼は、送ったことにしない。
+ */
+function started(plan: PlanResult, arrangement: Arrangement, optionKey: string): boolean {
   return (
     plan.tasks.some((t) => t.basis.optionKey === optionKey && t.commitment === 'done') ||
-    plan.requests.some((r) => r.basis.optionKey === optionKey)
+    plan.requests.some(
+      (r) => r.basis.optionKey === optionKey && r.state !== 'cancelled' && forDay(r, arrangement),
+    )
   );
 }
 
@@ -208,7 +232,7 @@ export function todayCards(
     // 決め時を過ぎて、まだ始めていない案の作業は、もう持てない（手配の状態が、選び直しを出す）。始めた
     // 案（手順を済ませた・依頼を送った）の残りの手順は、決め時の後も出す（手配もまだその案を使う）。
     const option = arrangement?.options.find((o) => o.key === task.basis.optionKey);
-    if (option?.expired && !started(plan, option.key)) continue;
+    if (arrangement && option?.expired && !started(plan, arrangement, option.key)) continue;
     unowned.push({ kind: 'unowned', task, ...(arrangement ? { arrangement } : {}) });
   }
 

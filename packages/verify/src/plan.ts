@@ -11,7 +11,14 @@ import {
 import { type FactState, historicalItem } from './facts';
 import { doneContentMatches, type History, otherAnswerPossible } from './history';
 import type { Collector } from './report';
-import { dateFromIndex, dateIndex, instantMinute, localMinute, weekday } from './time';
+import {
+  dateFromIndex,
+  dateIndex,
+  instantMinute,
+  localMinute,
+  matchesArrangementDay,
+  weekday,
+} from './time';
 
 function indexUnique<T>(
   items: readonly T[],
@@ -381,16 +388,11 @@ function optionStarted(
       taskKey = entry.taskKey;
     } else if (entry.type === 'externalRequestSent') {
       // 訂正で消えた送信は進捗にしない。控えの日が違う依頼も、現在の日を始めた証拠にはならない。
-      // 日の控えが無い旧い依頼は、これまでどおり扱う。
+      // 日の控えが無い古い送信は、現在の日の送信として扱う。独立に確かめられない事は別に示す。
       const sent = history.requests.get(entry.requestId);
-      if (!sent || sent.seq !== entry.seq) continue;
+      if (!sent || sent.seq !== entry.seq || sent.state === 'cancelled') continue;
       const window = sent.snapshot?.window;
-      if (
-        window &&
-        localMinute(instantMinute(window.start), timeZone).date !==
-          localMinute(instantMinute(arrangement.start), timeZone).date
-      )
-        continue;
+      if (matchesArrangementDay(window, arrangement, timeZone) === false) continue;
       taskKey = entry.taskKey;
     }
     if (!taskKey || !option.taskKeys.includes(taskKey)) continue;
@@ -415,8 +417,20 @@ export function optionFailure(
   history: History,
   timeZone: string,
 ): { code: 'turnedDown' | 'missedDeadline'; refs: string[] } | undefined {
-  const turnedDown = [...history.requests.entries()]
-    .filter(([, sent]) => option.taskKeys.includes(sent.taskKey) && sent.state === 'turnedDown')
+  const requests = [...history.requests.entries()].filter(
+    ([, sent]) => option.taskKeys.includes(sent.taskKey) && sent.state !== 'cancelled',
+  );
+  // 今の日の依頼があればその返事を見る。新しい依頼が一つも無い時は、以前の断りを見落として
+  // 使えると決めない（今の日への断りが確定したという意味ではない）。
+  const current = requests.filter(
+    ([, sent]) => matchesArrangementDay(sent.snapshot?.window, arrangement, timeZone) === true,
+  );
+  // 控えが無い依頼は現在の日の可能性がある。その間、別の日の断りを今も有効と断定しない。
+  const unknownDay = requests.some(
+    ([, sent]) => matchesArrangementDay(sent.snapshot?.window, arrangement, timeZone) === undefined,
+  );
+  const turnedDown = (current.length > 0 ? current : unknownDay ? [] : requests)
+    .filter(([, sent]) => sent.state === 'turnedDown')
     .map(([id]) => id);
   if (turnedDown.length) return { code: 'turnedDown', refs: turnedDown };
   if (
@@ -1070,22 +1084,32 @@ export function checkPlan(
     }
     const subjectOption =
       usable ?? replacement ?? (selected.length === 0 ? recommended : undefined);
-    if (
-      arrangement.status === 'decidable' &&
-      subjectOption &&
-      [...history.requests.values()].some(
-        (request) =>
-          subjectOption.taskKeys.includes(request.taskKey) && request.state === 'awaitingReply',
-      )
-    ) {
+    const waiting = subjectOption
+      ? [...history.requests.values()].filter(
+          (request) =>
+            subjectOption.taskKeys.includes(request.taskKey) && request.state === 'awaitingReply',
+        )
+      : [];
+    const waitingToday = waiting.some(
+      (request) =>
+        matchesArrangementDay(request.snapshot?.window, arrangement, household.timeZone) === true,
+    );
+    const waitingUnknown = waiting.some(
+      (request) =>
+        matchesArrangementDay(request.snapshot?.window, arrangement, household.timeZone) ===
+        undefined,
+    );
+    if (arrangement.status === 'decidable' && subjectOption && (waitingToday || waitingUnknown)) {
       const priorUnknown = selected
         .slice(0, selected.indexOf(subjectOption))
         .some((option) => failures.get(option.key)?.code === 'missedDeadline');
-      if (priorUnknown)
+      if (priorUnknown || !waitingToday)
         report.undetermined(
           'decidable_waiting_reply',
           arrangement.key,
-          '進捗が不明な本命と返事待ちの予備を確認できない。',
+          waitingUnknown && !waitingToday
+            ? '返事待ちの依頼が今の日の分か確かめられない。'
+            : '進捗が不明な本命と返事待ちの予備を確認できない。',
         );
       else
         report.violation(

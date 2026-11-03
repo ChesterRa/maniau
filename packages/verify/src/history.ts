@@ -10,7 +10,7 @@ import type {
 import { Extraction } from '@maniau/core';
 import { collectFacts, type FactState, historicalItem } from './facts';
 import { Collector } from './report';
-import { instantMinute } from './time';
+import { instantMinute, matchesArrangementDay, matchesArrangementWindow } from './time';
 
 type RequestState = 'awaitingReply' | 'confirmed' | 'turnedDown' | 'cancelled';
 
@@ -407,9 +407,40 @@ export function checkHistory(
   const tasks = new Map(plan.tasks.map((task) => [task.key, task]));
   for (const task of plan.tasks) {
     const completed = doneContents.get(task.key);
-    if (commitment.get(task.key) === 'done' && completed && !doneContentMatches(task, completed)) {
+    if (
+      commitment.get(task.key) === 'done' &&
+      !requestBasedDone.has(task.key) &&
+      completed &&
+      !doneContentMatches(task, completed)
+    ) {
       // 前の用件を済ませた記録は、今の用件の済みではない。再確認の必要も後で検査する。
       commitment.set(task.key, 'accepted');
+    }
+    // 子の居場所の依頼で済んだ時、送った日の控えと今の手配の日を家庭の時区で照らす。
+    // 控えのない古い送信は、今の日かを断定せず、今までの済みをそのまま見る。
+    if (commitment.get(task.key) === 'done' && requestBasedDone.has(task.key)) {
+      const arrangement = plan.arrangements.find(
+        (entry) => entry.key === task.basis.arrangementKey && entry.kind === 'childCare',
+      );
+      const seq = commitmentSeq.get(task.key);
+      const sent = [...requests.values()].find(
+        (entry) => entry.taskKey === task.key && entry.seq === seq,
+      );
+      if (arrangement && sent) {
+        const sameDay = matchesArrangementDay(
+          sent.snapshot?.window,
+          arrangement,
+          household.timeZone,
+        );
+        if (sameDay === false || (sent.state === 'cancelled' && task.live && arrangement.live))
+          commitment.set(task.key, 'accepted');
+        else if (sameDay === undefined)
+          report.undetermined(
+            'request_window_unverified',
+            task.key,
+            '送った依頼の日を確かめられない。',
+          );
+      }
     }
     // 買った後に同じ品物が無いと分かった時、購入の済みは今の用意の済みではない。
     // 事象と通し番号で照らし、読み取りの作用などが入り得る時は断定しない。
@@ -624,6 +655,7 @@ export function checkRequestNeed(
   history: History,
   facts: FactState,
   report: Collector,
+  timeZone: string,
 ): void {
   const beforeSending = new Map<number, FactState>();
   for (const request of plan.requests) {
@@ -649,14 +681,41 @@ export function checkRequestNeed(
               )
               .map((task) => task.key),
           );
-          const primaryRequests = [...history.requests.values()].filter((sent) =>
+          const primaryRequests = [...history.requests.entries()].filter(([, sent]) =>
             primaryTasks.has(sent.taskKey),
           );
-          if (
-            primaryRequests.length > 0 &&
-            primaryRequests.every((sent) => sent.state === 'confirmed')
-          )
-            optionNeeded = false;
+          const currentArrangement = plan.arrangements.find((a) => a.key === basis.arrangementKey);
+          const current = currentArrangement
+            ? primaryRequests.filter(
+                ([, sent]) =>
+                  sent.state !== 'cancelled' &&
+                  matchesArrangementDay(sent.snapshot?.window, currentArrangement, timeZone) ===
+                    true,
+              )
+            : [];
+          const unknownWindow =
+            currentArrangement &&
+            primaryRequests.some(
+              ([, sent]) =>
+                ['confirmed', 'awaitingReply', 'turnedDown'].includes(sent.state) &&
+                matchesArrangementDay(sent.snapshot?.window, currentArrangement, timeZone) ===
+                  undefined,
+            );
+          if (!currentArrangement || unknownWindow) optionNeeded = 'unknown';
+          else if (
+            current.length > 0 &&
+            current.every(
+              ([id, sent]) =>
+                sent.state === 'confirmed' &&
+                !plan.requests.some((request) => request.requestId === id && request.needsCheck),
+            )
+          ) {
+            // 見せる計画に本命の依頼が欠ける・不要とされている時は、予備を要らないと断定しない。
+            const projected = current.map(([id]) =>
+              plan.requests.find((request) => request.requestId === id),
+            );
+            optionNeeded = projected.every((request) => request?.live) ? false : 'unknown';
+          }
         }
       }
     } else if (basis.optionKey || basis.arrangementKey) optionNeeded = 'unknown';
@@ -672,8 +731,23 @@ export function checkRequestNeed(
           : basisStates.every((active) => active === true)
             ? true
             : 'unknown';
+    // 同じ作業から現在の日の依頼を新たに送ったなら、古い日の依頼は引き継がれない。
+    // 古い控えに日が無い場合は、何日の依頼か分からないため、ここでは断定しない。
+    const arrangement = plan.arrangements.find((entry) => entry.key === basis.arrangementKey);
+    const superseded =
+      history.complete &&
+      sent !== undefined &&
+      arrangement?.kind === 'childCare' &&
+      matchesArrangementDay(sent.snapshot?.window, arrangement, timeZone) === false &&
+      [...history.requests.values()].some(
+        (newer) =>
+          newer.taskKey === sent.taskKey &&
+          newer.seq > sent.seq &&
+          newer.state !== 'cancelled' &&
+          matchesArrangementDay(newer.snapshot?.window, arrangement, timeZone) === true,
+      );
     const needed: Truth =
-      optionNeeded === false || factsNeeded === false
+      superseded || optionNeeded === false || factsNeeded === false
         ? false
         : optionNeeded === true && factsNeeded === true
           ? true
@@ -715,6 +789,21 @@ export function checkRequestNeed(
         request.requestId,
         '根拠の一部だけが取り消された依頼を、確かめずに不要と扱っている。',
       );
+    const requestedArrangement = plan.arrangements.find(
+      (entry) => entry.key === basis.arrangementKey && entry.live,
+    );
+    if (
+      sent !== undefined &&
+      request.live &&
+      (state === 'awaitingReply' || state === 'confirmed') &&
+      requestedArrangement?.kind === 'childCare' &&
+      !sent.snapshot?.window
+    )
+      report.undetermined(
+        'request_window_unverified',
+        request.requestId,
+        '控えが無いため、送った依頼の日を確かめられない。',
+      );
     if (
       needed !== false &&
       history.complete &&
@@ -724,6 +813,13 @@ export function checkRequestNeed(
       !request.needsCheck
     ) {
       const original = sent.snapshot;
+      const arrangement = plan.arrangements.find(
+        (entry) => entry.key === basis.arrangementKey && entry.live,
+      );
+      const changedWindow =
+        arrangement?.kind === 'childCare' &&
+        original.window !== undefined &&
+        matchesArrangementWindow(original.window, arrangement) === false;
       const currentItems = basis.itemIds.map((id) =>
         facts.items.get(historicalItem(facts, id).itemId),
       );
@@ -781,6 +877,7 @@ export function checkRequestNeed(
       if (
         partiallyCancelled ||
         changedEquality ||
+        changedWindow ||
         (needed === 'unknown' &&
           (missingOrUntrusted ||
             staleBasis ||

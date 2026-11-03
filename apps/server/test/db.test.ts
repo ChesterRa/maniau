@@ -18,6 +18,8 @@ const NOW = '2026-11-25T19:40+09:00';
 const CARE = 'arr:childCare:n1:i6:c';
 const GRANDMA = `opt:${CARE}:opt-grandma`;
 const ASK = `task:${GRANDMA}:ask`;
+// デモの 12/7 の頼む時間（子の居場所の手配の区間）。送ったの記録には、画面で見せた頼む時間を付ける。
+const DEMO_WINDOW = { start: '2026-12-07T08:10+09:00', end: '2026-12-07T18:15+09:00' };
 
 /** 試験の家に無い種類の事象（形だけを確かめる。計画には入れない）。 */
 function otherKinds(): DomainEvent[] {
@@ -167,7 +169,12 @@ describe('Postgres の置き場所', () => {
         // 本人でない大人の引き受けは断る（事象を足さない）。
         out.push(await run('a', 'op-3', { type: 'accept', taskKey: ASK, shown }));
         out.push(
-          await run('b', 'op-4', { type: 'recordSent', taskKey: ASK, requestId: 'r-grandma' }),
+          await run('b', 'op-4', {
+            type: 'recordSent',
+            taskKey: ASK,
+            requestId: 'r-grandma',
+            window: DEMO_WINDOW,
+          }),
         );
         const events = await store.withHousehold(H, (log) => [...log.events()]);
         return { out, events: events.map((e) => [e.seq, e.actorId, bodyOf(e)]) };

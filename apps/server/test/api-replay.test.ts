@@ -5,6 +5,8 @@ import { createApp } from '../src/app';
 import type { CommandResult } from '../src/commands';
 import type { View } from '../src/views';
 
+// デモの 12/7 の頼む時間（子の居場所の手配の区間）。送ったの記録には、画面で見せた頼む時間を付ける。
+const DEMO_WINDOW = { start: '2026-12-07T08:10+09:00', end: '2026-12-07T18:15+09:00' };
 const care = 'arr:childCare:n1:i6:c';
 const grandma = `opt:${care}:opt-grandma`;
 const ask = `task:${grandma}:ask`;
@@ -119,7 +121,12 @@ describe('HTTP からたどる架空の家庭', () => {
     expect(
       accepted.view.today.quiet.some((card) => card.kind === 'todo' && card.task.key === ask),
     ).toBe(true);
-    const sentCommand: Command = { type: 'recordSent', taskKey: ask, requestId: 'r-http' };
+    const sentCommand: Command = {
+      type: 'recordSent',
+      taskKey: ask,
+      requestId: 'r-http',
+      window: DEMO_WINDOW,
+    };
     const sent = await command(app, session, 'b', 'send', sentCommand);
     expect(sent.status).toBe(200);
     expect(sent.view.plan.requests.find((entry) => entry.requestId === 'r-http')).toMatchObject({
@@ -186,6 +193,7 @@ describe('HTTP からたどる架空の家庭', () => {
       type: 'recordSent',
       taskKey: ask,
       requestId: 'r-change',
+      window: DEMO_WINDOW,
     });
     expect(
       sent.view.plan.requests.find((request) => request.requestId === 'r-change'),

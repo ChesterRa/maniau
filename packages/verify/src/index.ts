@@ -75,7 +75,7 @@ export function verifyPlan(input: VerificationInput): VerificationReport {
   }
   const facts = collectFacts(history.events, report);
   checkProposals(plan.data, history, report);
-  checkRequestNeed(plan.data, history, facts, report);
+  checkRequestNeed(plan.data, history, facts, report, household.data.timeZone);
   checkPlan(household.data, plan.data, facts, history, report);
   checkSchedule(household.data, plan.data, history, report);
   if (facts.items.size > 0) {

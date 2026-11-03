@@ -332,33 +332,47 @@ function careOption(
     const key = keys.task(optionKey, step.id);
     taskKeys.push(key);
     const previous = template.steps[index - 1];
+    // 依頼を送って済みになった手順は、送った依頼の日で見る。前の日の分を送った済みは、今の日に当てず、
+    // 引き受けた所に戻す（今の日の分を頼み直せるように）。控えに時間の無い古い事象は、時間からは決めない。
+    const sentWith = ctx.state.commitmentLog.get(key)?.at(-1)?.requestId;
+    const sent = sentWith === undefined ? undefined : ctx.state.requests.get(sentWith);
+    const sentDay = sent === undefined ? undefined : requestDay(sent, ctx.tz);
+    // 取り消しを伝えた依頼は、送ったことにしない（案がまた要るなら、頼み直す）。
+    const reopen =
+      sent !== undefined &&
+      (sent.state === 'cancelled' || (sentDay !== undefined && sentDay !== needDate));
     tasks.push(
-      task(ctx, key, {
-        step: { templateId: template.id, stepId: step.id },
-        titleKey: step.titleKey,
-        // 用件に、その手配の日を入れる（日が直されたら別の用件。前の日の申込書を書いた済みや、前の日の
-        // 引き受けを、新しい日に当てない）。
-        titleParams: { date: needDate },
-        basis,
-        durationMin: step.durationMin,
-        deadline: ctx.fmt(result.ruleDeadline),
-        after: previous
-          ? [{ taskKey: keys.task(optionKey, previous.id), waitMin: previous.waitAfterMin }]
-          : [],
-        segments: step.segments,
-        ...(step.placeId === undefined ? {} : { placeId: step.placeId }),
-        ...(step.external === undefined ? {} : { external: step.external }),
-        ...(handoff ? { handoff: true } : {}),
-        ...(placed && !handoff
-          ? {
-              assigneeId: placed.memberId,
-              start: ctx.fmt(placed.start),
-              end: ctx.fmt(placed.end),
-              ...(placed.slot.placeId === undefined ? {} : { atPlaceId: placed.slot.placeId }),
-            }
-          : {}),
-        live,
-      }),
+      task(
+        ctx,
+        key,
+        {
+          step: { templateId: template.id, stepId: step.id },
+          titleKey: step.titleKey,
+          // 用件に、その手配の日を入れる（日が直されたら別の用件。前の日の申込書を書いた済みや、前の日の
+          // 引き受けを、新しい日に当てない）。
+          titleParams: { date: needDate },
+          basis,
+          durationMin: step.durationMin,
+          deadline: ctx.fmt(result.ruleDeadline),
+          after: previous
+            ? [{ taskKey: keys.task(optionKey, previous.id), waitMin: previous.waitAfterMin }]
+            : [],
+          segments: step.segments,
+          ...(step.placeId === undefined ? {} : { placeId: step.placeId }),
+          ...(step.external === undefined ? {} : { external: step.external }),
+          ...(handoff ? { handoff: true } : {}),
+          ...(placed && !handoff
+            ? {
+                assigneeId: placed.memberId,
+                start: ctx.fmt(placed.start),
+                end: ctx.fmt(placed.end),
+                ...(placed.slot.placeId === undefined ? {} : { atPlaceId: placed.slot.placeId }),
+              }
+            : {}),
+          live,
+        },
+        { reopen },
+      ),
     );
   });
   for (const extra of template.extraSteps) {
@@ -441,22 +455,45 @@ function task(
     : { ...built, reconfirm: true };
 }
 
+/** 依頼の控えの頼んだ日（区間の始まりの日、家庭の時区）。控えに時間が無ければ無し。 */
+function requestDay(
+  request: Pick<RequestRecord, 'snapshot'>,
+  timeZone: string,
+): LocalDate | undefined {
+  const window = request.snapshot?.window;
+  return window === undefined ? undefined : localDateOf(toEpochMinutes(window.start), timeZone);
+}
+
 /**
- * 案の依頼のうち、今の手配の日の分。控えの頼んだ日（区間の始まりの日）が今の日と同じ物だけ。控えに時間の
- * 無い古い依頼は当たるとする（控えに無い物からは決めない。§5.6）。日が直されて前の日の分になった依頼で、
- * 今の日の手配を始めたことにはしない（送った後の疑いとして、頼んだ本人に確かめてもらう）。
+ * 依頼が、今の手配の日の分か（02-foundation §5.6）。子の居場所の手配は、控えの頼んだ日が今の日と同じ物だけ
+ * （日が直されたら、前の日の返事で今の日を決めない）。時間で頼まない依頼は、いつも今の分。控えに時間の無い
+ * 古い事象は、時間からは決めない（今の分として扱う。サーバーとデモが書く事象は、いつも時間を持つ）。
+ */
+function requestForDay(
+  request: Pick<RequestRecord, 'snapshot'>,
+  arrangement: Pick<Arrangement, 'kind' | 'start'>,
+  timeZone: string,
+): boolean {
+  if (arrangement.kind !== 'childCare') return true;
+  const day = requestDay(request, timeZone);
+  return day === undefined || day === localDateOf(toEpochMinutes(arrangement.start), timeZone);
+}
+
+/**
+ * 案の依頼のうち、今の手配の日の分（requestForDay）。日が直されて前の日の分になった依頼で、今の日の手配を
+ * 始めたことにはしない（送った後の疑いとして、頼んだ本人に確かめてもらう）。
  */
 function optionRequests(
   state: EngineState,
-  arrangement: Pick<Arrangement, 'start'>,
+  arrangement: Pick<Arrangement, 'kind' | 'start'>,
   option: Pick<OptionPlan, 'taskKeys'>,
   timeZone: string,
 ): RequestRecord[] {
-  const day = (value: DateTime) => localDateOf(toEpochMinutes(value), timeZone);
   return [...state.requests.values()].filter(
     (r) =>
       option.taskKeys.includes(r.taskKey) &&
-      (r.snapshot?.window === undefined || day(r.snapshot.window.start) === day(arrangement.start)),
+      r.state !== 'cancelled' &&
+      requestForDay(r, arrangement, timeZone),
   );
 }
 
@@ -467,7 +504,7 @@ function optionRequests(
  */
 export function optionStarted(
   state: EngineState,
-  arrangement: Pick<Arrangement, 'start'>,
+  arrangement: Pick<Arrangement, 'kind' | 'start'>,
   option: Pick<OptionPlan, 'taskKeys'>,
   tasks: readonly Task[],
   timeZone: string,
@@ -482,9 +519,9 @@ export function optionStarted(
 }
 
 /**
- * 選んだ案が使えなくなったか：依頼が断られた、または決め時を過ぎても始めていない。断られたのは、頼んだ日に
- * よらず使えないとする（前の日の分の断りでも、今の日を頼み直すまでは決まっていない。勝手に使える側へ
- * 倒さない）。始めたかは、今の日の分だけで見る（optionStarted）。
+ * 選んだ案が使えなくなったか：依頼が断られた、または決め時を過ぎても始めていない。今の日の分の依頼があれば、
+ * その返事で決める。無ければ、前の日の分の断りでも使えないとする（今の日を頼み直すまでは決まっていない。
+ * 勝手に使える側へ倒さない）。始めたかは、今の日の分だけで見る（optionStarted）。
  */
 function failure(
   ctx: Context,
@@ -492,9 +529,12 @@ function failure(
   option: OptionPlan,
   tasks: readonly Task[],
 ): Reason | undefined {
-  const turned = [...ctx.state.requests.values()].filter(
-    (r) => option.taskKeys.includes(r.taskKey) && r.state === 'turnedDown',
+  // 取り消しを伝えた依頼は、返事として数えない（今の日の分として、前の日の断りを打ち消さない）。
+  const requests = [...ctx.state.requests.values()].filter(
+    (r) => option.taskKeys.includes(r.taskKey) && r.state !== 'cancelled',
   );
+  const current = requests.filter((r) => requestForDay(r, arrangement, ctx.tz));
+  const turned = (current.length > 0 ? current : requests).filter((r) => r.state === 'turnedDown');
   if (turned.length > 0) return { code: 'turnedDown', refs: turned.map((r) => r.requestId) };
   if (option.expired && !optionStarted(ctx.state, arrangement, option, tasks, ctx.tz))
     return { code: 'missedDeadline', refs: [option.key] };
@@ -524,8 +564,12 @@ function withStatus(ctx: Context, arrangement: Arrangement, tasks: Task[]): Arra
   const inUse = chosenKeys.find((k) => !failed.has(k));
   if (inUse) {
     const option = byKey.get(inUse);
+    // 返事を待つのは、今の日の分の依頼だけ（前の日の分の返事は、今の日を決めない）。
     const waiting = [...ctx.state.requests.values()].filter(
-      (r) => r.state === 'awaitingReply' && option?.taskKeys.includes(r.taskKey),
+      (r) =>
+        r.state === 'awaitingReply' &&
+        option?.taskKeys.includes(r.taskKey) &&
+        requestForDay(r, arrangement, ctx.tz),
     );
     if (waiting.length > 0) {
       reasons.push({ code: 'awaitingReply', refs: waiting.map((r) => r.requestId) });
@@ -920,7 +964,13 @@ function purchase(
  * その案の依頼が、まだ要るか。取り下げた案、選び替えて外れた案、本命が確定した後の予備は要らない
  * （頼んだ後なら、取り消しの連絡を作る。§4・§7）。何も選んでいなければ、家族が出した依頼は残す。
  */
-function optionStillNeeded(ctx: Context, tasks: readonly Task[], basis: Basis): boolean {
+function optionStillNeeded(
+  ctx: Context,
+  tasks: readonly Task[],
+  items: ReadonlyMap<string, LiveItem>,
+  basis: Basis,
+  arrangement: Pick<Arrangement, 'kind' | 'start' | 'end'>,
+): boolean {
   const { arrangementKey, optionKey } = basis;
   if (arrangementKey === undefined || optionKey === undefined) return true;
   if (ctx.state.dropped.get(arrangementKey)?.has(optionKey)) return false;
@@ -933,11 +983,23 @@ function optionStillNeeded(ctx: Context, tasks: readonly Task[], basis: Basis): 
   const primaryTasks = new Set(
     tasks.filter((t) => t.basis.optionKey === primary).map((t) => t.key),
   );
-  const primaryRequests = [...ctx.state.requests.values()].filter((r) =>
-    primaryTasks.has(r.taskKey),
+  // 本命が決まったかは、今の日の分の、取り消していない依頼で見る（日が直されたら、前の日の「はい」で予備を
+  // たたまない）。「はい」の後に疑い（根拠や頼んだ時間が変わった）が生じたら、確かめるまで決まっていない。
+  const byKey = new Map(tasks.map((t) => [t.key, t]));
+  const primaryRequests = [...ctx.state.requests.values()].filter(
+    (r) =>
+      primaryTasks.has(r.taskKey) &&
+      r.state !== 'cancelled' &&
+      requestForDay(r, arrangement, ctx.tz),
   );
-  const primaryConfirmed =
-    primaryRequests.length > 0 && primaryRequests.every((r) => r.state === 'confirmed');
+  const settled = (request: RequestRecord) => {
+    if (request.state !== 'confirmed') return false;
+    const snapshot = snapshotOf(request, byKey.get(request.taskKey));
+    if (snapshot === undefined) return true;
+    const { unclear, changed } = requestDoubt(ctx, items, snapshot, arrangement);
+    return !unclear && !changed;
+  };
+  const primaryConfirmed = primaryRequests.length > 0 && primaryRequests.every(settled);
   return !primaryConfirmed;
 }
 
@@ -1041,6 +1103,7 @@ const sameTime = (a: DateTime, b: DateTime) => toEpochMinutes(a) === toEpochMinu
  *   効くか分からない作用（置き換え・取り消し）の先にある、送った時は確か（控えの conditional が false）
  *   だったのに今は条件しだい、送った時と条件の式が違う（控えの condition）、頼んだ時間が違う（控えの
  *   window）。控えに無い古い事象では、条件と時間からは決めない。条件に答えが出ただけなら疑いではない。
+ * - 同じ作業で今の日の分を送り直した後の、前の日の分の依頼（superseded）は要らない（取り消しを伝える）。
  * - 手配が無く、根拠がはっきり外れた（取り消し、確かな事項で手当てが要らなくなった）なら、要らない。
  */
 function requestStanding(
@@ -1049,7 +1112,33 @@ function requestStanding(
   arrangements: ReadonlyMap<string, Arrangement>,
   items: ReadonlyMap<string, LiveItem>,
   snapshot: RequestSnapshot,
+  superseded: boolean,
 ): { live: boolean; needsCheck: boolean; conditional: boolean } {
+  const { basis } = snapshot;
+  const arrangement =
+    basis.arrangementKey === undefined ? undefined : arrangements.get(basis.arrangementKey);
+  const { unclear, changed, conditional } = requestDoubt(ctx, items, snapshot, arrangement);
+  if (arrangement) {
+    const live =
+      arrangement.live && !superseded && optionStillNeeded(ctx, tasks, items, basis, arrangement);
+    return { live, needsCheck: live && (unclear || changed), conditional };
+  }
+  return unclear
+    ? { live: true, needsCheck: true, conditional }
+    : { live: false, needsCheck: false, conditional };
+}
+
+/**
+ * 送った後に生じた疑い（requestStanding の needsCheck の中身。要るかは別に見る）。unclear：根拠の事項の
+ * どれかが分からない（見つからない・確かでない）。changed：手配があり、根拠や頼んだ時間が送った時と違う。
+ * conditional：根拠が今、条件しだい。本命の「はい」で予備をたたむかも、同じ見方で決める。
+ */
+function requestDoubt(
+  ctx: Context,
+  items: ReadonlyMap<string, LiveItem>,
+  snapshot: RequestSnapshot,
+  arrangement: Pick<Arrangement, 'start' | 'end'> | undefined,
+): { unclear: boolean; changed: boolean; conditional: boolean } {
   const { basis } = snapshot;
   const fates = basis.itemIds.map((id) => itemFate(ctx.state, id));
   const current = fates.flatMap((fate) =>
@@ -1064,24 +1153,27 @@ function requestStanding(
         fate.item.evidence !== 'stated' &&
         fate.item.evidence !== 'confirmed'),
   );
-  const arrangement =
-    basis.arrangementKey === undefined ? undefined : arrangements.get(basis.arrangementKey);
-  if (arrangement) {
-    const live = arrangement.live && optionStillNeeded(ctx, tasks, basis);
-    const changed =
-      fates.some((fate) => fate.status === 'cancelled') ||
+  const changed =
+    arrangement !== undefined &&
+    (fates.some((fate) => fate.status === 'cancelled') ||
       current.some((i) => i.doubted) ||
       (conditional && snapshot.conditional === false) ||
       (snapshot.condition !== undefined &&
         snapshot.condition !== basisCondition(ctx.state, basis.itemIds)) ||
       (snapshot.window !== undefined &&
         (!sameTime(snapshot.window.start, arrangement.start) ||
-          !sameTime(snapshot.window.end, arrangement.end)));
-    return { live, needsCheck: live && (unclear || changed), conditional };
-  }
-  return unclear
-    ? { live: true, needsCheck: true, conditional }
-    : { live: false, needsCheck: false, conditional };
+          !sameTime(snapshot.window.end, arrangement.end))));
+  return { unclear, changed, conditional };
+}
+
+/** 依頼の控え。控えの無い古い事象だけ、今の作業から補う（外の相手への作業でなければ無し）。 */
+function snapshotOf(request: RequestRecord, task: Task | undefined): RequestSnapshot | undefined {
+  return (
+    request.snapshot ??
+    (task?.external
+      ? { to: task.external.to, kind: task.external.kind, basis: task.basis }
+      : undefined)
+  );
 }
 
 /** 依頼は、送った時の控えから作る。控えの無い古い事象だけ、今の作業から補う。 */
@@ -1094,21 +1186,40 @@ function externalRequests(
   const byKey = new Map(tasks.map((t) => [t.key, t]));
   const arrangementByKey = new Map(arrangements.map((a) => [a.key, a]));
   const itemById = new Map(items.map((i) => [i.item.id, i]));
+  const arrangementOf = (request: RequestRecord) => {
+    const key =
+      request.snapshot?.basis.arrangementKey ?? byKey.get(request.taskKey)?.basis.arrangementKey;
+    return key === undefined ? undefined : arrangementByKey.get(key);
+  };
+  // 今の日の分の依頼を送った作業（日が直された後に送り直した）。前の日の分の依頼は、もう要らない。取り消しを
+  // 伝えた依頼は数えない（日が戻っても、取り消した依頼を今の日の分として扱わない）。
+  const resent = new Set<string>();
+  for (const request of ctx.state.requests.values()) {
+    const arrangement = arrangementOf(request);
+    if (
+      request.state !== 'cancelled' &&
+      arrangement?.kind === 'childCare' &&
+      requestForDay(request, arrangement, ctx.tz)
+    ) {
+      resent.add(request.taskKey);
+    }
+  }
   const result: ExternalRequest[] = [];
   for (const request of ctx.state.requests.values()) {
-    const task = byKey.get(request.taskKey);
-    const snapshot =
-      request.snapshot ??
-      (task?.external
-        ? { to: task.external.to, kind: task.external.kind, basis: task.basis }
-        : undefined);
+    const snapshot = snapshotOf(request, byKey.get(request.taskKey));
     if (!snapshot) continue;
+    const arrangement = arrangementOf(request);
+    const superseded =
+      arrangement?.kind === 'childCare' &&
+      resent.has(request.taskKey) &&
+      !requestForDay(request, arrangement, ctx.tz);
     const { live, needsCheck, conditional } = requestStanding(
       ctx,
       tasks,
       arrangementByKey,
       itemById,
       snapshot,
+      superseded,
     );
     result.push({
       requestId: request.requestId,

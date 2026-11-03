@@ -376,7 +376,14 @@ describe('済んだ時に見せた用件', () => {
     expect(check(same).issues.map((issue) => issue.code)).not.toContain(
       'missed_deadline_unreported',
     );
+    // 控えの無い旧い送信は従来どおり進捗とし、日を照らせないことを示す。
     expect(check().issues.map((issue) => issue.code)).not.toContain('missed_deadline_unreported');
+    expect(check().issues).toContainEqual(
+      expect.objectContaining({
+        code: 'request_window_unverified',
+        kind: 'undetermined',
+      }),
+    );
     expect(check(same, true).issues.map((issue) => issue.code)).toContain(
       'missed_deadline_unreported',
     );

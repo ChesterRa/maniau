@@ -1,6 +1,7 @@
 import type { Arrangement, Household, PlanResult, Task } from '@maniau/core';
 import type { History } from './history';
 import { optionFailure } from './plan';
+import { matchesArrangementDay, matchesArrangementWindow } from './time';
 
 /**
  * 本命が外の相手の返事で決まったか。依頼の返事は計画の state を信じず事象から読み、送信時の根拠
@@ -20,6 +21,7 @@ function primaryConfirmed(
   if (optionFailure(option, arrangement, plan, history, timeZone)) return false;
 
   const primaryRequests = [...history.requests.entries()].filter(([, sent]) => {
+    if (sent.state === 'cancelled') return false;
     if (sent.snapshot) {
       const { basis } = sent.snapshot;
       return basis.arrangementKey === arrangement.key && basis.optionKey === primary;
@@ -30,9 +32,31 @@ function primaryConfirmed(
       (task?.basis.arrangementKey === arrangement.key && task.basis.optionKey === primary)
     );
   });
-  const confirmed = primaryRequests.filter(([, request]) => request.state === 'confirmed');
+  // 前の日時への依頼は今の根拠にならない。時段の控えが無ければ、今の依頼か未判定。
+  if (
+    primaryRequests.some(
+      ([, request]) =>
+        ['confirmed', 'awaitingReply', 'turnedDown'].includes(request.state) &&
+        matchesArrangementDay(request.snapshot?.window, arrangement, timeZone) === undefined,
+    )
+  )
+    return undefined;
+  const currentRequests = primaryRequests.filter(
+    ([, request]) =>
+      matchesArrangementDay(request.snapshot?.window, arrangement, timeZone) === true,
+  );
+  if (
+    currentRequests.some(
+      ([id, sent]) =>
+        (arrangement.kind === 'childCare' &&
+          matchesArrangementWindow(sent.snapshot?.window, arrangement) === false) ||
+        plan.requests.some((request) => request.requestId === id && request.needsCheck),
+    )
+  )
+    return false;
+  const confirmed = currentRequests.filter(([, request]) => request.state === 'confirmed');
   if (confirmed.length === 0) return false;
-  const waiting = primaryRequests.filter(([, request]) => request.state === 'awaitingReply');
+  const waiting = currentRequests.filter(([, request]) => request.state === 'awaitingReply');
   if (
     waiting.some(([id]) =>
       plan.requests.some((request) => request.requestId === id && request.live),
