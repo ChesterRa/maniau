@@ -72,14 +72,14 @@ export function consequencesOf(
 }
 
 /**
- * 家の情報の直しの「この変更で変わること」。before は今、after は直しの事象を足した後（検証器は、直した後の
- * 家の情報と、足した事象の列で確かめる）。edited は画面が送った直し（要約に入れる。サーバーが付ける確かめた
- * 時刻は入れない：見た時と書く時で違う）。
+ * 保存の前に見せる「この変更で変わること」（家の情報の直し・「すること」の言明・やり方の選び）。before は今、
+ * after は命令の事象を足した後（検証器は、足した後の家の情報と、足した事象の列で確かめる）。edited は画面が
+ * 送った中身（要約に入れる。サーバーが付ける確かめた時刻は入れない：見た時と書く時で違う）。
  */
 export function householdConsequences(
   before: { household: Household; events: readonly DomainEvent[]; plan: PlanResult },
   after: { household: Household; added: readonly DomainEvent[]; plan: PlanResult },
-  edited: Household,
+  edited: unknown,
 ): HouseholdPreview {
   const events = [...before.events, ...after.added];
   const newly = (kind: 'violation' | 'undetermined') => {

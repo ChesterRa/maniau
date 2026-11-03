@@ -102,6 +102,16 @@ export interface EngineState {
   sourceChangedSeq: Map<string, number>;
   /** 家族が取り下げた出典。 */
   withdrawnSources: Set<string>;
+  /**
+   * 家族が書いた出典（事項が家族の言明 itemsStated の物）。モデルの読み取りで置き換えず、書き起こしも直さない
+   * （家族の言葉を、ほかの物にしない）。
+   */
+  statedSources: Set<string>;
+  /**
+   * 家族が「すること」に選んだやり方（事項の ID → 最後の選びと、選んだ時の中身とやり方の版の要約）。要約が今と
+   * 違えば当てない。
+   */
+  needWays: Map<string, { wayIds: string[]; about: string; seq: number }>;
   /** 書き起こしを直した事のある出典（読んだ版の無い読み取りは、もう使わない）。 */
   correctedSources: Set<string>;
   /**
@@ -166,6 +176,8 @@ export function emptyState(): EngineState {
     escorts: new Map(),
     sourceChangedSeq: new Map(),
     withdrawnSources: new Set(),
+    statedSources: new Set(),
+    needWays: new Map(),
     correctedSources: new Set(),
     declaredUnknowns: new Map(),
     purgedSources: new Map(),
@@ -194,6 +206,8 @@ function touchedSources(state: EngineState, event: DomainEvent): string[] {
       return [event.source.id];
     case 'modelOutputRecorded':
       return event.sourceId ? [event.sourceId] : [];
+    case 'itemsStated':
+      return [event.sourceId];
     case 'sourceWithdrawn':
     case 'sourceContentPurged':
     case 'transcriptionCorrected':
@@ -203,6 +217,7 @@ function touchedSources(state: EngineState, event: DomainEvent): string[] {
     case 'itemDismissed':
     case 'turnStated':
     case 'escortStated':
+    case 'needWaysSet':
       return [...state.extractions]
         .filter(([, e]) => e.items.some((i) => i.id === event.itemId))
         .map(([sourceId]) => sourceId);
@@ -230,6 +245,8 @@ const FAMILY_ONLY = new Set<DomainEvent['type']>([
   'itemDismissed',
   'turnStated',
   'escortStated',
+  'itemsStated',
+  'needWaysSet',
   'sourceWithdrawn',
   'transcriptionCorrected',
   'requestRecordCorrected',
@@ -285,6 +302,10 @@ function apply(state: EngineState, event: DomainEvent): void {
         state.rejected.push({ seq: event.seq, reason: '届いていない出典の読み取り' });
         return;
       }
+      if (state.statedSources.has(sourceId)) {
+        state.rejected.push({ seq: event.seq, reason: '家族の言明の出典の読み取り' });
+        return;
+      }
       // 読み取りは非同期なので、書き起こしを直す前の版を読んだ物が後で届くことがある。
       // 読んだ版の分からない読み取りは、直した事の無い出典でだけ使う（直した後なら、どの版か示せない）。
       // 今の読み取りより古い版の読み取りでは置き換えない。
@@ -327,6 +348,40 @@ function apply(state: EngineState, event: DomainEvent): void {
       }
       return;
     }
+    case 'itemsStated': {
+      // 家族が書いた出典の事項。出典は家族の物で、まだ事項の無い物だけ（言い直しは事項の直しで行う）。
+      const source = state.sources.get(event.sourceId);
+      if (
+        source?.sender !== 'family' ||
+        state.purgedSources.get(event.sourceId) === 'all' ||
+        state.withdrawnSources.has(event.sourceId) ||
+        state.extractions.has(event.sourceId) ||
+        event.items.some((i) => i.sourceId !== event.sourceId || i.evidence !== 'stated')
+      ) {
+        state.rejected.push({ seq: event.seq, reason: '使えない家族の言明の事項' });
+        return;
+      }
+      state.statedSources.add(event.sourceId);
+      state.extractions.set(event.sourceId, {
+        sourceId: event.sourceId,
+        items: event.items,
+        unknowns: [],
+        conditions: [],
+        irrelevantSentenceIds: [],
+        ambiguities: [],
+      });
+      state.extractionVersion.set(event.sourceId, source.version);
+      state.extractionSeq.set(event.sourceId, event.seq);
+      for (const item of event.items) state.seenItemIds.add(item.id);
+      return;
+    }
+    case 'needWaysSet':
+      state.needWays.set(event.itemId, {
+        wayIds: event.wayIds,
+        about: event.about,
+        seq: event.seq,
+      });
+      return;
     case 'answered':
       state.answers.push({
         unknownId: event.unknownId,
@@ -437,6 +492,7 @@ function apply(state: EngineState, event: DomainEvent): void {
       const source = state.sources.get(event.sourceId);
       if (
         !source ||
+        state.statedSources.has(event.sourceId) ||
         state.purgedSources.get(event.sourceId) === 'all' ||
         event.sourceVersion <= source.version
       ) {
@@ -703,6 +759,37 @@ export function familyQuestionBasis(
     }))
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return canonical({ label: unknown.label, values: unknown.values, items: using });
+}
+
+/**
+ * 家族が「すること」に選んだやり方の要約（needWaysSet と依頼の控えの about）。「すること」の中身（何を・形・日・
+ * 時刻・締切・場所・だれのため・条件）と、選んだやり方の中身（版）。どちらかが変われば、前の選び・依頼の返事を
+ * 当てない。「すること」でない事項・無い事項は無し。
+ */
+export function needWaysBasis(
+  state: EngineState,
+  itemId: string,
+  wayIds: readonly string[],
+): string | undefined {
+  const item = itemsOf(state).find((i) => i.id === itemId);
+  if (item?.kind !== 'need') return undefined;
+  const nodes = [...state.extractions.values()].flatMap((e) => e.conditions);
+  const i = item.interpretation;
+  return canonical({
+    need: {
+      what: i.what ?? item.written,
+      shape: i.shape,
+      date: i.date,
+      startTime: i.startTime,
+      endTime: i.endTime,
+      deadline: i.deadline,
+      deadlineDayOnly: i.deadlineDayOnly,
+      place: i.place,
+      forMemberId: i.forMemberId,
+      condition: conditionShape(item.conditionNodeId, nodes),
+    },
+    ways: wayIds.map((id) => state.household?.ways.find((w) => w.id === id) ?? null),
+  });
 }
 
 /** 鍵の並びによらない JSON（同じ中身なら同じ文字列）。 */

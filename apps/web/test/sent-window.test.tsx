@@ -20,3 +20,22 @@ it('頼む文と同じ頼む時間を、送ったの記録に付ける', () => {
   expect(arrangement.start.startsWith('2026-12-07')).toBe(true);
   expect(askDraft(ctx, task)).toContain('12月7日');
 });
+
+it('通用の「すること」の窓の手配も、頼む時間を送ったの記録に付ける（締切の形には付けない）', () => {
+  const window = { start: '2026-11-26T08:00+09:00', end: '2026-11-26T18:00+09:00' };
+  const ctx = {
+    plan: {
+      arrangements: [
+        { key: 'arr:need:f-1:i1', kind: 'need', needShape: 'window', ...window },
+        { key: 'arr:need:f-2:i1', kind: 'need', needShape: 'by', ...window },
+      ],
+    },
+  } as unknown as Parameters<typeof sentCommand>[0];
+  const task = (arrangementKey: string) =>
+    ({
+      key: `task:${arrangementKey}`,
+      basis: { itemIds: [], arrangementKey },
+    }) as unknown as Parameters<typeof sentCommand>[1];
+  expect(sentCommand(ctx, task('arr:need:f-1:i1'))).toMatchObject({ window });
+  expect(sentCommand(ctx, task('arr:need:f-2:i1'))).not.toHaveProperty('window');
+});

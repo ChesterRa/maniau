@@ -8,10 +8,11 @@ import {
   formatDateTime,
   type Household,
   type HouseholdPreview,
+  type PreviewCommand,
   toEpochMinutes,
 } from '@maniau/core';
 import { foldEvents, planFromState } from '@maniau/core/engine';
-import { previewCommand } from './commands';
+import { previewCommand, previewedInput } from './commands';
 import { consequencesOf, householdConsequences, violationsOf } from './consequences';
 
 /**
@@ -101,14 +102,15 @@ export function previewChoices(
 }
 
 /**
- * 家と暮らしの情報を直したら、計画の何が変わるか。書く時と同じ命令（updateHousehold）を書き込まずに展開し、
- * 同じ計算で比べる（頼み直し reopened も含む）。何も書かない（事象・操作・知らせ・家の情報）。直せない直しは、
- * 書く時と同じ理由で断る。
+ * 保存の前に見せる「この変更で変わること」（家と暮らしの情報の直し・「すること」の言明・やり方の選び）。書く時と
+ * 同じ命令を書き込まずに展開し、同じ計算で比べる（頼み直し reopened も含む）。何も書かない（事象・操作・知らせ・
+ * 家の情報）。書けない変更は、書く時と同じ理由で断る。見た物の要約（seen）は、書く時に押さえた中で作り直す物と
+ * 同じ作り方（previewedInput）。
  */
-export function previewHousehold(
+export function previewChange(
   events: readonly DomainEvent[],
   context: { memberId: string; now: DateTime },
-  household: Household,
+  command: PreviewCommand,
 ): HouseholdPreview | { status: 'conflict' | 'forbidden' | 'invalid'; reason: string } {
   const state = foldEvents(events);
   const current = state.household;
@@ -116,12 +118,10 @@ export function previewHousehold(
   const now =
     state.clock === undefined ? context.now : formatDateTime(state.clock, current.timeZone);
   const plan = planFromState(state, now);
-  const result = previewCommand(
-    events,
-    { memberId: context.memberId, now },
-    { type: 'updateHousehold', household },
-    { state, plan },
-  );
+  const result = previewCommand(events, { memberId: context.memberId, now }, command, {
+    state,
+    plan,
+  });
   if (result.status !== 'ok') return result;
   const set = result.added.find((e) => e.type === 'householdSet');
   return householdConsequences(
@@ -131,6 +131,15 @@ export function previewHousehold(
       added: result.added,
       plan: result.after,
     },
-    household,
+    previewedInput(command)?.input,
   );
+}
+
+/** 家と暮らしの情報を直したら、計画の何が変わるか（previewChange の updateHousehold）。 */
+export function previewHousehold(
+  events: readonly DomainEvent[],
+  context: { memberId: string; now: DateTime },
+  household: Household,
+): ReturnType<typeof previewChange> {
+  return previewChange(events, context, { type: 'updateHousehold', household });
 }

@@ -52,6 +52,10 @@ const KEEP: Record<DomainEvent['type'], readonly string[]> = {
   turnStated: ['itemId'],
   // 送り迎えの要否と、言った時の子・用件・日・時刻・場所は、payloads に置く。
   escortStated: ['itemId', 'leg'],
+  // 家族の言明の事項（原文と解釈）は、payloads に置く。
+  itemsStated: ['sourceId'],
+  // 選んだ時の中身の要約（原文の入りうる文）は、payloads に置く。
+  needWaysSet: ['itemId', 'wayIds'],
   sourceWithdrawn: ['sourceId'],
   sourceContentPurged: ['sourceId', 'scope'],
   transcriptionCorrected: ['sourceId', 'sourceVersion'],

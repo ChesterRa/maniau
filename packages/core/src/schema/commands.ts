@@ -16,6 +16,25 @@ export const ItemSeen = z.object({ throughSeq: z.number().int().nonnegative() })
 export type ItemSeen = z.infer<typeof ItemSeen>;
 
 /**
+ * 家族の言明の「すること」の欄。何を（what）と形（shape）は要る。by は締切（deadline）、window は日と始まり・
+ * 終わり（同じ日の中）が要る（無い・日をまたぐ時は、サーバーが断る。時刻を作らない）。
+ */
+export const NeedInterpretation = Interpretation.pick({
+  date: true,
+  startTime: true,
+  endTime: true,
+  deadline: true,
+  deadlineDayOnly: true,
+  place: true,
+  audience: true,
+  forMemberId: true,
+}).extend({
+  what: z.string().trim().min(1).max(200),
+  shape: z.enum(['by', 'window']),
+});
+export type NeedInterpretation = z.infer<typeof NeedInterpretation>;
+
+/**
  * 画面が見せた作業の担当と状態。二人が同じ札を見る時に、もう一人が先に持った・引き受けた後の古い操作で、
  * それを黙って替えないために付ける（替わっていれば、断って見せ直す）。
  */
@@ -29,6 +48,40 @@ export type TaskSeen = z.infer<typeof TaskSeen>;
 /** 画面が見せた、外への依頼の状態（返事が来たか等で、案をやめた時の結果が変わる）。 */
 export const RequestSeen = z.object({ requestId: Id, state: ExternalRequestState });
 export type RequestSeen = z.infer<typeof RequestSeen>;
+
+/**
+ * 家と暮らしの情報（家族・ふだんの一週間・場所・取れる手）を直す。画面は直した家の情報を丸ごと送る。直せる範囲は
+ * サーバーが決める（成員の ID・種類・有効と、場所・取れる手の ID は替えない。02-foundation §6）。
+ */
+const UpdateHousehold = z.object({ type: z.literal('updateHousehold'), household: Household });
+/**
+ * 家族の言明で「すること」を足す（02-foundation §3.4）。text は家族の一言の原文、interpretation は家族が画面で
+ * 確かめた欄（何を・形・日・時刻・締切・場所・だれのため）。サーバーが、家族の出典と、その出典の事項（need。
+ * evidence stated）に展開する。
+ */
+const StateNeed = z.object({
+  type: z.literal('stateNeed'),
+  text: z.string().trim().min(1).max(500),
+  interpretation: NeedInterpretation,
+});
+/**
+ * 「すること」に使うやり方を選ぶ（家族の選択。空にすれば、選んでいない状態に戻す）。サーバーは、選んだ時の
+ * 「すること」の中身とやり方の版を控える。
+ */
+const SetNeedWays = z.object({ type: z.literal('setNeedWays'), itemId: Id, wayIds: z.array(Id) });
+/**
+ * 保存の前に見せた物：計画の通し番号と、見せた「この変更で変わること」の要約（サーバーが作る）。書く時は要る。
+ * 今と違えば断って見せ直す（もう一人の変更・時が進んで変わった結果を、黙って書かない）。
+ */
+const Seen = z.object({ throughSeq: z.number().int().nonnegative(), changes: z.string().min(1) });
+
+/** 保存の前に「この変更で変わること」を見る命令（seen の無い中身。見るだけで、何も書かない）。 */
+export const PreviewCommand = z.discriminatedUnion('type', [
+  UpdateHousehold,
+  StateNeed,
+  SetNeedWays,
+]);
+export type PreviewCommand = z.infer<typeof PreviewCommand>;
 
 export const Command = z.discriminatedUnion('type', [
   z.object({
@@ -147,19 +200,9 @@ export const Command = z.discriminatedUnion('type', [
     seen: ItemSeen,
   }),
   z.object({ type: z.literal('withdrawSource'), sourceId: Id }),
-  /**
-   * 家と暮らしの情報（家族・ふだんの一週間・場所・取れる手）を直す。画面は直した家の情報を丸ごと送る。
-   * 書く時は seen が要る：見せた計画の通し番号と、見せた「この変更で変わること」の要約（サーバーが作る）。
-   * 今と違えば断って見せ直す（もう一人の直し・時が進んで変わった結果を、黙って書かない）。直せる範囲は
-   * サーバーが決める（成員の ID・種類・有効と、場所・取れる手の ID は替えない。02-foundation §6）。
-   */
-  z.object({
-    type: z.literal('updateHousehold'),
-    household: Household,
-    seen: z
-      .object({ throughSeq: z.number().int().nonnegative(), changes: z.string().min(1) })
-      .optional(),
-  }),
+  UpdateHousehold.extend({ seen: Seen.optional() }),
+  StateNeed.extend({ seen: Seen.optional() }),
+  SetNeedWays.extend({ seen: Seen.optional() }),
   /** 時計を進める。デモの家庭だけ。 */
   z.object({ type: z.literal('advanceClock'), to: DateTime }),
 ]);

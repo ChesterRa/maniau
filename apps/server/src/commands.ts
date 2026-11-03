@@ -7,11 +7,14 @@ import {
   DomainEvent,
   formatDateTime,
   type Household,
+  type Interpretation,
   isActiveTask,
+  type NeedInterpretation,
   type PlanResult,
   proposalSnapshot,
   sameContent,
   sameProposal,
+  taskContent,
   toEpochMinutes,
   validateHousehold,
 } from '@maniau/core';
@@ -22,6 +25,7 @@ import {
   foldEvents,
   itemsOf,
   liveItems,
+  needWaysBasis,
   optionStarted,
   planFromState,
   requestSnapshot,
@@ -139,13 +143,15 @@ function handle(
       return { status: 'conflict', reason: 'consequencesChanged', throughSeq: throughSeq() };
     }
   }
-  // 家の情報の直しは、見せた計画の番号と、見せた「この変更で変わること」（送られた直しを含む要約）が、押さえた
-  // 中で今の時刻に作り直した物と同じ時だけ書く（もう一人の直し・時が進んで変わった結果を、黙って書かない）。
-  if (command.type === 'updateHousehold') {
-    if (command.seen === undefined) {
+  // 家の情報の直し・「すること」の言明・やり方の選びは、見せた計画の番号と、見せた「この変更で変わること」
+  // （送られた中身を含む要約）が、押さえた中で今の時刻に作り直した物と同じ時だけ書く（もう一人の直し・時が
+  // 進んで変わった結果を、黙って書かない）。
+  const previewed = previewedInput(command);
+  if (previewed) {
+    if (previewed.seen === undefined) {
       return { status: 'invalid', reason: 'seenRequired', throughSeq: throughSeq() };
     }
-    if (command.seen.throughSeq !== plan.throughSeq) {
+    if (previewed.seen.throughSeq !== plan.throughSeq) {
       return { status: 'conflict', reason: 'proposalChanged', throughSeq: throughSeq() };
     }
     const added = asEvents(
@@ -162,9 +168,9 @@ function handle(
         added,
         plan: planFromState(foldEvents([...events, ...added]), now),
       },
-      command.household,
+      previewed.input,
     );
-    if (again.seen !== command.seen.changes) {
+    if (again.seen !== previewed.seen.changes) {
       return { status: 'conflict', reason: 'consequencesChanged', throughSeq: throughSeq() };
     }
   }
@@ -577,8 +583,7 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       // 済んだのは、札で見せた用件。今の用件と違えば（直されて別の物になった後の古い札）、断って
       // 見せ直す。記録には見せた用件を残し、後で用件が替わっても、前の物の済みを当てない。
       if (command.seen === undefined) return { status: 'invalid', reason: 'seenRequired' };
-      const content = { titleKey: task.titleKey, titleParams: task.titleParams };
-      if (!sameContent(command.seen, content))
+      if (!sameContent(command.seen, taskContent(task)))
         return { status: 'conflict', reason: 'proposalChanged' };
       return {
         bodies: [
@@ -675,6 +680,20 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       }
       if (Object.keys(command.interpretation).length === 0) {
         return { status: 'invalid', reason: 'nothingToCorrect' };
+      }
+      // 家族の言明の「すること」は、直した後も言った時と同じ決まりで確かめる。形（締切か時間か）は替えない
+      // （替えるなら言い直す。前の形の欄を残したまま別の形にしない）。
+      if (item.kind === 'need') {
+        const merged = { ...item.interpretation, ...command.interpretation };
+        if (merged.shape === undefined || merged.shape !== item.interpretation.shape) {
+          return { status: 'invalid', reason: 'needShapeLocked' };
+        }
+        const checked = checkNeed(state.household, {
+          ...merged,
+          what: merged.what ?? item.written,
+          shape: merged.shape,
+        });
+        if ('reason' in checked) return checked;
       }
       return {
         bodies: [
@@ -802,6 +821,73 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       if ('reason' in checked) return checked;
       return { bodies: [{ type: 'householdSet', household: checked.household }] };
     }
+    case 'stateNeed': {
+      // 家族の一言（原文）を家族の出典にし、確かめた欄をその出典の「すること」（言明）にする。出典の ID は、
+      // 言った人・中身・見た時の番号から決める（見せた「変わること」と書く時で同じ ID。原文は ID に入れない）。
+      const checked = checkNeed(state.household, command.interpretation);
+      if ('reason' in checked) return checked;
+      const sourceId = `f-${sha256Of({
+        by: me,
+        text: command.text,
+        interpretation: command.interpretation,
+        at: plan.throughSeq,
+      }).slice(0, 16)}`;
+      if (state.sources.has(sourceId)) return { bodies: [] };
+      const sentenceId = `${sourceId}#1`;
+      const speaker = state.household?.members.find((m) => m.id === me);
+      return {
+        bodies: [
+          {
+            type: 'noticeReceived',
+            source: {
+              id: sourceId,
+              version: 1,
+              receivedAt: context.now,
+              sender: 'family',
+              language: speaker?.uiLanguage ?? 'ja',
+              medium: 'text',
+              sentences: [{ id: sentenceId, text: command.text }],
+            },
+          },
+          {
+            type: 'itemsStated',
+            sourceId,
+            items: [
+              {
+                id: `${sourceId}:i1`,
+                sourceId,
+                sentenceIds: [sentenceId],
+                kind: 'need',
+                written: command.text,
+                interpretation: checked.interpretation,
+                evidence: 'stated',
+                effects: [],
+              },
+            ],
+          },
+        ],
+      };
+    }
+    case 'setNeedWays': {
+      // 家族が「すること」に使うやり方を選ぶ。選んだ時の中身とやり方の版を控える（替われば当てない）。
+      const item = liveItems(state).find((l) => l.item.id === command.itemId)?.item;
+      if (item?.kind !== 'need') return { status: 'conflict', reason: 'needGone' };
+      const ways = state.household?.ways ?? [];
+      if (
+        new Set(command.wayIds).size !== command.wayIds.length ||
+        command.wayIds.some((id) => !ways.some((w) => w.id === id))
+      ) {
+        return { status: 'invalid', reason: 'wayUnknown' };
+      }
+      const about = needWaysBasis(state, command.itemId, command.wayIds);
+      if (about === undefined) return { status: 'conflict', reason: 'needGone' };
+      const current = state.needWays.get(command.itemId);
+      if (current?.about === about && sameJson(current.wayIds, command.wayIds))
+        return { bodies: [] };
+      return {
+        bodies: [{ type: 'needWaysSet', itemId: command.itemId, wayIds: command.wayIds, about }],
+      };
+    }
     case 'advanceClock': {
       if (!context.demo) return { status: 'forbidden', reason: 'demoOnly' };
       // 時計は進めるだけ（戻すと、記録の時刻が前後する）。
@@ -827,6 +913,55 @@ const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringif
  * - 大人のふだんの一日には、家にいる区間が要る（家にいる区間が一つも無い日は、子の居場所の手配の要る時間を
  *   決められない）。
  */
+/**
+ * 保存の前に「この変更で変わること」を見せる命令と、その要約に入れる中身（家の情報の直し・「すること」の言明・
+ * やり方の選び）。ほかの命令は無し。
+ */
+export function previewedInput(
+  command: Command,
+): { input: unknown; seen?: { throughSeq: number; changes: string } } | undefined {
+  switch (command.type) {
+    case 'updateHousehold':
+      return { input: command.household, ...(command.seen ? { seen: command.seen } : {}) };
+    case 'stateNeed':
+      return {
+        input: { text: command.text, interpretation: command.interpretation },
+        ...(command.seen ? { seen: command.seen } : {}),
+      };
+    case 'setNeedWays':
+      return {
+        input: { itemId: command.itemId, wayIds: command.wayIds },
+        ...(command.seen ? { seen: command.seen } : {}),
+      };
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * 家族の言明の「すること」の欄を確かめる（02-foundation §3.4）。window は同じ日の始まり–終わり（日をまたぐ・
+ * 足りない時は断る。時刻を作らない）、by は締切が要る。だれのためは家庭の成員だけ。形に使わない欄は落とす。
+ */
+function checkNeed(
+  household: Household | undefined,
+  need: NeedInterpretation,
+): { interpretation: Interpretation } | { status: 'invalid'; reason: string } {
+  const invalid = (reason: string) => ({ status: 'invalid' as const, reason });
+  if (!household) return invalid('householdMissing');
+  if (need.forMemberId !== undefined && !household.members.some((m) => m.id === need.forMemberId)) {
+    return invalid('needMemberUnknown');
+  }
+  if (need.shape === 'window') {
+    if (!need.date || !need.startTime || !need.endTime) return invalid('needWindowMissing');
+    if (need.startTime >= need.endTime) return invalid('needWindowOvernight');
+    const { deadline: _deadline, deadlineDayOnly: _dayOnly, ...rest } = need;
+    return { interpretation: rest };
+  }
+  if (!need.deadline) return invalid('needDeadlineMissing');
+  const { startTime: _start, endTime: _end, ...rest } = need;
+  return { interpretation: rest };
+}
+
 function checkHouseholdEdit(
   current: Household | undefined,
   next: Household,
@@ -870,6 +1005,8 @@ function checkHouseholdEdit(
     const { deadline: _d2, cost: _c2, ...editedRest } = edited;
     if (!sameJson(rest, editedRest)) return invalid('careOptionsLocked');
   }
+  // やり方は、ここでは替えない（足す・直す入口は別に作る。送られた家の情報で消さない）。
+  if (!sameJson(current.ways, next.ways)) return invalid('waysLocked');
   // 大人のふだんの一日：前からある曜日は消さず（区間の無い日にしない）、直した日は区間を切れ目なく続ける
   // （書かれていない時間を作らない）。分からない時間で、子の居場所の手配が要る時間を決めないため。
   const adults = new Set(next.members.filter((m) => m.kind === 'adult').map((m) => m.id));

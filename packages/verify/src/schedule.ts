@@ -159,6 +159,7 @@ function checkOpeningHours(
 
 function checkPlace(
   household: Household,
+  plan: PlanResult,
   scheduled: ScheduledTask,
   routines: readonly RoutineSegment[],
   report: Collector,
@@ -189,7 +190,13 @@ function checkPlace(
       'この場所で必要な品物を扱うか確認できない。',
     );
   }
-  if (place.kind === 'store') checkOpeningHours(household, scheduled, place, report);
+  const genericPlace =
+    place.kind !== 'home' &&
+    plan.arrangements.some(
+      (arrangement) => arrangement.key === task.basis.arrangementKey && arrangement.kind === 'need',
+    );
+  if (place.kind === 'store' || place.hours || genericPlace)
+    checkOpeningHours(household, scheduled, place, report);
 
   if (task.travelSource === 'maps') {
     report.undetermined(
@@ -296,7 +303,7 @@ export function checkSchedule(
       const routines = task.detour
         ? checkDetour(household, plan, history, task, start, end, report)
         : allowedSegments(household, scheduled, report);
-      checkPlace(household, scheduled, routines, report);
+      checkPlace(household, plan, scheduled, routines, report);
     }
     placed.push(scheduled);
   }

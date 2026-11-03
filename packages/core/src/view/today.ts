@@ -176,7 +176,8 @@ export function todayCards(
   const backup: TodayCard[] = [];
   const decide: TodayCard[] = [];
   for (const arrangement of plan.arrangements) {
-    if (!arrangement.live) continue;
+    // 通用の「すること」の手配の札は、通用の文の画面で足す（今の決める画面は、子の居場所の文）。作業の札は出す。
+    if (!arrangement.live || arrangement.kind === 'need') continue;
     if (arrangement.status === 'dependsOnReply') {
       // 根拠が分からない依頼は、ふつうの返事待ちとして予備を勧めない（まず要るかを確かめる）。
       const waitingFor = plan.requests.find(
@@ -219,7 +220,8 @@ export function todayCards(
 
   const stuck: TodayCard[] = [];
   for (const arrangement of plan.arrangements) {
-    if (!arrangement.live || arrangement.status === 'askFirst') continue;
+    if (!arrangement.live || arrangement.status === 'askFirst' || arrangement.kind === 'need')
+      continue;
     // 間に合う手が見つからない時と、買い物でどの店で買えるか分からない時（家に無いと分かった後）。
     const noStore =
       arrangement.kind === 'purchase' &&

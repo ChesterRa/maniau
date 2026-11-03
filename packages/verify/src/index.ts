@@ -1,6 +1,7 @@
 import { DomainEvent, Household, PlanResult, validateHousehold } from '@maniau/core';
 import { collectFacts } from './facts';
 import { checkHistory, checkRequestNeed } from './history';
+import { checkNeedCoverage, checkNeedSelections } from './need-coverage';
 import { checkPlan } from './plan';
 import { checkProposals } from './proposal';
 import { checkReleased } from './released';
@@ -76,9 +77,11 @@ export function verifyPlan(input: VerificationInput): VerificationReport {
   }
   const facts = collectFacts(history.events, report);
   checkReleased(household.data, plan.data, facts, history, report);
-  checkProposals(plan.data, history, report);
+  checkProposals(plan.data, history, report, household.data, facts);
   checkRequestNeed(plan.data, history, facts, report, household.data.timeZone);
   checkPlan(household.data, plan.data, facts, history, report);
+  checkNeedSelections(household.data, plan.data, facts, history, report);
+  checkNeedCoverage(household.data, plan.data, facts, history, report);
   checkSchedule(household.data, plan.data, history, report);
   if (facts.items.size > 0) {
     report.undetermined(

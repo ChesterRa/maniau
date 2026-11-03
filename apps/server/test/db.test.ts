@@ -77,6 +77,36 @@ function otherKinds(): DomainEvent[] {
         place: '架空のグラウンド',
       },
     ],
+    // 家族の言明の「すること」は、原文と解釈を持つ（行には出典の ID だけ）。
+    [
+      'b',
+      {
+        type: 'itemsStated',
+        sourceId: 'f-1',
+        items: [
+          {
+            id: 'f-1:i1',
+            sourceId: 'f-1',
+            sentenceIds: ['f-1#1'],
+            kind: 'need',
+            written: '架空の子を家で見る人が要る',
+            interpretation: { what: '架空の子を家で見る', shape: 'by', deadline: at },
+            evidence: 'stated',
+            effects: [],
+          },
+        ],
+      },
+    ],
+    // やり方の選びの、選んだ時の中身の要約（原文の入りうる文）は、行に残さない。
+    [
+      'b',
+      {
+        type: 'needWaysSet',
+        itemId: 'f-1:i1',
+        wayIds: ['way-grandma'],
+        about: '{"need":{"what":"架空の子を家で見る"}}',
+      },
+    ],
     ['b', { type: 'itemCorrected', itemId: 'i1', interpretation: { what: '架空の持ち物' } }],
     ['b', { type: 'itemDismissed', itemId: 'i1', reason: 'misread' }],
     ['b', { type: 'sourceWithdrawn', sourceId: 'n1' }],
@@ -159,6 +189,13 @@ describe('乾かす・戻す（§6.2）', () => {
     // 送り迎えの要否と、言った時の子・用件・日・時刻・場所は、行に残さない。
     for (const event of all.filter((e) => e.type === 'escortStated')) {
       expect(dehydrate(event).row.body).toEqual({ itemId: event.itemId, leg: event.leg });
+    }
+    // 家族の言明の原文と解釈、やり方を選んだ時の中身の要約は、行に残さない。
+    for (const event of all.filter((e) => e.type === 'itemsStated')) {
+      expect(dehydrate(event).row.body).toEqual({ sourceId: event.sourceId });
+    }
+    for (const event of all.filter((e) => e.type === 'needWaysSet')) {
+      expect(dehydrate(event).row.body).toEqual({ itemId: event.itemId, wayIds: event.wayIds });
     }
   });
 

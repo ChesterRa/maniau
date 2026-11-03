@@ -139,6 +139,66 @@ describe('時刻と場所', () => {
     expect(report.status).toBe('undetermined');
   });
 
+  it('店以外の場所にも登録された営業時間を照らす', () => {
+    const family = household();
+    const place = family.places.find((entry) => entry.id === 'store');
+    if (!place) throw new Error('場所がない');
+    place.kind = 'other';
+    const visit = (start: string, end: string) =>
+      task('visit', {
+        durationMin: 20,
+        start,
+        end,
+        segments: ['away'],
+        atPlaceId: 'store',
+        placeKind: 'other',
+      });
+    const check = (start: string, end: string) =>
+      codes(
+        verifyPlan({ household: family, plan: plan({ tasks: [visit(start, end)] }), events: [] }),
+      );
+
+    expect(check('2026-12-07T12:15+09:00', '2026-12-07T12:35+09:00')).not.toContain(
+      'outside_opening_hours',
+    );
+    expect(check('2026-12-07T12:00+09:00', '2026-12-07T12:20+09:00')).toContain(
+      'outside_opening_hours',
+    );
+  });
+
+  it('通用の用件で家以外の場所の時間が分からなければ未判定とする', () => {
+    const family = household();
+    const place = family.places.find((entry) => entry.id === 'store');
+    if (!place) throw new Error('場所がない');
+    place.kind = 'other';
+    delete place.hours;
+    const visit = task('visit', {
+      durationMin: 20,
+      start: '2026-12-07T12:15+09:00',
+      end: '2026-12-07T12:35+09:00',
+      segments: ['away'],
+      atPlaceId: 'store',
+      basis: { itemIds: [], arrangementKey: 'arrangement' },
+    });
+    const report = verifyPlan({
+      household: family,
+      plan: plan({
+        requirements: [requirement({ kind: 'need' })],
+        arrangements: [arrangement({ kind: 'need' })],
+        tasks: [visit],
+      }),
+      events: [],
+    });
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        kind: 'undetermined',
+        code: 'opening_hours_missing',
+        subject: 'visit',
+      }),
+    );
+    expect(codes(report)).not.toContain('place_closed');
+  });
+
   it('移動を含む人の占有の重なりと、短すぎる徒歩を見つける', () => {
     const shop = task('shop', {
       durationMin: 20,

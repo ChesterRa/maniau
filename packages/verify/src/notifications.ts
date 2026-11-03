@@ -3,6 +3,7 @@
 
 import type { Household as Family, PlanResult as Plan, Task } from '@maniau/core';
 import { DateTime, DomainEvent, Household, PlanResult, toEpochMinutes } from '@maniau/core';
+import { checkHistory } from './history';
 import { Collector, type VerificationReport } from './report';
 import { matchesArrangementDay, matchesArrangementWindow } from './time';
 
@@ -145,7 +146,13 @@ function expectedKey(intent: Intent): string | undefined {
   return `${base}:${toMemberId}`;
 }
 
-function activeTask(task: Task, plan: Plan, timeZone: string): boolean {
+function activeTask(
+  task: Task,
+  plan: Plan,
+  timeZone: string,
+  needShapes: ReadonlyMap<string, 'by' | 'window'>,
+  needRequestCurrent: ReadonlyMap<string, boolean>,
+): boolean {
   const { arrangementKey, optionKey } = task.basis;
   if (arrangementKey === undefined || optionKey === undefined) return true;
   const arrangement = plan.arrangements.find((a) => a.key === arrangementKey);
@@ -162,23 +169,31 @@ function activeTask(task: Task, plan: Plan, timeZone: string): boolean {
         r.basis.optionKey === primary,
     );
     const current = primaryRequests.filter(
-      (r) => matchesArrangementDay(r.window, arrangement, timeZone) === true,
+      (r) =>
+        matchesArrangementDay(r.window, arrangement, timeZone, needShapes.get(arrangement.key)) ===
+        true,
     );
     const unknownWindow = primaryRequests.some(
       (r) =>
         ['confirmed', 'awaitingReply', 'turnedDown'].includes(r.state) &&
-        matchesArrangementDay(r.window, arrangement, timeZone) === undefined,
+        matchesArrangementDay(r.window, arrangement, timeZone, needShapes.get(arrangement.key)) ===
+          undefined,
     );
     const primaryConfirmed =
       primary !== undefined &&
       !unknownWindow &&
       arrangement.inUseOptionKey === primary &&
-      current.some((r) => r.state === 'confirmed') &&
+      current.some(
+        (r) =>
+          r.state === 'confirmed' &&
+          (arrangement.kind !== 'need' || needRequestCurrent.get(r.requestId) === true),
+      ) &&
       !current.some(
         (r) =>
           r.state === 'awaitingReply' ||
           r.needsCheck ||
-          (arrangement.kind === 'childCare' &&
+          ((arrangement.kind === 'childCare' ||
+            (arrangement.kind === 'need' && needShapes.get(arrangement.key) === 'window')) &&
             matchesArrangementWindow(r.window, arrangement) === false),
       );
     return arrangement.inUseOptionKey === optionKey || !primaryConfirmed;
@@ -247,7 +262,14 @@ function checkTiming(
 }
 
 /** 出典のある札が、その人の今の計画に本当にあるかを、知らせの生成関数を使わずに照らす。 */
-function checkSubject(intent: Intent, plan: Plan, timeZone: string, out: Collector): undefined {
+function checkSubject(
+  intent: Intent,
+  plan: Plan,
+  timeZone: string,
+  needShapes: ReadonlyMap<string, 'by' | 'window'>,
+  needRequestCurrent: ReadonlyMap<string, boolean>,
+  out: Collector,
+): undefined {
   const { subject, titleKey, toMemberId: member } = intent;
   const wrong = (): undefined => {
     out.violation('notification_subject_mismatch', intent.key, 'この人に出す根拠が計画にない。');
@@ -296,7 +318,7 @@ function checkSubject(intent: Intent, plan: Plan, timeZone: string, out: Collect
       !task?.live ||
       task.cancels !== undefined ||
       task.assigneeId !== member ||
-      !activeTask(task, plan, timeZone) ||
+      !activeTask(task, plan, timeZone, needShapes, needRequestCurrent) ||
       (titleKey === 'notify.proposal'
         ? task.commitment !== 'proposed'
         : task.commitment !== 'accepted' || !task.reconfirm)
@@ -315,7 +337,7 @@ function checkSubject(intent: Intent, plan: Plan, timeZone: string, out: Collect
       task.cancels !== undefined ||
       ['done', 'cancelled'].includes(task.commitment) ||
       (task.assigneeId !== undefined && !['declined', 'withdrawn'].includes(task.commitment)) ||
-      !activeTask(task, plan, timeZone)
+      !activeTask(task, plan, timeZone, needShapes, needRequestCurrent)
     )
       return wrong();
     const arrangement = plan.arrangements.find((entry) => entry.key === task.basis.arrangementKey);
@@ -346,12 +368,28 @@ function checkSubject(intent: Intent, plan: Plan, timeZone: string, out: Collect
       (plan.tasks.some(
         (entry) => entry.basis.optionKey === option.key && entry.commitment === 'done',
       ) ||
-        sent.some((entry) => matchesArrangementDay(entry.window, arrangement, timeZone) === true));
+        sent.some(
+          (entry) =>
+            matchesArrangementDay(
+              entry.window,
+              arrangement,
+              timeZone,
+              needShapes.get(arrangement.key),
+            ) === true &&
+            (arrangement.kind !== 'need' || needRequestCurrent.get(entry.requestId) === true),
+        ));
     if (option?.expired && !started) {
       if (
         !arrangement ||
         !sent.some(
-          (entry) => matchesArrangementDay(entry.window, arrangement, timeZone) === undefined,
+          (entry) =>
+            matchesArrangementDay(
+              entry.window,
+              arrangement,
+              timeZone,
+              needShapes.get(arrangement.key),
+            ) === undefined ||
+            (arrangement.kind === 'need' && needRequestCurrent.get(entry.requestId) === undefined),
         )
       )
         return wrong();
@@ -508,6 +546,11 @@ export function verifyNotifications(input: NotificationVerificationInput): Verif
   if (lastSeq !== plan.data.throughSeq)
     out.violation('notification_plan_stale', ALL, '計画と事象の時点が違う。');
   if (out.issues.some((issue) => issue.kind === 'violation')) return out.result();
+  const needHistory = plan.data.arrangements.some((entry) => entry.kind === 'need')
+    ? checkHistory(household.data, plan.data, events, new Collector())
+    : undefined;
+  const needShapes = needHistory?.needShapes ?? new Map<string, 'by' | 'window'>();
+  const needRequestCurrent = needHistory?.needRequestCurrent ?? new Map<string, boolean>();
   const keys = new Set<string>();
   const now = toEpochMinutes(plan.data.now);
   for (const value of input.intents) {
@@ -532,7 +575,7 @@ export function verifyNotifications(input: NotificationVerificationInput): Verif
         intent.key,
         'キーに家庭の名前または場所が含まれる。',
       );
-    checkSubject(intent, plan.data, household.data.timeZone, out);
+    checkSubject(intent, plan.data, household.data.timeZone, needShapes, needRequestCurrent, out);
     checkTiming(intent, plan.data, events, out);
     out.undetermined(
       'notification_round_unverified',

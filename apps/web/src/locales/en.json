@@ -381,6 +381,9 @@
     },
     "buy": {
       "title": "Buy it"
+    },
+    "way": {
+      "title": "{{name}}"
     }
   },
   "task": {
@@ -405,7 +408,8 @@
       "make": "Make the packed lunch"
     },
     "escortTo": "Drop-off for {{what}}",
-    "escortFrom": "Pick-up from {{what}}"
+    "escortFrom": "Pick-up from {{what}}",
+    "wayStep": "{{what}}"
   },
   "push": {
     "enable": "Get notifications",
@@ -631,6 +635,7 @@
       "used": "Used for each way's decision time (counted back from its deadline) and for the order we recommend.",
       "daysBefore": "By {{at}}, {{days}} days before",
       "businessDaysBefore": "By {{at}}, {{days}} business days before",
+      "onTheDay": "By {{at}} on the day",
       "previousWeek": "By {{weekday}} {{at}} the week before",
       "waitsReply": "{{title}} (wait for a reply)",
       "yen": "¥{{yen}}",
@@ -690,6 +695,7 @@
       "membersLocked": "Adding or removing people, or changing adult/child, isn't possible here.",
       "placesLocked": "Removing a place or changing its type isn't possible here.",
       "careOptionsLocked": "The steps or the contact of a way can't be changed here.",
+      "waysLocked": "Ways of handling things can't be changed here.",
       "unavailable": "We couldn't calculate this right now. Please try again in a moment.",
       "other": "This edit wasn't accepted."
     }

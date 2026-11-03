@@ -66,6 +66,11 @@ export const ItemKind = z.enum([
   'duty',
   /** 配られたプリント（「おてがみ 1まい」のように、枚数だけ書かれた物）。 */
   'handout',
+  /**
+   * 通用の「すること」：ほかの種類に入らず、家族の行動が要る事（家族の言明も同じ形）。形（shape）で、締切まで
+   * に済ませる事か、窓の間だれか・どこかが受け持つ事かを分ける。場面の種類ではない。
+   */
+  'need',
 ]);
 export type ItemKind = z.infer<typeof ItemKind>;
 
@@ -109,6 +114,16 @@ export const Interpretation = z.object({
    * これがある物だけを家族の作業にする。子どもだけでする宿題や子の当番には無い（読んだだけ）。
    */
   familyAction: z.literal(true).optional(),
+  /**
+   * 「すること」（need）の形。by：締切（deadline）までに済ませる。window：日（date）の始まり–終わり（startTime–
+   * endTime）の間、だれか・どこかが受け持つ。一つの「すること」はどちらか一つ。
+   */
+  shape: z.enum(['by', 'window']).optional(),
+  /**
+   * 「すること」がだれのためか（家庭の成員の ID。家族が選んだ時だけ。原文の audience とは別に持つ）。選んで
+   * いない・一人に決まらない時は無い（分からない）。替われば、前の選び・引き受け・返事を当てない。
+   */
+  forMemberId: z.string().min(1).optional(),
 });
 export type Interpretation = z.infer<typeof Interpretation>;
 

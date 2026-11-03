@@ -11,6 +11,7 @@ import {
   type Household,
   type Item,
   isActiveTask,
+  isNeedArrangementKey,
   isValidLocalDate,
   type Member,
   type OptionPlan,
@@ -21,6 +22,7 @@ import {
   type Source,
   type Task,
   type TodayCard,
+  taskContent,
   toEpochMinutes,
   untimed,
 } from '@maniau/core';
@@ -171,6 +173,10 @@ function optionParams(ctx: Ctx, option: OptionPlan): Record<string, string> {
   }
   if (option.titleKey === 'option.askHelper') {
     return { name: nameOf(ctx.household, template?.providerId) };
+  }
+  // 家族のやり方は、家族が付けた名前で見せる。
+  if (option.titleKey === 'option.way') {
+    return { name: ctx.household.ways.find((w) => w.id === option.templateId)?.name ?? '' };
   }
   return {};
 }
@@ -402,7 +408,8 @@ export function sentCommand(ctx: Ctx, task: Task): Command {
     type: 'recordSent',
     taskKey: task.key,
     requestId: requestId(),
-    ...(arrangement?.kind === 'childCare'
+    ...(arrangement?.kind === 'childCare' ||
+    (arrangement?.kind === 'need' && arrangement.needShape === 'window')
       ? { window: { start: arrangement.start, end: arrangement.end } }
       : {}),
   };
@@ -413,8 +420,12 @@ function helperOf(ctx: Ctx, task: Task): Member | undefined {
   return ctx.household.members.find((m) => m.id === id);
 }
 
-/** 人に頼む作業（文を作って LINE などで送る）。学童・会社のような所へ出す物は、済んだと記録するだけ。 */
-const asksPerson = (ctx: Ctx, task: Task) => helperOf(ctx, task) !== undefined;
+/**
+ * 人に頼む作業（文を作って LINE などで送る）。学童・会社のような所へ出す物は、済んだと記録するだけ。通用の「すること」の
+ * 作業は、頼む文が子の居場所の文なので、通用の文ができるまで文を作らず、送ったと記録するだけにする。
+ */
+const asksPerson = (ctx: Ctx, task: Task) =>
+  helperOf(ctx, task) !== undefined && !isNeedArrangementKey(task.basis.arrangementKey);
 
 function arrangementOf(ctx: Ctx, key: string | undefined): Arrangement | undefined {
   return ctx.plan.arrangements.find((a) => a.key === key);
@@ -774,7 +785,7 @@ function CheckCard({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
       <Label tone="warn">{ctx.t('card.check.label')}</Label>
       <Title>{ctx.t('card.check.title', { to: nameOf(ctx.household, request.to) })}</Title>
       <Text quiet>{ctx.t('card.check.body')}</Text>
-      {arrangement && (
+      {arrangement && arrangement.kind !== 'need' && (
         <Button onClick={() => ctx.go({ name: 'decide', key: arrangement.key })}>
           {ctx.t('card.check.action')}
         </Button>
@@ -1053,7 +1064,7 @@ const doneCommand = (task: Task): Command => ({
   type: 'commitment',
   taskKey: task.key,
   action: 'done',
-  seen: { titleKey: task.titleKey, titleParams: task.titleParams },
+  seen: taskContent(task),
 });
 
 /**
@@ -1205,7 +1216,7 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
           )}
         </Text>
       )}
-      {conflicted && arrangement && (
+      {conflicted && arrangement && arrangement.kind !== 'need' && (
         <MoreLink onClick={() => ctx.go({ name: 'decide', key: arrangement.key })}>
           {ctx.t('card.proposal.review')}
         </MoreLink>
@@ -1381,12 +1392,14 @@ export function CancelCard({
 }) {
   const [open, setOpen] = useState(false);
   const draft = cancelDraft(ctx, request);
+  // 通用の「すること」の取り消しの文は、子の居場所の文なので、通用の文ができるまで見せない（伝えたと記録するだけ）。
+  const drafted = !isNeedArrangementKey(request.basis.arrangementKey);
   return (
     <Card>
       <Label tone="warn">{ctx.t('card.cancel.label')}</Label>
       <Title>{taskTitle(ctx, task)}</Title>
       <Text quiet>{ctx.t('card.cancel.body')}</Text>
-      {open ? (
+      {!drafted ? null : open ? (
         <>
           <Quote>{draft}</Quote>
           {!request.window && <Text quiet>{ctx.t('card.cancel.checkDate')}</Text>}
@@ -1587,7 +1600,8 @@ export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey
     ctx.plan.throughSeq,
   );
   const arrangement = arrangementOf(ctx, arrangementKey);
-  if (!arrangement) return <Missing ctx={ctx} />;
+  // 通用の「すること」は、この画面（子の居場所の文）で決めさせない（通用の文の画面で足す。札からは開かない）。
+  if (!arrangement || arrangement.kind === 'need') return <Missing ctx={ctx} />;
   const requirement = ctx.plan.requirements.find((r) => r.key === arrangement.requirementKey);
   const date = requirement?.date ?? arrangement.start;
   const working = ctx.household.members

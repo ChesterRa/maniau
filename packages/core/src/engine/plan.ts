@@ -17,7 +17,14 @@ import {
   sameProposal,
   type TaskContent,
 } from '../schema/events';
-import type { CareOptionTemplate, Cost, Household } from '../schema/household';
+import type {
+  CareOptionTemplate,
+  Cost,
+  DeadlineRule,
+  Household,
+  StepTemplate,
+  Way,
+} from '../schema/household';
 import type {
   Arrangement,
   Basis,
@@ -46,7 +53,7 @@ import {
 import { type DutyTurn, dutyTurn, statedTurn } from '../view/ours';
 import { isActiveTask } from '../view/today';
 import { noAdultAtHome } from './availability';
-import { type Busy, optionDeadline, placeStep } from './deadline';
+import { type Busy, optionDeadline, placeStep, ruleDeadline } from './deadline';
 import { bestOrder } from './joint';
 import { purchaseOpportunities } from './purchase';
 import {
@@ -55,6 +62,7 @@ import {
   type EngineState,
   foldEvents,
   itemFate,
+  needWaysBasis,
   type RequestRecord,
   retiredUnknowns,
 } from './state';
@@ -92,6 +100,8 @@ export const keys = {
   escortRequirement: (rootId: string) => `req:escort:${rootId}`,
   escortTask: (rootId: string, leg: 'to' | 'from') => `task:escort:${leg}:${rootId}`,
   purchaseArrangement: (rootId: string) => `arr:purchase:${rootId}`,
+  needRequirement: (rootId: string) => `req:need:${rootId}`,
+  needArrangement: (rootId: string) => `arr:need:${rootId}`,
   option: (arrangementKey: string, templateId: string) => `opt:${arrangementKey}:${templateId}`,
   task: (optionKey: string, stepId: string) => `task:${optionKey}:${stepId}`,
   cancellationTask: (requestId: string) => `task:cancel:${requestId}`,
@@ -360,6 +370,7 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
     conditional: boolean;
     frame: EscortFrame;
   }[] = [];
+  const needs: LiveItem[] = [];
 
   // 子の居場所の手配は、家族が進める案どうしを一緒に置いてから（joint.ts）、お知らせの順に並べる。
   // 本命が決まって、もう進めない予備（「きょう」に出ない。isActiveTask）は、一緒に置く鎖から外して置き直す
@@ -417,7 +428,12 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
     if (entry.escort) {
       escorts.push({ item, rootId, live, conditional, frame: entry.escort });
     }
+    if (item.kind === 'need') needs.push(entry);
   }
+  // 通用の「すること」は、子の居場所と買い物の作業を置いた後に（同じ人の時間を重ねない）。
+  const needBusy = new Map<string, Busy[]>();
+  addBusy(needBusy, tasks);
+  for (const entry of needs) planNeed(ctx, entry, needBusy, { requirements, arrangements, tasks });
   const requests = externalRequests(ctx, tasks, arrangements, items);
   // 提出物の作業は、ほかの作業と依頼がそろった後に置く（持った人の、選んだ案のほかの作業と重ならない
   // ように）。提出物は外の相手が無いので、依頼には影響しない。
@@ -791,6 +807,330 @@ function placeCare(
   return byItem;
 }
 
+/** 案の手順の鎖（子の居場所の取れる手と、通用のやり方の両方。careOption が置く）。 */
+type ChainTemplate = Pick<
+  CareOptionTemplate,
+  'id' | 'titleKey' | 'deadline' | 'steps' | 'extraSteps' | 'cost'
+>;
+
+/**
+ * 通用の「すること」の時（書かれた・家族が言った日と時刻だけから。作らない）。window は同じ日の始まり–終わり、
+ * by は締切（日だけの締切は、その日の終わりまで。内部の目安の時刻で、過ぎた・選べないと言わない）。足りな
+ * ければ無し（要件だけで、手配を作らない）。
+ */
+type NeedFrame =
+  | { shape: 'window'; date: LocalDate; start: EpochMinutes; end: EpochMinutes }
+  | { shape: 'by'; date: LocalDate; by: EpochMinutes };
+
+function needFrame(ctx: Context, item: Item): NeedFrame | undefined {
+  const i = item.interpretation;
+  if (i.shape === 'window') {
+    if (!i.date || !i.startTime || !i.endTime || i.startTime >= i.endTime) return undefined;
+    return {
+      shape: 'window',
+      date: i.date,
+      start: zonedToEpochMinutes(i.date, i.startTime, ctx.tz),
+      end: zonedToEpochMinutes(i.date, i.endTime, ctx.tz),
+    };
+  }
+  if (i.shape === 'by' && i.deadline) {
+    const written = toEpochMinutes(i.deadline);
+    const date = localDateOf(written, ctx.tz);
+    const by = i.deadlineDayOnly ? zonedToEpochMinutes(date, '23:59', ctx.tz) : written;
+    return { shape: 'by', date, by };
+  }
+  return undefined;
+}
+
+/**
+ * 家族が「すること」に選んだやり方。選んだ時と今で、「すること」の中身とやり方の版が同じ時だけ当てる（違えば
+ * stale：もう一度選んでもらう）。
+ */
+function chosenWays(ctx: Context, item: Item): { ways: Way[]; stale: boolean } {
+  const chosen = ctx.state.needWays.get(item.id);
+  if (!chosen || chosen.wayIds.length === 0) return { ways: [], stale: false };
+  if (needWaysBasis(ctx.state, item.id, chosen.wayIds) !== chosen.about) {
+    return { ways: [], stale: true };
+  }
+  const ways = chosen.wayIds.flatMap((id) => ctx.household.ways.filter((w) => w.id === id));
+  return { ways, stale: false };
+}
+
+/**
+ * やり方の案。準備の手順（受け持ち以外）は、子の居場所の取れる手と同じ置き方（careOption：手順の逆算、手順ごとの
+ * 締切、ほかの作業を避ける、担当、済み、返事待ち）で、鎖の最後は窓の始まり（window）か締切（by）。やり方に締切が
+ * あり、それより早ければ、やり方の締切。受け持ちの手順は、窓の時刻に置く（その人のほかの作業と重なる時は時刻を
+ * 置かない）。準備の手順が無いやり方の決め時は、窓の始まりか締切。
+ */
+function wayOption(
+  ctx: Context,
+  way: Way,
+  frame: NeedFrame,
+  arrangementKey: string,
+  requirementKey: string,
+  item: Item,
+  live: boolean,
+  tasks: Task[],
+  busy: ReadonlyMap<string, readonly Busy[]>,
+): OptionPlan {
+  const optionKey = keys.option(arrangementKey, way.id);
+  const limit = frame.shape === 'window' ? frame.start : frame.by;
+  const needRule: DeadlineRule = { type: 'onTheDay', at: ctx.fmt(limit).slice(11, 16) };
+  const rule =
+    way.deadline !== undefined && ruleDeadline(way.deadline, frame.date, ctx.household) < limit
+      ? way.deadline
+      : needRule;
+  const names = new Map(way.steps.map((s) => [s.id, s.name]));
+  // 作業の引き受けと済みを、今の「すること」の中身とこのやり方の版に結ぶ（替われば前の物を当てない）。
+  const about = needWaysBasis(ctx.state, item.id, [way.id]);
+  // 前もってする手順：受け持ちでない手順と、外の相手に頼む手順（相手が受け持つ物も、頼むのは前もって）。
+  const prep: StepTemplate[] = way.steps
+    .filter((s) => !familyCover(s))
+    .map(({ name: _name, cover: _cover, ...s }) => ({ ...s, titleKey: 'task.wayStep' }));
+  const option: OptionPlan =
+    prep.length > 0
+      ? careOption(
+          ctx,
+          {
+            id: way.id,
+            titleKey: 'option.way',
+            deadline: rule,
+            steps: prep,
+            extraSteps: [],
+            cost: way.cost,
+          },
+          arrangementKey,
+          requirementKey,
+          item,
+          frame.date,
+          live,
+          tasks,
+          busy,
+          (step) => ({ what: names.get(step.id) ?? '' }),
+          about,
+        ).option
+      : {
+          key: optionKey,
+          arrangementKey,
+          templateId: way.id,
+          titleKey: 'option.way',
+          decisionDeadline: ctx.fmt(limit),
+          deadlineCertainty: 'estimate',
+          expired: limit < ctx.now,
+          cost: way.cost,
+          taskKeys: [],
+        };
+  if (frame.shape !== 'window') return option;
+  // このやり方の作業（前の手順と、先に置いた受け持ち）も、同じ人の時間として避ける（受け持ちどうしを重ねない）。
+  const mine = new Map<string, Busy[]>([...busy].map(([who, used]) => [who, [...used]]));
+  addBusy(
+    mine,
+    tasks.filter((t) => t.basis.optionKey === optionKey),
+  );
+  for (const step of way.steps.filter(familyCover)) {
+    const key = keys.task(optionKey, step.id);
+    const who = step.assigneeId ?? ctx.state.assignees.get(key);
+    // 受け持ちは、その人のふだんの予定が窓の間ずっと手順の区間（家など）にあり、ほかの作業とも重ならない時だけ、
+    // 窓の時刻に置く（書かれた時間の当番と同じ。ずらさない）。仕事の時間に受け持ちを置かない（休みを取って見る
+    // のは、休みの承認を頼む手順で表す）。窓が始まった後も、窓の始まりから確かめる。
+    const candidate =
+      who === undefined
+        ? undefined
+        : placeStep(
+            {
+              id: step.id,
+              titleKey: 'task.wayStep',
+              durationMin: frame.end - frame.start,
+              segments: step.segments,
+              waitAfterMin: 0,
+              // 決まった場所の受け持ちは、その場所にいる区間だけ（場所を問わず家の区間に置かない）。
+              ...(step.placeId === undefined ? {} : { placeId: step.placeId }),
+            },
+            who,
+            ctx.household,
+            Math.min(ctx.now, frame.start),
+            frame.end,
+            mine.get(who) ?? [],
+          );
+    const free = candidate !== undefined && candidate.start === frame.start;
+    if (free && who !== undefined) {
+      mine.set(who, [...(mine.get(who) ?? []), { start: frame.start, end: frame.end }]);
+    }
+    tasks.push(
+      task(ctx, key, {
+        step: { templateId: way.id, stepId: step.id },
+        titleKey: 'task.wayStep',
+        titleParams: { what: step.name, date: frame.date },
+        basis: { itemIds: [item.id], requirementKey, arrangementKey, optionKey },
+        durationMin: frame.end - frame.start,
+        earliestStart: ctx.fmt(frame.start),
+        deadline: ctx.fmt(frame.end),
+        after: [],
+        segments: step.segments,
+        ...(step.placeId === undefined ? {} : { placeId: step.placeId }),
+        cover: true,
+        ...(about === undefined ? {} : { about }),
+        ...(who === undefined ? {} : { assigneeId: who }),
+        ...(free ? { start: ctx.fmt(frame.start), end: ctx.fmt(frame.end) } : {}),
+        live,
+      }),
+    );
+    option.taskKeys.push(key);
+  }
+  return option;
+}
+
+/**
+ * 通用の「すること」の要件と手配（02-foundation §3.4）。日時が足りなければ要件だけ。やり方が選ばれていなければ、
+ * 手配は「やり方を選ぶ」（inputMissing）で、作業を作らない（推し量りで作らない）。選んだやり方から案を作り、本命・
+ * 予備・返事・決め時の扱いは子の居場所と同じ（withStatus）。窓の「すること」は、覆ったと言えない時間を出す。
+ */
+function planNeed(
+  ctx: Context,
+  entry: LiveItem,
+  busy: Map<string, Busy[]>,
+  out: { requirements: Requirement[]; arrangements: Arrangement[]; tasks: Task[] },
+): void {
+  const { item, rootId, live, conditional } = entry;
+  const requirementKey = keys.needRequirement(rootId);
+  const arrangementKey = keys.needArrangement(rootId);
+  const frame = needFrame(ctx, item);
+  const date = frame?.date ?? item.interpretation.date;
+  out.requirements.push({
+    key: requirementKey,
+    kind: 'need',
+    what: item.interpretation.what ?? item.written,
+    ...(date === undefined ? {} : { date }),
+    ...(frame?.shape === 'by' ? { by: ctx.fmt(frame.by) } : {}),
+    nature: 'required',
+    basis: { itemIds: [item.id], requirementKey },
+    live,
+    ...(conditional ? { conditional } : {}),
+  });
+  if (!frame) return;
+  const { ways, stale } = chosenWays(ctx, item);
+  const own: Task[] = [];
+  const options = ways.map((way) =>
+    wayOption(ctx, way, frame, arrangementKey, requirementKey, item, live, own, busy),
+  );
+  addBusy(busy, own);
+  out.tasks.push(...own);
+  const base: Arrangement = {
+    key: arrangementKey,
+    requirementKey,
+    kind: 'need',
+    needShape: frame.shape,
+    start: ctx.fmt(frame.shape === 'window' ? frame.start : ctx.now),
+    end: ctx.fmt(frame.shape === 'window' ? frame.end : frame.by),
+    status: ways.length === 0 ? 'undetermined' : 'decidable',
+    options,
+    backupOptionKeys: [...(ctx.state.backups.get(arrangementKey) ?? [])],
+    reasons:
+      ways.length === 0 ? [{ code: 'inputMissing', refs: [stale ? 'waysChanged' : 'ways'] }] : [],
+    live,
+    ...(conditional ? { conditional } : {}),
+    ...chosen(ctx, arrangementKey),
+  };
+  if (ways.length === 0) {
+    out.arrangements.push(base);
+    return;
+  }
+  const placed = withStatus(ctx, base, own);
+  out.arrangements.push(frame.shape === 'window' ? withCoverage(ctx, placed, own, ways) : placed);
+}
+
+/** 家族が窓の間受け持つ手順（外の相手に頼む手順でない受け持ち）。 */
+const familyCover = (step: Way['steps'][number]): boolean =>
+  step.cover === true && step.external === undefined;
+
+/**
+ * 窓の「すること」を覆ったと言えるか（今使う案で）。やり方の約束が全部そろった時だけ覆う：家族の受け持ちの作業は
+ * どれも、時刻に置いてあり、本人が引き受けた（済んだ）物（引き受け直しを待つ物は除く）。外の相手に頼む手順は
+ * どれも（受け持つと書かれた相手も、承認などの前提も）、同じ窓・同じ中身（控えの about）に「はい」の返事のある
+ * 依頼（取り消していない）。そのうえで、受け持つ人（家族の受け持ちか、受け持つと書かれた外の相手）が一人もいない
+ * やり方は覆わない（承認は、だれかが受け持つことではない）。覆うのは、やり方に covers があればその内だけ、無ければ
+ * 窓の全部。残りの時間を notCovered にする（覆ったと言わない）。今使う案が無ければ足さない。
+ */
+function withCoverage(
+  ctx: Context,
+  arrangement: Arrangement,
+  tasks: readonly Task[],
+  ways: readonly Way[],
+): Arrangement {
+  const inUse = arrangement.options.find((o) => o.key === arrangement.inUseOptionKey);
+  if (!inUse || !arrangement.live) return arrangement;
+  const way = ways.find((w) => w.id === inUse.templateId);
+  const start = toEpochMinutes(arrangement.start);
+  const end = toEpochMinutes(arrangement.end);
+  const date = localDateOf(start, ctx.tz);
+  // やり方が覆うのは、そのやり方の約束が全部そろった時だけ：外の相手に頼む手順はどれも、同じ窓・今の中身（控えの
+  // about）に「はい」があり、受け持ちの作業はどれも、本人が今の中身で引き受けている（引き受け直しを待たない）。
+  // 一つでも欠ければ、窓は覆っていない（有休の受け持ちを引き受けても、申請の承認が無ければ覆ったと言わない）。
+  const yes = new Set<string>();
+  for (const request of optionRequests(ctx.state, arrangement, inUse, ctx.tz)) {
+    const snapshot = request.snapshot;
+    if (request.state !== 'confirmed' || !snapshot?.window) continue;
+    if (!sameTime(snapshot.window.start, arrangement.start)) continue;
+    if (!sameTime(snapshot.window.end, arrangement.end)) continue;
+    // 控えに中身の要約の無い依頼は、今の用件とやり方への返事と示せないので、数えない。
+    if (snapshot.about === undefined || snapshot.about !== aboutNow(ctx.state, snapshot)) continue;
+    yes.add(request.taskKey);
+  }
+  const agreed = (way?.steps ?? []).filter((s) => s.cover || s.external !== undefined);
+  const held = (step: Way['steps'][number]) => {
+    const key = keys.task(inUse.key, step.id);
+    if (!familyCover(step)) return yes.has(key);
+    const t = tasks.find((x) => x.key === key);
+    return (
+      t !== undefined &&
+      t.start !== undefined &&
+      (t.commitment === 'accepted' || t.commitment === 'done') &&
+      !t.reconfirm
+    );
+  };
+  // 受け持つ人（家族の受け持ちか、受け持つと書かれた外の相手）が一人もいないやり方は覆わない（承認だけでは、
+  // だれもその時間を受け持っていない）。
+  const covered =
+    way?.steps.some((s) => s.cover) && agreed.every(held)
+      ? [
+          way.covers
+            ? {
+                start: zonedToEpochMinutes(date, way.covers.start, ctx.tz),
+                end: zonedToEpochMinutes(date, way.covers.end, ctx.tz),
+              }
+            : { start, end },
+        ]
+      : [];
+  const gaps = uncovered({ start, end }, covered);
+  if (gaps.length === 0) return arrangement;
+  return {
+    ...arrangement,
+    reasons: [
+      ...arrangement.reasons,
+      { code: 'notCovered', refs: gaps.map((g) => `${ctx.fmt(g.start)}/${ctx.fmt(g.end)}`) },
+    ],
+  };
+}
+
+/** 窓から、覆った時間を除いた残り。 */
+function uncovered(
+  window: { start: EpochMinutes; end: EpochMinutes },
+  covered: readonly { start: EpochMinutes; end: EpochMinutes }[],
+): { start: EpochMinutes; end: EpochMinutes }[] {
+  let rest = [window];
+  for (const c of covered) {
+    rest = rest.flatMap((piece) =>
+      c.end <= piece.start || c.start >= piece.end
+        ? [piece]
+        : [
+            ...(c.start > piece.start ? [{ start: piece.start, end: c.start }] : []),
+            ...(c.end < piece.end ? [{ start: c.end, end: piece.end }] : []),
+          ],
+    );
+  }
+  return rest;
+}
+
 /**
  * 本命が決まって、もう進めない予備（「きょう」に出ない。isActiveTask と同じ見方）。依頼と手配の状態は、
  * 一度置いた結果から作る（本命が決まったかは依頼の返事で決まり、置き方では変わらない）。
@@ -876,7 +1216,7 @@ function chosen(ctx: Context, arrangementKey: string): { chosenOptionKey?: strin
 
 function careOption(
   ctx: Context,
-  template: CareOptionTemplate,
+  template: ChainTemplate,
   arrangementKey: string,
   requirementKey: string,
   item: Item,
@@ -884,6 +1224,8 @@ function careOption(
   live: boolean,
   tasks: Task[],
   busy: ReadonlyMap<string, readonly Busy[]>,
+  params: (step: StepTemplate) => Record<string, string> = () => ({}),
+  about?: string,
 ): { option: OptionPlan; conflicted: boolean } {
   const optionKey = keys.option(arrangementKey, template.id);
   // 依頼を送って済みになった手順は、送った依頼の日で見る。前の日の分を送った済みは、今の日に当てず、
@@ -902,7 +1244,11 @@ function careOption(
   // 無いので、計画の時刻を、済ませた時として残さない）。全部済んでいれば、何も置かない。
   const finished = template.steps.map((step) => {
     const key = keys.task(optionKey, step.id);
-    const content = { titleKey: step.titleKey, titleParams: { date: needDate } };
+    const content = {
+      titleKey: step.titleKey,
+      titleParams: { ...params(step), date: needDate },
+      ...(about === undefined ? {} : { about }),
+    };
     return !reopenOf(key) && commitmentOf(ctx, key, content) === 'done';
   });
   const rest = template.steps.flatMap((_, i) => (finished[i] ? [] : [i]));
@@ -916,7 +1262,7 @@ function careOption(
   }, undefined);
   const remaining = {
     ...template,
-    steps: rest.map((i) => template.steps[i] as CareOptionTemplate['steps'][number]),
+    steps: rest.map((i) => template.steps[i] as StepTemplate),
   };
   // ほかの案の作業（busy）を避けて置く。避けて置けなければ、決め時はこの案だけを見た逆算の目安にし
   // （置けないとは言わない）、作業には時刻を置かない（ほかの作業と重ねて置かない。手配に timeConflict）。
@@ -953,7 +1299,7 @@ function careOption(
   const byAssignee = {
     ...template,
     steps: rest.map((i) => {
-      const s = template.steps[i] as CareOptionTemplate['steps'][number];
+      const s = template.steps[i] as StepTemplate;
       const who = assigned[i];
       return who !== undefined && s.assigneeId === undefined ? { ...s, assigneeId: who } : s;
     }),
@@ -998,6 +1344,13 @@ function careOption(
     taskKeys.push(key);
     const previous = template.steps[index - 1];
     const reopen = reopenOf(key);
+    // 手順の締切は、案の締切と、手順ごとの締切（前の日 21:00 までの予約など）の早い方。
+    const own =
+      step.deadline === undefined
+        ? undefined
+        : ruleDeadline(step.deadline, needDate, ctx.household);
+    const stepDeadline =
+      own === undefined ? result.ruleDeadline : Math.min(own, result.ruleDeadline);
     tasks.push(
       task(
         ctx,
@@ -1006,11 +1359,11 @@ function careOption(
           step: { templateId: template.id, stepId: step.id },
           titleKey: step.titleKey,
           // 用件に、その手配の日を入れる（日が直されたら別の用件。前の日の申込書を書いた済みや、前の日の
-          // 引き受けを、新しい日に当てない）。
-          titleParams: { date: needDate },
+          // 引き受けを、新しい日に当てない）。やり方の手順は、題（家族の言葉）も用件に入れる。
+          titleParams: { ...params(step), date: needDate },
           basis,
           durationMin: step.durationMin,
-          deadline: ctx.fmt(result.ruleDeadline),
+          deadline: ctx.fmt(stepDeadline),
           after: previous
             ? [{ taskKey: keys.task(optionKey, previous.id), waitMin: previous.waitAfterMin }]
             : [],
@@ -1018,6 +1371,7 @@ function careOption(
           ...(step.placeId === undefined ? {} : { placeId: step.placeId }),
           ...(step.external === undefined ? {} : { external: step.external }),
           ...(handoff ? { handoff: true } : {}),
+          ...(about === undefined ? {} : { about }),
           ...(placed && !handoff
             ? {
                 assigneeId: placed.memberId,
@@ -1145,10 +1499,10 @@ function requestDay(
  */
 function requestForDay(
   request: Pick<RequestRecord, 'snapshot'>,
-  arrangement: Pick<Arrangement, 'kind' | 'start'>,
+  arrangement: Pick<Arrangement, 'kind' | 'start' | 'needShape'>,
   timeZone: string,
 ): boolean {
-  if (arrangement.kind !== 'childCare') return true;
+  if (!windowed(arrangement)) return true;
   const day = requestDay(request, timeZone);
   return day === undefined || day === localDateOf(toEpochMinutes(arrangement.start), timeZone);
 }
@@ -1159,7 +1513,7 @@ function requestForDay(
  */
 function optionRequests(
   state: EngineState,
-  arrangement: Pick<Arrangement, 'kind' | 'start'>,
+  arrangement: Pick<Arrangement, 'kind' | 'start' | 'needShape'>,
   option: Pick<OptionPlan, 'taskKeys'>,
   timeZone: string,
 ): RequestRecord[] {
@@ -1178,7 +1532,7 @@ function optionRequests(
  */
 export function optionStarted(
   state: EngineState,
-  arrangement: Pick<Arrangement, 'kind' | 'start'>,
+  arrangement: Pick<Arrangement, 'kind' | 'start' | 'needShape'>,
   option: Pick<OptionPlan, 'taskKeys'>,
   tasks: readonly Task[],
   timeZone: string,
@@ -2053,8 +2407,14 @@ export function requestSnapshot(
     basis: task.basis,
     conditional,
     condition: basisCondition(state, task.basis.itemIds),
-    ...(arrangement?.kind === 'childCare'
+    ...(arrangement && windowed(arrangement)
       ? { window: { start: arrangement.start, end: arrangement.end } }
+      : {}),
+    ...(arrangement?.kind === 'need' && task.step
+      ? (() => {
+          const about = needWaysBasis(state, task.basis.itemIds[0] ?? '', [task.step.templateId]);
+          return about === undefined ? {} : { about };
+        })()
       : {}),
   };
 }
@@ -2128,8 +2488,28 @@ function requestDoubt(
         snapshot.condition !== basisCondition(ctx.state, basis.itemIds)) ||
       (snapshot.window !== undefined &&
         (!sameTime(snapshot.window.start, arrangement.start) ||
-          !sameTime(snapshot.window.end, arrangement.end))));
+          !sameTime(snapshot.window.end, arrangement.end))) ||
+      (snapshot.about !== undefined && snapshot.about !== aboutNow(ctx.state, snapshot)));
   return { unclear, changed, conditional };
+}
+
+/** 通用の「すること」の依頼の、今の中身とやり方の版の要約（控えの about と比べる）。 */
+function aboutNow(state: EngineState, snapshot: RequestSnapshot): string | undefined {
+  const { arrangementKey, optionKey } = snapshot.basis;
+  const itemId = snapshot.basis.itemIds[0];
+  if (arrangementKey === undefined || optionKey === undefined || itemId === undefined)
+    return undefined;
+  const prefix = `opt:${arrangementKey}:`;
+  if (!optionKey.startsWith(prefix)) return undefined;
+  return needWaysBasis(state, itemId, [optionKey.slice(prefix.length)]);
+}
+
+/** 頼んだ時間（窓）で依頼を結ぶ手配か：子の居場所と、窓の「すること」。 */
+function windowed(arrangement: Pick<Arrangement, 'kind' | 'needShape'>): boolean {
+  return (
+    arrangement.kind === 'childCare' ||
+    (arrangement.kind === 'need' && arrangement.needShape === 'window')
+  );
 }
 
 /** 依頼の控え。控えの無い古い事象だけ、今の作業から補う（外の相手への作業でなければ無し）。 */

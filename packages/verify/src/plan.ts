@@ -2,7 +2,9 @@ import {
   type Arrangement,
   type Basis,
   type CareOptionTemplate,
+  type DeadlineRule,
   type Household,
+  type Item,
   japaneseHolidayName,
   type OptionPlan,
   type PlanResult,
@@ -164,18 +166,24 @@ function optionDeadline(
   report: Collector,
 ): number | undefined {
   const date = localMinute(instantMinute(arrangement.start), household.timeZone).date;
+  return deadlineOnDate(household, date, template.deadline, arrangement.key, report);
+}
+
+/** 家族の決まりを、対象日の地域日付から計算する。 */
+function deadlineOnDate(
+  household: Household,
+  date: string,
+  rule: DeadlineRule,
+  subject: string,
+  report: Collector,
+): number | undefined {
   let day = dateIndex(date);
-  const rule = template.deadline;
   if (rule.type === 'daysBefore') day -= rule.days * 24 * 60;
   else if (rule.type === 'weekdayOfPreviousWeek') {
     day -= (weekday(date) - 1 + 7 - (rule.weekday - 1)) * 24 * 60;
-  } else {
+  } else if (rule.type === 'businessDaysBefore') {
     if (rule.days > 730) {
-      report.undetermined(
-        'deadline_range',
-        arrangement.key,
-        '営業日の締切を確認できる範囲を超える。',
-      );
+      report.undetermined('deadline_range', subject, '営業日の締切を確認できる範囲を超える。');
       return undefined;
     }
     let left = rule.days;
@@ -191,11 +199,7 @@ function optionDeadline(
         )
           continue;
       } catch {
-        report.undetermined(
-          'holiday_data_missing',
-          arrangement.key,
-          '営業日の祝日を確認できない。',
-        );
+        report.undetermined('holiday_data_missing', subject, '営業日の祝日を確認できない。');
         return undefined;
       }
       left -= 1;
@@ -205,7 +209,55 @@ function optionDeadline(
   return Date.parse(`${dateFromIndex(day)}T${rule.at}:00+09:00`) / 60_000;
 }
 
-function checkStep(task: Task, household: Household, plan: PlanResult, report: Collector): void {
+/** 手配の形は計画に推測させず、元の事項から確かめる。 */
+function needItem(arrangement: Arrangement, plan: PlanResult, facts: FactState): Item | undefined {
+  const requirement = plan.requirements.find((entry) => entry.key === arrangement.requirementKey);
+  if (requirement?.kind !== 'need' || requirement.basis.itemIds.length !== 1) return undefined;
+  const id = requirement.basis.itemIds[0];
+  if (!id || facts.active.get(id) !== true || facts.staleItems.has(id)) return undefined;
+  const item = facts.items.get(id);
+  return item?.kind === 'need' ? item : undefined;
+}
+
+function statedWindow(item: Item | undefined): { start: number; end: number } | undefined {
+  const value = item?.interpretation;
+  if (
+    value?.shape !== 'window' ||
+    !value.date ||
+    !value.startTime ||
+    !value.endTime ||
+    value.startTimeUnconfirmed ||
+    value.endTimeUnconfirmed
+  )
+    return undefined;
+  const start = Date.parse(`${value.date}T${value.startTime}:00+09:00`) / 60_000;
+  const end = Date.parse(`${value.date}T${value.endTime}:00+09:00`) / 60_000;
+  return end > start ? { start, end } : undefined;
+}
+
+function needDate(item: Item | undefined, timeZone: string): string | undefined {
+  const value = item?.interpretation;
+  if (value?.shape === 'window') return value.date;
+  if (value?.shape === 'by' && value.deadline)
+    return localMinute(instantMinute(value.deadline), timeZone).date;
+  return undefined;
+}
+
+function needDeadline(item: Item, timeZone: string): number | undefined {
+  const value = item.interpretation;
+  if (value.shape !== 'by' || !value.deadline) return undefined;
+  if (!value.deadlineDayOnly) return instantMinute(value.deadline);
+  const date = localMinute(instantMinute(value.deadline), timeZone).date;
+  return Date.parse(`${date}T23:59:00+09:00`) / 60_000;
+}
+
+function checkStep(
+  task: Task,
+  household: Household,
+  plan: PlanResult,
+  facts: FactState,
+  report: Collector,
+): void {
   if (task.commitment === 'done' && task.end && instantMinute(task.end) < instantMinute(plan.now)) {
     if (task.step)
       report.undetermined(
@@ -221,12 +273,21 @@ function checkStep(task: Task, household: Household, plan: PlanResult, report: C
     }
     return;
   }
-  const template = household.careOptions.find((entry) => entry.id === task.step?.templateId);
+  const arrangement = plan.arrangements.find((entry) => entry.key === task.basis.arrangementKey);
+  const careTemplate =
+    arrangement?.kind === 'need'
+      ? undefined
+      : household.careOptions.find((entry) => entry.id === task.step?.templateId);
+  const way =
+    arrangement?.kind === 'need'
+      ? household.ways.find((entry) => entry.id === task.step?.templateId)
+      : undefined;
+  const template = careTemplate ?? way;
   if (!template) {
     report.violation('step_template_missing', task.key, '元の取れる手がない。');
     return;
   }
-  const matches = [...template.steps, ...template.extraSteps].filter(
+  const matches = [...template.steps, ...(careTemplate?.extraSteps ?? [])].filter(
     (step) => step.id === task.step?.stepId,
   );
   if (matches.length !== 1 || !matches[0]) {
@@ -234,8 +295,35 @@ function checkStep(task: Task, household: Household, plan: PlanResult, report: C
     return;
   }
   const step = matches[0];
+  // 外の相手が受け持つ手順は、窓の前に頼む作業。窓の時刻に置くのは家族自身の受け持ちだけ。
+  const cover = way && 'cover' in step && step.cover === true && step.external === undefined;
+  if (way && Boolean(task.cover) !== Boolean(cover))
+    report.violation('need_cover_marker_mismatch', task.key, '受け持ちの印が家庭の手順と違う。');
+  const stated = arrangement?.kind === 'need' ? needItem(arrangement, plan, facts) : undefined;
+  if (cover) {
+    const window = statedWindow(stated);
+    if (!window) {
+      report.undetermined(
+        'need_cover_window_unverified',
+        task.key,
+        '受け持つ窓を元の事項から確かめられない。',
+      );
+    } else if (!task.start || !task.end) {
+      report.undetermined('need_cover_unscheduled', task.key, '受け持ちの時刻を確認できない。');
+    } else if (
+      task.durationMin !== window.end - window.start ||
+      instantMinute(task.start) !== window.start ||
+      instantMinute(task.end) !== window.end
+    ) {
+      report.violation(
+        'need_cover_window_mismatch',
+        task.key,
+        '受け持ちの作業が元の窓全体と違う。',
+      );
+    }
+  }
   if (
-    task.durationMin !== step.durationMin ||
+    (!cover && task.durationMin !== step.durationMin) ||
     task.segments.some((segment) => !step.segments.includes(segment))
   ) {
     report.violation(
@@ -269,12 +357,11 @@ function checkStep(task: Task, household: Household, plan: PlanResult, report: C
         '本人が決まった手順の担当がまだない。',
       );
   }
-  const arrangement = plan.arrangements.find((entry) => entry.key === task.basis.arrangementKey);
   const option = arrangement?.options.find((entry) => entry.key === task.basis.optionKey);
   if (option && option.templateId !== template.id)
     report.violation('step_option_mismatch', task.key, '案と作業の取れる手が違う。');
 
-  const extra = template.extraSteps.find((entry) => entry.id === step.id);
+  const extra = careTemplate?.extraSteps.find((entry) => entry.id === step.id);
   if (extra && (!arrangement || !task.start || !task.end)) {
     report.undetermined('extra_step_date_unverified', task.key, '追加の準備の日付を確認できない。');
   } else if (extra && arrangement && task.start && task.end) {
@@ -289,11 +376,15 @@ function checkStep(task: Task, household: Household, plan: PlanResult, report: C
       report.violation('extra_step_wrong_date', task.key, '追加の準備の日付が家庭の決まりと違う。');
   }
 
-  const stepIndex = template.steps.findIndex((entry) => entry.id === step.id);
+  // 窓の受け持ちは準備の鎖とは別。予約などの順序だけを確かめる。
+  const orderedSteps = way
+    ? way.steps.filter((entry) => !entry.cover || entry.external !== undefined)
+    : template.steps;
+  const stepIndex = orderedSteps.findIndex((entry) => entry.id === step.id);
   if (stepIndex >= 0 && task.live && task.basis.optionKey && task.basis.arrangementKey) {
     // 案の中の連続した手順について、出力の印に頼らず担当を照らす。
     // 前後の担当が違えば、その先も含めて一つの鎖として未配置にする。
-    const chain = template.steps.map((entry) =>
+    const chain = orderedSteps.map((entry) =>
       plan.tasks.find(
         (candidate) =>
           candidate.live &&
@@ -333,7 +424,7 @@ function checkStep(task: Task, household: Household, plan: PlanResult, report: C
     }
   }
   if (stepIndex > 0) {
-    const previous = template.steps[stepIndex - 1];
+    const previous = orderedSteps[stepIndex - 1];
     if (previous) {
       const candidates = plan.tasks.filter(
         (entry) =>
@@ -363,15 +454,43 @@ function checkStep(task: Task, household: Household, plan: PlanResult, report: C
       }
     }
   }
+  if (way && step.deadline && task.end) {
+    const date = needDate(stated, household.timeZone);
+    if (!date) {
+      report.undetermined(
+        'step_deadline_unverified',
+        task.key,
+        '手順の締切の対象日を確かめられない。',
+      );
+    } else {
+      const deadline = deadlineOnDate(household, date, step.deadline, task.key, report);
+      if (deadline !== undefined && instantMinute(task.end) > deadline)
+        report.violation('step_deadline_missed', task.key, '手順の締切より後に作業が終わる。');
+    }
+  }
   const lastStep = template.steps.at(-1);
-  if (arrangement && option && lastStep?.id === step.id && task.end) {
-    const deadline = optionDeadline(household, arrangement, template, report);
+  if (arrangement && option && careTemplate && lastStep?.id === step.id && task.end) {
+    const deadline = optionDeadline(household, arrangement, careTemplate, report);
     if (deadline !== undefined && instantMinute(task.end) > deadline) {
       report.violation(
         'template_deadline_missed',
         task.key,
         '家庭の決まりの締切より後に最後の手順が終わる。',
       );
+    }
+  }
+  if (way?.deadline && stepIndex === 0 && task.start) {
+    const date = needDate(stated, household.timeZone);
+    if (!date) {
+      report.undetermined(
+        'way_deadline_unverified',
+        task.key,
+        'やり方の締切の対象日を確かめられない。',
+      );
+    } else {
+      const deadline = deadlineOnDate(household, date, way.deadline, task.key, report);
+      if (deadline !== undefined && instantMinute(task.start) > deadline)
+        report.violation('way_deadline_missed', task.key, 'やり方の締切より後に手順を始める。');
     }
   }
 }
@@ -428,8 +547,18 @@ function optionStarted(
       // 日の控えが無い古い送信は、現在の日の送信として扱う。独立に確かめられない事は別に示す。
       const sent = history.requests.get(entry.requestId);
       if (!sent || sent.seq !== entry.seq || sent.state === 'cancelled') continue;
+      if (arrangement.kind === 'need' && history.needRequestCurrent.get(entry.requestId) === false)
+        continue;
       const window = sent.snapshot?.window;
-      if (matchesArrangementDay(window, arrangement, timeZone) === false) continue;
+      if (
+        matchesArrangementDay(
+          window,
+          arrangement,
+          timeZone,
+          history.needShapes.get(arrangement.key),
+        ) === false
+      )
+        continue;
       taskKey = entry.taskKey;
     }
     if (!taskKey || !option.taskKeys.includes(taskKey)) continue;
@@ -460,13 +589,29 @@ export function optionFailure(
   // 今の日の依頼があればその返事を見る。新しい依頼が一つも無い時は、以前の断りを見落として
   // 使えると決めない（今の日への断りが確定したという意味ではない）。
   const current = requests.filter(
-    ([, sent]) => matchesArrangementDay(sent.snapshot?.window, arrangement, timeZone) === true,
+    ([id, sent]) =>
+      matchesArrangementDay(
+        sent.snapshot?.window,
+        arrangement,
+        timeZone,
+        history.needShapes.get(arrangement.key),
+      ) === true &&
+      (arrangement.kind !== 'need' || history.needRequestCurrent.get(id) === true),
   );
   // 控えが無い依頼は現在の日の可能性がある。その間、別の日の断りを今も有効と断定しない。
   const unknownDay = requests.some(
-    ([, sent]) => matchesArrangementDay(sent.snapshot?.window, arrangement, timeZone) === undefined,
+    ([id, sent]) =>
+      matchesArrangementDay(
+        sent.snapshot?.window,
+        arrangement,
+        timeZone,
+        history.needShapes.get(arrangement.key),
+      ) === undefined ||
+      (arrangement.kind === 'need' && history.needRequestCurrent.get(id) === undefined),
   );
-  const turnedDown = (current.length > 0 ? current : unknownDay ? [] : requests)
+  const turnedDown = (
+    current.length > 0 ? current : unknownDay || arrangement.kind === 'need' ? [] : requests
+  )
     .filter(([, sent]) => sent.state === 'turnedDown')
     .map(([id]) => id);
   if (turnedDown.length) return { code: 'turnedDown', refs: turnedDown };
@@ -559,6 +704,7 @@ function checkReasons(
           '期限以外の条件も含め、使える案がないか確かめられない。',
         );
       }
+    } else if (reason.code === 'notCovered' && arrangement.kind === 'need') {
     } else {
       report.undetermined(
         'reason_not_independently_proved',
@@ -619,6 +765,43 @@ export function checkPlan(
     report,
   );
   for (const requirement of plan.requirements) {
+    if (requirement.live && requirement.kind === 'need') {
+      for (const id of requirement.basis.itemIds) {
+        const item = facts.items.get(id);
+        if (item?.kind !== 'need' || facts.active.get(id) !== true || facts.staleItems.has(id))
+          continue;
+        const value = item.interpretation;
+        if (
+          value.forMemberId &&
+          !household.members.some((member) => member.id === value.forMemberId)
+        )
+          report.violation(
+            'need_member_unknown',
+            requirement.key,
+            'することの対象が家庭の成員にいない。',
+          );
+        if (value.shape === 'by' && value.deadline) {
+          const expected = needDeadline(item, household.timeZone);
+          if (expected === undefined) continue;
+          if (!requirement.by) {
+            report.undetermined(
+              'need_deadline_unverified',
+              requirement.key,
+              '事項の締切と要件を照らせない。',
+            );
+          } else if (
+            instantMinute(requirement.by) !== expected &&
+            !(value.deadlineDayOnly && instantMinute(requirement.by) === expected + 1)
+          ) {
+            report.violation(
+              value.deadlineDayOnly ? 'need_day_deadline_mismatch' : 'need_deadline_mismatch',
+              requirement.key,
+              '要件の締切が元の事項と違う。',
+            );
+          }
+        }
+      }
+    }
     // 家にあると示す時は、その言明が家族の最後の答えと品物に対応するかを、事象から確かめる。
     // 別の出典の作用・退休・欠落で答えが変わり得る時は、ここでは断定しない。
     if (
@@ -916,6 +1099,53 @@ export function checkPlan(
         '不要な要件から手配が残っている。',
       );
     if (!arrangement.live) continue;
+    if (arrangement.kind === 'need') {
+      const item = needItem(arrangement, plan, facts);
+      const window = statedWindow(item);
+      if (!item?.interpretation.shape) {
+        report.undetermined(
+          'need_shape_unverified',
+          arrangement.key,
+          'することの形を元の事項から確かめられない。',
+        );
+      } else if (arrangement.needShape === undefined) {
+        report.undetermined('need_shape_missing', arrangement.key, '手配にすることの形がない。');
+      } else if (arrangement.needShape !== item.interpretation.shape) {
+        report.violation('need_shape_mismatch', arrangement.key, '手配の形が元の事項と違う。');
+      }
+      if (item?.interpretation.shape === 'window' && !window) {
+        report.undetermined(
+          'need_window_unverified',
+          arrangement.key,
+          '受け持つ窓を元の事項から確かめられない。',
+        );
+      } else if (
+        window &&
+        (instantMinute(arrangement.start) !== window.start ||
+          instantMinute(arrangement.end) !== window.end)
+      ) {
+        report.violation('need_window_mismatch', arrangement.key, '手配の窓が元の事項と違う。');
+      }
+      if (item?.interpretation.shape === 'by') {
+        const deadline = needDeadline(item, household.timeZone);
+        if (deadline === undefined) {
+          report.undetermined(
+            'need_deadline_unverified',
+            arrangement.key,
+            'することの締切を元の事項から確かめられない。',
+          );
+        } else if (
+          instantMinute(arrangement.end) !== deadline &&
+          !(item.interpretation.deadlineDayOnly && instantMinute(arrangement.end) === deadline + 1)
+        ) {
+          report.violation(
+            'need_deadline_mismatch',
+            arrangement.key,
+            '手配の締切が元の事項と違う。',
+          );
+        }
+      }
+    }
     if (arrangement.kind === 'purchase') {
       const requirementUnknown =
         requirement?.kind === 'belongings' ? requirement.atHomeUnknownId : undefined;
@@ -979,7 +1209,15 @@ export function checkPlan(
     for (const option of arrangement.options) {
       if (option.arrangementKey !== arrangement.key)
         report.violation('option_arrangement_mismatch', option.key, '案が別の手配を指している。');
-      if (!household.careOptions.some((template) => template.id === option.templateId)) {
+      const way =
+        arrangement.kind === 'need'
+          ? household.ways.find((entry) => entry.id === option.templateId)
+          : undefined;
+      const careTemplate =
+        arrangement.kind === 'need'
+          ? undefined
+          : household.careOptions.find((entry) => entry.id === option.templateId);
+      if (!careTemplate && !way) {
         if (arrangement.kind === 'purchase') {
           report.undetermined(
             'purchase_template_unverified',
@@ -1006,9 +1244,15 @@ export function checkPlan(
       for (const key of option.taskKeys)
         if (!tasks.has(key))
           report.violation('option_task_missing', option.key, '案が存在しない作業を指している。');
-      const template = household.careOptions.find((entry) => entry.id === option.templateId);
-      if (template && option.decisionDeadline) {
-        const deadline = optionDeadline(household, arrangement, template, report);
+      if ((careTemplate || way?.deadline) && option.decisionDeadline) {
+        const date = way
+          ? needDate(needItem(arrangement, plan, facts), household.timeZone)
+          : undefined;
+        const deadline = careTemplate
+          ? optionDeadline(household, arrangement, careTemplate, report)
+          : date && way?.deadline
+            ? deadlineOnDate(household, date, way.deadline, option.key, report)
+            : undefined;
         if (deadline !== undefined && instantMinute(option.decisionDeadline) > deadline) {
           report.violation(
             'decision_after_rule_deadline',
@@ -1174,12 +1418,21 @@ export function checkPlan(
       : [];
     const waitingToday = waiting.some(
       (request) =>
-        matchesArrangementDay(request.snapshot?.window, arrangement, household.timeZone) === true,
+        matchesArrangementDay(
+          request.snapshot?.window,
+          arrangement,
+          household.timeZone,
+          history.needShapes.get(arrangement.key),
+        ) === true,
     );
     const waitingUnknown = waiting.some(
       (request) =>
-        matchesArrangementDay(request.snapshot?.window, arrangement, household.timeZone) ===
-        undefined,
+        matchesArrangementDay(
+          request.snapshot?.window,
+          arrangement,
+          household.timeZone,
+          history.needShapes.get(arrangement.key),
+        ) === undefined,
     );
     if (arrangement.status === 'decidable' && subjectOption && (waitingToday || waitingUnknown)) {
       const priorUnknown = selected
@@ -1355,7 +1608,7 @@ export function checkPlan(
       report,
       task.commitment === 'done' || Boolean(task.cancels),
     );
-    checkStep(task, household, plan, report);
+    checkStep(task, household, plan, facts, report);
     if (task.live && !task.cancels && task.basis.optionKey && task.basis.arrangementKey) {
       const arrangement = arrangements.get(task.basis.arrangementKey);
       const active =

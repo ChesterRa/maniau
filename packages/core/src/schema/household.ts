@@ -126,6 +126,8 @@ export const DeadlineRule = z.discriminatedUnion('type', [
   }),
   /** 例：学童の一日利用は、前の週の月曜日 18:30 まで。 */
   z.object({ type: z.literal('weekdayOfPreviousWeek'), weekday: Weekday, at: LocalTime }),
+  /** 例：病児保育の確かめの電話は、当日の 7:30 まで。 */
+  z.object({ type: z.literal('onTheDay'), at: LocalTime }),
 ]);
 export type DeadlineRule = z.infer<typeof DeadlineRule>;
 
@@ -152,6 +154,11 @@ export const StepTemplate = z.object({
   waitAfterMin: z.number().int().nonnegative().default(0),
   /** 本人しかできない手順（自分の有休の申請など）。無ければ大人の誰でもよい。 */
   assigneeId: Id.optional(),
+  /**
+   * この手順の最後の時（手配の日から逆算）。無ければ、案の締切と次の手順で決まる。手順ごとに別に守る（前の日
+   * 21:00 までの予約と、当日 7:30 までの確かめが、両方成り立つように）。
+   */
+  deadline: DeadlineRule.optional(),
 });
 export type StepTemplate = z.infer<typeof StepTemplate>;
 
@@ -181,6 +188,43 @@ export const CareOptionTemplate = z.object({
 });
 export type CareOptionTemplate = z.infer<typeof CareOptionTemplate>;
 
+/** やり方の手順。題は家族が書いたデータの文（画面の文言の鍵ではない）。ほかは案の手順と同じ。 */
+export const WayStep = StepTemplate.omit({ titleKey: true }).extend({
+  name: z.string().min(1),
+  /**
+   * この手順をする人が、窓の間を受け持つ（窓の「すること」だけ）。
+   * - 外の相手に頼む手順（external）なら、相手が受け持つ：その窓・今の中身への「はい」が、相手が受け持つという
+   *   証拠になる（病児保育の予約、祖母に来てもらう）。頼むのは前もってで、作業は窓の前に置く。
+   * - そうでなければ家族が受け持つ：その人のふだんの予定が、窓の間ずっと手順の区間（家など）にある時だけ、その回の
+   *   窓の時刻に置き（durationMin は使わない。仕事の時間には置かない）、その間その人はほかの作業をしない（ほかの
+   *   こともしながら受け持てる、は今週は言えない）。引き受けた時だけ、その人が窓を受け持つと言える。
+   * 受け持ちの無い外の相手の手順（休みの承認など）は前提で、「はい」でもだれかが受け持つことにはならない。
+   */
+  cover: z.literal(true).optional(),
+});
+export type WayStep = z.infer<typeof WayStep>;
+
+/**
+ * やり方（通用の「すること」を満たす手立て。家族が確かめたデータ。02-foundation §3.4）。名前と手順の題は家族の
+ * 言葉で、場面の種類を持たない（熱・印刷などで分岐しない）。どの「すること」に使うかは、家族が選ぶ。
+ */
+export const Way = z.object({
+  id: Id,
+  name: z.string().min(1),
+  /** 案の締切（最初の手順の始まりの最後。無ければ手順ごとの締切と「すること」の締切・窓で決まる）。 */
+  deadline: DeadlineRule.optional(),
+  steps: z.array(WayStep).min(1),
+  /**
+   * 窓の「すること」で、前もって分かっている受け持てる時間（例：病児保育は 8:30–17:30）。無くてもよい（外の
+   * 相手が窓の全部に「はい」と答えれば覆う）。窓の一部しか覆わなければ、覆ったと言わず、足りない時間を出す。
+   */
+  covers: z.object({ start: LocalTime, end: LocalTime }).optional(),
+  cost: Cost,
+  /** 後で取り消せるか。 */
+  cancellable: z.boolean(),
+});
+export type Way = z.infer<typeof Way>;
+
 export const Household = z.object({
   id: Id,
   /** 地域。日本だけのうちは JP。地域を差し替える仕組みは作らない（§13）。 */
@@ -190,6 +234,8 @@ export const Household = z.object({
   places: z.array(Place),
   routines: z.array(RoutineDay),
   careOptions: z.array(CareOptionTemplate),
+  /** 通用の「すること」のやり方（家族が確かめた物）。 */
+  ways: z.array(Way).default([]),
   /** 勤務先などの休み（営業日の計算に使う）。 */
   closedDates: z.array(LocalDate).default([]),
 });

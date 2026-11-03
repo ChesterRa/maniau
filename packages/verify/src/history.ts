@@ -1,6 +1,7 @@
 import type {
   DomainEvent,
   Household,
+  Item,
   PlanResult,
   ProposalSnapshot,
   Task,
@@ -8,9 +9,15 @@ import type {
   Truth,
 } from '@maniau/core';
 import { Extraction } from '@maniau/core';
-import { collectFacts, type FactState, historicalItem } from './facts';
+import { collectFacts, type FactState, historicalItem, needShape } from './facts';
+import { aboutMatches } from './need-proof';
 import { Collector } from './report';
-import { instantMinute, matchesArrangementDay, matchesArrangementWindow } from './time';
+import {
+  instantMinute,
+  localMinute,
+  matchesArrangementDay,
+  matchesArrangementWindow,
+} from './time';
 
 type RequestState = 'awaitingReply' | 'confirmed' | 'turnedDown' | 'cancelled';
 
@@ -30,6 +37,7 @@ export function doneContentMatches(task: Task, content: TaskContent): boolean {
   const keys = Object.keys(task.titleParams);
   return (
     task.titleKey === content.titleKey &&
+    task.about === content.about &&
     keys.length === Object.keys(content.titleParams).length &&
     keys.every(
       (key) =>
@@ -51,6 +59,26 @@ function sameBasis(
   );
 }
 
+/** 依頼した「すること」の中身。日だけの締切に付いた内部の目安は内容にしない。 */
+export function needContent(item: Item, timeZone: string): unknown[] {
+  const value = item.interpretation;
+  return [
+    value.what ?? item.written,
+    value.shape,
+    value.date,
+    value.startTime,
+    value.endTime,
+    value.startTimeUnconfirmed,
+    value.endTimeUnconfirmed,
+    value.deadlineDayOnly && value.deadline
+      ? localMinute(instantMinute(value.deadline), timeZone).date
+      : value.deadline,
+    value.deadlineDayOnly,
+    value.place,
+    value.forMemberId,
+  ];
+}
+
 interface Selection {
   primary?: string;
   backups: Set<string>;
@@ -60,12 +88,17 @@ interface Selection {
 export interface History {
   events: DomainEvent[];
   complete: boolean;
+  /** 通用の手配の形。出典と事項の事象から得られない時は入れない。 */
+  needShapes: Map<string, 'by' | 'window'>;
+  /** 通用の依頼の控えが、送信時と今の双方の内容に一致するか。欄が無い物は未判定。 */
+  needRequestCurrent: Map<string, boolean>;
   requests: Map<string, SentRequest>;
   selections: Map<string, Selection>;
   approvals: Map<
     string,
     {
       assigneeId: string;
+      seq: number;
       shown?: ProposalSnapshot;
       basisItemIds?: string[];
       basisSourceIds?: string[];
@@ -150,6 +183,7 @@ export function checkHistory(
     string,
     {
       assigneeId: string;
+      seq: number;
       shown?: ProposalSnapshot;
       basisItemIds?: string[];
       basisSourceIds?: string[];
@@ -177,6 +211,8 @@ export function checkHistory(
       event.type === 'itemDismissed' ||
       event.type === 'turnStated' ||
       event.type === 'escortStated' ||
+      event.type === 'itemsStated' ||
+      event.type === 'needWaysSet' ||
       event.type === 'sourceWithdrawn' ||
       event.type === 'transcriptionCorrected' ||
       event.type === 'requestRecordCorrected'
@@ -200,6 +236,18 @@ export function checkHistory(
           event.id,
           'その時の成員を確認できない。',
         );
+        excluded.add(event.id);
+        continue;
+      }
+    }
+    if (event.type === 'needWaysSet' && householdAtTime) {
+      if (new Set(event.wayIds).size !== event.wayIds.length) {
+        report.violation('need_way_duplicate', event.id, '同じやり方を重ねて選んでいる。');
+        excluded.add(event.id);
+        continue;
+      }
+      if (event.wayIds.some((id) => !householdAtTime?.ways.some((way) => way.id === id))) {
+        report.violation('need_way_unknown', event.id, '選んだやり方がその時の家庭にない。');
         excluded.add(event.id);
         continue;
       }
@@ -287,6 +335,7 @@ export function checkHistory(
       if (event.action === 'accept') {
         approvals.set(event.taskKey, {
           assigneeId: event.assigneeId,
+          seq: event.seq,
           ...(event.shown ? { shown: event.shown } : {}),
           ...(event.basisItemIds === undefined ? {} : { basisItemIds: event.basisItemIds }),
           ...(event.basisSourceIds === undefined ? {} : { basisSourceIds: event.basisSourceIds }),
@@ -424,6 +473,74 @@ export function checkHistory(
   const usableEvents = ordered.filter(
     (event) => event.householdId === household.id && !excluded.has(event.id),
   );
+  const needShapes = new Map<string, 'by' | 'window'>();
+  const needRequestCurrent = new Map<string, boolean>();
+  if (plan.arrangements.some((entry) => entry.kind === 'need')) {
+    const factReport = new Collector();
+    const facts = collectFacts(usableEvents, factReport);
+    for (const arrangement of plan.arrangements) {
+      const shape = needShape(arrangement, plan, facts);
+      if (shape) needShapes.set(arrangement.key, shape);
+    }
+    if (complete && !factReport.issues.some((issue) => issue.kind === 'violation')) {
+      const priorBySeq = new Map<number, FactState>();
+      for (const [requestId, sent] of requests) {
+        const snapshot = sent.snapshot;
+        const arrangement = plan.arrangements.find(
+          (entry) => entry.key === snapshot?.basis.arrangementKey && entry.kind === 'need',
+        );
+        const requirement = plan.requirements.find(
+          (entry) => entry.key === arrangement?.requirementKey,
+        );
+        const itemId =
+          requirement?.basis.itemIds.length === 1 ? requirement.basis.itemIds[0] : undefined;
+        const item = itemId ? facts.items.get(itemId) : undefined;
+        const option = arrangement?.options.find(
+          (entry) => entry.key === snapshot?.basis.optionKey,
+        );
+        const way = household.ways.find((entry) => entry.id === option?.templateId);
+        if (
+          !snapshot ||
+          !itemId ||
+          item?.kind !== 'need' ||
+          !way ||
+          facts.active.get(itemId) !== true ||
+          facts.staleItems.has(itemId)
+        )
+          continue;
+        let prior = priorBySeq.get(sent.seq);
+        if (!prior) {
+          const scratch = new Collector();
+          const collected = collectFacts(
+            usableEvents.filter((event) => event.seq < sent.seq),
+            scratch,
+          );
+          if (scratch.issues.some((issue) => issue.kind === 'violation')) continue;
+          prior = collected;
+          priorBySeq.set(sent.seq, prior);
+        }
+        const old = prior.items.get(itemId);
+        const oldHousehold = usableEvents.findLast(
+          (event) => event.type === 'householdSet' && event.seq < sent.seq,
+        );
+        const oldWay =
+          oldHousehold?.type === 'householdSet'
+            ? oldHousehold.household.ways.find((entry) => entry.id === way.id)
+            : undefined;
+        if (
+          old?.kind !== 'need' ||
+          !oldWay ||
+          prior.active.get(itemId) !== true ||
+          prior.staleItems.has(itemId)
+        )
+          continue;
+        const before = aboutMatches(snapshot.about, old, [oldWay]);
+        const current = aboutMatches(snapshot.about, item, [way]);
+        if (before === false || current === false) needRequestCurrent.set(requestId, false);
+        else if (before === true && current === true) needRequestCurrent.set(requestId, true);
+      }
+    }
+  }
   const tasks = new Map(plan.tasks.map((task) => [task.key, task]));
   for (const task of plan.tasks) {
     const completed = doneContents.get(task.key);
@@ -440,25 +557,40 @@ export function checkHistory(
     // 控えのない古い送信は、今の日かを断定せず、今までの済みをそのまま見る。
     if (commitment.get(task.key) === 'done' && requestBasedDone.has(task.key)) {
       const arrangement = plan.arrangements.find(
-        (entry) => entry.key === task.basis.arrangementKey && entry.kind === 'childCare',
+        (entry) =>
+          entry.key === task.basis.arrangementKey &&
+          (entry.kind === 'childCare' || entry.kind === 'need'),
       );
       const seq = commitmentSeq.get(task.key);
-      const sent = [...requests.values()].find(
-        (entry) => entry.taskKey === task.key && entry.seq === seq,
+      const sentEntry = [...requests.entries()].find(
+        ([, entry]) => entry.taskKey === task.key && entry.seq === seq,
       );
+      const sent = sentEntry?.[1];
       if (arrangement && sent) {
         const sameDay = matchesArrangementDay(
           sent.snapshot?.window,
           arrangement,
           household.timeZone,
+          needShapes.get(arrangement.key),
         );
-        if (sameDay === false || (sent.state === 'cancelled' && task.live && arrangement.live))
+        const content = sentEntry ? needRequestCurrent.get(sentEntry[0]) : undefined;
+        if (
+          sameDay === false ||
+          (arrangement.kind === 'need' && content === false) ||
+          (sent.state === 'cancelled' && task.live && arrangement.live)
+        )
           commitment.set(task.key, 'accepted');
         else if (sameDay === undefined)
           report.undetermined(
             'request_window_unverified',
             task.key,
             '送った依頼の日を確かめられない。',
+          );
+        else if (arrangement.kind === 'need' && content === undefined)
+          report.undetermined(
+            'need_request_content_unverified',
+            task.key,
+            '送った時と今の用件を確かめられない。',
           );
       }
     }
@@ -659,6 +791,8 @@ export function checkHistory(
   return {
     events: usableEvents,
     complete,
+    needShapes,
+    needRequestCurrent,
     requests,
     selections,
     approvals,
@@ -707,19 +841,31 @@ export function checkRequestNeed(
           const currentArrangement = plan.arrangements.find((a) => a.key === basis.arrangementKey);
           const current = currentArrangement
             ? primaryRequests.filter(
-                ([, sent]) =>
+                ([id, sent]) =>
                   sent.state !== 'cancelled' &&
-                  matchesArrangementDay(sent.snapshot?.window, currentArrangement, timeZone) ===
-                    true,
+                  matchesArrangementDay(
+                    sent.snapshot?.window,
+                    currentArrangement,
+                    timeZone,
+                    history.needShapes.get(currentArrangement.key),
+                  ) === true &&
+                  (currentArrangement.kind !== 'need' ||
+                    history.needRequestCurrent.get(id) !== false),
               )
             : [];
           const unknownWindow =
             currentArrangement &&
             primaryRequests.some(
-              ([, sent]) =>
+              ([id, sent]) =>
                 ['confirmed', 'awaitingReply', 'turnedDown'].includes(sent.state) &&
-                matchesArrangementDay(sent.snapshot?.window, currentArrangement, timeZone) ===
-                  undefined,
+                (matchesArrangementDay(
+                  sent.snapshot?.window,
+                  currentArrangement,
+                  timeZone,
+                  history.needShapes.get(currentArrangement.key),
+                ) === undefined ||
+                  (currentArrangement.kind === 'need' &&
+                    history.needRequestCurrent.get(id) === undefined)),
             );
           if (!currentArrangement || unknownWindow) optionNeeded = 'unknown';
           else if (
@@ -727,6 +873,8 @@ export function checkRequestNeed(
             current.every(
               ([id, sent]) =>
                 sent.state === 'confirmed' &&
+                (currentArrangement.kind !== 'need' ||
+                  history.needRequestCurrent.get(id) === true) &&
                 !plan.requests.some((request) => request.requestId === id && request.needsCheck),
             )
           ) {
@@ -757,14 +905,25 @@ export function checkRequestNeed(
     const superseded =
       history.complete &&
       sent !== undefined &&
-      arrangement?.kind === 'childCare' &&
-      matchesArrangementDay(sent.snapshot?.window, arrangement, timeZone) === false &&
+      (arrangement?.kind === 'childCare' ||
+        (arrangement?.kind === 'need' && history.needShapes.get(arrangement.key) === 'window')) &&
+      matchesArrangementDay(
+        sent.snapshot?.window,
+        arrangement,
+        timeZone,
+        history.needShapes.get(arrangement.key),
+      ) === false &&
       [...history.requests.values()].some(
         (newer) =>
           newer.taskKey === sent.taskKey &&
           newer.seq > sent.seq &&
           newer.state !== 'cancelled' &&
-          matchesArrangementDay(newer.snapshot?.window, arrangement, timeZone) === true,
+          matchesArrangementDay(
+            newer.snapshot?.window,
+            arrangement,
+            timeZone,
+            history.needShapes.get(arrangement.key),
+          ) === true,
       );
     const needed: Truth =
       superseded || optionNeeded === false || factsNeeded === false
@@ -813,10 +972,33 @@ export function checkRequestNeed(
       (entry) => entry.key === basis.arrangementKey && entry.live,
     );
     if (
+      needed !== false &&
+      sent &&
+      request.live &&
+      requestedArrangement?.kind === 'need' &&
+      (state === 'awaitingReply' || state === 'confirmed')
+    ) {
+      const proof = history.needRequestCurrent.get(request.requestId);
+      if (proof === undefined)
+        report.undetermined(
+          'need_request_content_unverified',
+          request.requestId,
+          '送った時と今の用件・やり方を確かめられない。',
+        );
+      else if (!proof && !request.needsCheck)
+        report.violation(
+          'request_uncertainty_unmarked',
+          request.requestId,
+          '送った時と今の用件・やり方が異なるが、要確認になっていない。',
+        );
+    }
+    if (
       sent !== undefined &&
       request.live &&
       (state === 'awaitingReply' || state === 'confirmed') &&
-      requestedArrangement?.kind === 'childCare' &&
+      (requestedArrangement?.kind === 'childCare' ||
+        (requestedArrangement?.kind === 'need' &&
+          history.needShapes.get(requestedArrangement.key) === 'window')) &&
       !sent.snapshot?.window
     )
       report.undetermined(
@@ -837,7 +1019,8 @@ export function checkRequestNeed(
         (entry) => entry.key === basis.arrangementKey && entry.live,
       );
       const changedWindow =
-        arrangement?.kind === 'childCare' &&
+        (arrangement?.kind === 'childCare' ||
+          (arrangement?.kind === 'need' && history.needShapes.get(arrangement.key) === 'window')) &&
         original.window !== undefined &&
         matchesArrangementWindow(original.window, arrangement) === false;
       const currentItems = basis.itemIds.map((id) =>
@@ -850,6 +1033,7 @@ export function checkRequestNeed(
       // 同じ節点 ID の再利用だけでは条件が同じとは限らない。送信前の読み取りを事象から作り直し、
       // 一つの未定値について別の値を指す条件に変わったケースだけ、意味の変更を確定する。
       let changedEquality = false;
+      let changedNeed = false;
       const conditionDataInvalid = report.issues.some((issue) =>
         [
           'invalid_extraction',
@@ -873,6 +1057,20 @@ export function checkRequestNeed(
           }
         }
         if (previous) {
+          if (arrangement?.kind === 'need') {
+            changedNeed = basis.itemIds.some((id) => {
+              const old = previous.items.get(id);
+              const current = facts.items.get(historicalItem(facts, id).itemId);
+              return (
+                old?.kind === 'need' &&
+                current?.kind === 'need' &&
+                !previous.staleItems.has(id) &&
+                !facts.staleItems.has(current.id) &&
+                JSON.stringify(needContent(old, timeZone)) !==
+                  JSON.stringify(needContent(current, timeZone))
+              );
+            });
+          }
           changedEquality = basis.itemIds.some((id) => {
             const oldId = previous.items.get(id)?.conditionNodeId;
             const newId = facts.items.get(historicalItem(facts, id).itemId)?.conditionNodeId;
@@ -897,6 +1095,7 @@ export function checkRequestNeed(
       if (
         partiallyCancelled ||
         changedEquality ||
+        changedNeed ||
         changedWindow ||
         (needed === 'unknown' &&
           (missingOrUntrusted ||

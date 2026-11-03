@@ -75,7 +75,7 @@ export type Basis = z.infer<typeof Basis>;
 export const Requirement = z.object({
   /** 安定したキー：種類と、置き換えをたどった元の事項の ID から作る。時刻や担当は入れない。 */
   key: z.string().min(1),
-  kind: z.enum(['childCare', 'belongings', 'attendance', 'submission', 'escort']),
+  kind: z.enum(['childCare', 'belongings', 'attendance', 'submission', 'escort', 'need']),
   /** 品物・行事の名前（原文の言葉）。 */
   what: z.string().min(1),
   /** 子の居場所なら、その日。持ち物なら、書かれた使う日（持って行く日。書かれていなければ無し）。 */
@@ -181,16 +181,28 @@ export const Reason = z.object({
     'turnedDown',
     /** 選んだ案を、決め時を過ぎても始めていない（refs：案の key）。予備へ移るか、選び直す。 */
     'missedDeadline',
+    /**
+     * 窓の「すること」で、受け持つと言えない時間がある（refs：「始まり/終わり」の時刻の対）。引き受けた受け持ち
+     * の作業か、同じ窓に「はい」の返事のある依頼（やり方の covers の内）で覆った所の残り。
+     */
+    'notCovered',
   ]),
   refs: z.array(z.string()),
 });
 export type Reason = z.infer<typeof Reason>;
 
+/**
+ * 通用の「すること」の手配のキーか（engine の keys.needArrangement と同じ形）。手配が計画から消えた後も、依頼の根拠の
+ * キーで見分ける（取り消しの連絡の文を、子の居場所の文にしない）。
+ */
+export const isNeedArrangementKey = (key: string | undefined): boolean =>
+  key?.startsWith('arr:need:') ?? false;
+
 /** 手配：手当てが要る事（例：12/7 8:10〜18:15 の子の居場所）。 */
 export const Arrangement = z.object({
   key: z.string().min(1),
   requirementKey: z.string().min(1),
-  kind: z.enum(['childCare', 'purchase']),
+  kind: z.enum(['childCare', 'purchase', 'need']),
   childId: Id.optional(),
   start: DateTime,
   end: DateTime,
@@ -221,6 +233,11 @@ export const Arrangement = z.object({
    * できたら、この値に「ある」と答えて手配を閉じる。
    */
   atHomeUnknownId: Id.optional(),
+  /**
+   * 通用の「すること」の手配だけ：形。window なら start–end は受け持つ窓（依頼の控えに窓を写し、窓が替われば
+   * 確かめてもらう）。by なら start は今で、end は締切（窓ではない）。
+   */
+  needShape: z.enum(['by', 'window']).optional(),
 });
 export type Arrangement = z.infer<typeof Arrangement>;
 
@@ -283,6 +300,16 @@ export const Task = z.object({
    * その案が今使う案（手配の inUseOptionKey）でない間は候補で、引き受けを求めない。
    */
   extra: z.boolean().optional(),
+  /**
+   * やり方の受け持ちの作業（窓の「すること」）。窓の間その人の時間を使う（その間ほかの作業をしない）。引き受けた
+   * 時だけ、その人が窓を受け持つと言える。
+   */
+  cover: z.literal(true).optional(),
+  /**
+   * 通用の「すること」の作業だけ：「すること」の中身とやり方の版の要約（needWaysBasis）。引き受けと済みの控えに
+   * 入り、今と違えば前の引き受け・済みを当てない（だれのため・日・やり方が替わっても、題と時刻は同じことがある）。
+   */
+  about: z.string().min(1).optional(),
   /**
    * 案の手順の担当が、前後で別の人になっている。紙の受け渡しなどの時間と方法が分からないので、
    * 時刻を置かない（零分で手渡せるとは言わない）。同じ人が続けてするか、家族が受け渡しを決める。

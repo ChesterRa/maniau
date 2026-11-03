@@ -37,25 +37,41 @@ function primaryConfirmed(
     primaryRequests.some(
       ([, request]) =>
         ['confirmed', 'awaitingReply', 'turnedDown'].includes(request.state) &&
-        matchesArrangementDay(request.snapshot?.window, arrangement, timeZone) === undefined,
+        matchesArrangementDay(
+          request.snapshot?.window,
+          arrangement,
+          timeZone,
+          history.needShapes.get(arrangement.key),
+        ) === undefined,
     )
   )
     return undefined;
   const currentRequests = primaryRequests.filter(
     ([, request]) =>
-      matchesArrangementDay(request.snapshot?.window, arrangement, timeZone) === true,
+      matchesArrangementDay(
+        request.snapshot?.window,
+        arrangement,
+        timeZone,
+        history.needShapes.get(arrangement.key),
+      ) === true,
   );
   if (
     currentRequests.some(
       ([id, sent]) =>
-        (arrangement.kind === 'childCare' &&
+        ((arrangement.kind === 'childCare' ||
+          (arrangement.kind === 'need' && history.needShapes.get(arrangement.key) === 'window')) &&
           matchesArrangementWindow(sent.snapshot?.window, arrangement) === false) ||
         plan.requests.some((request) => request.requestId === id && request.needsCheck),
     )
   )
     return false;
-  const confirmed = currentRequests.filter(([, request]) => request.state === 'confirmed');
+  let confirmed = currentRequests.filter(([, request]) => request.state === 'confirmed');
   if (confirmed.length === 0) return false;
+  if (arrangement.kind === 'need') {
+    const possible = confirmed.some(([id]) => history.needRequestCurrent.get(id) === undefined);
+    confirmed = confirmed.filter(([id]) => history.needRequestCurrent.get(id) === true);
+    if (confirmed.length === 0) return possible ? undefined : false;
+  }
   const waiting = currentRequests.filter(([, request]) => request.state === 'awaitingReply');
   if (
     waiting.some(([id]) =>

@@ -1,10 +1,12 @@
 import {
+  type Arrangement,
   type ConditionNode,
   type DomainEvent,
   Extraction,
   type Interpretation,
   type Item,
   MAX_CONDITION_NODES,
+  type PlanResult,
   type Source,
   type SourceSender,
   type Truth,
@@ -49,6 +51,21 @@ export interface FactState {
   >;
 }
 
+/** 通用の手配の形は、計画ではなく、その根拠の確かな事項からたどる。 */
+export function needShape(
+  arrangement: Arrangement,
+  plan: PlanResult,
+  facts: FactState,
+): 'by' | 'window' | undefined {
+  if (arrangement.kind !== 'need') return undefined;
+  const requirement = plan.requirements.find((entry) => entry.key === arrangement.requirementKey);
+  if (requirement?.kind !== 'need' || requirement.basis.itemIds.length !== 1) return undefined;
+  const id = requirement.basis.itemIds[0];
+  if (!id || facts.active.get(id) !== true || facts.staleItems.has(id)) return undefined;
+  const item = facts.items.get(id);
+  return item?.kind === 'need' ? item.interpretation.shape : undefined;
+}
+
 /** 送信時の根拠は、確かな一対一の置き換えをたどる。競合や循環は決めつけない。 */
 export function historicalItem(
   facts: FactState,
@@ -82,8 +99,13 @@ interface Extracted extends Extraction {
 /** JSON の値を、オブジェクトの欄の順に依らず照らす。中身を検証結果には出さない。 */
 function sameValue(left: unknown, right: unknown): boolean {
   if (left === right) return true;
-  if (Array.isArray(left) && Array.isArray(right))
-    return left.length === right.length && left.every((value, i) => sameValue(value, right[i]));
+  if (Array.isArray(left) || Array.isArray(right))
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, i) => sameValue(value, right[i]))
+    );
   if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
   const a = left as Record<string, unknown>;
   const b = right as Record<string, unknown>;
@@ -139,6 +161,7 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   const correctedSources = new Set<string>();
   const withdrawnSources = new Set<string>();
   const purgedSources = new Set<string>();
+  const statedSources = new Set<string>();
   const declaredBySource = new Map<string, Set<string>>();
   const seenItems = new Set<string>();
   const invalidExtractions: { eventId: string; sourceId?: string }[] = [];
@@ -160,6 +183,14 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
       continue;
     }
     if (event.type === 'transcriptionCorrected') {
+      if (statedSources.has(event.sourceId)) {
+        report.violation(
+          'stated_source_transcription_invalid',
+          event.id,
+          '家族の言葉を読み取りの書き起こしとして直している。',
+        );
+        continue;
+      }
       const entry = sources.get(event.sourceId);
       if (!entry || purgedSources.has(event.sourceId)) {
         report.undetermined(
@@ -202,7 +233,8 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
       event.type === 'itemCorrected' ||
       event.type === 'itemDismissed' ||
       event.type === 'turnStated' ||
-      event.type === 'escortStated'
+      event.type === 'escortStated' ||
+      event.type === 'needWaysSet'
     ) {
       if (!seenItems.has(event.itemId)) {
         report.undetermined(
@@ -210,6 +242,28 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
           event.id,
           '操作する事項を確認できない。',
         );
+        continue;
+      }
+      // やり方の選択は、事項の読み取りを確かめたり排除したりしない。
+      if (event.type === 'needWaysSet') {
+        const target = [...latestBySource.values()]
+          .filter(
+            (entry) => !withdrawnSources.has(entry.sourceId) && !purgedSources.has(entry.sourceId),
+          )
+          .flatMap((entry) => entry.items)
+          .find((item) => item.id === event.itemId);
+        if (!target)
+          report.undetermined(
+            'item_action_target_unverified',
+            event.id,
+            'その時の事項を確認できない。',
+          );
+        else if (target.kind !== 'need')
+          report.violation(
+            'need_choice_target_invalid',
+            event.id,
+            'すること以外にやり方を選んでいる。',
+          );
         continue;
       }
       // 帰属の言明は、読み取りを確認したり、事項の作用を外したりしない。
@@ -237,7 +291,59 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
       verdicts.set(event.itemId, event.type === 'itemDismissed' ? 'dismissed' : 'confirmed');
       continue;
     }
+    if (event.type === 'itemsStated') {
+      const received = sources.get(event.sourceId);
+      if (!received) {
+        report.undetermined('source_missing', event.id, '言明の出典を確認できない。');
+        continue;
+      }
+      if (
+        received.source.sender !== 'family' ||
+        withdrawnSources.has(event.sourceId) ||
+        purgedSources.has(event.sourceId) ||
+        latestBySource.has(event.sourceId)
+      ) {
+        report.violation('stated_source_invalid', event.id, '家族の言明に使えない出典。');
+        continue;
+      }
+      let valid = true;
+      for (const item of event.items) {
+        if (item.sourceId !== event.sourceId) {
+          report.violation('item_source_mismatch', item.id, '事項の出典と言明の出典が違う。');
+          valid = false;
+        }
+        if (item.evidence !== 'stated') {
+          report.violation('stated_item_evidence_invalid', item.id, '家族の言明の証拠が違う。');
+          valid = false;
+        }
+      }
+      if (!valid) continue;
+      statedSources.add(event.sourceId);
+      for (const item of event.items) seenItems.add(item.id);
+      latestBySource.set(event.sourceId, {
+        sourceId: event.sourceId,
+        items: event.items,
+        unknowns: [],
+        conditions: [],
+        irrelevantSentenceIds: [],
+        ambiguities: [],
+        seq: event.seq,
+        sourceSeq: received.seq,
+        eventId: event.id,
+        source: received.source,
+        sourceVersion: received.source.version,
+      });
+      continue;
+    }
     if (event.type !== 'modelOutputRecorded' || event.call !== 'extract') continue;
+    if (event.sourceId && statedSources.has(event.sourceId)) {
+      report.violation(
+        'stated_source_reading_invalid',
+        event.id,
+        '家族の言葉を読み取りで置き換えている。',
+      );
+      continue;
+    }
     if (event.sourceId && purgedSources.has(event.sourceId)) {
       report.undetermined(
         'purged_source_reading_ignored',
@@ -255,6 +361,14 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
       continue;
     }
     const extraction = parsed.data;
+    if (statedSources.has(extraction.sourceId)) {
+      report.violation(
+        'stated_source_reading_invalid',
+        event.id,
+        '家族の言葉を読み取りで置き換えている。',
+      );
+      continue;
+    }
     if (purgedSources.has(extraction.sourceId)) continue;
     if (event.sourceId && event.sourceId !== extraction.sourceId) {
       report.violation('extraction_source_mismatch', event.id, '事象と読み取り結果の出典が違う。');

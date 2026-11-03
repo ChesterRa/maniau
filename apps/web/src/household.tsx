@@ -72,6 +72,8 @@ function deadlineText(ctx: Ctx, rule: DeadlineRule): string {
         weekday: weekdayName(ctx, rule.weekday),
         at: rule.at,
       });
+    case 'onTheDay':
+      return ctx.t('household.ways.onTheDay', { at: rule.at });
   }
 }
 
@@ -568,7 +570,8 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
               {mode !== 'ways' && <Text>{deadlineText(ctx, way.deadline)}</Text>}
               {mode === 'ways' && (
                 <div className="flex flex-wrap items-center gap-2">
-                  {way.deadline.type !== 'weekdayOfPreviousWeek' ? (
+                  {way.deadline.type === 'daysBefore' ||
+                  way.deadline.type === 'businessDaysBefore' ? (
                     <label className="flex items-center gap-1.5">
                       <input
                         type="number"
@@ -580,7 +583,11 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
                           change((h) => {
                             const rule = h.careOptions.find((o) => o.id === way.id)?.deadline;
                             const days = Number.parseInt(e.target.value, 10);
-                            if (rule && rule.type !== 'weekdayOfPreviousWeek' && days > 0) {
+                            if (
+                              (rule?.type === 'daysBefore' ||
+                                rule?.type === 'businessDaysBefore') &&
+                              days > 0
+                            ) {
                               rule.days = days;
                             }
                           })
@@ -592,7 +599,7 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
                           : 'household.ways.businessDaysUnit',
                       )}
                     </label>
-                  ) : (
+                  ) : way.deadline.type === 'weekdayOfPreviousWeek' ? (
                     <select
                       aria-label={ctx.t('household.ways.weekday')}
                       className={input}
@@ -614,7 +621,7 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
                         </option>
                       ))}
                     </select>
-                  )}
+                  ) : null}
                   <input
                     type="time"
                     aria-label={ctx.t('household.ways.at')}
@@ -677,6 +684,7 @@ function refusedKey(reason: string): string {
     'routineGap',
     'routineDayMissing',
     'routinePlace',
+    'waysLocked',
     'hoursOvernight',
     'membersLocked',
     'placesLocked',

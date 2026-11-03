@@ -376,6 +376,9 @@
     },
     "buy": {
       "title": "買う"
+    },
+    "way": {
+      "title": "{{name}}"
     }
   },
   "task": {
@@ -400,7 +403,8 @@
       "make": "お弁当を作る"
     },
     "escortTo": "{{what}}の送り",
-    "escortFrom": "{{what}}の迎え"
+    "escortFrom": "{{what}}の迎え",
+    "wayStep": "{{what}}"
   },
   "push": {
     "enable": "知らせを受け取る",
@@ -623,6 +627,7 @@
       "used": "それぞれの手の決め時（締切から逆算）と、お勧めの順に使います。",
       "daysBefore": "{{days}}日前の {{at}} まで",
       "businessDaysBefore": "{{days}}営業日前の {{at}} まで",
+      "onTheDay": "当日の {{at}} まで",
       "previousWeek": "前の週の{{weekday}}曜 {{at}} まで",
       "waitsReply": "{{title}}（返事を待つ）",
       "yen": "{{yen}}円",
@@ -680,6 +685,7 @@
       "membersLocked": "人の追加・削除や、大人・子どもの区別は、ここでは変えられません。",
       "placesLocked": "場所の削除や種類の変更は、ここではできません。",
       "careOptionsLocked": "取れる手の手順や相手は、ここでは変えられません。",
+      "waysLocked": "やり方は、ここでは変えられません。",
       "unavailable": "今は計算できませんでした。少しして、もう一度押してください。",
       "other": "この直し方は受け付けられませんでした。"
     }

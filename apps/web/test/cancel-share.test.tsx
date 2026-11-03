@@ -41,6 +41,7 @@ const requestOn = (day: string) =>
     requestId: 'r-grandma',
     to: 'g',
     window: { start: `${day}T08:10+09:00`, end: `${day}T18:15+09:00` },
+    basis: { itemIds: ['i6'], arrangementKey: 'arr:childCare:n1:i6:c' },
   }) as unknown as ExternalRequest;
 const request = requestOn('2026-12-07');
 
@@ -102,6 +103,18 @@ const open = async (shown = request) => {
 };
 
 describe('取り消しの文を渡す', () => {
+  it('通用の「すること」の取り消しは、子の居場所の文を見せず、伝えたと記録するだけ', async () => {
+    device({});
+    const need = {
+      ...requestOn('2026-12-07'),
+      basis: { itemIds: ['f-1:i1'], arrangementKey: 'arr:need:f-1:i1' },
+    } as ExternalRequest;
+    await draw(need);
+    expect(button('伝える文を見る')).toBeUndefined();
+    expect(host.textContent).not.toContain('大丈夫になりました');
+    expect(button('取り消しを伝えた')).toBeDefined();
+  });
+
   it('文を開いた後に、共有かコピーで、見せた文と同じ文を渡す', async () => {
     device({});
     const draft = cancelDraft(ctx, request);

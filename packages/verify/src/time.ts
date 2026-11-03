@@ -12,14 +12,23 @@ export function instantMinute(value: string): number {
   return Date.parse(value) / 60_000;
 }
 
-/** 子の居場所への依頼が今の日の分か。家庭の時区の日で照らし、控えの無い古い依頼は未判定。
- * 子の居場所以外の依頼は、時段を当期の条件にしない。
+/** 子の居場所は日、窓のすることは窓全体を照らす。締切型のすることに架空の窓は作らない。
+ * することの形を元の事項から確かめられない時は、依頼が今の物か決めない。
  */
 export function matchesArrangementDay(
   window: { start: string; end: string } | undefined,
-  arrangement: { start: string; kind: string },
+  arrangement: { start: string; end?: string; kind: string },
   timeZone: string,
+  needShape?: 'by' | 'window',
 ): boolean | undefined {
+  if (arrangement.kind === 'need') {
+    if (needShape === 'by') return window ? undefined : true;
+    if (needShape !== 'window' || !window || !arrangement.end) return undefined;
+    return (
+      instantMinute(window.start) === instantMinute(arrangement.start) &&
+      instantMinute(window.end) === instantMinute(arrangement.end)
+    );
+  }
   if (arrangement.kind !== 'childCare') return true;
   if (!window) return undefined;
   return (

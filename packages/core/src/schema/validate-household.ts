@@ -68,5 +68,29 @@ export function validateHousehold(household: Household): HouseholdIssue[] {
       ref(`${base}.steps.${j}.assigneeId`, s.assigneeId, memberIds);
     }
   }
+  // やり方：ID は一意、手順の参照は実在、受け持てる時間は始まりが終わりより前。
+  const wayIds = new Set<string>();
+  for (const [i, w] of household.ways.entries()) {
+    const base = `ways.${i}`;
+    if (wayIds.has(w.id)) issues.push({ path: base, problem: 'duplicateId', detail: w.id });
+    wayIds.add(w.id);
+    const stepIds = new Set<string>();
+    for (const [j, s] of w.steps.entries()) {
+      if (stepIds.has(s.id)) {
+        issues.push({ path: `${base}.steps.${j}`, problem: 'duplicateId', detail: s.id });
+      }
+      stepIds.add(s.id);
+      ref(`${base}.steps.${j}.placeId`, s.placeId, placeIds);
+      ref(`${base}.steps.${j}.external.to`, s.external?.to, anyIds);
+      ref(`${base}.steps.${j}.assigneeId`, s.assigneeId, memberIds);
+    }
+    if (w.covers && w.covers.start >= w.covers.end) {
+      issues.push({
+        path: `${base}.covers`,
+        problem: 'badSegment',
+        detail: `${w.covers.start}–${w.covers.end}`,
+      });
+    }
+  }
   return issues;
 }

@@ -216,6 +216,12 @@
         ],
         "source": "family"
       }
+    },
+    {
+      "id": "sick-care",
+      "kind": "other",
+      "name": "みらい橋病児保育室（架空）",
+      "area": "豊洲"
     }
   ],
   "routines": [
@@ -945,5 +951,63 @@
       "cancellable": true
     }
   ],
-  "closedDates": []
+  "closedDates": [],
+  "ways": [
+    {
+      "id": "way-sick-care",
+      "name": "病児保育に預ける",
+      "steps": [
+        {
+          "id": "reserve",
+          "name": "病児保育を予約する",
+          "durationMin": 10,
+          "segments": ["home", "commute", "work"],
+          "external": {
+            "to": "sick-care",
+            "kind": "reply"
+          },
+          "cover": true,
+          "deadline": {
+            "type": "daysBefore",
+            "days": 1,
+            "at": "21:00"
+          }
+        }
+      ],
+      "covers": {
+        "start": "08:30",
+        "end": "17:30"
+      },
+      "cost": {
+        "yen": 2000
+      },
+      "cancellable": true
+    },
+    {
+      "id": "way-grandma",
+      "name": "祖母に来てもらう",
+      "steps": [
+        {
+          "id": "ask",
+          "name": "祖母に来てもらえるか聞く",
+          "durationMin": 5,
+          "segments": ["home", "commute", "work"],
+          "external": {
+            "to": "g",
+            "kind": "reply"
+          },
+          "cover": true
+        }
+      ],
+      "deadline": {
+        "type": "daysBefore",
+        "days": 1,
+        "at": "21:00"
+      },
+      "cost": {
+        "helperRequests": 1
+      },
+      "cancellable": true
+    }
+  ]
 }

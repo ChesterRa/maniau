@@ -419,6 +419,31 @@ describe('決め時', () => {
     expect(codes(report)).toContain('decision_after_rule_deadline');
   });
 
+  it('当日の締切は対象日の指定時刻と照らす', () => {
+    const family = household();
+    const template = family.careOptions.find((entry) => entry.id === 'one');
+    if (!template) throw new Error('取れる手がない');
+    template.deadline = { type: 'onTheDay', at: '10:00' };
+    const check = (decisionDeadline: string) =>
+      codes(
+        verifyPlan({
+          household: family,
+          plan: plan({
+            requirements: [requirement()],
+            arrangements: [
+              arrangement({
+                options: [option('one', { decisionDeadline, deadlineCertainty: 'checked' })],
+              }),
+            ],
+          }),
+          events: [],
+        }),
+      );
+
+    expect(check('2026-12-07T10:00+09:00')).not.toContain('decision_after_rule_deadline');
+    expect(check('2026-12-07T10:01+09:00')).toContain('decision_after_rule_deadline');
+  });
+
   it('営業日は週末と祝日を飛ばし、期限を独立に照合する', () => {
     const family = household();
     const template = family.careOptions.find((entry) => entry.id === 'one');

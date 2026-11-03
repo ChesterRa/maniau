@@ -41,6 +41,8 @@ export function ruleDeadline(
       const target = addDays(mondayOfWeek, -7 + (rule.weekday - 1));
       return zonedToEpochMinutes(target, rule.at, tz);
     }
+    case 'onTheDay':
+      return zonedToEpochMinutes(needDate, rule.at, tz);
   }
 }
 
@@ -72,6 +74,49 @@ function slotFits(step: StepTemplate, slot: Slot): boolean {
 }
 
 /**
+ * 区間の中で、手順を置ける時間。決まった場所の手順は、その場所の営業時間が書かれていれば、その内だけ（書かれた
+ * 休みの日は、前の日から続く夜の営業があっても置かない。休みでない日は、前の日から続く夜の営業も含める）。営業時間の書かれていない場所は、時刻で絞らない（閉まっているとは
+ * 言わない）。開店と閉店が同じ時刻の書き方は、終日か休みか分からないので、時刻で絞らない。地図（Google）から
+ * 得た営業時間は、有効な日・時区・臨時の営業を確かめられないので、開いている・閉まっているを決めず、時刻で
+ * 絞らない（地図の決まり。検証器も未判定にする）。
+ */
+function usableIn(step: StepTemplate, slot: Slot, household?: Household): Interval[] {
+  if (!slotFits(step, slot)) return [];
+  const whole = [{ start: slot.start, end: slot.end }];
+  const hours =
+    step.placeId === undefined || household === undefined
+      ? undefined
+      : household.places.find((p) => p.id === step.placeId)?.hours;
+  if (!hours || household === undefined || hours.source === 'googlePlaces') return whole;
+  // 書かれた休みの日は、前の日から続く夜の営業があっても、その日の全部を休みとする（休みの日が先）。
+  if (hours.closedDates.includes(slot.date)) return [];
+  const tz = household.timeZone;
+  const open: Interval[] = [];
+  for (const date of [addDays(slot.date, -1), slot.date]) {
+    if (hours.closedDates.includes(date)) continue;
+    for (const p of hours.periods.filter((x) => x.weekday === weekdayOf(date))) {
+      if (p.open === p.close) return whole;
+      const from = zonedToEpochMinutes(date, p.open, tz);
+      const overnight = p.close < p.open;
+      // 前の日の分は、夜をまたぐ営業だけ。
+      if (date !== slot.date && !overnight) continue;
+      const until = zonedToEpochMinutes(overnight ? addDays(date, 1) : date, p.close, tz);
+      open.push({ start: from, end: until });
+    }
+  }
+  return open.flatMap((o) => {
+    const start = Math.max(o.start, slot.start);
+    const end = Math.min(o.end, slot.end);
+    return end > start ? [{ start, end }] : [];
+  });
+}
+
+interface Interval {
+  start: EpochMinutes;
+  end: EpochMinutes;
+}
+
+/**
  * 一人の担当で、手順の鎖を後ろから置く。置けた時は、最初の手順の開始が最も遅い置き方を返す。
  * 決まった担当の無い手順は、同じ人がする。手順の担当が前後で別の人になる鎖は置かない：書いた紙を
  * 次の人へ渡す時間と方法が分からず、零分で手渡せるとは言えないから（家族が受け渡しを決める）。
@@ -81,23 +126,30 @@ function placeChain(
   memberId: string,
   slotsByMember: ReadonlyMap<string, Slot[]>,
   latestEnd: EpochMinutes,
+  limits: readonly (EpochMinutes | undefined)[] = [],
+  /** 決まった場所の営業時間を見るための家の情報（無ければ、営業時間で絞らない）。 */
+  household?: Household,
 ): PlacedStep[] | undefined {
   const placed: PlacedStep[] = [];
   let bound = latestEnd;
   for (let i = steps.length - 1; i >= 0; i -= 1) {
     const step = steps[i];
     if (!step) return undefined;
+    // 手順ごとの最後の時（前の日 21:00 までの予約など）。案の締切と次の手順から決まる時より早ければ、それを守る。
+    const limit = limits[i];
+    if (limit !== undefined) bound = Math.min(bound, limit);
     const who = step.assigneeId ?? memberId;
     if (placed[0] && placed[0].memberId !== who) return undefined;
     const slots = slotsByMember.get(who) ?? [];
     let best: PlacedStep | undefined;
     for (const slot of slots) {
-      if (!slotFits(step, slot)) continue;
-      const end = Math.min(slot.end, bound);
-      const start = end - step.durationMin;
-      if (start < slot.start) continue;
-      if (!best || start > best.start) {
-        best = { stepId: step.id, memberId: who, start, end, slot };
+      for (const piece of usableIn(step, slot, household)) {
+        const end = Math.min(piece.end, bound);
+        const start = end - step.durationMin;
+        if (start < piece.start) continue;
+        if (!best || start > best.start) {
+          best = { stepId: step.id, memberId: who, start, end, slot };
+        }
       }
     }
     if (!best) return undefined;
@@ -153,7 +205,7 @@ export function placeStep(
     .map((slot) => ({ ...slot, start: Math.max(slot.start, now) }))
     .flatMap((slot) => withoutBusy(slot, busy))
     .filter((slot) => slot.end > slot.start);
-  return placeChain([step], memberId, new Map([[memberId, free]]), latestEnd)?.[0];
+  return placeChain([step], memberId, new Map([[memberId, free]]), latestEnd, [], household)?.[0];
 }
 
 /**
@@ -163,7 +215,7 @@ export function placeStep(
  * それより前には置かない（済ませた手順の後に待つ時間がある時。now より前に置けるのは、過ぎた決め時を示すため）。
  */
 export function optionDeadline(
-  template: CareOptionTemplate,
+  template: Pick<CareOptionTemplate, 'id' | 'deadline' | 'steps'>,
   needDate: LocalDate,
   household: Household,
   now: EpochMinutes,
@@ -172,6 +224,10 @@ export function optionDeadline(
   from?: EpochMinutes,
 ): OptionDeadline {
   const deadline = ruleDeadline(template.deadline, needDate, household);
+  // 手順ごとの最後の時（決まりのある手順だけ）。
+  const limits = template.steps.map((s) =>
+    s.deadline === undefined ? undefined : ruleDeadline(s.deadline, needDate, household),
+  );
   const tz = household.timeZone;
   const firstDate = localDateOf(Math.min(now, deadline), tz);
   const lastDate = localDateOf(deadline, tz);
@@ -196,7 +252,7 @@ export function optionDeadline(
 
   let best: PlacedStep[] | undefined;
   for (const memberId of candidates) {
-    const chain = placeChain(template.steps, memberId, slotsByMember, deadline);
+    const chain = placeChain(template.steps, memberId, slotsByMember, deadline, limits, household);
     const first = chain?.[0];
     if (chain && first && (!best || first.start > (best[0]?.start ?? -Infinity))) best = chain;
   }

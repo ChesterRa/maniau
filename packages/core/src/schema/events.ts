@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { DateTime, toEpochMinutes } from '../time';
 import { ExternalKind, Household, Id } from './household';
 import { Basis, type Task, untimed } from './plan';
-import { Interpretation, Sentence, Source } from './source';
+import { Interpretation, Item, Sentence, Source } from './source';
 
 /** 事象の共通の欄。 */
 const envelope = {
@@ -34,8 +34,13 @@ export const RequestSnapshot = z.object({
    * 無いのは古い事象で、その時は条件が替わったかを決めない。
    */
   condition: z.string().min(1).optional(),
-  /** 頼んだ時間（子の居場所の手配の区間）。無いのは古い事象か、時間で頼まない依頼。 */
+  /** 頼んだ時間（子の居場所の手配の区間、窓の「すること」の窓）。無いのは古い事象か、時間で頼まない依頼。 */
   window: z.object({ start: DateTime, end: DateTime }).optional(),
+  /**
+   * 通用の「すること」の依頼だけ：頼んだ時の「すること」の中身と、やり方の版の要約（needWaysBasis）。今と違えば、
+   * 要るかを頼んだ本人に確かめてもらう（日・締切・だれのため・やり方が替わった時に、前の返事を当てない）。
+   */
+  about: z.string().min(1).optional(),
 });
 export type RequestSnapshot = z.infer<typeof RequestSnapshot>;
 
@@ -64,6 +69,8 @@ export const ProposalSnapshot = z.object({
    * 無いのは条件の無い作業か、古い控え（条件の有る今の作業とは違う物として扱う）。
    */
   condition: z.string().min(1).optional(),
+  /** 通用の「すること」の作業だけ：見せた時の中身とやり方の版の要約（Task.about）。 */
+  about: z.string().min(1).optional(),
 });
 export type ProposalSnapshot = z.infer<typeof ProposalSnapshot>;
 
@@ -81,6 +88,7 @@ export function sameProposal(a: ProposalSnapshot, b: ProposalSnapshot): boolean 
       p.travelAfterMin,
       p.external ? [p.external.to, p.external.kind] : null,
       p.condition ?? null,
+      p.about ?? null,
     ]);
   return key(a) === key(b);
 }
@@ -93,8 +101,19 @@ export function sameProposal(a: ProposalSnapshot, b: ProposalSnapshot): boolean 
 export const TaskContent = z.object({
   titleKey: z.string().min(1),
   titleParams: z.record(z.string(), z.string()),
+  /** 通用の「すること」の作業だけ：済ませた時の中身とやり方の版の要約（Task.about）。 */
+  about: z.string().min(1).optional(),
 });
 export type TaskContent = z.infer<typeof TaskContent>;
+
+/** 作業の今の用件（済んだと記録する時に、札で見せた物として付ける）。 */
+export function taskContent(task: Task): TaskContent {
+  return {
+    titleKey: task.titleKey,
+    titleParams: task.titleParams,
+    ...(task.about === undefined ? {} : { about: task.about }),
+  };
+}
 
 /** 二つの用件が同じか（用件の値は並びによらない）。 */
 export function sameContent(a: TaskContent, b: TaskContent): boolean {
@@ -102,6 +121,7 @@ export function sameContent(a: TaskContent, b: TaskContent): boolean {
     JSON.stringify([
       c.titleKey,
       Object.entries(c.titleParams).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)),
+      c.about ?? null,
     ]);
   return key(a) === key(b);
 }
@@ -126,6 +146,7 @@ export function proposalSnapshot(task: Task): ProposalSnapshot | undefined {
     travelAfterMin: task.travelAfterMin,
     ...(task.external ? { external: task.external } : {}),
     ...(task.condition === undefined ? {} : { condition: task.condition }),
+    ...(task.about === undefined ? {} : { about: task.about }),
   };
 }
 
@@ -267,6 +288,29 @@ export const DomainEvent = z.discriminatedUnion('type', [
   }),
   /** 家族が、推定・食い違いの事項を確かめた（「家族が確認」。要件と作用が効く。§5.2）。 */
   z.object({ ...envelope, type: z.literal('itemConfirmed'), itemId: Id }),
+  /**
+   * 家族が書いた出典（noticeReceived の sender family。文は家族の一言の原文）の事項。家族の言明で、モデルの
+   * 読み取りではない。家族が画面で確かめた欄だけを持ち、evidence は stated。取り下げ・直し・消去は、ほかの
+   * 出典と同じ命令で行う。
+   */
+  z.object({
+    ...envelope,
+    type: z.literal('itemsStated'),
+    sourceId: Id,
+    items: z.array(Item).min(1),
+  }),
+  /**
+   * 家族が、「すること」（need）に使うやり方を選んだ（家族の意向。外の相手の同意や、済んだことではない）。
+   * about は、選んだ時の「すること」の中身と、やり方の版の要約。どちらかが変われば、この選びを当てない。
+   * 同じ事項への後の選びが、前の選びに代わる。
+   */
+  z.object({
+    ...envelope,
+    type: z.literal('needWaysSet'),
+    itemId: Id,
+    wayIds: z.array(Id),
+    about: z.string().min(1),
+  }),
   /**
    * 家族が、事項の解釈の一部を直した。直した欄だけを持ち、解釈を置き換えて「家族が確認」にする。
    * 事項の ID は変わらない。原文は変えない（書かれた事と、家族の解釈を分けて残す）。

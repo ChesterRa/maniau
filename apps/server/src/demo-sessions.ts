@@ -10,6 +10,7 @@ import {
   formatDateTime,
   type Household,
   type PlanResult,
+  type PreviewCommand,
   type ProposalSeen,
   type Source,
   type SourceSender,
@@ -25,7 +26,7 @@ import {
 import { computePlan, currentItems, foldEvents } from '@maniau/core/engine';
 import { type CommandGuard, type CommandResult, reopened, runCommand } from './commands';
 import { DEMO_STAGES, type DemoStageId, demoEvents } from './demo';
-import { previewChoices, previewHousehold } from './preview';
+import { previewChange, previewChoices } from './preview';
 import {
   buildExtractInput,
   type ExtractRequest,
@@ -541,16 +542,24 @@ export function demoSessions(
         previewChoices(log.events(), { memberId, now: session.now }, arrangementKey),
       );
     },
-    /** 家と暮らしの情報の直しを、書き込まずに見る（previewHousehold）。会話が無ければ null。 */
+    /** 家と暮らしの情報の直しを、書き込まずに見る（previewChange）。会話が無ければ null。 */
     async householdPreview(
       id: string,
       memberId: string,
       household: Household,
-    ): Promise<ReturnType<typeof previewHousehold> | null> {
+    ): Promise<ReturnType<typeof previewChange> | null> {
+      return this.changePreview(id, memberId, { type: 'updateHousehold', household });
+    },
+    /** 保存の前に「この変更で変わること」を見る（何も書かない）。会話が無ければ null。 */
+    async changePreview(
+      id: string,
+      memberId: string,
+      command: PreviewCommand,
+    ): Promise<ReturnType<typeof previewChange> | null> {
       const session = touch(id);
       if (!session) return null;
       return store.withHousehold(id, (log) =>
-        previewHousehold(log.events(), { memberId, now: session.now }, household),
+        previewChange(log.events(), { memberId, now: session.now }, command),
       );
     },
     async command(
