@@ -47,7 +47,7 @@ export function doneContentMatches(task: Task, content: TaskContent): boolean {
   );
 }
 
-function sameBasis(
+export function sameBasis(
   a: NonNullable<RequestBasis>['basis'],
   b: NonNullable<RequestBasis>['basis'],
 ): boolean {
@@ -85,6 +85,10 @@ interface Selection {
   dropped: Set<string>;
 }
 
+type NeedWaysEvidence =
+  | { state: 'current'; optionKeys: Set<string> }
+  | { state: 'none' | 'unknown' };
+
 export interface History {
   events: DomainEvent[];
   complete: boolean;
@@ -92,8 +96,12 @@ export interface History {
   needShapes: Map<string, 'by' | 'window'>;
   /** 通用の依頼の控えが、送信時と今の双方の内容に一致するか。欄が無い物は未判定。 */
   needRequestCurrent: Map<string, boolean>;
+  /** 送信時の控えが、その時の事項と登録済みのやり方に一致するか。 */
+  needRequestSentValid: Map<string, boolean>;
   requests: Map<string, SentRequest>;
   selections: Map<string, Selection>;
+  /** 家族のやり方の選びが現在の事項に対して有効か。空の選びも current として記録する。 */
+  needWays: Map<string, NeedWaysEvidence>;
   approvals: Map<
     string,
     {
@@ -445,42 +453,93 @@ export function checkHistory(
     else requestBasedDone.delete(change.taskKey);
   }
 
-  for (const arrangement of plan.arrangements) {
-    if (!arrangement.live) continue;
-    const selection = selections.get(arrangement.key);
-    const expectedPrimary = selection?.primary;
-    const expectedBackups = [...(selection?.backups ?? [])].sort();
-    const actualBackups = [...arrangement.backupOptionKeys].sort();
-    if (
-      arrangement.chosenOptionKey !== expectedPrimary ||
-      JSON.stringify(actualBackups) !== JSON.stringify(expectedBackups)
-    ) {
-      if (complete)
-        report.violation(
-          'option_selection_mismatch',
-          arrangement.key,
-          '本命・予備の選択と事象が食い違う。',
-        );
-      else
-        report.undetermined(
-          'option_selection_unknown',
-          arrangement.key,
-          '本命・予備の選択を事象から確定できない。',
-        );
-    }
-  }
-
   const usableEvents = ordered.filter(
     (event) => event.householdId === household.id && !excluded.has(event.id),
   );
   const needShapes = new Map<string, 'by' | 'window'>();
+  const needWays = new Map<string, NeedWaysEvidence>();
   const needRequestCurrent = new Map<string, boolean>();
+  const needRequestSentValid = new Map<string, boolean>();
   if (plan.arrangements.some((entry) => entry.kind === 'need')) {
     const factReport = new Collector();
     const facts = collectFacts(usableEvents, factReport);
     for (const arrangement of plan.arrangements) {
       const shape = needShape(arrangement, plan, facts);
       if (shape) needShapes.set(arrangement.key, shape);
+      if (arrangement.kind !== 'need') continue;
+      const requirement = plan.requirements.find(
+        (entry) => entry.key === arrangement.requirementKey,
+      );
+      const itemId =
+        requirement?.basis.itemIds.length === 1 ? requirement.basis.itemIds[0] : undefined;
+      const item = itemId ? facts.items.get(itemId) : undefined;
+      if (
+        !complete ||
+        factReport.issues.some((issue) => issue.kind === 'violation') ||
+        !itemId ||
+        item?.kind !== 'need' ||
+        facts.staleItems.has(itemId) ||
+        !['stated', 'confirmed'].includes(facts.needConfirmation.get(itemId) ?? '')
+      ) {
+        needWays.set(arrangement.key, { state: 'unknown' });
+        continue;
+      }
+      const choice = usableEvents.findLast(
+        (event) => event.type === 'needWaysSet' && event.itemId === itemId,
+      );
+      if (choice?.type !== 'needWaysSet') {
+        needWays.set(arrangement.key, { state: 'none' });
+        continue;
+      }
+      const priorReport = new Collector();
+      const prior = collectFacts(
+        usableEvents.filter((event) => event.seq < choice.seq),
+        priorReport,
+      );
+      const previous = prior.items.get(itemId);
+      const priorHousehold = usableEvents.findLast(
+        (event) => event.type === 'householdSet' && event.seq < choice.seq,
+      );
+      const oldWays = choice.wayIds.map((id) =>
+        priorHousehold?.type === 'householdSet'
+          ? priorHousehold.household.ways.find((way) => way.id === id)
+          : undefined,
+      );
+      const nowWays = choice.wayIds.map((id) => household.ways.find((way) => way.id === id));
+      if (
+        priorReport.issues.some((issue) => issue.kind === 'violation') ||
+        previous?.kind !== 'need' ||
+        prior.staleItems.has(itemId) ||
+        priorHousehold?.type !== 'householdSet' ||
+        oldWays.some((way) => !way) ||
+        nowWays.some((way) => !way)
+      ) {
+        needWays.set(arrangement.key, { state: 'unknown' });
+        continue;
+      }
+      const before = aboutMatches(
+        choice.about,
+        previous,
+        oldWays.filter((way) => way !== undefined),
+      );
+      const current = aboutMatches(
+        choice.about,
+        item,
+        nowWays.filter((way) => way !== undefined),
+      );
+      if (before !== true || current === undefined)
+        needWays.set(arrangement.key, { state: 'unknown' });
+      else if (!current) needWays.set(arrangement.key, { state: 'none' });
+      else
+        needWays.set(arrangement.key, {
+          state: 'current',
+          optionKeys: new Set([
+            ...choice.wayIds.map((id) => `opt:${arrangement.key}:${id}`),
+            ...arrangement.options
+              .filter((option) => choice.wayIds.includes(option.templateId))
+              .map((option) => option.key),
+          ]),
+        });
     }
     if (complete && !factReport.issues.some((issue) => issue.kind === 'violation')) {
       const priorBySeq = new Map<number, FactState>();
@@ -494,16 +553,29 @@ export function checkHistory(
         );
         const itemId =
           requirement?.basis.itemIds.length === 1 ? requirement.basis.itemIds[0] : undefined;
+        const originalId =
+          snapshot?.basis.itemIds.length === 1 ? snapshot.basis.itemIds[0] : undefined;
         const item = itemId ? facts.items.get(itemId) : undefined;
         const option = arrangement?.options.find(
           (entry) => entry.key === snapshot?.basis.optionKey,
         );
-        const way = household.ways.find((entry) => entry.id === option?.templateId);
+        // 選び直し待ちでは現在の options が空になる。送信時の案のキーは家庭に登録された ID を
+        // 一つずつ当てて照らし、区切り文字で分解しない（ID 自体に ':' を含められる）。
+        const ways = household.ways.filter((entry) =>
+          option
+            ? entry.id === option.templateId
+            : snapshot?.basis.optionKey === `opt:${arrangement?.key}:${entry.id}`,
+        );
+        const way = ways.length === 1 ? ways[0] : undefined;
+        const resolvedOriginal = originalId ? historicalItem(facts, originalId) : undefined;
         if (
           !snapshot ||
           !itemId ||
+          !originalId ||
           item?.kind !== 'need' ||
           !way ||
+          resolvedOriginal?.itemId !== itemId ||
+          resolvedOriginal.active !== true ||
           facts.active.get(itemId) !== true ||
           facts.staleItems.has(itemId)
         )
@@ -519,7 +591,7 @@ export function checkHistory(
           prior = collected;
           priorBySeq.set(sent.seq, prior);
         }
-        const old = prior.items.get(itemId);
+        const old = prior.items.get(originalId);
         const oldHousehold = usableEvents.findLast(
           (event) => event.type === 'householdSet' && event.seq < sent.seq,
         );
@@ -530,15 +602,57 @@ export function checkHistory(
         if (
           old?.kind !== 'need' ||
           !oldWay ||
-          prior.active.get(itemId) !== true ||
-          prior.staleItems.has(itemId)
+          prior.active.get(originalId) !== true ||
+          prior.staleItems.has(originalId)
         )
           continue;
         const before = aboutMatches(snapshot.about, old, [oldWay]);
         const current = aboutMatches(snapshot.about, item, [way]);
+        if (before !== undefined) needRequestSentValid.set(requestId, before);
         if (before === false || current === false) needRequestCurrent.set(requestId, false);
         else if (before === true && current === true) needRequestCurrent.set(requestId, true);
       }
+    }
+  }
+  for (const arrangement of plan.arrangements) {
+    if (!arrangement.live) continue;
+    const selection = selections.get(arrangement.key);
+    const evidence = needWays.get(arrangement.key);
+    // 現在有効な選びを証明できる場合は事象から照らす。それ以外は、提示された案との整合を照らす。
+    const allowed =
+      evidence?.state === 'current'
+        ? evidence.optionKeys
+        : evidence?.state === 'none'
+          ? new Set<string>()
+          : new Set(arrangement.options.map((option) => option.key));
+    const expectedPrimary =
+      selection?.primary && allowed.has(selection.primary) ? selection.primary : undefined;
+    const expectedBackups = [...(selection?.backups ?? [])]
+      .filter((key) => allowed.has(key))
+      .sort();
+    const actualBackups = [...arrangement.backupOptionKeys].sort();
+    if (
+      arrangement.chosenOptionKey !== expectedPrimary ||
+      JSON.stringify(actualBackups) !== JSON.stringify(expectedBackups)
+    ) {
+      if (complete && evidence?.state !== 'unknown')
+        report.violation(
+          'option_selection_mismatch',
+          arrangement.key,
+          '本命・予備の選択と事象が食い違う。',
+        );
+      else
+        report.undetermined(
+          'option_selection_unknown',
+          arrangement.key,
+          '本命・予備の選択を事象から確定できない。',
+        );
+    } else if (evidence?.state === 'unknown' && (selection?.primary || selection?.backups.size)) {
+      report.undetermined(
+        'option_selection_unknown',
+        arrangement.key,
+        '本命・予備の選択を事象から確定できない。',
+      );
     }
   }
   const tasks = new Map(plan.tasks.map((task) => [task.key, task]));
@@ -793,8 +907,10 @@ export function checkHistory(
     complete,
     needShapes,
     needRequestCurrent,
+    needRequestSentValid,
     requests,
     selections,
+    needWays,
     approvals,
     commitments: commitment,
     commitmentSeq,
@@ -821,7 +937,18 @@ export function checkRequestNeed(
       if (!history.complete) optionNeeded = 'unknown';
       else {
         const selection = history.selections.get(basis.arrangementKey);
+        const ways = history.needWays.get(basis.arrangementKey);
         if (selection?.dropped.has(basis.optionKey)) optionNeeded = false;
+        else if (ways?.state === 'current' && !ways.optionKeys.has(basis.optionKey))
+          // 現在の選びに無いだけでは、依頼した案の正体は分からない。送信時の控えとやり方を
+          // 独立に確認できる時だけ、そのやり方が家族に外されたとする。
+          optionNeeded =
+            sent?.snapshot &&
+            sameBasis(sent.snapshot.basis, request.basis) &&
+            history.needRequestSentValid.get(request.requestId) === true
+              ? false
+              : 'unknown';
+        else if (ways?.state === 'unknown') optionNeeded = 'unknown';
         else if (!selection?.primary && !selection?.backups.size) optionNeeded = true;
         else if (selection.primary === basis.optionKey) optionNeeded = true;
         else if (!selection.backups.has(basis.optionKey)) optionNeeded = false;

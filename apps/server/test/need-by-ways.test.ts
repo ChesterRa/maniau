@@ -8,6 +8,7 @@
 import {
   type Arrangement,
   type Command,
+  type DomainEvent,
   type ExtractionOutput,
   notificationHistory,
   notificationIntents,
@@ -18,9 +19,10 @@ import {
   splitSentences,
   type Task,
   taskContent,
+  todayCards,
   toExtraction,
 } from '@maniau/core';
-import { computePlan } from '@maniau/core/engine';
+import { computePlan, currentItems, foldEvents } from '@maniau/core/engine';
 import { verifyPlan } from '@maniau/verify';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/app';
@@ -399,8 +401,8 @@ function formal(now: string) {
   const store = memoryStore(new Map([['demo', demoEvents('arrived')]]));
   const events = () => store.withHousehold('demo', (log) => [...log.events()]);
   let n = 0;
-  const run = (command: Command) =>
-    runCommand(store, 'demo', { memberId: 'b', now, operationId: `f-${++n}`, demo: true }, command);
+  const run = (command: Command, memberId = 'b') =>
+    runCommand(store, 'demo', { memberId, now, operationId: `f-${++n}`, demo: true }, command);
   const write = async (command: PreviewCommand) => {
     const shown = previewChange(await events(), { memberId: 'b', now }, command);
     if ('reason' in shown) throw new Error(shown.reason);
@@ -480,7 +482,91 @@ function formal(now: string) {
     ).toMatchObject({ status: 'ok' });
     return `${id}:i2`;
   };
-  return { need, gate, notice, write };
+  /** 元の「すること」を置き換えるお知らせを、製品と同じ変換で読み取りにして入れる（手で書いた v4 の形。API は呼ばない）。 */
+  const replaceNotice = async (itemId: string, text: string) => {
+    const source: Source = {
+      id: 'next-need',
+      version: 1,
+      receivedAt: now,
+      sender: 'other',
+      language: 'ja',
+      medium: 'text',
+      sentences: [{ id: 'next-need#1', text }],
+    };
+    const output: ExtractionOutput = {
+      items: [
+        {
+          ...blank,
+          id: 'i1',
+          sentenceIds: ['next-need#1'],
+          kind: 'need',
+          written: text,
+          date: '2026-12-04',
+          startTime: '08:00',
+          endTime: '18:00',
+          what: '陽菜を見てもらう',
+          shape: 'window',
+          effects: [{ type: 'replace', itemId, unknownId: null, value: null }],
+        },
+      ],
+      unknowns: [],
+      conditions: [],
+      irrelevantSentenceIds: [],
+      ambiguities: [],
+    };
+    const prior = currentItems(foldEvents(await events())).map((entry) => entry.item);
+    const { extraction } = toExtraction(output, source, { priorItems: prior, priorUnknowns: [] });
+    expect(extraction.items[0]?.effects).toContainEqual({ type: 'replace', itemId });
+    await store.withHousehold('demo', (log) => {
+      log.append([{ type: 'noticeReceived', source }], 'b', now);
+      log.append(
+        [
+          {
+            type: 'modelOutputRecorded',
+            call: 'extract',
+            model: 'fixture',
+            promptVersion: 'fixture',
+            inputHash: 'fixture',
+            sourceId: source.id,
+            sourceVersion: 1,
+            output: extraction,
+          },
+        ],
+        'system',
+        now,
+      );
+    });
+  };
+  return { need, gate, notice, write, run, events, replaceNotice };
+}
+
+/**
+ * at の計画を確かめる：検証の違反が無く、知らせの門が家庭の全部を止めず、ほかの手配の本当の知らせ（この
+ * 「すること」の手配でない物）があって、止まっていない。
+ */
+async function checked(events: () => Promise<DomainEvent[]>, at: string, needKey: string) {
+  const all = await events();
+  const plan = computePlan(all, at);
+  const household = all.flatMap((e) => (e.type === 'householdSet' ? [e.household] : [])).at(-1);
+  if (!household) throw new Error('家庭が無い');
+  expect(
+    verifyPlan({ household, plan, events: all })
+      .issues.filter((i) => i.kind === 'violation')
+      .map((i) => i.code),
+  ).toEqual([]);
+  const intents = notificationIntents(plan, household, notificationHistory(all));
+  const other = intents.find((i) => i.subject.type === 'arrangement' && i.subject.id !== needKey);
+  expect(other).toBeDefined();
+  const result = sendGate({
+    household,
+    plan,
+    events: all,
+    intents,
+    batchEnds: all.map((e) => e.seq),
+  });
+  expect(result.all).toBe(false);
+  if (other) expect(result.blocked.has(other.key)).toBe(false);
+  return plan;
 }
 
 describe('決め時を出せない時、締切の後も、家庭の知らせを止めない（今日より前の最後の機会・置けない・締切の後）', () => {
@@ -554,5 +640,153 @@ describe('決め時を出せない時、締切の後も、家庭の知らせを�
     const after = await f.gate('2026-12-05T09:00+09:00');
     expect(after?.conditional).toBe(true);
     expect(after?.status).toBe('infeasible');
+  });
+});
+
+describe('返事のある依頼の後に、やり方を選び直す・全部外す・中身が替わる（取り消すか、確かめるか）', () => {
+  const NOW = '2026-11-29T21:00+09:00';
+  /** 12/3 の窓の「すること」に祖母を選び、本命にして頼み、「はい」をもらう。 */
+  async function asked() {
+    const f = formal(NOW);
+    await f.need(
+      '12月3日8時から18時に、陽菜を見てもらう。',
+      {
+        what: '陽菜を見てもらう',
+        shape: 'window',
+        date: '2026-12-03',
+        startTime: '08:00',
+        endTime: '18:00',
+        forMemberId: 'c',
+      },
+      ['way-grandma'],
+    );
+    let plan = computePlan(await f.events(), NOW);
+    const arrangement = plan.arrangements.find((a) => a.kind === 'need' && a.live);
+    const option = arrangement?.options.find((o) => o.templateId === 'way-grandma');
+    const itemId = plan.requirements.find((r) => r.kind === 'need' && r.live)?.basis.itemIds[0];
+    if (!arrangement || !option || !itemId) throw new Error('祖母の案が無い');
+    expect(
+      await f.run({
+        type: 'chooseOption',
+        arrangementKey: arrangement.key,
+        optionKey: option.key,
+        role: 'primary',
+        assigneeId: 'b',
+      }),
+    ).toMatchObject({ status: 'ok' });
+    plan = computePlan(await f.events(), NOW);
+    const task = plan.tasks.find((t) => t.live && t.basis.optionKey === option.key);
+    if (!task) throw new Error('頼む作業が無い');
+    expect(
+      await f.run({
+        type: 'recordSent',
+        taskKey: task.key,
+        requestId: 'r-need',
+        window: { start: arrangement.start, end: arrangement.end },
+      }),
+    ).toMatchObject({ status: 'ok' });
+    expect(await f.run({ type: 'recordReply', requestId: 'r-need', reply: 'yes' })).toMatchObject({
+      status: 'ok',
+    });
+    return { f, itemId, key: arrangement.key };
+  }
+
+  it.each([
+    ['祖母を外して病児保育を選び直す', ['way-sick-care']],
+    ['やり方を全部外す', []],
+  ])(
+    '%s：祖母への依頼は要らない。保存の前に取り消しを見せ、取り消しの札を出す。知らせを止めない',
+    async (_, wayIds) => {
+      const { f, itemId, key } = await asked();
+      const command = { type: 'setNeedWays', itemId, wayIds } as PreviewCommand;
+      const shown = previewChange(await f.events(), { memberId: 'b', now: NOW }, command);
+      if ('reason' in shown) throw new Error(shown.reason);
+      expect(shown.changes.cancels.map((r) => r.requestId)).toEqual(['r-need']);
+      await f.write(command);
+      const plan = await checked(f.events, NOW, key);
+      const request = plan.requests.find((r) => r.requestId === 'r-need');
+      expect(request).toMatchObject({ live: false, state: 'confirmed', to: 'g' });
+      expect(plan.arrangements.find((a) => a.key === key)?.chosenOptionKey).toBeUndefined();
+      const cancel = todayCards(plan, 'b').main.find((c) => c.kind === 'cancel');
+      expect(cancel && 'request' in cancel ? cancel.request.requestId : undefined).toBe('r-need');
+    },
+  );
+
+  it('祖母に頼む作業を健太が引き受けた後に祖母を外す：健太に要らなくなったと出す（保存の前にも見せる）', async () => {
+    const f = formal(NOW);
+    await f.need(
+      '12月3日8時から18時に、陽菜を見てもらう。',
+      {
+        what: '陽菜を見てもらう',
+        shape: 'window',
+        date: '2026-12-03',
+        startTime: '08:00',
+        endTime: '18:00',
+        forMemberId: 'c',
+      },
+      ['way-grandma'],
+    );
+    let plan = computePlan(await f.events(), NOW);
+    const arrangement = plan.arrangements.find((a) => a.kind === 'need' && a.live);
+    const option = arrangement?.options.find((o) => o.templateId === 'way-grandma');
+    const itemId = plan.requirements.find((r) => r.kind === 'need' && r.live)?.basis.itemIds[0];
+    if (!arrangement || !option || !itemId) throw new Error('祖母の案が無い');
+    expect(
+      await f.run({
+        type: 'chooseOption',
+        arrangementKey: arrangement.key,
+        optionKey: option.key,
+        role: 'primary',
+        assigneeId: 'a',
+      }),
+    ).toMatchObject({ status: 'ok' });
+    plan = computePlan(await f.events(), NOW);
+    const task = plan.tasks.find((t) => t.live && t.basis.optionKey === option.key);
+    const shownTask = task && proposalSnapshot(task);
+    if (!task || !shownTask) throw new Error('頼む作業が無い');
+    expect(await f.run({ type: 'accept', taskKey: task.key, shown: shownTask }, 'a')).toMatchObject(
+      {
+        status: 'ok',
+      },
+    );
+    const command = { type: 'setNeedWays', itemId, wayIds: ['way-sick-care'] } as PreviewCommand;
+    const shown = previewChange(await f.events(), { memberId: 'b', now: NOW }, command);
+    if ('reason' in shown) throw new Error(shown.reason);
+    expect(shown.changes.released.map((r) => [r.taskKey, r.assigneeId])).toEqual([[task.key, 'a']]);
+    await f.write(command);
+    plan = await checked(f.events, NOW, arrangement.key);
+    expect((plan.released ?? []).map((r) => [r.taskKey, r.assigneeId])).toEqual([[task.key, 'a']]);
+  });
+
+  it('中身を直した後（日が替わる。API の correctItem）：やり方を選び直すまで、祖母への依頼は確かめる。知らせを止めない', async () => {
+    const { f, itemId, key } = await asked();
+    expect(
+      await f.run({ type: 'correctItem', itemId, interpretation: { date: '2026-12-04' } }),
+    ).toMatchObject({ status: 'ok' });
+    const plan = await checked(f.events, NOW, key);
+    expect(plan.arrangements.find((a) => a.key === key)?.reasons).toEqual([
+      { code: 'inputMissing', refs: ['waysChanged'] },
+    ]);
+    expect(plan.requests.find((r) => r.requestId === 'r-need')).toMatchObject({
+      live: true,
+      needsCheck: true,
+    });
+    expect(todayCards(plan, 'b').main.some((c) => c.kind === 'check')).toBe(true);
+  });
+
+  it('別のお知らせで置き換えて確かめた後、新しい「すること」のやり方をまだ選んでいない：祖母への依頼は確かめる', async () => {
+    const { f, itemId, key } = await asked();
+    const text = '12月4日8時から18時に、陽菜を見てもらう。';
+    await f.replaceNotice(itemId, text);
+    const throughSeq = (await f.events()).at(-1)?.seq ?? 0;
+    expect(
+      await f.run({ type: 'confirmItem', itemId: 'next-need:i1', seen: { throughSeq } }),
+    ).toMatchObject({ status: 'ok' });
+    const plan = await checked(f.events, NOW, key);
+    expect(plan.requests.find((r) => r.requestId === 'r-need')).toMatchObject({
+      live: true,
+      needsCheck: true,
+    });
+    expect(todayCards(plan, 'b').main.some((c) => c.kind === 'check')).toBe(true);
   });
 });

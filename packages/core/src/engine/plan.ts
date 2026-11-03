@@ -799,11 +799,19 @@ function placeCare(
           end: ctx.fmt(slot.gap.end),
           status: 'decidable',
           options: built.map((b) => b.option),
-          backupOptionKeys: [...(ctx.state.backups.get(slot.arrangementKey) ?? [])],
+          backupOptionKeys: backupsOffered(
+            ctx,
+            slot.arrangementKey,
+            built.map((b) => b.option),
+          ),
           reasons: conflictReasons(placed, slot.arrangementKey),
           live: entry.live,
           ...(entry.conditional ? { conditional: entry.conditional } : {}),
-          ...chosen(ctx, slot.arrangementKey),
+          ...chosen(
+            ctx,
+            slot.arrangementKey,
+            built.map((b) => b.option),
+          ),
         },
         tasks,
       ),
@@ -859,6 +867,22 @@ function chosenWays(ctx: Context, item: Item): { ways: Way[]; stale: boolean } {
   }
   const ways = chosen.wayIds.flatMap((id) => ctx.household.ways.filter((w) => w.id === id));
   return { ways, stale: false };
+}
+
+/**
+ * 家族が、今の「すること」の中身とやり方の版に対して選んだやり方（空なら、どれも使わないと選んだ）。選んでいない・
+ * 選んだ後に中身かやり方が替わった（選び直す）時は undefined。
+ */
+function waysSelectedNow(ctx: Context, arrangementKey: string): ReadonlySet<string> | undefined {
+  for (const live of ctx.items.values()) {
+    if (live.item.kind !== 'need' || keys.needArrangement(live.rootId) !== arrangementKey) continue;
+    const chosen = ctx.state.needWays.get(live.item.id);
+    if (!chosen) return undefined;
+    return needWaysBasis(ctx.state, live.item.id, chosen.wayIds) === chosen.about
+      ? new Set(chosen.wayIds)
+      : undefined;
+  }
+  return undefined;
 }
 
 /**
@@ -1054,12 +1078,12 @@ function planNeed(
     end: ctx.fmt(frame.shape === 'window' ? frame.end : frame.by),
     status: ways.length === 0 ? 'undetermined' : 'decidable',
     options,
-    backupOptionKeys: [...(ctx.state.backups.get(arrangementKey) ?? [])],
+    backupOptionKeys: backupsOffered(ctx, arrangementKey, options),
     reasons:
       ways.length === 0 ? [{ code: 'inputMissing', refs: [stale ? 'waysChanged' : 'ways'] }] : [],
     live,
     ...(conditional ? { conditional } : {}),
-    ...chosen(ctx, arrangementKey),
+    ...chosen(ctx, arrangementKey, options),
   };
   if (ways.length === 0) {
     out.arrangements.push(base);
@@ -1249,9 +1273,28 @@ function addBusy(busy: Map<string, Busy[]>, tasks: readonly Task[]): void {
   }
 }
 
-function chosen(ctx: Context, arrangementKey: string): { chosenOptionKey?: string } {
+/**
+ * 家族が選んだ本命のうち、今の案にある物。案が無くなった選択（「すること」のやり方を選び直して外した、中身が
+ * 替わって選び直す等）は、事象に残して出さない（同じ中身・やり方に戻れば、また当てる）。
+ */
+function chosen(
+  ctx: Context,
+  arrangementKey: string,
+  options: readonly OptionPlan[],
+): { chosenOptionKey?: string } {
   const key = ctx.state.primary.get(arrangementKey);
-  return key === undefined ? {} : { chosenOptionKey: key };
+  return key === undefined || !options.some((o) => o.key === key) ? {} : { chosenOptionKey: key };
+}
+
+/** 家族が選んだ予備のうち、今の案にある物（chosen と同じ）。 */
+function backupsOffered(
+  ctx: Context,
+  arrangementKey: string,
+  options: readonly OptionPlan[],
+): string[] {
+  return [...(ctx.state.backups.get(arrangementKey) ?? [])].filter((key) =>
+    options.some((o) => o.key === key),
+  );
 }
 
 function careOption(
@@ -2320,7 +2363,7 @@ function purchase(
     reasons: live ? reasons : [],
     live,
     ...(conditional ? { conditional } : {}),
-    ...chosen(ctx, arrangementKey),
+    ...chosen(ctx, arrangementKey, [option]),
     // 案は一つ。取れるなら、それを勧める（選ぶのは家族）。
     ...(live &&
     !option.expired &&
@@ -2345,6 +2388,18 @@ function optionStillNeeded(
   const { arrangementKey, optionKey } = basis;
   if (arrangementKey === undefined || optionKey === undefined) return true;
   if (ctx.state.dropped.get(arrangementKey)?.has(optionKey)) return false;
+  // 通用の「すること」で、家族が今の中身に選んだやり方（全部外したのも含む）に、この案のやり方が無いなら、
+  // 外した（dropOption）のと同じく要らない。まだ選んでいない・中身が替わって選び直す前は、ここで決めない
+  // （根拠が替わった疑いとして、頼んだ本人に確かめる）。決め時を過ぎた・置けない案でも、選んでいれば残す。
+  if (arrangement.kind === 'need') {
+    const selected = waysSelectedNow(ctx, arrangementKey);
+    const prefix = `opt:${arrangementKey}:`;
+    if (
+      selected !== undefined &&
+      !(optionKey.startsWith(prefix) && selected.has(optionKey.slice(prefix.length)))
+    )
+      return false;
+  }
   const primary = ctx.state.primary.get(arrangementKey);
   const backups = ctx.state.backups.get(arrangementKey) ?? new Set<string>();
   if (primary === undefined && backups.size === 0) return true;

@@ -13,7 +13,7 @@ import {
 import { checkEscort } from './escort';
 import { type FactState, historicalItem } from './facts';
 import { checkFamilyQuestions } from './family-question';
-import { doneContentMatches, type History, otherAnswerPossible } from './history';
+import { doneContentMatches, type History, otherAnswerPossible, sameBasis } from './history';
 import { checkNoSlot } from './no-slot';
 import type { Collector } from './report';
 import {
@@ -85,6 +85,7 @@ function checkBasis(
   exempt: boolean,
   missingReferencesUncertain = false,
   historical = false,
+  historicalOption?: true | false | 'unknown',
 ): void {
   if (!live || exempt) return;
   if (basis.itemIds.length === 0 && !basis.requirementKey && !basis.arrangementKey) {
@@ -149,7 +150,10 @@ function checkBasis(
       basis.optionKey &&
       !arrangement.options.some((option) => option.key === basis.optionKey)
     ) {
-      report.violation('basis_option_missing', subject, '根拠の案が手配の中にない。');
+      if (historicalOption === 'unknown')
+        report.undetermined('basis_option_unverified', subject, '送った時の案を確かめられない。');
+      else if (historicalOption !== true)
+        report.violation('basis_option_missing', subject, '根拠の案が手配の中にない。');
     }
   } else if (basis.optionKey) {
     report.undetermined(
@@ -1760,6 +1764,9 @@ export function checkPlan(
   for (const task of plan.tasks) if (task.live) visit(task.key);
   for (const request of plan.requests) {
     const original = history.requests.get(request.requestId)?.snapshot;
+    const requestedArrangement = plan.arrangements.find(
+      (entry) => entry.key === request.basis.arrangementKey,
+    );
     // 根拠の不確かさは計画の needsCheck ではなく、送信時の控えと事象から判定する。
     const originalStates = original?.basis.itemIds.map((id) => historicalItem(facts, id).active);
     const uncertain =
@@ -1777,6 +1784,15 @@ export function checkPlan(
       false,
       uncertain,
       original !== undefined,
+      requestedArrangement?.kind !== 'need'
+        ? undefined
+        : !history.complete || original === undefined
+          ? 'unknown'
+          : !sameBasis(original.basis, request.basis)
+            ? false
+            : history.needRequestSentValid.get(request.requestId) === true
+              ? true
+              : 'unknown',
     );
   }
   for (const question of plan.questions) {
