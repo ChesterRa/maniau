@@ -1,0 +1,31 @@
+# Docker の組み立てに渡さない物。Dockerfile は COPY に挙げた物だけを入れるが、渡す前にも除く。
+# 決まりは docs/dev/repository.md と .gitignore。
+
+# 鍵・認証（どの深さでも）
+**/.env
+**/.env.*
+**/.envrc
+**/*.pem
+**/*.key
+
+# 手元だけに置く物
+**/.local
+**/private
+.claude
+AGENTS.md
+CLAUDE.md
+
+# 評価（場面・結果・生の出力）。動かすのに要らない
+eval
+
+# 依存・組み立ての出力・記録・データベースのファイル
+**/node_modules
+**/dist
+**/coverage
+**/*.log
+**/*.tmp
+**/*.db
+**/*.db-*
+**/*.sqlite
+**/*.sqlite3
+.git
