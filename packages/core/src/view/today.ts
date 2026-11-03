@@ -158,6 +158,28 @@ export function needOpen(
 }
 
 /**
+ * 「すること」で家族が次に決めること（札・画面・知らせが同じ物を使う）。やり方を選ぶ・選び直す、間に合う進め方が
+ * 無い、本命を選ぶ、受け持ちを確かめられない時間が残る、の順に見る。
+ */
+export function needStep(
+  arrangement: Arrangement,
+): 'ways' | 'waysChanged' | 'stuck' | 'choose' | 'gaps' | 'settled' {
+  const missing = arrangement.reasons.find((r) => r.code === 'inputMissing');
+  if (missing?.refs.includes('waysChanged')) return 'waysChanged';
+  if (arrangement.status === 'undetermined') return 'ways';
+  if (
+    arrangement.status === 'infeasible' ||
+    arrangement.reasons.some((r) => r.code === 'noOptionLeft')
+  ) {
+    return 'stuck';
+  }
+  if (arrangement.chosenOptionKey === undefined || arrangement.recommendedOptionKey !== undefined) {
+    return 'choose';
+  }
+  return arrangement.reasons.some((r) => r.code === 'notCovered') ? 'gaps' : 'settled';
+}
+
+/**
  * 依頼が、今の手配の日の分か（エンジンと同じ見方：子の居場所の手配は、控えの頼んだ日が今の日と同じ物だけ。
  * 控えに時間の無い古い事象は、時間からは決めない。時刻は家庭の時区で書いてあるので、日をそのまま読める）。
  * 日が直されたら、前の日の返事で今の日を決めない。

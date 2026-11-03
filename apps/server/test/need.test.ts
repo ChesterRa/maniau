@@ -4,6 +4,7 @@
 import {
   type Household,
   type NeedInterpretation,
+  notificationIntents,
   type PreviewCommand,
   proposalSnapshot,
   type Task,
@@ -426,6 +427,102 @@ describe('家族の言明の「すること」', () => {
     await app.askAndReply(ask, 'req-today-g', 'yes');
     expect((await app.need()).gaps).toEqual([]);
     expect(await needCards('a')).toEqual([]);
+  });
+
+  it('「すること」の知らせ：やり方を選ぶ前は日時が近づいた時だけ、本命は決め時の前から、受け持ちを確かめられない時間は窓の前から、二人に', async () => {
+    const app = await setup();
+    const household = (await app.events()).find((e) => e.type === 'householdSet');
+    if (household?.type !== 'householdSet') throw new Error('家の情報が無い');
+    /** その時の計画から、この「すること」の手配の札についての知らせ（題と宛先。予備の知らせは別の決まり）。 */
+    const intents = async (at: string) => {
+      const plan = computePlan(await app.events(), at);
+      const key = plan.arrangements.find((a) => a.kind === 'need' && a.live)?.key;
+      return notificationIntents(plan, household.household)
+        .filter(
+          (i) =>
+            i.subject.type === 'arrangement' &&
+            i.subject.id === key &&
+            ['notify.need', 'notify.needGaps', 'notify.decide'].includes(i.titleKey),
+        )
+        .map((i) => ({ title: i.titleKey, to: i.toMemberId, until: i.until, actBy: i.actBy }));
+    };
+    // 三日後の窓（11/28 08:00〜18:00）。言っただけ（やり方を選んでいない）。
+    const later = { ...NEED, date: '2026-11-28' };
+    expect(
+      await app.previewed({ type: 'stateNeed', text: TEXT, interpretation: later }),
+    ).toMatchObject({ status: 'ok' });
+    expect(await intents(NOW)).toEqual([]);
+    // 窓の始まりの 26 時間前から、中身を言わずに二人に（始まりまでに動けばよい）。
+    const window = { until: '2026-11-28T18:00+09:00', actBy: '2026-11-28T08:00+09:00' };
+    expect(await intents('2026-11-27T07:00+09:00')).toEqual([
+      { title: 'notify.need', to: 'a', ...window },
+      { title: 'notify.need', to: 'b', ...window },
+    ]);
+    // やり方を選んだが、本命を選んでいない：最初に選べなくなる案の決め時（病児保育の予約は前の日 21:00 までに
+    // 済ませるので、始めるのは 20:50 まで）の 26 時間前から。
+    const itemId = (await app.need()).requirement?.basis.itemIds[0] ?? '';
+    expect(
+      await app.previewed({
+        type: 'setNeedWays',
+        itemId,
+        wayIds: ['way-grandma', 'way-sick-care'],
+      }),
+    ).toMatchObject({ status: 'ok' });
+    expect(await intents(NOW)).toEqual([]);
+    const decide = await intents('2026-11-27T07:00+09:00');
+    expect(decide.map((i) => [i.title, i.to])).toEqual([
+      ['notify.decide', 'a'],
+      ['notify.decide', 'b'],
+    ]);
+    expect(decide[0]?.until && toEpochMinutes(decide[0].until)).toBe(
+      toEpochMinutes('2026-11-27T20:50+09:00'),
+    );
+    // 本命を選び、予約を送って返事を待つ間：窓が近づくまでは知らせない。近づいたら、受け持ちを確かめられない
+    // 時間を二人に（窓の終わりまで）。
+    await app.choose('way-sick-care');
+    const reserve = (await app.need()).task('way-sick-care', 'reserve');
+    const { arrangement } = await app.need();
+    if (!reserve || !arrangement) throw new Error('予約の作業が無い');
+    await app.run({
+      type: 'recordSent',
+      taskKey: reserve.key,
+      requestId: 'req-notify',
+      window: { start: arrangement.start, end: arrangement.end },
+    });
+    expect(await intents(NOW)).toEqual([]);
+    expect(await intents('2026-11-27T07:00+09:00')).toEqual([
+      { title: 'notify.needGaps', to: 'a', ...window },
+      { title: 'notify.needGaps', to: 'b', ...window },
+    ]);
+    expect(await intents('2026-11-28T12:00+09:00')).toHaveLength(2);
+    expect(await intents('2026-11-28T18:00+09:00')).toEqual([]);
+  });
+
+  it('締切の「すること」の知らせ：やり方を選ぶ前は、締切の 26 時間前から（計算した時刻を始まりにしない）', async () => {
+    const app = await setup();
+    const household = (await app.events()).find((e) => e.type === 'householdSet');
+    if (household?.type !== 'householdSet') throw new Error('家の情報が無い');
+    expect(
+      await app.previewed({
+        type: 'stateNeed',
+        text: '金曜の17時までに、祖母に来週の予定を聞いておく。',
+        interpretation: {
+          what: '祖母に来週の予定を聞く',
+          shape: 'by',
+          deadline: '2026-11-27T17:00+09:00',
+        },
+      }),
+    ).toMatchObject({ status: 'ok' });
+    const titles = async (at: string) =>
+      notificationIntents(computePlan(await app.events(), at), household.household)
+        .filter((i) => i.titleKey === 'notify.need')
+        .map((i) => [i.toMemberId, i.until, i.actBy]);
+    expect(await titles(NOW)).toEqual([]);
+    expect(await titles('2026-11-26T16:00+09:00')).toEqual([
+      ['a', '2026-11-27T17:00+09:00', undefined],
+      ['b', '2026-11-27T17:00+09:00', undefined],
+    ]);
+    expect(await titles('2026-11-27T17:00+09:00')).toEqual([]);
   });
 
   it('中身を直すと選んだやり方は選び直しになり、引き受けを当てない。元に戻せば選び直さずに戻るが、引き受けは本人にもう一度頼む', async () => {

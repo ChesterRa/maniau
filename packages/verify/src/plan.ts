@@ -219,7 +219,7 @@ function needItem(arrangement: Arrangement, plan: PlanResult, facts: FactState):
   return item?.kind === 'need' ? item : undefined;
 }
 
-function statedWindow(item: Item | undefined): { start: number; end: number } | undefined {
+export function statedWindow(item: Item | undefined): { start: number; end: number } | undefined {
   const value = item?.interpretation;
   if (
     value?.shape !== 'window' ||
@@ -243,7 +243,7 @@ function needDate(item: Item | undefined, timeZone: string): string | undefined 
   return undefined;
 }
 
-function needDeadline(item: Item, timeZone: string): number | undefined {
+export function needDeadline(item: Item, timeZone: string): number | undefined {
   const value = item.interpretation;
   if (value.shape !== 'by' || !value.deadline) return undefined;
   if (!value.deadlineDayOnly) return instantMinute(value.deadline);

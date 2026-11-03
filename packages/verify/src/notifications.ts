@@ -1,10 +1,11 @@
 // 知らせを送る前に、受け取った意図と、最後に送る固定文を独立に照らす。
 // 計画の検証は verifyPlan の責務。ここでは知らせに固有の条件を確かめる。
 
-import type { Household as Family, PlanResult as Plan, Task } from '@maniau/core';
+import type { Arrangement, Household as Family, PlanResult as Plan, Task } from '@maniau/core';
 import { DateTime, DomainEvent, Household, PlanResult, toEpochMinutes } from '@maniau/core';
 import { collectFacts, type FactState } from './facts';
 import { checkHistory } from './history';
+import { needDeadline, statedWindow } from './plan';
 import { Collector, type VerificationReport } from './report';
 import { matchesArrangementDay, matchesArrangementWindow } from './time';
 
@@ -20,7 +21,9 @@ type Title =
   | 'notify.releasedCheck'
   | 'notify.unowned'
   | 'notify.question'
-  | 'notify.readCheck';
+  | 'notify.readCheck'
+  | 'notify.need'
+  | 'notify.needGaps';
 type Subject = {
   type: 'task' | 'request' | 'arrangement' | 'question' | 'reading';
   id: string;
@@ -50,6 +53,8 @@ const titles: Record<Title, string> = {
   'notify.unowned': 'assignment',
   'notify.question': 'question',
   'notify.readCheck': 'question',
+  'notify.need': 'decisionApproaching',
+  'notify.needGaps': 'assignment',
 };
 
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -148,6 +153,11 @@ function expectedKey(intent: Intent): string | undefined {
     case 'notify.readCheck':
       if (subject.type !== 'reading' || subject.seq === undefined) return undefined;
       base = `readCheck:${subject.id}:${subject.seq}`;
+      break;
+    case 'notify.need':
+    case 'notify.needGaps':
+      if (subject.type !== 'arrangement' || subject.optionId || subject.requestId) return undefined;
+      base = `${titleKey === 'notify.need' ? 'needWays' : 'needGaps'}:${subject.id}`;
       break;
     case 'notify.decide':
     case 'notify.backup':
@@ -282,6 +292,84 @@ function checkTiming(
       out.violation('notification_wrong_time', intent.key, '仕組みの提案を早く知らせている。');
     }
   }
+}
+
+/** 画面と通知の関数を呼ばず、手配の欄から次に決める事を照らす。 */
+function needDecision(arrangement: Arrangement): 'ways' | 'stuck' | 'choose' | 'gaps' | 'settled' {
+  const missing = arrangement.reasons.find((reason) => reason.code === 'inputMissing');
+  if (missing?.refs.includes('waysChanged') || arrangement.status === 'undetermined') return 'ways';
+  if (
+    arrangement.status === 'infeasible' ||
+    arrangement.reasons.some((r) => r.code === 'noOptionLeft')
+  )
+    return 'stuck';
+  if (arrangement.chosenOptionKey === undefined || arrangement.recommendedOptionKey !== undefined)
+    return 'choose';
+  return arrangement.reasons.some((reason) => reason.code === 'notCovered') ? 'gaps' : 'settled';
+}
+
+/** 通知に使う「すること」の形と日時を、計画の印ではなく家族の言明・確認から照らす。 */
+function notificationNeedShape(
+  arrangement: Arrangement,
+  plan: Plan,
+  facts: FactState | undefined,
+  timeZone: string,
+  key: string,
+  out: Collector,
+): { valid: boolean; shape: 'by' | 'window' | undefined } {
+  const requirement = plan.requirements.find((entry) => entry.key === arrangement.requirementKey);
+  if (!requirement?.live || requirement.kind !== 'need' || requirement.unconfirmed)
+    return { valid: false, shape: undefined };
+  const id = requirement.basis.itemIds.length === 1 ? requirement.basis.itemIds[0] : undefined;
+  const item = id === undefined ? undefined : facts?.items.get(id);
+  const confirmation = id === undefined ? undefined : facts?.needConfirmation.get(id);
+  if (
+    confirmation === 'pending' ||
+    confirmation === 'dismissed' ||
+    (id && facts?.active.get(id) === false)
+  )
+    return { valid: false, shape: undefined };
+  if (
+    item?.kind !== 'need' ||
+    !item.interpretation.shape ||
+    (confirmation !== 'stated' && confirmation !== 'confirmed') ||
+    (id !== undefined && facts?.staleItems.has(id))
+  ) {
+    out.undetermined(
+      'notification_need_evidence_unverified',
+      key,
+      'することの形と日時の根拠を確かめられない。',
+    );
+    return { valid: true, shape: arrangement.needShape };
+  }
+  const shape = item.interpretation.shape;
+  if (arrangement.needShape !== undefined && arrangement.needShape !== shape) {
+    out.violation('notification_need_shape_mismatch', key, '手配の形が元の事項と違う。');
+  }
+  if (shape === 'window') {
+    const window = statedWindow(item);
+    if (!window) {
+      out.undetermined('notification_need_evidence_unverified', key, '窓の日時を確かめられない。');
+    } else if (
+      toEpochMinutes(arrangement.start) !== window.start ||
+      toEpochMinutes(arrangement.end) !== window.end
+    ) {
+      out.violation('notification_need_frame_mismatch', key, '知らせの手配の窓が元の事項と違う。');
+    }
+  } else {
+    const deadline = needDeadline(item, timeZone);
+    const end = toEpochMinutes(arrangement.end);
+    if (deadline === undefined) {
+      out.undetermined('notification_need_evidence_unverified', key, '締切を確かめられない。');
+    } else if (end !== deadline && !(item.interpretation.deadlineDayOnly && end === deadline + 1)) {
+      out.violation(
+        'notification_need_frame_mismatch',
+        key,
+        '知らせの手配の締切が元の事項と違う。',
+      );
+    }
+  }
+  return { valid: true, shape };
 }
 
 /** 出典のある札が、その人の今の計画に本当にあるかを、知らせの生成関数を使わずに照らす。 */
@@ -494,6 +582,65 @@ function checkSubject(
     checkTime(intent, deadline, undefined, out);
     return;
   }
+  if (titleKey === 'notify.need' || titleKey === 'notify.needGaps') {
+    if (subject.type !== 'arrangement' || subject.optionId || subject.requestId) return wrong();
+    const arrangement = plan.arrangements.find((entry) => entry.key === subject.id);
+    if (!arrangement?.live || arrangement.kind !== 'need' || arrangement.status === 'askFirst')
+      return wrong();
+    const inUse = arrangement.inUseOptionKey;
+    const waiting = plan.requests.some(
+      (request) =>
+        request.live &&
+        request.basis.optionKey === inUse &&
+        (request.state === 'awaitingReply' || request.needsCheck === true),
+    );
+    const unfinished = plan.tasks.some(
+      (task) =>
+        task.live &&
+        task.cancels === undefined &&
+        task.basis.optionKey === inUse &&
+        activeTask(task, plan, timeZone, needShapes, needRequestCurrent) &&
+        task.commitment !== 'done' &&
+        !(
+          task.cover === true &&
+          task.commitment === 'accepted' &&
+          !task.reconfirm &&
+          task.start !== undefined
+        ),
+    );
+    const hasCard =
+      arrangement.status === 'undetermined' ||
+      arrangement.status === 'infeasible' ||
+      arrangement.reasons.some((reason) => reason.code === 'noOptionLeft') ||
+      (arrangement.options.length > 0 && arrangement.chosenOptionKey === undefined) ||
+      arrangement.recommendedOptionKey !== undefined ||
+      (arrangement.reasons.some((reason) => reason.code === 'notCovered') &&
+        (arrangement.inUseOptionKey === undefined ||
+          toEpochMinutes(arrangement.start) - toEpochMinutes(plan.now) <= 26 * 60 ||
+          (!waiting && !unfinished)));
+    if (!hasCard) return wrong();
+    const decision = needDecision(arrangement);
+    if (
+      (titleKey === 'notify.need' && decision !== 'ways') ||
+      (titleKey === 'notify.needGaps' && decision !== 'gaps')
+    )
+      return wrong();
+    const evidence = notificationNeedShape(arrangement, plan, facts, timeZone, intent.key, out);
+    if (!evidence.valid) return wrong();
+    if (titleKey === 'notify.needGaps' && evidence.shape === 'by') return wrong();
+    if (evidence.shape === undefined) {
+      if (!sameTime(intent.until, arrangement.end))
+        out.violation('notification_deadline_mismatch', intent.key, '知らせの期限が根拠と違う。');
+      return;
+    }
+    const actBy = evidence.shape === 'window' ? arrangement.start : undefined;
+    checkTime(intent, arrangement.end, actBy, out);
+    const now = toEpochMinutes(plan.now);
+    const from = toEpochMinutes(actBy ?? arrangement.end);
+    if (from - now > 26 * 60 || toEpochMinutes(arrangement.end) <= now)
+      out.violation('notification_wrong_time', intent.key, '知らせる時機ではない。');
+    return;
+  }
   if (subject.type !== 'arrangement' || !subject.optionId) return wrong();
   const arrangement = plan.arrangements.find((a) => a.key === subject.id);
   const option = arrangement?.options.find((o) => o.key === subject.optionId);
@@ -512,13 +659,25 @@ function checkSubject(
       arrangement.backupOptionKeys.includes(option.key)
     )
       return wrong();
-  } else if (
-    arrangement.kind !== 'childCare' ||
-    ['askFirst', 'dependsOnReply', 'infeasible'].includes(arrangement.status) ||
-    (arrangement.chosenOptionKey !== undefined && arrangement.recommendedOptionKey === undefined) ||
-    arrangement.chosenOptionKey === option.key
-  )
-    return wrong();
+  } else {
+    if (arrangement.kind === 'need') {
+      if (
+        subject.requestId ||
+        arrangement.status === 'askFirst' ||
+        toEpochMinutes(arrangement.end) <= toEpochMinutes(plan.now) ||
+        needDecision(arrangement) !== 'choose'
+      )
+        return wrong();
+      const evidence = notificationNeedShape(arrangement, plan, facts, timeZone, intent.key, out);
+      if (!evidence.valid) return wrong();
+    } else if (
+      arrangement.kind !== 'childCare' ||
+      ['askFirst', 'dependsOnReply', 'infeasible'].includes(arrangement.status) ||
+      (arrangement.chosenOptionKey !== undefined && arrangement.recommendedOptionKey === undefined)
+    )
+      return wrong();
+    if (arrangement.chosenOptionKey === option.key) return wrong();
+  }
   const eligible = arrangement.options.filter((candidate) => {
     if (candidate.expired || !candidate.decisionDeadline) return false;
     if (candidate.key === arrangement.chosenOptionKey) return false;
@@ -613,7 +772,11 @@ export function verifyNotifications(input: NotificationVerificationInput): Verif
   const needRequestCurrent = needHistory?.needRequestCurrent ?? new Map<string, boolean>();
   // 計画の reading 旗を根拠にせず、採用された読み取りと家族の言明を事象から組み立てる。
   const readingFacts = input.intents.some(
-    (value) => object(value) && value.titleKey === 'notify.readCheck',
+    (value) =>
+      object(value) &&
+      ['notify.readCheck', 'notify.need', 'notify.needGaps', 'notify.decide'].includes(
+        String(value.titleKey),
+      ),
   )
     ? collectFacts(events, new Collector())
     : undefined;
@@ -677,6 +840,8 @@ const safeText: Record<'ja' | 'en', Record<Title | 'notify.app' | 'notify.many',
     'notify.unowned': 'まだだれもやると決めていないことがあります。期限が近づいています。',
     'notify.question': '段取りについて、聞きたいことがあります。',
     'notify.readCheck': 'お知らせの読み取りで、まだ確かめていないものがあります。',
+    'notify.need': '進め方がまだ決まっていないことがあります。日が近づいています。',
+    'notify.needGaps': 'まだ受け持ちを確かめられていない時間があります。',
     'notify.many': '確かめてほしいことが {{count}} 件あります。',
   },
   en: {
@@ -693,6 +858,8 @@ const safeText: Record<'ja' | 'en', Record<Title | 'notify.app' | 'notify.many',
     'notify.unowned': 'Something still has no one to do it, and its deadline is coming up.',
     'notify.question': "There's a question about your plans.",
     'notify.readCheck': "Part of a notice's reading hasn't been checked yet.",
+    'notify.need': 'Something still has no way to proceed chosen, and its date is coming up.',
+    'notify.needGaps': 'Some hours still have no one confirmed to cover them.',
     'notify.many': '{{count}} things need your attention.',
   },
 };

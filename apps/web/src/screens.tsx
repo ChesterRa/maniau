@@ -15,6 +15,7 @@ import {
   isNeedArrangementKey,
   isValidLocalDate,
   type Member,
+  needStep,
   type OptionPlan,
   type PlanResult,
   type PreviewCommand,
@@ -1293,28 +1294,6 @@ export function needGaps(ctx: Ctx, arrangement: Arrangement): string[] {
     if (!start || !end) return ref;
     return `${time(ctx, start)}–${day(ctx, end) === day(ctx, start) ? time(ctx, end) : dayTime(ctx, end)}`;
   });
-}
-
-/**
- * 「すること」で家族が次に決めること（札と画面の文）。やり方を選ぶ・選び直す、間に合う進め方が無い、本命を選ぶ、
- * 受け持ちを確かめられない時間が残る、の順に見る。
- */
-export function needStep(
-  arrangement: Arrangement,
-): 'ways' | 'waysChanged' | 'stuck' | 'choose' | 'gaps' | 'settled' {
-  const missing = arrangement.reasons.find((r) => r.code === 'inputMissing');
-  if (missing?.refs.includes('waysChanged')) return 'waysChanged';
-  if (arrangement.status === 'undetermined') return 'ways';
-  if (
-    arrangement.status === 'infeasible' ||
-    arrangement.reasons.some((r) => r.code === 'noOptionLeft')
-  ) {
-    return 'stuck';
-  }
-  if (arrangement.chosenOptionKey === undefined || arrangement.recommendedOptionKey !== undefined) {
-    return 'choose';
-  }
-  return arrangement.reasons.some((r) => r.code === 'notCovered') ? 'gaps' : 'settled';
 }
 
 /**

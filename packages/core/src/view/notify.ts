@@ -18,7 +18,7 @@ import {
   toEpochMinutes,
   zonedToEpochMinutes,
 } from '../time';
-import { BACKUP_LEAD_MIN, type TodayCard, todayCards } from './today';
+import { BACKUP_LEAD_MIN, needStep, type TodayCard, todayCards } from './today';
 
 /** 決める事・問いを知らせ始める時：期限のこの時間前から（予備の勧めと同じ、前の晩）。 */
 export const URGENT_LEAD_MIN = BACKUP_LEAD_MIN;
@@ -47,12 +47,15 @@ export type NotificationTitle =
   | 'notify.changed'
   | 'notify.question'
   | 'notify.unowned'
-  | 'notify.readCheck';
+  | 'notify.readCheck'
+  | 'notify.need'
+  | 'notify.needGaps';
 
 /** 知らせの元（検証器が、キーを読まずに計画の物と照らすため）。 */
 export type NotificationSubject =
   | { type: 'request'; id: string }
-  | { type: 'arrangement'; id: string; optionId: string; requestId?: string }
+  /** 手配（案を決める・予備の時は案。「すること」のやり方を選ぶ・受け持ちの時は手配だけ）。 */
+  | { type: 'arrangement'; id: string; optionId?: string; requestId?: string }
   | { type: 'task'; id: string }
   | { type: 'question'; id: string }
   /** お知らせの読み取り（出典と、読み取りの事象の番号）。 */
@@ -92,6 +95,8 @@ export const NOTIFICATION_TEXT: Record<
     'notify.question': '段取りについて、聞きたいことがあります。',
     'notify.unowned': 'まだだれもやると決めていないことがあります。期限が近づいています。',
     'notify.readCheck': 'お知らせの読み取りで、まだ確かめていないものがあります。',
+    'notify.need': '進め方がまだ決まっていないことがあります。日が近づいています。',
+    'notify.needGaps': 'まだ受け持ちを確かめられていない時間があります。',
     'notify.many': '確かめてほしいことが {{count}} 件あります。',
   },
   en: {
@@ -108,6 +113,8 @@ export const NOTIFICATION_TEXT: Record<
     'notify.question': "There's a question about your plans.",
     'notify.unowned': 'Something still has no one to do it, and its deadline is coming up.',
     'notify.readCheck': "Part of a notice's reading hasn't been checked yet.",
+    'notify.need': 'Something still has no way to proceed chosen, and its date is coming up.',
+    'notify.needGaps': 'Some hours still have no one confirmed to cover them.',
     'notify.many': '{{count}} things need your attention.',
   },
 };
@@ -345,6 +352,61 @@ function intentOf(
         titleKey: 'notify.question',
         ...(by ? { until: by } : {}),
       };
+    }
+    case 'need': {
+      // 通用の「すること」の手配（札は大人の全員に出る）。やり方の本命を選ぶ時は、決める事と同じく、最初に選べなく
+      // なる案の決め時の前から（決め時の分からない案だけなら知らせない。札だけ）。やり方をまだ選んでいない時は、
+      // 確かめた日時（窓の始まり、締切の形は締切）が近づいた時だけ、中身を言わずに（選ぶ前は、やり方の前もっての
+      // 手順が分からないので、その時ではもう遅いこともある）。窓の受け持ちを確かめられない時間は、窓の始まりの前
+      // から終わりまで。間に合う進め方が無い時は札だけ（できないと言い切らない）。
+      const { arrangement } = card;
+      const step = needStep(arrangement);
+      const window = arrangement.needShape === 'window';
+      if (step === 'choose') {
+        const first = arrangement.options
+          .filter(
+            (o) =>
+              !o.expired &&
+              o.decisionDeadline !== undefined &&
+              o.key !== arrangement.chosenOptionKey,
+          )
+          .map((o) => ({ key: o.key, deadline: o.decisionDeadline as DateTime }))
+          .sort((a, b) => toEpochMinutes(a.deadline) - toEpochMinutes(b.deadline))[0];
+        if (!first || !urgent(first.deadline, now)) return undefined;
+        return {
+          key: `decide:${arrangement.key}:${first.key}`,
+          subject: { type: 'arrangement', id: arrangement.key, optionId: first.key },
+          kind: 'decisionApproaching',
+          titleKey: 'notify.decide',
+          until: first.deadline,
+        };
+      }
+      const end = toEpochMinutes(arrangement.end);
+      if (now >= end) return undefined;
+      if (step === 'ways' || step === 'waysChanged') {
+        const by = window ? arrangement.start : arrangement.end;
+        if (toEpochMinutes(by) - now > URGENT_LEAD_MIN) return undefined;
+        return {
+          key: `needWays:${arrangement.key}`,
+          subject: { type: 'arrangement', id: arrangement.key },
+          kind: 'decisionApproaching',
+          titleKey: 'notify.need',
+          until: arrangement.end,
+          ...(window ? { actBy: arrangement.start } : {}),
+        };
+      }
+      if (step === 'gaps' && window) {
+        if (toEpochMinutes(arrangement.start) - now > URGENT_LEAD_MIN) return undefined;
+        return {
+          key: `needGaps:${arrangement.key}`,
+          subject: { type: 'arrangement', id: arrangement.key },
+          kind: 'assignment',
+          titleKey: 'notify.needGaps',
+          until: arrangement.end,
+          actBy: arrangement.start,
+        };
+      }
+      return undefined;
     }
     case 'needCheck': {
       // お知らせから読んだ「すること」の確かめ：読み取りから READ_CHECK_AFTER_MIN たっても確かめていなければ、
