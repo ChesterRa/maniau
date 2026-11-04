@@ -534,7 +534,7 @@ describe('家族の言明の「すること」', () => {
     });
     // 終わりの時刻を直す：選んだ時と中身が違うので、やり方を選び直すまで作業を作らない。
     expect(
-      await app.run({ type: 'correctItem', itemId, interpretation: { endTime: '17:00' } }),
+      await app.previewed({ type: 'correctItem', itemId, interpretation: { endTime: '17:00' } }),
     ).toMatchObject({ status: 'ok' });
     let now = await app.need();
     expect(now.arrangement?.options).toEqual([]);
@@ -546,7 +546,7 @@ describe('家族の言明の「すること」', () => {
     );
     // 元に戻す：最後の選び（同じ中身への物）が戻る。引き受けは、本人にもう一度頼む（黙って当てない）。
     expect(
-      await app.run({ type: 'correctItem', itemId, interpretation: { endTime: '18:00' } }),
+      await app.previewed({ type: 'correctItem', itemId, interpretation: { endTime: '18:00' } }),
     ).toMatchObject({ status: 'ok' });
     now = await app.need();
     const ask = now.task('way-grandma', 'ask');
@@ -558,11 +558,11 @@ describe('家族の言明の「すること」', () => {
   it('中身を直した後に別のやり方を選び、元の中身に戻しても、前の選びを戻さない', async () => {
     const app = await setup();
     const itemId = await app.stated(['way-sick-care']);
-    await app.run({ type: 'correctItem', itemId, interpretation: { endTime: '17:00' } });
+    await app.previewed({ type: 'correctItem', itemId, interpretation: { endTime: '17:00' } });
     expect(
       await app.previewed({ type: 'setNeedWays', itemId, wayIds: ['way-grandma'] }),
     ).toMatchObject({ status: 'ok' });
-    await app.run({ type: 'correctItem', itemId, interpretation: { endTime: '18:00' } });
+    await app.previewed({ type: 'correctItem', itemId, interpretation: { endTime: '18:00' } });
     const now = await app.need();
     expect(now.arrangement?.options).toEqual([]);
     expect(now.arrangement?.reasons).toContainEqual(

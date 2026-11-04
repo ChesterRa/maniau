@@ -844,6 +844,20 @@
     "placeNote": "We have not checked that someone will be at the written place, or the travel time.",
     "options": "Pick the way to go with",
     "look": "See what this changes",
+    "edit": "Edit details",
+    "dismiss": {
+      "open": "Mark as not needed",
+      "label": "Mark this as not needed",
+      "reason": "Reason",
+      "reasons": {
+        "other": "No longer needed",
+        "notOurs": "Doesn’t apply to us",
+        "misread": "It was misread"
+      },
+      "note": "If you mark it as not needed, accepted tasks are no longer needed and anyone you asked will need a cancellation message. Check what changes below before deciding.",
+      "save": "Mark as not needed",
+      "close": "Close"
+    },
     "ways": {
       "label": "Ways to use",
       "none": "Your family has no ways yet. You can add one with “Add a way” below.",
@@ -886,7 +900,13 @@
       "shape": "Kind: {{shape}} (kept from the reading. If the kind is wrong, remove it with “Misread” on Today, then use “Add something to do”.)",
       "changed": "This notice changed after it was shown. Please check it again on Today.",
       "save": "Save as checked",
-      "conditionNote": "The condition and answers can’t be changed here (they are confirmed as read). If they are wrong, remove the reading with “Misread” on Today."
+      "conditionNote": "The condition and answers can’t be changed here (they are confirmed as read). If they are wrong, remove the reading with “Misread” on Today.",
+      "titlePlanned": "Edit what to do",
+      "introPlanned": "Edit the fields the plan uses. Before saving, you’ll see what this changes (choosing a way again, checking with anyone you asked, and so on).",
+      "shapePlanned": "Kind: {{shape}} (can’t be changed. If it’s wrong, mark this as not needed and use “Add something to do”.)",
+      "conditionNotePlanned": "The condition and answers can’t be changed here. If they are wrong, mark this as not needed and use “Add something to do”.",
+      "changedPreview": "The plan changed after you looked. Please check what this changes again.",
+      "savePlanned": "Save"
     },
     "refused": {
       "needWindowMissing": "Enter the date and the start and end times.",

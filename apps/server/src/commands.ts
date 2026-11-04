@@ -1,6 +1,7 @@
 // 命令（02-foundation §7.2・§7.3）。画面は事象を直接書かず、命令を送る。サーバーが、権限と前提を
 // 確かめて事象に展開する。一つの命令は、家庭を押さえた一続きの中で処理する。
 import {
+  applyCorrection,
   atHomeAnswerable,
   type Command,
   type DateTime,
@@ -23,6 +24,7 @@ import {
   type Way,
 } from '@maniau/core';
 import {
+  awaitingConfirmation,
   currentReadings,
   type EngineState,
   familyQuestionBasis,
@@ -148,10 +150,10 @@ function handle(
       return { status: 'conflict', reason: 'consequencesChanged', throughSeq: throughSeq() };
     }
   }
-  // 家の情報の直し・「すること」の言明・やり方の選びは、見せた計画の番号と、見せた「この変更で変わること」
-  // （送られた中身を含む要約）が、押さえた中で今の時刻に作り直した物と同じ時だけ書く（もう一人の直し・時が
-  // 進んで変わった結果を、黙って書かない）。
-  const previewed = previewedInput(command);
+  // 家の情報の直し・「すること」の言明・やり方の選び・計画に入っている「すること」の直しと外しは、見せた計画の
+  // 番号と、見せた「この変更で変わること」（送られた中身を含む要約）が、押さえた中で今の時刻に作り直した物と
+  // 同じ時だけ書く（もう一人の直し・時が進んで変わった結果を、黙って書かない）。
+  const previewed = previewedInput(command, state);
   if (previewed) {
     if (previewed.seen === undefined) {
       return { status: 'invalid', reason: 'seenRequired', throughSeq: throughSeq() };
@@ -730,7 +732,8 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       // 家族の言明の「すること」は、直した後も言った時と同じ決まりで確かめる。形（締切か時間か）は替えない
       // （替えるなら言い直す。前の形の欄を残したまま別の形にしない）。読み取りに形が無かった物だけ、形を入れられる。
       if (item.kind === 'need') {
-        const merged = { ...item.interpretation, ...command.interpretation };
+        // 直しの null（だれのためを外す）は、外した後の中身で確かめる。
+        const merged = applyCorrection(item.interpretation, command.interpretation);
         if (merged.shape === undefined) return { status: 'invalid', reason: 'needShapeMissing' };
         if (item.interpretation.shape !== undefined && merged.shape !== item.interpretation.shape) {
           return { status: 'invalid', reason: 'needShapeLocked' };
@@ -975,12 +978,36 @@ const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringif
  */
 /**
  * 保存の前に「この変更で変わること」を見せる命令と、その要約に入れる中身（家の情報の直し・「すること」の言明・
- * やり方の選び）。ほかの命令は無し。
+ * やり方の選び・「すること」の直しと外し）。ほかの命令は無し。state を渡すと、書く時に見た物が要るかを決める：
+ * 「すること」の直しと外しは、計画に入っている物（家族の言明か、家族が確かめた読み取り）だけ要る（まだ確かめて
+ * いない読み取りは、見せた番号だけ。初めての読み取りなら計画に無く、作業も依頼も無い。読み直した後で確かめを
+ * 待つ物には、前の中身で送った依頼が残ることがあるが、今は前もって見せない〔02-foundation の境〕。ほかの事項は
+ * 今の決まりのまま）。
+ * state が無ければ（見せる時）、要約に入れる中身だけを返す。
  */
 export function previewedInput(
   command: Command,
+  state?: EngineState,
 ): { input: unknown; seen?: { throughSeq: number; changes: string } } | undefined {
   switch (command.type) {
+    case 'correctItem':
+    case 'dismissItem': {
+      if (state !== undefined) {
+        const item = itemsOf(state).find((i) => i.id === command.itemId);
+        if (item?.kind !== 'need' || awaitingConfirmation(state, item)) return undefined;
+      }
+      const input =
+        command.type === 'correctItem'
+          ? { itemId: command.itemId, interpretation: command.interpretation }
+          : { itemId: command.itemId, reason: command.reason };
+      const changes = command.seen?.changes;
+      return {
+        input,
+        ...(command.seen && changes !== undefined
+          ? { seen: { throughSeq: command.seen.throughSeq, changes } }
+          : {}),
+      };
+    }
     case 'updateHousehold':
       return { input: command.household, ...(command.seen ? { seen: command.seen } : {}) };
     case 'stateNeed':

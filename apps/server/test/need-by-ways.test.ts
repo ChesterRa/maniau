@@ -760,9 +760,11 @@ describe('返事のある依頼の後に、やり方を選び直す・全部外�
 
   it('中身を直した後（日が替わる。API の correctItem）：やり方を選び直すまで、祖母への依頼は確かめる。知らせを止めない', async () => {
     const { f, itemId, key } = await asked();
+    // 計画に入っている「すること」の直しは、見た物が要る（見ずに書かない）。
     expect(
       await f.run({ type: 'correctItem', itemId, interpretation: { date: '2026-12-04' } }),
-    ).toMatchObject({ status: 'ok' });
+    ).toMatchObject({ status: 'invalid', reason: 'seenRequired' });
+    await f.write({ type: 'correctItem', itemId, interpretation: { date: '2026-12-04' } });
     const plan = await checked(f.events, NOW, key);
     expect(plan.arrangements.find((a) => a.key === key)?.reasons).toEqual([
       { code: 'inputMissing', refs: ['waysChanged'] },

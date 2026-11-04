@@ -2,8 +2,10 @@
 // 選ぶ・まだ受け持ちを確かめられていない時間）。場面の言葉を入れず、「すること」の欄と、家族が登録したやり方の
 // データだけで組む（02-foundation §3.4）。計算はサーバー（見る口と命令）。保存は、見た物と同じ計算の時だけ。
 import {
+  type CorrectedInterpretation,
   formatDateTime,
   type HouseholdPreview,
+  type Item,
   type NeedInterpretation,
   needStep,
   type PreviewCommand,
@@ -33,6 +35,7 @@ const input =
 
 /** サーバーが断った理由の符号を、画面の言葉の鍵にする（知らない物は一つにまとめる）。 */
 function refusedKey(reason: string): string {
+  if (reason === 'itemGone' || reason === 'sourceWithdrawn') return 'needGone';
   return [
     'needWindowMissing',
     'needWindowOvernight',
@@ -280,6 +283,14 @@ export function StateNeedScreen({ ctx }: { ctx: Ctx }) {
  * 一つの「すること」で決める：何を・いつ・だれのため・元の文、まだ受け持ちを確かめられていない時間、本命を選ぶ
  * （子の居場所と同じ選ぶ所）、使うやり方を選ぶ（家族が登録したやり方から）。
  */
+/**
+ * モデルが読んだ出典の事項か（家族の言明〔stateNeed〕には読み取りが無い）。送り手が家族のお知らせでも、
+ * モデルが読んだ物は読み取りとして扱う（条件や読み取りの印を見せ、外す理由を聞く）。
+ */
+function readByModel(ctx: Ctx, item: Item): boolean {
+  return ctx.readings.some((r) => r.sourceId === item.sourceId);
+}
+
 export function NeedScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey: string }) {
   const arrangement = ctx.plan.arrangements.find(
     (a) => a.key === arrangementKey && a.kind === 'need' && a.live,
@@ -291,7 +302,6 @@ export function NeedScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey: 
   const gaps = needGaps(ctx, arrangement);
   const place = item?.interpretation.place;
   const forId = item?.interpretation.forMemberId;
-  const source = item ? ctx.sources.get(item.sourceId) : undefined;
   const choosingWays = step === 'ways' || step === 'waysChanged' || step === 'waysStopped';
   const ways = item && (
     <WaysPicker
@@ -324,7 +334,9 @@ export function NeedScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey: 
               arrangementKey: arrangement.key,
             }}
           />
-          <Text quiet>{ctx.t(source?.sender === 'family' ? 'need.stated' : 'need.written')}</Text>
+          <Text quiet>
+            {ctx.t(item && !readByModel(ctx, item) ? 'need.stated' : 'need.written')}
+          </Text>
           {item && (
             <MoreLink
               onClick={() =>
@@ -335,6 +347,7 @@ export function NeedScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey: 
             </MoreLink>
           )}
         </Card>
+        {item && <NeedActions key={item.id} ctx={ctx} item={item} />}
         {arrangement.reasons.some((r) => r.code === 'turnedDown') && (
           <Card tone="warn">
             <Text>{ctx.t('card.decide.turnedDown')}</Text>
@@ -365,6 +378,80 @@ export function NeedScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey: 
         {!choosingWays && ways}
       </Main>
     </>
+  );
+}
+
+/**
+ * 計画に入っている「すること」を直す・要らないにする入口。直すは直す画面へ。要らないは（お知らせから読んだ物は理由を
+ * 選び）、この変更で変わること（要らなくなる引き受け・頼んだ相手への取り消しの連絡など）を見てから決める。
+ */
+function NeedActions({ ctx, item }: { ctx: Ctx; item: Item }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState<'other' | 'notOurs' | 'misread'>('other');
+  const [failed, setFailed] = useState(false);
+  const flow = usePreviewSave(ctx);
+  const read = readByModel(ctx, item);
+  if (!open) {
+    return (
+      <div className="flex flex-wrap gap-x-5">
+        <MoreLink onClick={() => ctx.go({ name: 'needFix', itemId: item.id })}>
+          {ctx.t('need.edit')}
+        </MoreLink>
+        <MoreLink onClick={() => setOpen(true)}>{ctx.t('need.dismiss.open')}</MoreLink>
+      </div>
+    );
+  }
+  const command: PreviewCommand = { type: 'dismissItem', itemId: item.id, reason };
+  const shown = flow.shownFor(command);
+  const refused = flow.refusedFor(command);
+  const save = async () => {
+    setFailed(false);
+    if (await flow.save(command)) ctx.go({ name: 'today' });
+    else setFailed(true);
+  };
+  return (
+    <Card>
+      <Label tone="warn">{ctx.t('need.dismiss.label')}</Label>
+      {read && (
+        <fieldset className="flex flex-col gap-1">
+          <legend className="text-sm font-bold text-sub">{ctx.t('need.dismiss.reason')}</legend>
+          {(['other', 'notOurs', 'misread'] as const).map((value) => (
+            <label key={value} className="flex min-h-11 items-center gap-2">
+              <input
+                type="radio"
+                name="need-dismiss-reason"
+                className="size-5 accent-accent"
+                checked={reason === value}
+                onChange={() => setReason(value)}
+              />
+              {ctx.t(`need.dismiss.reasons.${value}`)}
+            </label>
+          ))}
+        </fieldset>
+      )}
+      <Text quiet>{ctx.t('need.dismiss.note')}</Text>
+      <PreviewBlock
+        ctx={ctx}
+        {...(shown ? { preview: shown } : {})}
+        {...(refused ? { refused } : {})}
+      />
+      {failed && <Text>{ctx.t('need.fix.changedPreview')}</Text>}
+      <Row>
+        {shown ? (
+          <Button onClick={() => void save()} disabled={flow.busy}>
+            {ctx.t('need.dismiss.save')}
+          </Button>
+        ) : (
+          <Button
+            onClick={() => void flow.look(command)}
+            disabled={flow.busy || !ctx.previewChange}
+          >
+            {ctx.t('need.look')}
+          </Button>
+        )}
+      </Row>
+      <MoreLink onClick={() => setOpen(false)}>{ctx.t('need.dismiss.close')}</MoreLink>
+    </Card>
   );
 }
 
@@ -456,9 +543,10 @@ function WaysPicker(props: {
 }
 
 /**
- * モデルが読んだ「すること」の読み取りを、家族が直す（直すと「家族が確認」になり、計画に入る）。元の文を見ながら、
- * 何を・日・時刻（締切の時刻が空なら、その日の終わりまで）・だれのためを入れる。形は読み取りの形のまま（読み取りに
- * 形が無かった時だけ選ぶ）。保存は、見せた時の番号を付ける（後で読み直された中身を、古い画面から直さない）。
+ * 「すること」を直す。まだ確かめていないモデルの読み取りは、元の文を見ながら直す（直すと「家族が確認」になり、計画に
+ * 入る。保存は見せた時の番号を付ける）。計画に入っている物（家族の言明か、家族が確かめた読み取り）は、保存の前に
+ * 「この変更で変わること」（選び直し・頼んだ相手への確かめ・要らなくなる引き受け）を見せ、見た物で保存する。何を・日・
+ * 時刻（締切の時刻が空なら、その日の終わりまで）・だれのためを入れる。形は替えない（読み取りに形が無かった時だけ選ぶ）。
  */
 export function NeedFixScreen({ ctx, itemId }: { ctx: Ctx; itemId: string }) {
   const live = ctx.items.find((l) => l.item.id === itemId);
@@ -480,14 +568,25 @@ export function NeedFixScreen({ ctx, itemId }: { ctx: Ctx; itemId: string }) {
   const [forId, setForId] = useState(i?.forMemberId ?? '');
   const [failed, setFailed] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
-  const back = () => ctx.go({ name: 'today' });
+  const flow = usePreviewSave(ctx);
+  // まだ確かめていない読み取りか（計画に入っていない）。計画に入っている物は、見てから保存し、その「すること」へ戻る。
+  const awaiting = ctx.plan.requirements.some(
+    (r) => r.unconfirmed === true && r.basis.itemIds.includes(itemId),
+  );
+  const arrangement = ctx.plan.arrangements.find(
+    (a) =>
+      a.kind === 'need' &&
+      ctx.plan.requirements.find((r) => r.key === a.requirementKey)?.basis.itemIds.includes(itemId),
+  );
+  const back = () =>
+    !awaiting && arrangement
+      ? ctx.go({ name: 'need', key: arrangement.key })
+      : ctx.go({ name: 'today' });
+  const backLabel = ctx.t(!awaiting && arrangement ? 'need.label' : 'nav.today');
   if (!live || !i) {
     return (
       <>
-        <Header
-          back={{ label: ctx.t('nav.today'), onClick: back }}
-          title={ctx.t('need.fix.title')}
-        />
+        <Header back={{ label: backLabel, onClick: back }} title={ctx.t('need.fix.title')} />
         <Main>
           <Text>{ctx.t('need.refused.needGone')}</Text>
         </Main>
@@ -495,32 +594,44 @@ export function NeedFixScreen({ ctx, itemId }: { ctx: Ctx; itemId: string }) {
     );
   }
   const source = ctx.sources.get(live.item.sourceId);
+  const stated = !readByModel(ctx, live.item);
   const people = ctx.household.members.filter(
     (m) => m.active && (m.kind === 'adult' || m.kind === 'child'),
   );
   const filled =
     what.trim() !== '' && date !== '' && (shape === 'by' || (from !== '' && to !== ''));
+  const base = {
+    what: what.trim(),
+    ...(i.shape === undefined ? { shape } : {}),
+    // 選ばないにしたら、前の「だれのため」を外す（直しは前の欄に重ねるので、外すには null を送る）。
+    ...(forId ? { forMemberId: forId } : i.forMemberId !== undefined ? { forMemberId: null } : {}),
+  };
+  const interpretation: CorrectedInterpretation | undefined = !filled
+    ? undefined
+    : shape === 'window'
+      ? { ...base, date, startTime: from, endTime: to }
+      : {
+          ...base,
+          deadline: formatDateTime(zonedToEpochMinutes(date, byTime || '00:00', ctx.tz), ctx.tz),
+          deadlineDayOnly: byTime === '',
+        };
+  const command: PreviewCommand | undefined = interpretation && {
+    type: 'correctItem',
+    itemId,
+    interpretation,
+  };
+  const shown = command && !awaiting ? flow.shownFor(command) : undefined;
+  const refused = command && !awaiting ? flow.refusedFor(command) : undefined;
   const save = async () => {
-    const base = {
-      what: what.trim(),
-      ...(i.shape === undefined ? { shape } : {}),
-      ...(forId ? { forMemberId: forId } : {}),
-    };
-    const interpretation =
-      shape === 'window'
-        ? { ...base, date, startTime: from, endTime: to }
-        : {
-            ...base,
-            deadline: formatDateTime(zonedToEpochMinutes(date, byTime || '00:00', ctx.tz), ctx.tz),
-            deadlineDayOnly: byTime === '',
-          };
+    if (!command) return;
+    setFailed(undefined);
+    if (!awaiting) {
+      if (await flow.save(command)) back();
+      else setFailed('changedPreview');
+      return;
+    }
     setBusy(true);
-    const result = await ctx.send({
-      type: 'correctItem',
-      itemId,
-      interpretation,
-      seen: { throughSeq: ctx.plan.throughSeq },
-    });
+    const result = await ctx.send({ ...command, seen: { throughSeq: ctx.plan.throughSeq } });
     setBusy(false);
     if (succeeded(result)) back();
     else setFailed(('reason' in result && result.reason) || 'other');
@@ -529,13 +640,21 @@ export function NeedFixScreen({ ctx, itemId }: { ctx: Ctx; itemId: string }) {
   const label = 'text-sm font-bold text-sub';
   return (
     <>
-      <Header back={{ label: ctx.t('nav.today'), onClick: back }} title={ctx.t('need.fix.title')} />
+      <Header
+        back={{ label: backLabel, onClick: back }}
+        title={ctx.t(awaiting ? 'need.fix.title' : 'need.fix.titlePlanned')}
+      />
       <Main>
-        <Text quiet>{ctx.t('need.fix.intro')}</Text>
+        <Text quiet>{ctx.t(awaiting ? 'need.fix.intro' : 'need.fix.introPlanned')}</Text>
         <NoticeText source={source} cited={live.item.sentenceIds} t={ctx.t} />
-        <ReadingShown ctx={ctx} live={live} />
-        {(live.item.conditionNodeId !== undefined || (live.answers ?? []).length > 0) &&
-          live.unshown !== true && <Text quiet>{ctx.t('need.fix.conditionNote')}</Text>}
+        {!stated && <ReadingShown ctx={ctx} live={live} />}
+        {!stated &&
+          (live.item.conditionNodeId !== undefined || (live.answers ?? []).length > 0) &&
+          live.unshown !== true && (
+            <Text quiet>
+              {ctx.t(awaiting ? 'need.fix.conditionNote' : 'need.fix.conditionNotePlanned')}
+            </Text>
+          )}
         <Card>
           <label className={field}>
             <span className={label}>{ctx.t('need.add.what')}</span>
@@ -563,7 +682,11 @@ export function NeedFixScreen({ ctx, itemId }: { ctx: Ctx; itemId: string }) {
               ))}
             </fieldset>
           ) : (
-            <Text quiet>{ctx.t('need.fix.shape', { shape: ctx.t(`need.add.${i.shape}`) })}</Text>
+            <Text quiet>
+              {ctx.t(awaiting ? 'need.fix.shape' : 'need.fix.shapePlanned', {
+                shape: ctx.t(`need.add.${i.shape}`),
+              })}
+            </Text>
           )}
           <label className={field}>
             <span className={label}>{ctx.t('need.add.date')}</span>
@@ -618,14 +741,43 @@ export function NeedFixScreen({ ctx, itemId }: { ctx: Ctx; itemId: string }) {
             </select>
           </label>
         </Card>
-        {failed !== undefined && <Text>{fixRefused(ctx, failed)}</Text>}
-        {live.unshown !== true && (
-          <Row>
-            <Button onClick={() => void save()} disabled={!filled || busy}>
-              {ctx.t('need.fix.save')}
-            </Button>
-          </Row>
+        {failed !== undefined && (
+          <Text>
+            {failed === 'changedPreview'
+              ? ctx.t('need.fix.changedPreview')
+              : fixRefused(ctx, failed)}
+          </Text>
         )}
+        {live.unshown !== true &&
+          (awaiting ? (
+            <Row>
+              <Button onClick={() => void save()} disabled={!filled || busy}>
+                {ctx.t('need.fix.save')}
+              </Button>
+            </Row>
+          ) : (
+            <>
+              <PreviewBlock
+                ctx={ctx}
+                {...(shown ? { preview: shown } : {})}
+                {...(refused ? { refused } : {})}
+              />
+              <Row>
+                {shown ? (
+                  <Button onClick={() => void save()} disabled={flow.busy}>
+                    {ctx.t('need.fix.savePlanned')}
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={() => command && void flow.look(command)}
+                    disabled={flow.busy || !command || !ctx.previewChange}
+                  >
+                    {ctx.t('need.look')}
+                  </Button>
+                )}
+              </Row>
+            </>
+          ))}
       </Main>
     </>
   );

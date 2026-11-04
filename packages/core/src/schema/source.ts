@@ -128,6 +128,24 @@ export const Interpretation = z.object({
 });
 export type Interpretation = z.infer<typeof Interpretation>;
 
+/**
+ * 家族の直し（correctItem・itemCorrected）の欄。直しは前の欄に重ねるので、「だれのため」を外すには null が要る
+ * （null は、読み取りと前の直しの forMemberId を外す。事項の解釈には null を残さない）。
+ */
+export const CorrectedInterpretation = Interpretation.extend({
+  forMemberId: z.string().min(1).nullable().optional(),
+});
+export type CorrectedInterpretation = z.infer<typeof CorrectedInterpretation>;
+
+/** 直しを解釈に重ねる（null の「だれのため」は外す）。 */
+export function applyCorrection(
+  base: Interpretation,
+  correction: CorrectedInterpretation,
+): Interpretation {
+  const { forMemberId, ...rest } = { ...base, ...correction };
+  return forMemberId === null || forMemberId === undefined ? rest : { ...rest, forMemberId };
+}
+
 /** 前の事項への作用（変更の連絡）。ID で返させ、コードが実在を確かめる（§4）。 */
 export const Effect = z.discriminatedUnion('type', [
   z.object({ type: z.literal('resolveUnknown'), unknownId: Id, value: z.string().min(1) }),

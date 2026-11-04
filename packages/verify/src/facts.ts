@@ -1,6 +1,7 @@
 import {
   type Arrangement,
   type ConditionNode,
+  type CorrectedInterpretation,
   type DomainEvent,
   Extraction,
   type Interpretation,
@@ -36,7 +37,7 @@ export interface FactState {
   changes: Map<string, { kind: 'replace' | 'cancel'; itemId: string; active: Truth }[]>;
   staleItems: Set<string>;
   staleUnknowns: Set<string>;
-  corrections: Map<string, Interpretation>;
+  corrections: Map<string, CorrectedInterpretation>;
   /** 有効な大人が当番の帰属を言った時の内容。読み取りの確認とは分ける。 */
   turns: Map<string, { ours: boolean; what: string; audience: string | null }>;
   /** 送り・迎えの意向。読み取りや事項の作用とは分ける。 */
@@ -51,6 +52,18 @@ export interface FactState {
       place: string | null;
     }
   >;
+}
+
+/** 直しの省略は維持、null は家族が受益者を外した記録。元の事項には null を持ち越さない。 */
+function correctedInterpretation(
+  base: Interpretation,
+  correction: CorrectedInterpretation,
+): Interpretation {
+  const { forMemberId, ...other } = correction;
+  const result = { ...base, ...other };
+  if (forMemberId === null) delete result.forMemberId;
+  else if (forMemberId !== undefined) result.forMemberId = forMemberId;
+  return result;
 }
 
 /** 通用の手配の形は、計画ではなく、その根拠の確かな事項からたどる。 */
@@ -237,7 +250,7 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   const declaredBySource = new Map<string, Set<string>>();
   const seenItems = new Set<string>();
   const invalidExtractions: { eventId: string; sourceId?: string }[] = [];
-  const corrections = new Map<string, Interpretation>();
+  const corrections = new Map<string, CorrectedInterpretation>();
   const verdicts = new Map<string, 'confirmed' | 'dismissed'>();
   const needVerdicts = new Map<
     string,
@@ -245,7 +258,7 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
       reading: number;
       references: NeedReferences;
       verdict: 'confirmed' | 'dismissed';
-      correction?: Interpretation;
+      correction?: CorrectedInterpretation;
     }
   >();
   const turns = new Map<string, { ours: boolean; what: string; audience: string | null }>();
@@ -610,7 +623,9 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
       }
       const item: Item = {
         ...raw,
-        ...(correction ? { interpretation: { ...raw.interpretation, ...correction } } : {}),
+        ...(correction
+          ? { interpretation: correctedInterpretation(raw.interpretation, correction) }
+          : {}),
         ...(verdict === 'confirmed' ? { evidence: 'confirmed' } : {}),
       };
       items.set(raw.id, item);

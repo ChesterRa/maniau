@@ -161,6 +161,7 @@ async function askedAndYes() {
   return {
     plan,
     run,
+    previewed,
     ways,
     choose,
     drop,
@@ -247,12 +248,12 @@ describe('送った後に家族が外した依頼は、中身が替わっても�
   it('やり方を選び替えた後に、家族が日を直した（手配はある）', async () => {
     const app = await askedAndYes();
     expect(await app.ways(['way-sick-care'])).toMatchObject({ status: 'ok' });
+    // 計画に入っている「すること」の直しは、見てから書く。
     expect(
-      await app.run({
+      await app.previewed({
         type: 'correctItem',
         itemId: ITEM.id,
         interpretation: { date: '2026-11-27' },
-        seen: { throughSeq: (await app.plan()).throughSeq },
       }),
     ).toMatchObject({ status: 'ok' });
     await cancelled(app.plan);

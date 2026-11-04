@@ -3,6 +3,7 @@
 // 書かない。
 import {
   type ChoicePreview,
+  type Command,
   type DateTime,
   type DomainEvent,
   formatDateTime,
@@ -11,7 +12,7 @@ import {
   type PreviewCommand,
   toEpochMinutes,
 } from '@maniau/core';
-import { foldEvents, planFromState } from '@maniau/core/engine';
+import { foldEvents, itemsOf, planFromState } from '@maniau/core/engine';
 import { previewCommand, previewedInput } from './commands';
 import { consequencesOf, householdConsequences, violationsOf } from './consequences';
 
@@ -107,7 +108,8 @@ export function previewChoices(
 }
 
 /**
- * 保存の前に見せる「この変更で変わること」（家と暮らしの情報の直し・「すること」の言明・やり方の選び）。書く時と
+ * 保存の前に見せる「この変更で変わること」（家と暮らしの情報の直し・「すること」の言明・やり方の選び・「すること」の
+ * 直しと外し）。書く時と
  * 同じ命令を書き込まずに展開し、同じ計算で比べる（頼み直し reopened も含む）。何も書かない（事象・操作・知らせ・
  * 家の情報）。書けない変更は、書く時と同じ理由で断る。見た物の要約（seen）は、書く時に押さえた中で作り直す物と
  * 同じ作り方（previewedInput）。
@@ -123,7 +125,16 @@ export function previewChange(
   const now =
     state.clock === undefined ? context.now : formatDateTime(state.clock, current.timeZone);
   const plan = planFromState(state, now);
-  const result = previewCommand(events, { memberId: context.memberId, now }, command, {
+  // 事項の直しと外しは、「すること」の物だけ見せる（ほかの事項は、今の札の確かめのまま）。モデルが読んだ「すること」
+  // は書く時に見せた番号が要るので、今の番号で通す（見るのは今の中身。書く時に番号と要約を確かめる）。
+  let asCommand: Command = command;
+  if (command.type === 'correctItem' || command.type === 'dismissItem') {
+    const item = itemsOf(state).find((i) => i.id === command.itemId);
+    if (!item) return { status: 'conflict', reason: 'itemGone' };
+    if (item.kind !== 'need') return { status: 'invalid', reason: 'previewNeedOnly' };
+    asCommand = { ...command, seen: { throughSeq: state.lastSeq } };
+  }
+  const result = previewCommand(events, { memberId: context.memberId, now }, asCommand, {
     state,
     plan,
   });

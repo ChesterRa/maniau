@@ -117,6 +117,8 @@ function materials(answer: (command: PreviewCommand) => HouseholdPreviewResult |
       },
     ],
     sources: new Map([['f-1', { id: 'f-1', sender: 'family' }]]),
+    // 家族の言明には、読み取りが無い。
+    readings: [],
     me: { id: 'a', kind: 'adult', name: '健太', active: true },
     lang: 'ja',
     tz: 'Asia/Tokyo',

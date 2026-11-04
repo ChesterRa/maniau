@@ -71,7 +71,8 @@ function materials(items: Item[], answer: () => SendResult = () => ({ status: 'o
     sources: new Map([
       ['n9', { id: 'n9', sender: 'school', sentences: [{ id: 'n9#1', text: WRITTEN }] }],
     ]),
-    readings: [],
+    // モデルが読んだお知らせには、読み取りがある（確かめてほしい文の印は無い）。
+    readings: [{ sourceId: 'n9', origin: 'live', model: 'm' }],
     me: { id: 'a', kind: 'adult', name: '健太', active: true },
     lang: 'ja',
     tz: 'Asia/Tokyo',

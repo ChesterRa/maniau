@@ -15,9 +15,10 @@ import type { DomainEvent, ProposalSnapshot, RequestSnapshot, TaskContent } from
 import type { Household } from '../schema/household';
 import type { CommitmentState, ExternalRequestState } from '../schema/plan';
 import {
+  applyCorrection,
   type ConditionNode,
+  type CorrectedInterpretation,
   Extraction,
-  type Interpretation,
   type Item,
   type Source,
   type Unknown,
@@ -99,7 +100,7 @@ export interface EngineState {
   /** 出典ごとの、今の読み取りを記録した seq（読み直すと進む。同じ ID が同じ事項かを確かめる手がかり）。 */
   extractionSeq: Map<string, number>;
   /** 家族が直した解釈（事項の ID → 直した欄を重ねた物）。 */
-  corrections: Map<string, Interpretation>;
+  corrections: Map<string, CorrectedInterpretation>;
   /** 家族の確かめ（事項の ID → 最後の言明）。confirmed は「家族が確認」、dismissed は「関係ない」。 */
   verdicts: Map<string, 'confirmed' | 'dismissed'>;
   /**
@@ -110,7 +111,7 @@ export interface EngineState {
    */
   verdictReading: Map<string, string>;
   /** 読み取りの「すること」への家族の直し（読み取りごと。読み直しの後は、前の直しを新しい読みに重ねない）。 */
-  needCorrections: Map<string, { reading: string; interpretation: Interpretation }>;
+  needCorrections: Map<string, { reading: string; interpretation: CorrectedInterpretation }>;
   /**
    * 家族が、当番がうちの番かを言った（事項の ID → 最後の言明と、その時の用件と対象）。読んだ中身の確かめ・
    * 直し・取り下げ（verdicts）とは別に持ち、事項の確かさも作用も変えない。
@@ -821,8 +822,9 @@ function familyItem(state: EngineState, item: Item): Item {
         ? bound.interpretation
         : undefined
       : state.corrections.get(item.id);
+  // 直しの null（だれのためを外す）は、事項の解釈に残さない。
   const interpretation = correction
-    ? { ...item.interpretation, ...correction }
+    ? applyCorrection(item.interpretation, correction)
     : item.interpretation;
   return verdict === 'confirmed'
     ? { ...item, interpretation, evidence: 'confirmed' as const }

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { DateTime, toEpochMinutes } from '../time';
 import { ExternalKind, Household, Id } from './household';
 import { Basis, type Task, untimed } from './plan';
-import { Interpretation, Item, Sentence, Source } from './source';
+import { CorrectedInterpretation, Item, Sentence, Source } from './source';
 
 /** 事象の共通の欄。 */
 const envelope = {
@@ -321,7 +321,7 @@ export const DomainEvent = z.discriminatedUnion('type', [
     ...envelope,
     type: z.literal('itemCorrected'),
     itemId: Id,
-    interpretation: Interpretation.refine((value) => Object.keys(value).length > 0, {
+    interpretation: CorrectedInterpretation.refine((value) => Object.keys(value).length > 0, {
       message: '直す欄が無い',
     }),
   }),

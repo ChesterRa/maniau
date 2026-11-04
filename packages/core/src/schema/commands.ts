@@ -5,14 +5,19 @@ import { DateTime } from '../time';
 import { ProposalSnapshot, TaskContent } from './events';
 import { Household, Id } from './household';
 import { CommitmentState, ExternalRequestState } from './plan';
-import { Interpretation } from './source';
+import { CorrectedInterpretation, Interpretation } from './source';
 
 /**
  * 画面が見せた時の、事象の通し番号（View の throughSeq）。うちの番かを家族が言う命令（stateTurn）に付ける。
  * その後に、その事項の出典の文・読み取り・事項・答え・うちの番かの言明が替わっていれば（もう一人が直した・
  * 確かめた・外した・言った、読み直した。替わってまた元に戻った時も）、サーバーは断り、画面は今の中身を見せ直す。
+ * changes は、保存の前に見せた「この変更で変わること」の要約（サーバーが作る）。計画に入っている「すること」を
+ * 直す・外す時は要る（下の correctItem・dismissItem）。
  */
-export const ItemSeen = z.object({ throughSeq: z.number().int().nonnegative() });
+export const ItemSeen = z.object({
+  throughSeq: z.number().int().nonnegative(),
+  changes: z.string().min(1).optional(),
+});
 export type ItemSeen = z.infer<typeof ItemSeen>;
 
 /**
@@ -70,6 +75,22 @@ const StateNeed = z.object({
  */
 const SetNeedWays = z.object({ type: z.literal('setNeedWays'), itemId: Id, wayIds: z.array(Id) });
 /**
+ * 読み取りの事項（「すること」も）を直す・外す。計画に入っている「すること」（家族の言明か、家族が確かめた読み取り）は、
+ * 保存の前に「この変更で変わること」を見せ、見た物（seen の changes）と今が同じ時だけ書く（引き受けを要らなくし、
+ * 送った依頼に取り消しの連絡を要るようにするので）。まだ確かめていない読み取りは、見せた番号だけ。
+ */
+const CorrectItem = z.object({
+  type: z.literal('correctItem'),
+  itemId: Id,
+  /** 直す欄だけ。「だれのため」を外すのは null（直しは前の欄に重ねるので）。 */
+  interpretation: CorrectedInterpretation,
+});
+const DismissItem = z.object({
+  type: z.literal('dismissItem'),
+  itemId: Id,
+  reason: z.enum(['notOurs', 'misread', 'other']),
+});
+/**
  * 保存の前に見せた物：計画の通し番号と、見せた「この変更で変わること」の要約（サーバーが作る）。書く時は要る。
  * 今と違えば断って見せ直す（もう一人の変更・時が進んで変わった結果を、黙って書かない）。
  */
@@ -80,6 +101,8 @@ export const PreviewCommand = z.discriminatedUnion('type', [
   UpdateHousehold,
   StateNeed,
   SetNeedWays,
+  CorrectItem,
+  DismissItem,
 ]);
 export type PreviewCommand = z.infer<typeof PreviewCommand>;
 
@@ -174,18 +197,8 @@ export const Command = z.discriminatedUnion('type', [
    * 出典の文・事項・答え・言明・読み直しがあれば、古い画面から決めさせない。
    */
   z.object({ type: z.literal('confirmItem'), itemId: Id, seen: ItemSeen.optional() }),
-  z.object({
-    type: z.literal('correctItem'),
-    itemId: Id,
-    interpretation: Interpretation,
-    seen: ItemSeen.optional(),
-  }),
-  z.object({
-    type: z.literal('dismissItem'),
-    itemId: Id,
-    reason: z.enum(['notOurs', 'misread', 'other']),
-    seen: ItemSeen.optional(),
-  }),
+  CorrectItem.extend({ seen: ItemSeen.optional() }),
+  DismissItem.extend({ seen: ItemSeen.optional() }),
   /**
    * 当番が、うちの番か（「うちの番です」「うちの番ではない」）。読んだ中身の確かめ・取り下げとは別の言明で、
    * 事項の確かさも作用（ほかのお知らせの置き換え・取り消し）も変えない。サーバーが今の用件と対象を控える。
