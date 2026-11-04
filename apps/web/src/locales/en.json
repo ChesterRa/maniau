@@ -184,6 +184,8 @@
     "stuck": {
       "noStoreLabel": "No store found",
       "noStore": "It's needed by {{date}}, but we couldn't tell which store sells it, so no time to buy it was planned. If you get it another way, tap \"Got it\".",
+      "unconfirmedLabel": "Store not confirmed yet",
+      "unconfirmed": "It's needed by {{date}}, but the store's hours or walking route couldn't be confirmed on the map, so no time to buy it was planned. Open this again later or find another store. If you get it another way, tap \"Got it\".",
       "label": "No way found in time",
       "purchaseTitle": "{{what}}",
       "purchase": "It's needed by {{date}}, but no time to buy it was found on your registered routes and stores. If you get it another way, tap \"Got it\".",
@@ -1158,6 +1160,37 @@
     "checked": "Walking times and hours as of {{day}} {{time}}. Source:",
     "noRoute": "Couldn't draw the walking route (only the station and the store are marked).",
     "caution": "The route may be missing clear sidewalks or pedestrian paths.",
-    "terms": "Terms and privacy"
+    "terms": "Terms and privacy",
+    "name": "Name on Google Maps: ",
+    "provider": "Data provided by ",
+    "providerFor": "Data for {{name}} provided by "
+  },
+  "stores": {
+    "open": "Find another store",
+    "find": "Find a store near the station",
+    "label": "Stores near {{station}}",
+    "thinking": "Thinking of search words…",
+    "ideas": "Search ideas (Claude's guess; edit as you like)",
+    "query": "Search words",
+    "sendNote": "Search words are sent to Google as typed. Don't include people's names or addresses.",
+    "search": "Search",
+    "close": "Close",
+    "searching": "Searching…",
+    "walk": "{{min}} min walk from the station",
+    "known": "Already saved as “{{name}}”",
+    "choose": "Buy here",
+    "none": "Nothing found within a 15-minute walk of the station. Try other words.",
+    "failed": "Couldn't search. Wait a moment and try again.",
+    "limit": "This demo has used up its searches.",
+    "source": "Store names, addresses and walking times:",
+    "chosenWalk": " ({{min}} min walk from the station)",
+    "nameLabel": "What your family calls it (saved as the store for this item)",
+    "save": "Buy it at this store",
+    "back": "Choose again",
+    "ask": "Ask Claude for search words",
+    "askNote": "Only the item name ({{what}}) is sent (to the Anthropic API).",
+    "noIdeas": "No ideas came back. Type your own search words.",
+    "already": "You already buy this item here",
+    "addGoods": "You'll also buy {{what}} at “{{name}}”."
   }
 }

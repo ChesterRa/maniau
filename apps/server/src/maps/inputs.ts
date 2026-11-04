@@ -119,6 +119,19 @@ export function currentOf(
  * undefined。道のりが引けなければ（失敗・上限）全体を投げる（呼ぶ側が家庭の目安に戻す）。営業時間が
  * 引けない店は、営業時間の根拠を持たない（分からない）。
  */
+/**
+ * 地図の根拠を引く家庭：今の家庭に、直した後の家庭の場所を重ねた物（同じ ID は直した後の物。外した場所も残す）。
+ * 根拠は店と駅の ID と place ID が合う時だけ使われるので、前と後のどちらの計算にも、合う物だけが効く。
+ */
+export function withProposed(current: Household, proposed: Household | undefined): Household {
+  if (!proposed) return current;
+  const ids = new Set(proposed.places.map((p) => p.id));
+  return {
+    ...current,
+    places: [...proposed.places, ...current.places.filter((p) => !ids.has(p.id))],
+  };
+}
+
 export async function mapInputsFor(
   household: Household,
   client: MapsClient,
@@ -137,7 +150,9 @@ export async function mapInputsFor(
   const [there, back, details] = await Promise.all([
     client.walkMatrix(stations, stores),
     client.walkMatrix(stores, stations),
-    Promise.all(stores.map((id) => client.place(id, { hours: true }).catch(() => undefined))),
+    Promise.all(
+      stores.map((id) => client.place(id, { hours: true, summary: true }).catch(() => undefined)),
+    ),
   ]);
   const detailsOf = new Map(details.flatMap((d) => (d ? [[d.id, d] as const] : [])));
   const evidence = pairs.flatMap(({ store, station, storeG, stationG }): StoreMapEvidence[] => {
@@ -156,6 +171,8 @@ export async function mapInputsFor(
         stationGooglePlaceId: stationG,
         walkFromStationMin: Math.ceil(from / 60),
         walkToStationMin: Math.ceil(to / 60),
+        ...(d?.name ? { name: d.name } : {}),
+        ...(d?.attributions ? { attributions: d.attributions } : {}),
         ...(current ? { current } : {}),
         ...(regular ? { regular } : {}),
       },

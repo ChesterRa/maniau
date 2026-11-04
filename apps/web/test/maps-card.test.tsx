@@ -265,4 +265,45 @@ describe('地図で置いた買い物の札', () => {
     expect(text).toContain('地図を出せませんでした。道のりと時間は上のとおりです。');
     expect(text).toContain('駅から歩いて9分（戻りは11分）');
   });
+
+  it('提供者（attributions）が返った時は、その店・その駅のそばに書き、URL は http・https だけ繋ぐ', async () => {
+    const withProviders = {
+      ...walk,
+      station: { ...walk.station, attributions: [{ provider: '駅の提供者' }] },
+      store: {
+        ...walk.store,
+        attributions: [{ provider: '店の提供者', providerUri: 'https://example.com/store' }],
+      },
+    } as WalkView;
+    const facts = buy();
+    const evidence: MapInputs = {
+      ...mapInputs,
+      stores: mapInputs.stores.map((e) => ({
+        ...e,
+        name: '架空の衣料品店',
+        attributions: [{ provider: '営業時間の提供者', providerUri: 'https://example.com/hours' }],
+      })),
+    };
+    const ctx = ctxWith(facts, { key: 'browser-key', walk: async () => withProviders });
+    (ctx.plan as { mapInputs?: MapInputs }).mapInputs = evidence;
+    await step(() => root.render(<TodayScreen ctx={ctx} />));
+    expect(host.textContent).toContain('データ提供：営業時間の提供者');
+    await step(() => button('地図で見る')?.click());
+    await step(async () => {});
+    const text = host.textContent ?? '';
+    expect(text).toContain('豊洲駅（架空の応答）のデータ提供：駅の提供者');
+    expect(text).toContain('架空の衣料品店のデータ提供：店の提供者');
+    const links = [...host.querySelectorAll('a')].map((a) => [
+      a.textContent,
+      a.getAttribute('href'),
+    ]);
+    expect(links).toContainEqual(['営業時間の提供者', 'https://example.com/hours']);
+    expect(links).toContainEqual(['店の提供者', 'https://example.com/store']);
+    expect(links.some(([name]) => name === '駅の提供者')).toBe(false);
+  });
+
+  it('提供者が返らなければ、提供者の行を出さない', async () => {
+    await step(() => root.render(<TodayScreen ctx={ctxWith(buy())} />));
+    expect(host.textContent).not.toContain('データ提供');
+  });
 });

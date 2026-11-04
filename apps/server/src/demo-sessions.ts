@@ -12,6 +12,7 @@ import {
   type Extraction,
   formatDateTime,
   type Household,
+  type PlaceAttribution,
   type PlanResult,
   type PreviewCommand,
   type ProposalSeen,
@@ -35,7 +36,8 @@ import { computePlan, currentItems, foldEvents } from '@maniau/core/engine';
 import { type CommandGuard, type CommandResult, reopened, runCommand } from './commands';
 import { DEMO_STAGES, type DemoStageId, demoEvents } from './demo';
 import type { LatLng, MapsClient, WalkRoute } from './maps/google';
-import { mapInputsFor } from './maps/inputs';
+import { mapInputsFor, withProposed } from './maps/inputs';
+import { type FoundStore, searchStores } from './maps/search';
 import { previewChange, previewChoices } from './preview';
 import {
   buildExtractInput,
@@ -43,6 +45,7 @@ import {
   type ExtractResult,
   ReadingError,
 } from './reading/extract';
+import type { StoreKindsResult } from './reading/store-kinds';
 import { type PhotoInput, PhotoTooLarge, type TranscribeResult } from './reading/transcribe';
 import { buildUtteranceInput, type UtteranceResult } from './reading/utterance';
 import type { WayIdeasResult } from './reading/way-ideas';
@@ -137,6 +140,14 @@ export type UtteranceOutcome =
 
 /** 一つのデモで出せる、やり方の案の数（一日の数と、同時に読む数は、お知らせと同じ枠を使う）。 */
 export const MAX_WAY_IDEAS_PER_SESSION = 5;
+/** 一つのデモで、店の検索語を Claude に聞ける数と、地図で店を探せる数。 */
+export const MAX_STORE_KINDS_PER_SESSION = 10;
+export const MAX_STORE_SEARCHES_PER_SESSION = 20;
+
+/** 品物から、地図で店を探す検索語の候補を Claude が出す（試験では偽物に替える）。 */
+export type StoreKindsReader = (what: string) => Promise<StoreKindsResult>;
+/** 店の検索語の候補を聞く品物の名前と、地図で探す検索語の長さの上限（字）。 */
+export const MAX_STORE_TEXT_CHARS = 40;
 
 /** 新しい「すること」に、Claude がやり方の案を出す（試験では偽物に替える）。 */
 export type WayIdeasReader = (context: WayIdeasContext) => Promise<WayIdeasResult>;
@@ -258,14 +269,24 @@ interface Session {
   wayIdeasOperations: Map<string, WayIdeasOperation>;
   /** 見せた候補（確かめるまで、何も書かない）。 */
   proposals: Map<string, StoredProposal>;
+  /** このデモで、Claude に店の検索語を聞いた数と、地図で店を探した数。 */
+  storeKinds: number;
+  storeSearches: number;
 }
 
 /** 店までの徒歩の道（画面の地図）。Google の名前・位置・道は、この応答で見せるだけ。 */
 export interface WalkView {
   /** Google に照会した実際の時刻。 */
   checkedAt: DateTime;
-  station: { id: string; name?: string; location: LatLng };
-  store: { id: string; name?: string; location: LatLng; googleMapsUri?: string };
+  /** attributions：名前と一緒に見せなければならない、データの提供者（駅と店で別々）。 */
+  station: { id: string; name?: string; location: LatLng; attributions?: PlaceAttribution[] };
+  store: {
+    id: string;
+    name?: string;
+    location: LatLng;
+    googleMapsUri?: string;
+    attributions?: PlaceAttribution[];
+  };
   route: WalkRoute;
 }
 
@@ -374,13 +395,18 @@ export function demoSessions(
    * 確かめ・画面は、これ一つを使う。要求をまたいで使い回さない（Google の条件）。地図の口が無い・失敗・
    * 上限の時は無し（家庭の目安で計算する）。押さえた中のエンジンは、店・駅の ID が合う時だけ使う。
    */
-  const mapsOf = async (id: string): Promise<MapInputs | undefined> => {
+  const mapsOf = async (id: string, proposed?: Household): Promise<MapInputs | undefined> => {
     const client = deps.maps;
     if (!client) return undefined;
     const household = await store.withHousehold(id, (log) => foldEvents(log.events()).household);
     if (!household) return undefined;
-    return mapInputsFor(household, client, deps.mapsClock).catch(() => undefined);
+    return mapInputsFor(withProposed(household, proposed), client, deps.mapsClock).catch(
+      () => undefined,
+    );
   };
+  /** 家の情報の直し（見る・保存）は、直した後の家庭の店の根拠も一緒に引く（新しく選んだ店も、見た時に置ける）。 */
+  const proposedOf = (command: Command | PreviewCommand) =>
+    command.type === 'updateHousehold' ? command.household : undefined;
 
   /** 読む前の前提を取り、Claude で読み、前提が変わっていない時だけ、出典と読み取りを一度に足す。 */
   async function readNotice(
@@ -698,11 +724,13 @@ export function demoSessions(
           station: {
             id: station.id,
             ...(from.name ? { name: from.name } : {}),
+            ...(from.attributions ? { attributions: from.attributions } : {}),
             location: from.location,
           },
           store: {
             id: shop.id,
             ...(to.name ? { name: to.name } : {}),
+            ...(to.attributions ? { attributions: to.attributions } : {}),
             location: to.location,
             ...(to.googleMapsUri ? { googleMapsUri: to.googleMapsUri } : {}),
           },
@@ -710,6 +738,62 @@ export function demoSessions(
         };
       } catch {
         return undefined;
+      }
+    },
+    /**
+     * 品物から、地図で店を探す検索語の候補を Claude に聞く（推定。何も書かない）。送るのは品物の名前だけ。
+     * 数は、お知らせ・一言と同じ一日の枠と、デモごとの上限で抑える。
+     */
+    async storeKinds(
+      id: string,
+      what: string,
+      read: StoreKindsReader,
+    ): Promise<
+      { status: 'ok'; queries: string[] } | { status: 'limit' | 'busy' | 'failed' } | undefined
+    > {
+      const session = touch(id);
+      if (!session) return undefined;
+      const today = new Date(clock()).toISOString().slice(0, 10);
+      if (daily.day !== today) Object.assign(daily, { day: today, count: 0 });
+      if (session.storeKinds >= MAX_STORE_KINDS_PER_SESSION || daily.count >= perDay) {
+        return { status: 'limit' };
+      }
+      if (inFlight >= MAX_READINGS_IN_FLIGHT) return { status: 'busy' };
+      session.storeKinds += 1;
+      daily.count += 1;
+      inFlight += 1;
+      try {
+        return { status: 'ok', queries: (await read(what)).queries };
+      } catch {
+        return { status: 'failed' };
+      } finally {
+        inFlight -= 1;
+      }
+    },
+    /**
+     * 家庭の駅の近くで、検索語に合う本物の店を探す（家族が押した時だけ。結果は返すだけで取っておかない）。
+     * デモが無ければ null、地図の口が無い・駅が地図に結び付かなければ undefined。
+     */
+    async searchStores(
+      id: string,
+      query: string,
+      stationId: string,
+    ): Promise<
+      { status: 'ok'; stores: FoundStore[] } | { status: 'limit' | 'failed' } | null | undefined
+    > {
+      const session = touch(id);
+      if (!session) return null;
+      const client = deps.maps;
+      if (!client) return undefined;
+      if (session.storeSearches >= MAX_STORE_SEARCHES_PER_SESSION) return { status: 'limit' };
+      const household = await store.withHousehold(id, (log) => foldEvents(log.events()).household);
+      if (!household) return undefined;
+      session.storeSearches += 1;
+      try {
+        const stores = await searchStores(household, client, query, stationId);
+        return stores === undefined ? undefined : { status: 'ok', stores };
+      } catch {
+        return { status: 'failed' };
       }
     },
     /** 段から新しいデモの家庭を作る。 */
@@ -731,6 +815,8 @@ export function demoSessions(
         wayIdeas: 0,
         wayIdeasOperations: new Map(),
         proposals: new Map(),
+        storeKinds: 0,
+        storeSearches: 0,
       });
       return id;
     },
@@ -773,7 +859,7 @@ export function demoSessions(
     ): Promise<ReturnType<typeof previewChange> | null> {
       const session = touch(id);
       if (!session) return null;
-      const maps = await mapsOf(id);
+      const maps = await mapsOf(id, proposedOf(command));
       return store.withHousehold(id, (log) =>
         previewChange(
           log.events(),
@@ -790,7 +876,7 @@ export function demoSessions(
     ): Promise<{ result: CommandResult; view: View } | undefined> {
       const session = touch(id);
       if (!session) return undefined;
-      const maps = await mapsOf(id);
+      const maps = await mapsOf(id, proposedOf(command));
       // 時計を進めたデモの時刻は、命令の処理が家庭を押さえた中で事象から決める（ここで先に読まない）。
       const result = await runCommand(
         store,

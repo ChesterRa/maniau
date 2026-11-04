@@ -56,6 +56,7 @@ import {
   type ReadResult,
   type SendResult,
   type ShownProposal,
+  type StoreSearchResult,
   type WalkView,
   type WayIdeasRequest,
   type WayIdeasResult,
@@ -71,8 +72,9 @@ import {
   minutesBetween,
 } from './format';
 import type { UiLanguage } from './i18n';
-import { GoogleMapsMark, TermsLink, WalkMap } from './maps';
+import { Attributions, GoogleMapsMark, TermsLink, WalkMap } from './maps';
 import { type NotUploadable, toUploadable, type Uploadable } from './photo';
+import { StoreSearch } from './stores';
 import {
   Button,
   Card,
@@ -181,8 +183,16 @@ export interface Ctx {
    * 書けない変更は理由を返す。
    */
   previewChange?: (command: PreviewCommand) => Promise<HouseholdPreviewResult | undefined>;
-  /** 地図（地図のあるデモだけ）：画面の鍵と、店までの徒歩の道を読む口。 */
-  maps?: { key: string; walk: (storeId: string) => Promise<WalkView | undefined> };
+  /**
+   * 地図（地図のあるデモだけ）：画面の鍵（あれば地図を描く）、店までの徒歩の道を読む口、駅の近くの店を探す口、
+   * 探す言葉の案（Claude）を聞く口。
+   */
+  maps?: {
+    key?: string;
+    walk: (storeId: string) => Promise<WalkView | undefined>;
+    search?: (query: string, stationId: string) => Promise<StoreSearchResult>;
+    kinds?: (what: string) => Promise<string[] | undefined>;
+  };
   go: (route: Route) => void;
 }
 
@@ -1329,13 +1339,23 @@ export function StuckCard({
   const date = requirement?.by ?? requirement?.date ?? arrangement.end;
   const purchase = arrangement.kind === 'purchase';
   const unknownId = arrangement.atHomeUnknownId;
-  // どの店で買えるか分からない品物（間に合わないのではなく、買う時を決められない）。
-  const noStore =
-    purchase &&
-    arrangement.reasons.some((r) => r.code === 'inputMissing' && r.refs.includes('storeKind'));
+  // どの店で買えるか分からない品物・店の営業時間か道のりを地図で確かめられない品物（間に合わないのではなく、
+  // 買う時を決められない）。
+  const missing = (ref: string) =>
+    purchase && arrangement.reasons.some((r) => r.code === 'inputMissing' && r.refs.includes(ref));
+  const noStore = missing('storeKind');
+  const unconfirmed = !noStore && missing('storeHours');
   return (
     <Card>
-      <Label tone="warn">{ctx.t(noStore ? 'card.stuck.noStoreLabel' : 'card.stuck.label')}</Label>
+      <Label tone="warn">
+        {ctx.t(
+          noStore
+            ? 'card.stuck.noStoreLabel'
+            : unconfirmed
+              ? 'card.stuck.unconfirmedLabel'
+              : 'card.stuck.label',
+        )}
+      </Label>
       <Title>
         {purchase
           ? ctx.t('card.stuck.purchaseTitle', { what: requirement?.what ?? '' })
@@ -1354,9 +1374,14 @@ export function StuckCard({
       />
       <Text>
         {purchase
-          ? ctx.t(noStore ? 'card.stuck.noStore' : 'card.stuck.purchase', {
-              date: due(ctx, date, requirement?.basis.itemIds ?? []),
-            })
+          ? ctx.t(
+              noStore
+                ? 'card.stuck.noStore'
+                : unconfirmed
+                  ? 'card.stuck.unconfirmed'
+                  : 'card.stuck.purchase',
+              { date: due(ctx, date, requirement?.basis.itemIds ?? []) },
+            )
           : ctx.t('card.stuck.childCare', { child: childLabel(ctx, arrangement.childId) })}
       </Text>
       {purchase && unknownId && requirement && (
@@ -1376,6 +1401,8 @@ export function StuckCard({
           </Button>
         </Row>
       )}
+      {/* 買う店が分からない・置けない品物は、駅の近くで店を探して、この品物を買う店として足せる（地図のあるデモ）。 */}
+      {purchase && requirement && <StoreSearch ctx={ctx} what={requirement.what} first={noStore} />}
     </Card>
   );
 }
@@ -1825,6 +1852,14 @@ function MapsFacts({ ctx, task }: { ctx: Ctx; task: Task }) {
   const checked = ctx.plan.mapInputs?.checkedAt;
   return (
     <>
+      {/* Google での店の名前（この要求で引いた物を見せるだけ。家の情報には家族の呼び名だけを残す）。 */}
+      {evidence.name && (
+        <span className="text-[15px] text-sub">
+          {ctx.t('maps.name')}
+          <span translate="no">{evidence.name}</span>
+        </span>
+      )}
+      <Attributions ctx={ctx} list={evidence.attributions} />
       {hours && <span className="text-[15px] text-sub">{hours}</span>}
       {checked && (
         <span className="text-[13px] text-sub">
@@ -1896,6 +1931,11 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
     ? ctx.household.places.find((p) => p.id === task.atPlaceId)
     : undefined;
   const unvisited = stepPlaceWithoutHours(ctx.household, task);
+  // 買い物の作業は、ほかの店を探して、この品物を買う店として足せる（地図のあるデモ）。
+  const purchaseWhat =
+    arrangement?.kind === 'purchase'
+      ? ctx.plan.requirements.find((r) => r.key === arrangement.requirementKey)?.what
+      : undefined;
   const late = task.detour
     ? minutesBetween(task.detour.plannedArrival, task.detour.delayedArrival)
     : 0;
@@ -1950,6 +1990,7 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
       {task.travelSource === 'maps' && task.atPlaceId && (
         <WalkMap ctx={ctx} storeId={task.atPlaceId} />
       )}
+      {purchaseWhat !== undefined && <StoreSearch ctx={ctx} what={purchaseWhat} />}
       {/* 外の相手に出す作業は、相手と、何を待つか（返事・承認・受け付け）を、引き受ける前に見せる。 */}
       {task.external && (
         <Text quiet>

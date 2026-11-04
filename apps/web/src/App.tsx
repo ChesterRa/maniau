@@ -109,6 +109,9 @@ function Body(props: {
   canPhoto?: boolean;
   /** 画面で地図を描く鍵（地図のあるデモだけ）。 */
   mapsKey?: string;
+  /** 駅の近くの店を探せるか（地図のあるデモだけ）。探す言葉の案を Claude に聞けるか。 */
+  canSearchStores?: boolean;
+  canSuggestStores?: boolean;
   /** 家族の試しの家庭か（読む欄に「架空の文だけ」と、上限の戻る時刻を出す）。 */
   trial?: boolean;
   lang: UiLanguage;
@@ -137,7 +140,16 @@ function Body(props: {
           ...(props.canRead ? { read: live.read, wayIdeas: live.wayIdeas } : {}),
           ...(props.canRead && props.canPhoto ? { transcribe: live.transcribe } : {}),
           ...(props.canHear ? { hear: live.hear, confirm: live.confirm } : {}),
-          ...(props.mapsKey ? { maps: { key: props.mapsKey, walk: live.walk } } : {}),
+          ...(props.mapsKey || props.canSearchStores
+            ? {
+                maps: {
+                  ...(props.mapsKey ? { key: props.mapsKey } : {}),
+                  walk: live.walk,
+                  ...(props.canSearchStores ? { search: live.searchStores } : {}),
+                  ...(props.canSuggestStores ? { kinds: live.storeKinds } : {}),
+                },
+              }
+            : {}),
           ...(props.trial ? { trialInput: true as const } : {}),
           preview: live.preview,
           previewHousehold: live.previewHousehold,
@@ -258,6 +270,8 @@ function DemoApp() {
         canHear={session?.canHear === true}
         canPhoto={session?.canPhoto === true}
         {...(session?.mapsKey ? { mapsKey: session.mapsKey } : {})}
+        canSearchStores={session?.canSearchStores === true}
+        canSuggestStores={session?.canSuggestStores === true}
         lang={lang}
         route={route}
         onRoute={setRoute}

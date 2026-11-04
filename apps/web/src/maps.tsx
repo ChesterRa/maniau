@@ -2,7 +2,8 @@
 // API だけを許し、置き場所の URL に限った物）を使う。名前・位置・道はサーバーが Google から引いた物を描くだけで、
 // 取っておかない。地図の帰属（ロゴと著作権）は地図が出す。地図の外に出す Google の名前と時間には「Google Maps」
 // と添える（翻訳させない）。
-import { useEffect, useRef, useState } from 'react';
+import type { PlaceAttribution } from '@maniau/core';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import type { WalkView } from './family';
 import type { Ctx } from './screens';
 
@@ -86,6 +87,42 @@ export function GoogleMapsMark() {
 }
 
 /** 利用規約とプライバシーの頁（Google マップの追加利用規約と Google のプライバシーポリシーへの案内を含む）。 */
+/**
+ * 結果と一緒に見せなければならない、データの提供者（Google の attributions）。その結果のすぐそばに置く。
+ * name を渡すと、どの場所の提供者かを書く。URL は http・https の物だけ繋ぐ。無ければ何も出さない。
+ */
+export function Attributions(props: {
+  ctx: Ctx;
+  list: PlaceAttribution[] | undefined;
+  name?: string;
+}) {
+  const { ctx, list } = props;
+  if (!list || list.length === 0) return null;
+  return (
+    <span className="text-[13px] text-sub">
+      {props.name ? ctx.t('maps.providerFor', { name: props.name }) : ctx.t('maps.provider')}
+      {list.map((a, i) => (
+        <Fragment key={`${a.provider}>${a.providerUri ?? ''}`}>
+          {i > 0 && ctx.t('maps.and')}
+          {a.providerUri && /^https?:\/\//i.test(a.providerUri) ? (
+            <a
+              href={a.providerUri}
+              target="_blank"
+              rel="noreferrer"
+              translate="no"
+              className="text-accent underline"
+            >
+              {a.provider}
+            </a>
+          ) : (
+            <span translate="no">{a.provider}</span>
+          )}
+        </Fragment>
+      ))}
+    </span>
+  );
+}
+
 export function TermsLink({ ctx }: { ctx: Ctx }) {
   return (
     <a
@@ -185,7 +222,8 @@ function MapCanvas({ ctx, walk }: { ctx: Ctx; walk: WalkView }) {
 export function WalkMap({ ctx, storeId }: { ctx: Ctx; storeId: string }) {
   const [open, setOpen] = useState(false);
   const [walk, setWalk] = useState<WalkView | 'loading' | 'failed'>();
-  const read = ctx.maps?.walk;
+  // 地図は画面の鍵がある時だけ描く（鍵が無ければ、地図の口があっても開く手を出さない）。
+  const read = ctx.maps?.key ? ctx.maps.walk : undefined;
   useEffect(() => {
     if (!open || !read) return;
     let cancelled = false;
@@ -223,6 +261,16 @@ export function WalkMap({ ctx, storeId }: { ctx: Ctx; storeId: string }) {
               km: (walk.route.distanceM / 1000).toFixed(1),
             })}
           </p>
+          <Attributions
+            ctx={ctx}
+            list={walk.station.attributions}
+            {...(walk.station.name ? { name: walk.station.name } : {})}
+          />
+          <Attributions
+            ctx={ctx}
+            list={walk.store.attributions}
+            {...(walk.store.name ? { name: walk.store.name } : {})}
+          />
           {walk.route.warnings.map((warning) => (
             <p key={warning} className="text-[15px] text-warn">
               {warning}

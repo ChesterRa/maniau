@@ -142,7 +142,7 @@ function refusedKey(reason: string): string {
  * 見る → 保存（家の情報の直し）。見た物は、見た時の家の情報と一緒に持ち、欄が替われば見せない（替わった中身を、
  * 前に見た物で保存しない）。保存は、見た計画の番号と見た物の要約を付ける（サーバーが同じ計算で確かめる）。
  */
-function useHouseholdSave(ctx: Ctx) {
+export function useHouseholdSave(ctx: Ctx) {
   const [shown, setShown] = useState<{ key: string; preview: HouseholdPreview }>();
   const [refused, setRefused] = useState<{ key: string; reason: string }>();
   const [busy, setBusy] = useState(false);
@@ -184,11 +184,17 @@ function useHouseholdSave(ctx: Ctx) {
 }
 
 /** 「この変更で変わること」（サーバーが同じ計算で出した物）か、保存できない理由。 */
-function Shown(props: { ctx: Ctx; preview?: HouseholdPreview; refused?: string }) {
+export function Shown(props: {
+  ctx: Ctx;
+  preview?: HouseholdPreview;
+  refused?: string;
+  /** 直した後の家の情報（新しく足す場所の名前を書くため）。 */
+  household?: Household;
+}) {
   const { ctx, preview, refused } = props;
   if (refused) return <Text>{ctx.t(`household.refused.${refusedKey(refused)}`)}</Text>;
   if (!preview) return null;
-  const lines = householdPreviewLines(ctx, preview);
+  const lines = householdPreviewLines(ctx, preview, props.household);
   return (
     <div className="flex flex-col gap-1 rounded-xl bg-paper px-3 py-2.5">
       <Label tone="accent">{ctx.t('household.preview.label')}</Label>

@@ -11,8 +11,10 @@ import type { Db } from './db/store';
 import { DEMO_STAGES, isDemoStage, loadDemoData } from './demo';
 import {
   demoSessions,
+  MAX_STORE_TEXT_CHARS,
   type NoticeReader,
   type PhotoReader,
+  type StoreKindsReader,
   type UtteranceReader,
   type WayIdeasReader,
 } from './demo-sessions';
@@ -76,6 +78,8 @@ export function createApp(
     maps?: MapsClient;
     /** 画面で地図を描く鍵（Maps JavaScript API だけを許し、置き場所の URL に限った物）。 */
     mapsBrowserKey?: string;
+    /** 品物から、地図で店を探す検索語の案を Claude で出す口（Claude の鍵と地図の口がある時だけ使う）。 */
+    storeKindsReader?: StoreKindsReader;
   } = {},
 ): Hono {
   // 起きる時に、デモの家族とお知らせを読み、型と家族の決まりを確かめる（誤りなら起きない）。
@@ -93,6 +97,8 @@ export function createApp(
   const ideaReader = family ? undefined : options.ideaReader;
   // 写真の書き起こしも同じ（家族の家庭では、まだ開けない）。
   const transcriber = family ? undefined : options.transcriber;
+  // 店の検索語の案は、店を探せる時（地図の口がある時）だけ。家族の家庭では、まだ開けない。
+  const storeKindsReader = family || !sessions.mapsEnabled ? undefined : options.storeKindsReader;
   const familyInputs = family
     ? familyInput({ store: family.store, ...(family.clock ? { clock: family.clock } : {}) })
     : undefined;
@@ -537,7 +543,56 @@ export function createApp(
       ...(sessions.mapsEnabled && options.mapsBrowserKey
         ? { mapsKey: options.mapsBrowserKey }
         : {}),
+      // 駅の近くの店を地図で探せるか。探す言葉の案を Claude に聞けるか。
+      ...(sessions.mapsEnabled ? { canSearchStores: true } : {}),
+      ...(storeKindsReader ? { canSuggestStores: true } : {}),
     });
+  });
+  // 品物から、店を探す言葉の案（推定）。送るのは品物の名前だけ。何も書かない。
+  app.post('/api/demo/sessions/:sid/maps/store-kinds', async (c) => {
+    if (!storeKindsReader) return c.json({ error: 'readingUnavailable' }, 503);
+    const body = z
+      .object({ what: z.string().trim().min(1).max(MAX_STORE_TEXT_CHARS) })
+      .safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badStoreKinds' }, 400);
+    const done = await sessions.storeKinds(c.req.param('sid'), body.data.what, storeKindsReader);
+    if (!done) return c.json({ error: 'unknownSession' }, 404);
+    switch (done.status) {
+      case 'ok':
+        return c.json({ queries: done.queries });
+      case 'limit':
+        return c.json({ error: 'readingLimit' }, 429);
+      case 'busy':
+        return c.json({ error: 'readingBusy' }, 429);
+      case 'failed':
+        return c.json({ error: 'readingFailed' }, 502);
+    }
+  });
+  // 家庭の駅の近くで、家族が押した言葉の店を探す（言葉はそのまま Google に送る）。返すだけで、取っておかない。
+  app.post('/api/demo/sessions/:sid/maps/stores', async (c) => {
+    const body = z
+      .object({
+        query: z.string().trim().min(1).max(MAX_STORE_TEXT_CHARS),
+        stationId: z.string().min(1),
+      })
+      .safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badStoreSearch' }, 400);
+    const done = await sessions.searchStores(
+      c.req.param('sid'),
+      body.data.query,
+      body.data.stationId,
+    );
+    if (done === null) return c.json({ error: 'unknownSession' }, 404);
+    if (!done) return c.json({ error: 'mapsUnavailable' }, 503);
+    c.header('Cache-Control', 'private, no-store');
+    switch (done.status) {
+      case 'ok':
+        return c.json({ stores: done.stores });
+      case 'limit':
+        return c.json({ error: 'searchLimit' }, 429);
+      case 'failed':
+        return c.json({ error: 'mapsFailed' }, 502);
+    }
   });
   // 店までの徒歩の道（画面の地図に描く）。返すだけで、取っておかない。
   app.get('/api/demo/sessions/:sid/maps/walk', async (c) => {

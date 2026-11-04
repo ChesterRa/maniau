@@ -91,6 +91,15 @@ function routeOf(
   return { store, walkFrom: walk, walkTo: walk, travelSource: 'estimate' };
 }
 
+/** 地図で選んだ店で、この計算に地図の根拠も家庭の目安も無い（道のりが分からない。置けないとは言わない）。 */
+function routeUnknown(household: Household, store: Place, maps: MapInputs | undefined): boolean {
+  return (
+    store.googlePlaceId !== undefined &&
+    store.walkFromStationMin === undefined &&
+    evidenceFor(household, store, maps) === undefined
+  );
+}
+
 type Openness =
   | { status: 'open' | 'closed'; basis: HoursBasis }
   /** ふだんの営業時間の目安で閉まっている・営業時間が分からない（閉まっているとは言い切れない）。 */
@@ -163,12 +172,13 @@ export function searchPurchase(
   maps?: MapInputs,
 ): PurchaseSearch {
   const tz = household.timeZone;
-  const routes = household.places
-    .filter((p) => p.kind === 'store' && p.goods.includes(goods))
+  const stores = household.places.filter((p) => p.kind === 'store' && p.goods.includes(goods));
+  const routes = stores
     .map((store) => routeOf(household, store, maps))
     .filter((r): r is StoreRoute => r !== undefined);
   const result: PurchaseOpportunity[] = [];
-  let droppedUnconfirmed = false;
+  // 道のりの分からない店があれば、機会が無くても「無い」とは言い切れない。
+  let droppedUnconfirmed = stores.some((store) => routeUnknown(household, store, maps));
   for (const memberId of activeAdultIds(household)) {
     const slots = slotsBetweenDates(
       household,

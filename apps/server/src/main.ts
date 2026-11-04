@@ -16,6 +16,7 @@ import { invitationsFrom } from './members';
 import { type Notifier, notifier } from './notifier';
 import { type Vapid, webPushSender } from './push';
 import { extractNotice, ReadingError } from './reading/extract';
+import { readStoreKinds } from './reading/store-kinds';
 import { PhotoTooLarge, transcribePhoto } from './reading/transcribe';
 import { readUtterance } from './reading/utterance';
 import { readWayIdeas } from './reading/way-ideas';
@@ -153,6 +154,22 @@ const ideaReader = anthropic
       }
     }
   : undefined;
+// 店の検索語の案も、モデル名と使った量だけを記録する（品物の名前や案は出さない）。
+const storeKindsReader = anthropic
+  ? async (what: string) => {
+      try {
+        const result = await readStoreKinds(anthropic, what);
+        console.log(
+          `店の検索語：${result.model} 入力 ${result.usage.input_tokens}・出力 ${result.usage.output_tokens} tokens`,
+        );
+        return result;
+      } catch (error) {
+        const kind = error instanceof ReadingError ? error.reason : 'error';
+        console.log(`店の検索語：失敗（${kind}）。使った量は分からない`);
+        throw error;
+      }
+    }
+  : undefined;
 // 写真・PDF の書き起こしも、同じ鍵と同じ記録の仕方で（写真は残さない）。
 const transcriber = anthropic
   ? async (photo: Parameters<typeof transcribePhoto>[1]) => {
@@ -195,6 +212,7 @@ const app = createApp({
   ...(listener ? { listener } : {}),
   ...(ideaReader ? { ideaReader } : {}),
   ...(transcriber ? { transcriber } : {}),
+  ...(storeKindsReader ? { storeKindsReader } : {}),
   ...(maps ? { maps } : {}),
   ...(maps && mapsBrowserKey ? { mapsBrowserKey } : {}),
 });

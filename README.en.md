@@ -12,7 +12,7 @@ Putting an event in a calendar does not settle by when each decision must be mad
 
 - **Read notices:** Claude reads text you paste or dictate, or a photo or PDF of a handout, and turns events, belongings, submissions and changes into items linked to the original text.
 - **Show decision deadlines:** From the notice's deadlines, rules the family has registered (after-school care forms, leave requests, how far ahead to ask a grandparent) and the usual week, Maniau shows by when each option must be chosen and the next task.
-- **Place errands on a real map:** Errands on the way home use Google Maps walking times from the station to the store (each way) and the store's opening hours, and “Show on map” shows the walking route. Usual hours are an estimate; special closures on the day are not checked (only on a server with map keys).
+- **Place errands on a real map:** Errands on the way home use Google Maps walking times from the station to the store (each way) and the store's opening hours, and “Show on map” shows the walking route. For items with no known store, you can search for stores near your home station and pick one (Claude suggests search words as a guess; they are sent to Google only when you tap Search after checking them (and editing them if needed), and you see what changes before saving the store). Usual hours are an estimate; special closures on the day are not checked (only on a server with map keys).
 - **Choose:** Maniau lists the options you can still choose with how long each one remains available, and shows a suggestion with its reason and what would happen if you chose each option, computed with the same calculation without recording anything.
 - **Take it on and follow up:** Maniau proposes each task to one adult and records whether they take it on. Requests to grandparents or after-school care keep "awaiting a reply" separate from "confirmed". “What if they say no?” shows ahead of time what would happen if the answer is no.
 - **Adapt to changes:** When a postponement arrives, Maniau removes preparations that are no longer needed and drafts cancellation messages for people who were already asked.
@@ -65,7 +65,7 @@ When the server has `ANTHROPIC_API_KEY` set (as an environment variable or in `.
 
 ### Use maps
 
-When the server has `GOOGLE_MAPS_API_KEY` set (a server-only key allowed only for Places API (New) and Routes API), demo errands are placed with Google Maps walking times and store hours. If `GOOGLE_MAPS_BROWSER_KEY` is also set (a key allowed only for the Maps JavaScript API and restricted to the site's URL), the app shows the map. What is sent to Google and what is not kept is in [Terms and privacy](https://maniauserver-production.up.railway.app/terms.html#en).
+When the server has `GOOGLE_MAPS_API_KEY` set (a server-only key allowed only for Places API (New) and Routes API), demo errands are placed with Google Maps walking times and store hours. If `GOOGLE_MAPS_BROWSER_KEY` is also set (a key allowed only for the Maps JavaScript API and restricted to the site's URL), the app shows the map. With `ANTHROPIC_API_KEY` as well, you can ask Claude for search words for a store (only the item name is sent). What is sent to Google and what is not kept is in [Terms and privacy](https://maniauserver-production.up.railway.app/terms.html#en).
 
 ## Scope and limitations
 

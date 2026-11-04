@@ -1,10 +1,14 @@
 // 地図の口（Google の Places・Routes）の読み方と、デモの計画への繋ぎ（02-foundation §2.3）。
 // 応答は手で作った架空の物で、Google の本物の応答は使わない。鍵も架空。
+import type { Household, PlaceAttribution } from '@maniau/core';
 import { describe, expect, it } from 'vitest';
+import { createApp } from '../src/app';
 import { loadDemoData } from '../src/demo';
-import { demoSessions } from '../src/demo-sessions';
-import { googleMaps, type MapsClient, MapsError } from '../src/maps/google';
+import { demoSessions, MAX_STORE_SEARCHES_PER_SESSION } from '../src/demo-sessions';
+import { type FoundPlace, googleMaps, type MapsClient, MapsError } from '../src/maps/google';
 import { currentOf, mapInputsFor, regularOf } from '../src/maps/inputs';
+import { searchStores } from '../src/maps/search';
+import { cleanQueries, readStoreKinds } from '../src/reading/store-kinds';
 
 const JST = 'Asia/Tokyo';
 /** 2026-11-04 21:10 JST の分。 */
@@ -68,26 +72,37 @@ describe('照会の日から数日の営業時間（currentOf）', () => {
   });
 });
 
-/** 架空の地図の口：駅 → 店と店 → 駅の秒、店の営業時間。 */
+/** デモの豊洲駅の place ID（本物。地図の口は架空）。 */
+const STATION = 'ChIJMR82CaOJGGARi2sprG-ld6k';
+
+/** 架空の地図の口：駅 → 店と店 → 駅の秒、店の営業時間、検索の結果（店ごとの駅からの秒は walks）。 */
 function fakeMaps(
   over: Partial<{
     there: number;
     back: number | undefined;
     failHours: boolean;
     failWalk: boolean;
+    found: FoundPlace[];
+    walks: Record<string, number>;
+    /** place ID ごとの、詳細と一緒に返す提供者。 */
+    attributions: Record<string, PlaceAttribution[]>;
   }> = {},
-): MapsClient & { calls: string[] } {
+): MapsClient & { calls: string[]; queries: string[] } {
   const calls: string[] = [];
+  const queries: string[] = [];
   const there = over.there ?? 510;
   const back = 'back' in over ? over.back : 630;
   return {
     calls,
+    queries,
     async place(placeId, want) {
       calls.push(`place:${want.hours ? 'hours' : 'summary'}`);
       if (want.hours && over.failHours) throw new MapsError('http');
+      const attributions = over.attributions?.[placeId];
       return {
         id: placeId,
         name: `架空の場所 ${placeId.slice(-4)}`,
+        ...(attributions ? { attributions } : {}),
         location: { latitude: 35.65, longitude: 139.79 },
         timeZone: JST,
         regular: [0, 1, 2, 3, 4, 5, 6].map((day) => ({
@@ -102,8 +117,8 @@ function fakeMaps(
       const result = new Map<string, number>();
       for (const o of origins) {
         for (const d of destinations) {
-          const toStore = o.startsWith('ChIJMR82');
-          const seconds = toStore ? there : back;
+          const toStore = o === STATION;
+          const seconds = toStore ? (over.walks?.[d] ?? there) : (over.walks?.[o] ?? back);
           if (seconds !== undefined) result.set(`${o}>${d}`, seconds);
         }
       }
@@ -113,11 +128,21 @@ function fakeMaps(
       calls.push('route');
       return { durationSec: 414, distanceM: 486, polyline: 'abc', warnings: [] };
     },
-    async searchText() {
-      return [];
+    async searchText(query) {
+      calls.push('search');
+      queries.push(query);
+      return over.found ?? [];
     },
   };
 }
+
+/** 架空の店（Google の place ID の形だけ似せた物）。 */
+const shop = (id: string, name: string): FoundPlace => ({
+  id,
+  name,
+  address: `架空の住所 ${name}`,
+  location: { latitude: 35.65, longitude: 139.79 },
+});
 
 describe('計算一回の地図の根拠（mapInputsFor）', () => {
   const { household } = loadDemoData();
@@ -220,5 +245,263 @@ describe('デモの計画と地図', () => {
     });
     expect(await sessions.walk(id, 'home')).toBeUndefined();
     expect(await sessions.walk('no-such-session', 'store-clothing-toyosu')).toBeNull();
+  });
+});
+
+describe('駅の近くの店を探す（searchStores）', () => {
+  const { household } = loadDemoData();
+  const clothing = household.places.find((p) => p.id === 'store-clothing-toyosu')?.googlePlaceId;
+
+  it('言葉をそのまま送り、駅から歩いて 15 分までの店を近い順に返す（駅そのものと道の無い店は出さない）', async () => {
+    const maps = fakeMaps({
+      found: [
+        shop('g-far', '遠い店'),
+        shop('g-near', '近い店'),
+        shop(STATION, '豊洲駅'),
+        shop('g-edge', 'ちょうど15分の店'),
+        shop('g-over', '15分を超える店'),
+        shop('g-noroute', '道の無い店'),
+        shop(clothing ?? '', '登録した店'),
+      ],
+      walks: { 'g-far': 600, 'g-near': 120, 'g-edge': 900, 'g-over': 901, [clothing ?? '']: 420 },
+    });
+    // 道の無い店は、行列に秒を返さない。
+    const matrix = maps.walkMatrix;
+    maps.walkMatrix = async (o, d) => {
+      const result = await matrix(o, d);
+      result.delete(`${STATION}>g-noroute`);
+      return result;
+    };
+    const stores = await searchStores(household, maps, ' 文房具店 ', 'st-toyosu');
+    expect(maps.queries).toEqual([' 文房具店 ']);
+    expect(stores?.map((s) => [s.name, s.walkMin, s.known ?? false])).toEqual([
+      ['近い店', 2, false],
+      ['登録した店', 7, true],
+      ['遠い店', 10, false],
+      ['ちょうど15分の店', 15, false],
+    ]);
+  });
+
+  it('駅が地図に結び付かなければ、探さない（undefined）', async () => {
+    const maps = fakeMaps({ found: [shop('g-near', '近い店')] });
+    expect(await searchStores(household, maps, '文房具店', 'st-yurakucho')).toBeUndefined();
+    expect(maps.queries).toEqual([]);
+  });
+});
+
+describe('店を探す言葉の案（Claude）', () => {
+  it('空・長すぎる・重なりを落とし、3 つまでにする', () => {
+    expect(
+      cleanQueries([
+        ' 文房具店 ',
+        '',
+        '文房具店',
+        'あ'.repeat(21),
+        '100円ショップ',
+        '画材店',
+        '楽器店',
+      ]),
+    ).toEqual(['文房具店', '100円ショップ', '画材店']);
+  });
+
+  it('送るのは品物の名前だけで、モデルの案をそろえて返す', async () => {
+    const sent: unknown[] = [];
+    const client = {
+      messages: {
+        parse: async (request: unknown) => {
+          sent.push(request);
+          return {
+            stop_reason: 'end_turn',
+            model: 'fake-model',
+            parsed_output: { queries: ['画材店', '画材店', '文房具店'] },
+            usage: { input_tokens: 10, output_tokens: 5 },
+          };
+        },
+      },
+    } as unknown as Parameters<typeof readStoreKinds>[0];
+    const result = await readStoreKinds(client, '絵の具セット');
+    expect(result.queries).toEqual(['画材店', '文房具店']);
+    expect(JSON.stringify((sent[0] as { messages: unknown }).messages)).toBe(
+      JSON.stringify([{ role: 'user', content: '{"item":"絵の具セット"}' }]),
+    );
+  });
+});
+
+describe('デモで店を探して選ぶ', () => {
+  const found = [shop('g-new', '新しい店')];
+
+  it('探せる数はデモごとに限る', async () => {
+    const sessions = demoSessions(
+      Date.now,
+      {},
+      { maps: fakeMaps({ found }), mapsClock: () => NOW },
+    );
+    const id = sessions.create('asked');
+    for (let i = 0; i < MAX_STORE_SEARCHES_PER_SESSION; i += 1) {
+      expect(await sessions.searchStores(id, '子供服', 'st-toyosu')).toMatchObject({
+        status: 'ok',
+      });
+    }
+    expect(await sessions.searchStores(id, '子供服', 'st-toyosu')).toEqual({ status: 'limit' });
+    expect(await sessions.searchStores('no-such-session', '子供服', 'st-toyosu')).toBeNull();
+    // 地図の口が無いデモは、探さない（undefined）。
+    const plain = demoSessions();
+    expect(await plain.searchStores(plain.create('asked'), 'x', 'st-toyosu')).toBeUndefined();
+  });
+
+  it('選んだ新しい店は、見る時にも地図の根拠を引き、見た通りに保存される', async () => {
+    const maps = fakeMaps({ found, walks: { 'g-new': 180 } });
+    const sessions = demoSessions(Date.now, {}, { maps, mapsClock: () => NOW });
+    const id = sessions.create('asked');
+    const before = await sessions.view(id, 'a');
+    const household = structuredClone(before?.household) as Household;
+    household.places.push({
+      id: 'store-new',
+      kind: 'store',
+      name: '子供服',
+      nearStationId: 'st-toyosu',
+      googlePlaceId: 'g-new',
+      goods: ['白い長袖シャツ'],
+    });
+    const preview = await sessions.householdPreview(id, 'a', household);
+    if (!preview || 'reason' in preview) throw new Error('見られない');
+    expect(preview.changes.relocated).toEqual([
+      expect.objectContaining({ before: 'store-clothing-toyosu', after: 'store-new' }),
+    ]);
+    const saved = await sessions.command(id, 'a', 'op-store', {
+      type: 'updateHousehold',
+      household,
+      seen: { throughSeq: preview.throughSeq, changes: preview.seen },
+    });
+    expect(saved?.result.status).toBe('ok');
+    expect(saved?.view.plan.tasks.find((t) => t.titleKey === 'task.buy')).toMatchObject({
+      atPlaceId: 'store-new',
+      travelSource: 'maps',
+      travelBeforeMin: 3,
+    });
+  });
+});
+
+describe('店を探す口（API）', () => {
+  const post = (app: ReturnType<typeof createApp>, path: string, body: unknown) =>
+    app.request(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  const sessionOf = async (app: ReturnType<typeof createApp>) =>
+    (await (await post(app, '/api/demo/sessions', { stage: 'asked' })).json()) as {
+      sessionId: string;
+      canSearchStores?: boolean;
+      canSuggestStores?: boolean;
+    };
+
+  it('地図の口が無ければ、探す口も案の口も開けない', async () => {
+    const app = createApp({ storeKindsReader: async () => ({}) as never });
+    const session = await sessionOf(app);
+    expect(session.canSearchStores).toBeUndefined();
+    expect(session.canSuggestStores).toBeUndefined();
+    const base = `/api/demo/sessions/${session.sessionId}/maps`;
+    expect((await post(app, `${base}/stores`, { query: 'x', stationId: 'st-toyosu' })).status).toBe(
+      503,
+    );
+    expect((await post(app, `${base}/store-kinds`, { what: 'ハンカチ' })).status).toBe(503);
+  });
+
+  it('案は押した時だけ聞き、探すのは送った言葉で（控えに残さない）', async () => {
+    const maps = fakeMaps({ found: [shop('g-new', '新しい店')], walks: { 'g-new': 180 } });
+    const asked: string[] = [];
+    const app = createApp({
+      maps,
+      storeKindsReader: async (what) => {
+        asked.push(what);
+        return {
+          queries: ['文房具店'],
+          model: 'fake',
+          promptVersion: 'fake',
+          inputHash: 'fake',
+          usage: { input_tokens: 0, output_tokens: 0 },
+        };
+      },
+    });
+    const session = await sessionOf(app);
+    expect(session).toMatchObject({ canSearchStores: true, canSuggestStores: true });
+    expect(asked).toEqual([]);
+    expect(maps.queries).toEqual([]);
+    const base = `/api/demo/sessions/${session.sessionId}/maps`;
+    const kinds = await post(app, `${base}/store-kinds`, { what: 'ハンカチ' });
+    expect(await kinds.json()).toEqual({ queries: ['文房具店'] });
+    expect(maps.queries).toEqual([]);
+    const stores = await post(app, `${base}/stores`, { query: '雑貨店', stationId: 'st-toyosu' });
+    expect(stores.status).toBe(200);
+    expect(stores.headers.get('cache-control')).toContain('no-store');
+    expect(((await stores.json()) as { stores: unknown[] }).stores).toHaveLength(1);
+    expect(maps.queries).toEqual(['雑貨店']);
+    expect((await post(app, `${base}/stores`, { query: '', stationId: 'st-toyosu' })).status).toBe(
+      400,
+    );
+    expect(
+      (await post(app, `${base}/stores`, { query: 'あ'.repeat(41), stationId: 'st-toyosu' }))
+        .status,
+    ).toBe(400);
+  });
+});
+
+describe('結果と一緒に見せる提供者（attributions）', () => {
+  const given = [
+    { provider: '架空の提供者', providerUri: 'https://example.com/a' },
+    { provider: '危ない提供者', providerUri: 'javascript:alert(1)' },
+    { provider: ' ' },
+  ];
+  const kept: PlaceAttribution[] = [
+    { provider: '架空の提供者', providerUri: 'https://example.com/a' },
+    { provider: '危ない提供者' },
+  ];
+
+  it('詳細と文の検索で提供者を頼み、名前の無い物を落とし、URL は http・https だけを残す', async () => {
+    const masks: string[] = [];
+    const fake = (async (_url: string, init?: RequestInit) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      const mask = headers['X-Goog-FieldMask'] ?? '';
+      masks.push(mask);
+      const place = { id: 'g-1', displayName: { text: '架空の店' }, attributions: given };
+      return new Response(JSON.stringify(mask.startsWith('places.') ? { places: [place] } : place));
+    }) as unknown as typeof fetch;
+    const client = googleMaps('fake-key', { fetch: fake });
+    expect((await client.place('g-1', { hours: true })).attributions).toEqual(kept);
+    const found = await client.searchText('文房具店', { latitude: 35.6, longitude: 139.7 }, 800, 8);
+    expect(found[0]?.attributions).toEqual(kept);
+    expect(masks[0]?.split(',')).toContain('attributions');
+    expect(masks[1]?.split(',')).toContain('places.attributions');
+  });
+
+  it('提供者は、その店・その駅の結果にだけ付ける（返らなければ付けない）', async () => {
+    const { household } = loadDemoData();
+    const clothing =
+      household.places.find((p) => p.id === 'store-clothing-toyosu')?.googlePlaceId ?? '';
+    const maps = fakeMaps({
+      attributions: { [clothing]: kept, [STATION]: [{ provider: '駅の提供者' }] },
+      found: [
+        { ...shop('g-a', '提供者のある店'), attributions: kept },
+        shop('g-b', '提供者の無い店'),
+      ],
+      walks: { 'g-a': 120, 'g-b': 180 },
+    });
+    const inputs = await mapInputsFor(household, maps, () => NOW);
+    expect(inputs?.stores.find((e) => e.storeId === 'store-clothing-toyosu')?.attributions).toEqual(
+      kept,
+    );
+    expect(
+      inputs?.stores.find((e) => e.storeId === 'store-super-toyosu')?.attributions,
+    ).toBeUndefined();
+    const stores = await searchStores(household, maps, '文房具店', 'st-toyosu');
+    expect(stores?.map((f) => [f.name, f.attributions])).toEqual([
+      ['提供者のある店', kept],
+      ['提供者の無い店', undefined],
+    ]);
+    const sessions = demoSessions(Date.now, {}, { maps, mapsClock: () => NOW });
+    const walk = await sessions.walk(sessions.create('asked'), 'store-clothing-toyosu');
+    expect(walk?.station.attributions).toEqual([{ provider: '駅の提供者' }]);
+    expect(walk?.store.attributions).toEqual(kept);
   });
 });

@@ -29,6 +29,17 @@ export const RegularHours = z.object({
 });
 export type RegularHours = z.infer<typeof RegularHours>;
 
+/** 結果と一緒に見せなければならない、データの提供者（Google の attributions。見せるだけ）。 */
+export const PlaceAttribution = z.object({
+  provider: z.string().min(1),
+  /** 提供者の URL（http・https の物だけ）。 */
+  providerUri: z
+    .string()
+    .regex(/^https?:\/\//i)
+    .optional(),
+});
+export type PlaceAttribution = z.infer<typeof PlaceAttribution>;
+
 /** 家庭の店一つの、地図の根拠。 */
 export const StoreMapEvidence = z.object({
   /** 家庭の店の Place の id。 */
@@ -40,6 +51,10 @@ export const StoreMapEvidence = z.object({
   /** 徒歩（分、切り上げ）。駅 → 店と、店 → 駅を別々に照会した。 */
   walkFromStationMin: z.number().int().nonnegative(),
   walkToStationMin: z.number().int().nonnegative(),
+  /** Google での店の名前（画面に出すだけ。出典を添える。計算には使わない）。 */
+  name: z.string().min(1).optional(),
+  /** 名前・営業時間と一緒に見せる、データの提供者（返った時だけ）。 */
+  attributions: z.array(PlaceAttribution).optional(),
   /** 営業時間。返らなかった方は無い（無いのは「分からない」で、閉まっているではない）。 */
   current: CurrentHours.optional(),
   regular: RegularHours.optional(),

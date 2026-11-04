@@ -123,7 +123,16 @@ export function costScore(cost: Cost, weights = DEFAULT_COST_WEIGHTS): number {
   );
 }
 
-/** 品物の名前から、店で扱う品物の種類へ。v0 は小さな対応表。後で Claude の推定（店の種類）に替える。 */
+/**
+ * 品物を買う店を見分ける種類。家族がこの品物のために選んだ店（扱う物に品物の名前そのものがある店）があれば、
+ * その名前を使い、その店だけで買う（ほかの店より先）。無ければ、小さな対応表の種類（服・食材）。
+ */
+export function purchaseGoods(household: Household, what: string): string | undefined {
+  const chosen = household.places.some((p) => p.kind === 'store' && p.goods.includes(what));
+  return chosen ? what : goodsFor(what);
+}
+
+/** 品物の名前から、店で扱う品物の種類へ。小さな対応表（服・食材）。ほかは家族が地図で店を選ぶ。 */
 export function goodsFor(what: string): string | undefined {
   if (/シャツ|ズボン|服|靴下|帽子|上履き/.test(what)) return 'kidsClothing';
   if (/弁当|食材/.test(what)) return 'groceries';
@@ -2256,7 +2265,7 @@ function purchase(
   // 持って行く時（by）を過ぎたら、もう買う手配も問いも出さない（要件は記録に残す）。
   if (atHome === 'yes' || by === undefined || by <= ctx.now) return;
 
-  const goods = goodsFor(what);
+  const goods = purchaseGoods(ctx.household, what);
   const reasons: Reason[] = [];
   let status: PlanStatus = atHome === undefined ? 'askFirst' : 'decidable';
   const option: OptionPlan = {

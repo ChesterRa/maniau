@@ -122,10 +122,18 @@ function segmentText(ctx: Ctx, segment: RoutineSegment): string {
   return where ? `${range} ${kind}（${where}）` : `${range} ${kind}`;
 }
 
-/** 「この変更で変わること」の行（何も変わらなければ一行）。 */
-export function householdPreviewLines(ctx: Ctx, preview: HouseholdPreview): string[] {
+/**
+ * 「この変更で変わること」の行（何も変わらなければ一行）。after は直した後の家の情報（新しく足す場所の名前を、
+ * 保存する前にも書けるように。無ければ今の家の情報）。
+ */
+export function householdPreviewLines(
+  ctx: Ctx,
+  preview: HouseholdPreview,
+  after?: Household,
+): string[] {
   const { changes } = preview;
   const lines: string[] = [];
+  const placeName = (id: string) => (after ? nameOf(after, id) : '') || nameOf(ctx.household, id);
   const titleOf = (key: string) => {
     const task = ctx.plan.tasks.find((t) => t.key === key);
     return task ? taskTitle(ctx, task) : key;
@@ -241,8 +249,8 @@ export function householdPreviewLines(ctx: Ctx, preview: HouseholdPreview): stri
     lines.push(
       ctx.t('household.preview.relocated', {
         what: titleOf(r.taskKey),
-        before: r.before ? nameOf(ctx.household, r.before) : ctx.t('household.preview.noPlace'),
-        after: r.after ? nameOf(ctx.household, r.after) : ctx.t('household.preview.noPlace'),
+        before: r.before ? placeName(r.before) : ctx.t('household.preview.noPlace'),
+        after: r.after ? placeName(r.after) : ctx.t('household.preview.noPlace'),
       }),
     );
   }

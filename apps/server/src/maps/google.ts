@@ -2,6 +2,8 @@
 // （GOOGLE_MAPS_API_KEY。ブラウザには出さない）。応答はその要求の計算と表示に使うだけで、事象・DB・ログ・
 // Claude の入力に入れない（Google の条件。保存してよいのは place ID だけ）。中身はログに書かない。
 
+import type { PlaceAttribution } from '@maniau/core';
+
 const PLACES = 'https://places.googleapis.com/v1';
 const ROUTES = 'https://routes.googleapis.com';
 const TIMEOUT_MS = 6000;
@@ -31,6 +33,8 @@ export interface GooglePeriod {
 export interface PlaceDetails {
   id: string;
   name?: string;
+  /** 名前・営業時間と一緒に見せなければならない、データの提供者。 */
+  attributions?: PlaceAttribution[];
   location?: LatLng;
   googleMapsUri?: string;
   /** IANA の時区（例：Asia/Tokyo）。 */
@@ -51,6 +55,8 @@ export interface WalkRoute {
 export interface FoundPlace {
   id: string;
   name: string;
+  /** 名前・住所と一緒に見せなければならない、データの提供者。 */
+  attributions?: PlaceAttribution[];
   address?: string;
   location?: LatLng;
 }
@@ -70,6 +76,22 @@ export class MapsError extends Error {
   constructor(readonly reason: 'http' | 'timeout' | 'rateLimited' | 'invalid') {
     super(`maps: ${reason}`);
   }
+}
+
+/**
+ * Google の attributions（結果と一緒に見せなければならない、データの提供者）を、見せられる形にそろえる。
+ * 名前の無い物は落とし、URL は http・https の物だけを残す。無ければ undefined。
+ */
+export function attributionsOf(
+  raw: { provider?: string; providerUri?: string }[] | undefined,
+): PlaceAttribution[] | undefined {
+  const list = (raw ?? []).flatMap((a): PlaceAttribution[] => {
+    const provider = a.provider?.trim();
+    if (!provider) return [];
+    const uri = a.providerUri && /^https?:\/\//i.test(a.providerUri) ? a.providerUri : undefined;
+    return [{ provider, ...(uri ? { providerUri: uri } : {}) }];
+  });
+  return list.length > 0 ? list : undefined;
 }
 
 /** 一分ごとの数（サーバー全体）。 */
@@ -122,6 +144,8 @@ export function googleMaps(
     async place(placeId, want) {
       const fields = [
         'id',
+        // 名前・営業時間を見せる時は、一緒に見せなければならない提供者も引く。
+        ...(want.summary || want.hours ? ['attributions'] : []),
         ...(want.summary ? ['displayName', 'location', 'googleMapsUri'] : []),
         ...(want.hours
           ? ['timeZone', 'regularOpeningHours.periods', 'currentOpeningHours.periods']
@@ -133,6 +157,7 @@ export function googleMaps(
       )) as {
         id?: string;
         displayName?: { text?: string };
+        attributions?: { provider?: string; providerUri?: string }[];
         location?: LatLng;
         googleMapsUri?: string;
         timeZone?: { id?: string };
@@ -140,9 +165,11 @@ export function googleMaps(
         currentOpeningHours?: { periods?: GooglePeriod[] };
       };
       if (raw.id !== placeId) throw new MapsError('invalid');
+      const attributions = attributionsOf(raw.attributions);
       return {
         id: placeId,
         ...(raw.displayName?.text ? { name: raw.displayName.text } : {}),
+        ...(attributions ? { attributions } : {}),
         ...(raw.location ? { location: raw.location } : {}),
         ...(raw.googleMapsUri ? { googleMapsUri: raw.googleMapsUri } : {}),
         ...(raw.timeZone?.id ? { timeZone: raw.timeZone.id } : {}),
@@ -214,7 +241,7 @@ export function googleMaps(
     async searchText(query, center, radiusM, max) {
       const raw = (await call(
         `${PLACES}/places:searchText`,
-        'places.id,places.displayName,places.formattedAddress,places.location',
+        'places.id,places.displayName,places.formattedAddress,places.location,places.attributions',
         {
           textQuery: query,
           languageCode: 'ja',
@@ -228,20 +255,23 @@ export function googleMaps(
           displayName?: { text?: string };
           formattedAddress?: string;
           location?: LatLng;
+          attributions?: { provider?: string; providerUri?: string }[];
         }[];
       };
-      return (raw.places ?? []).flatMap((p) =>
-        p.id && p.displayName?.text
+      return (raw.places ?? []).flatMap((p) => {
+        const attributions = attributionsOf(p.attributions);
+        return p.id && p.displayName?.text
           ? [
               {
                 id: p.id,
                 name: p.displayName.text,
+                ...(attributions ? { attributions } : {}),
                 ...(p.formattedAddress ? { address: p.formattedAddress } : {}),
                 ...(p.location ? { location: p.location } : {}),
               },
             ]
-          : [],
-      );
+          : [];
+      });
     },
   };
 }

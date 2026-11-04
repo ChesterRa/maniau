@@ -10,6 +10,7 @@ import type {
   DateTime,
   Household,
   HouseholdPreview,
+  PlaceAttribution,
   PlanResult,
   PreviewCommand,
   RecordBlock,
@@ -86,7 +87,29 @@ interface Session {
   canPhoto?: boolean;
   /** 画面で地図を描く鍵（地図のあるデモのサーバーだけ。Maps JavaScript API だけを許した、公開してよい物）。 */
   mapsKey?: string;
+  /** 駅の近くの店を地図で探せるか（地図のあるデモのサーバーだけ）。探す言葉の案を Claude に聞けるか。 */
+  canSearchStores?: boolean;
+  canSuggestStores?: boolean;
 }
+
+/** 駅の近くで見つけた店（Google の名前・住所・位置は見せるだけ。家庭に残すのは place ID だけ）。 */
+export interface FoundStore {
+  placeId: string;
+  name: string;
+  /** 名前・住所と一緒に見せなければならない、データの提供者。 */
+  attributions?: PlaceAttribution[];
+  address?: string;
+  location?: { latitude: number; longitude: number };
+  /** 駅からの徒歩（分、切り上げ）。 */
+  walkMin: number;
+  /** 家庭にもう同じ店がある。 */
+  known?: true;
+}
+
+/** 店を探した結果。limit：このデモで探せる数を使い切った。 */
+export type StoreSearchResult =
+  | { status: 'ok'; stores: FoundStore[] }
+  | { status: 'limit' | 'failed' };
 
 /**
  * 店までの徒歩の道（デモの地図）。サーバーが Google から引いた名前・位置・道を、見せるだけで取っておかない。
@@ -94,10 +117,17 @@ interface Session {
 export interface WalkView {
   /** Google に照会した実際の時刻。 */
   checkedAt: string;
-  station: { id: string; name?: string; location: { latitude: number; longitude: number } };
+  /** attributions：名前と一緒に見せなければならない、データの提供者（駅と店で別々）。 */
+  station: {
+    id: string;
+    name?: string;
+    location: { latitude: number; longitude: number };
+    attributions?: PlaceAttribution[];
+  };
   store: {
     id: string;
     name?: string;
+    attributions?: PlaceAttribution[];
     location: { latitude: number; longitude: number };
     googleMapsUri?: string;
   };
@@ -828,6 +858,50 @@ export function useServerView(where: Where | undefined) {
     [kind, sessionId],
   );
 
+  /** 品物から、店を探す言葉の案（Claude の推定。何も書かない）。読めなければ無し。 */
+  const storeKinds = useCallback(
+    async (what: string): Promise<string[] | undefined> => {
+      if (kind !== 'demo' || !sessionId) return undefined;
+      try {
+        const response = await fetch(`/api/demo/sessions/${sessionId}/maps/store-kinds`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ what }),
+          signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+        });
+        if (!response.ok) return undefined;
+        return ((await response.json()) as { queries: string[] }).queries;
+      } catch {
+        return undefined;
+      }
+    },
+    [kind, sessionId],
+  );
+
+  /** 家庭の駅の近くで、家族が押した言葉の店を探す（言葉はそのまま Google に送る）。 */
+  const searchStores = useCallback(
+    async (query: string, stationId: string): Promise<StoreSearchResult> => {
+      if (kind !== 'demo' || !sessionId) return { status: 'failed' };
+      try {
+        const response = await fetch(`/api/demo/sessions/${sessionId}/maps/stores`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ query, stationId }),
+          signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+        });
+        if (response.status === 429) return { status: 'limit' };
+        if (!response.ok) return { status: 'failed' };
+        return {
+          status: 'ok',
+          stores: ((await response.json()) as { stores: FoundStore[] }).stores,
+        };
+      } catch {
+        return { status: 'failed' };
+      }
+    },
+    [kind, sessionId],
+  );
+
   /**
    * 変えた後に計画の何が変わるかを読む（サーバーが書き込まずに、書く時と同じ命令を展開した結果。何も書かない）。
    * 書けない変更は、その理由を返す。読めなければ無し。家の情報の直し（household-preview）と、「すること」の言明・
@@ -899,6 +973,8 @@ export function useServerView(where: Where | undefined) {
     previewHousehold,
     previewChange,
     walk,
+    storeKinds,
+    searchStores,
     /** 届いたか分からない操作を、同じ家庭・同じ大人・同じ ID・同じ代で送り直す。 */
     retry: async (): Promise<void> => {
       const operation = pending.current;
