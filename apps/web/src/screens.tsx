@@ -2255,14 +2255,35 @@ export function BackupCard(props: {
   const other = otherAdult(ctx.household, ctx.me.id);
   // 予備として押さえ、作業を担当に提案する。この札は作業ごとの時刻・場所を見せていないので、
   // 引き受けは、担当の人が中身を見せる提案の札で、作業ごとに行う（自分でやる時も同じ）。
-  const choose = (assignee: string) =>
+  const choose = (assignee?: string) =>
     void ctx.send({
       type: 'chooseOption',
       arrangementKey: arrangement.key,
       optionKey: option.key,
       role: 'backup',
-      assigneeId: assignee,
+      ...(assignee !== undefined ? { assigneeId: assignee } : {}),
     });
+  // サーバーと同じ決まりで、手順ごとの本当の担当を見る：本人しかできない手順はその人に、ほかの手順は押した時に
+  // 選んだ大人に頼む（当日の準備 extra は、ここでは頼まない）。押し口の人と、実際に頼む人を食い違わせない。
+  const steps = option.taskKeys
+    .map((key) => ctx.plan.tasks.find((t) => t.key === key))
+    .filter((t): t is Task => t !== undefined && !t.extra)
+    .map((task) => ({ task, fixed: fixedAssignee(ctx.household, task) }));
+  const free = steps.some((s) => s.fixed === undefined);
+  const fixedPeople = [...new Set(steps.flatMap((s) => (s.fixed === undefined ? [] : [s.fixed])))];
+  const only = !free && fixedPeople.length === 1 ? fixedPeople[0] : undefined;
+  const fixedLines = steps.flatMap(({ task, fixed }) =>
+    fixed === undefined
+      ? []
+      : [
+          fixed === ctx.me.id
+            ? ctx.t('card.backup.fixedSelf', { what: taskTitle(ctx, task) })
+            : ctx.t('card.backup.fixedOther', {
+                what: taskTitle(ctx, task),
+                name: nameOf(ctx.household, fixed),
+              }),
+        ],
+  );
   return (
     <Card tone="accent">
       <Label tone="warn">{ctx.t('card.backup.label')}</Label>
@@ -2272,14 +2293,36 @@ export function BackupCard(props: {
           {ctx.t('card.backup.body', { deadline: dayTime(ctx, option.decisionDeadline) })}
         </Text>
       )}
-      {other && (
-        <Button onClick={() => choose(other.id)}>
-          {ctx.t('card.backup.ask', { name: other.name })}
+      {free ? (
+        <>
+          {other && (
+            <Button onClick={() => choose(other.id)}>
+              {ctx.t('card.backup.ask', { name: other.name })}
+            </Button>
+          )}
+          <Button kind="secondary" onClick={() => choose(ctx.me.id)}>
+            {ctx.t('card.backup.self')}
+          </Button>
+        </>
+      ) : only !== undefined ? (
+        // 全部の手順が一人にしかできない：その人の名前の押し口だけ（自分なら「自分でやる」）。
+        <Button onClick={() => choose(only)}>
+          {only === ctx.me.id
+            ? ctx.t('card.backup.self')
+            : ctx.t('card.backup.ask', { name: nameOf(ctx.household, only) })}
+        </Button>
+      ) : (
+        // 手順が無い、または本人しかできない手順が何人かに分かれる：だれに頼むかは選ばせず、押さえるだけ。
+        <Button onClick={() => choose(fixedPeople.length > 0 ? ctx.me.id : undefined)}>
+          {ctx.t('card.backup.hold')}
         </Button>
       )}
-      <Button kind="secondary" onClick={() => choose(ctx.me.id)}>
-        {ctx.t('card.backup.self')}
-      </Button>
+      {(free || only === undefined) &&
+        fixedLines.map((line) => (
+          <Text key={line} quiet>
+            {line}
+          </Text>
+        ))}
       <Text quiet>{ctx.t('card.backup.note')}</Text>
       {/* 返事を待つ間も、全部の手と「選んだら」を見て、選び直せる（選ぶのは向きで、後から替えられる）。 */}
       <MoreLink onClick={() => ctx.go(decideRoute(arrangement))}>
@@ -2868,11 +2911,18 @@ function OptionRow({
     option.titleKey === 'option.askHelper' && !option.expired
       ? replyBy(ctx, arrangement, option.key)
       : undefined;
+  // 押すと、その場でこの手を選ぶ（見るだけの画面へは行かない）。押せる時は、そう書く。
+  const choosableNow = !(
+    option.expired ||
+    current ||
+    waiting !== undefined ||
+    (stopped && !backup)
+  );
   return (
     <button
       type="button"
       onClick={onChoose}
-      disabled={option.expired || current || waiting !== undefined || (stopped && !backup)}
+      disabled={!choosableNow}
       className={`flex w-full items-center gap-2.5 rounded-[18px] border bg-white px-4 py-3.5 text-left disabled:opacity-55 ${recommended ? 'border-accent-line' : 'border-line'}`}
     >
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -2954,6 +3004,9 @@ function OptionRow({
           <span className="mt-1 rounded-xl bg-paper px-3 py-2 text-sm text-sub">
             {ctx.t(`decide.waiting.${waiting}`)}
           </span>
+        )}
+        {choosableNow && (
+          <span className="mt-1 text-[15px] font-bold text-accent">{ctx.t('decide.go')}</span>
         )}
       </span>
       <span className="text-sub">

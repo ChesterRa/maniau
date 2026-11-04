@@ -132,6 +132,9 @@
       "ask": "Ask {{name}}",
       "self": "I'll do it",
       "note": "It shows up on their screen. They decide whether to take it.",
+      "hold": "Hold it as a backup",
+      "fixedSelf": "“{{what}}” can only be done by you, so it will be yours.",
+      "fixedOther": "“{{what}}” can only be done by {{name}}, so it goes to {{name}}.",
       "all": "See all options or switch"
     },
     "cancel": {
@@ -365,6 +368,7 @@
       "releasedCheck": "“{{what}}”, which {{name}} took on, will drop out of the plan (they will be asked to check whether it is still needed)",
       "releasedCheckYou": "“{{what}}”, which you took on, will drop out of the plan (please check whether it is still needed)"
     },
+    "go": "Choose this option",
     "reversible": "You can change this later. If you do, Maniau shows what needs cancelling or asking again as tasks (your family does the contacting).",
     "conflicted": "We couldn't find times for the tasks of {{options}} that don't overlap another task the same person is doing, so they have no time yet. Review the options, who does them, or the times.",
     "replyBy": "If you hear back by the evening of {{night}}, you can still switch to “{{fallback}}” if they say no",
