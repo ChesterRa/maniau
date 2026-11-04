@@ -885,7 +885,10 @@ function ChangeCard({ ctx, change }: { ctx: Ctx; change: ChangeSummary }) {
             who: who(u.assigneeId),
           })}
         </span>
-        <span className={u.done ? 'text-sub' : 'font-bold text-warn'}>
+        {/* 状態（済み・まだ）は、相手の名前が長くても縮めず、一行に保つ（狭い画面で一字ずつ折れないように）。 */}
+        <span
+          className={`shrink-0 whitespace-nowrap ${u.done ? 'text-sub' : 'font-bold text-warn'}`}
+        >
           {ctx.t(u.done ? 'card.change.done' : 'card.change.notYet')}
         </span>
       </li>
