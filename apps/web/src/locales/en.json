@@ -340,7 +340,7 @@
     "backup": "Backup",
     "because": {
       "onlyOption": "This is the only option known to still be in time",
-      "lowerCost": "Lightest overall when leave, asking others, cost and extra tasks are combined with rough weights",
+      "lowerCost": "The lightest load overall when time off, asking others, cost and extra tasks are added up with rough weights",
       "moreTime": "Of the options with the same estimated burden, it leaves the most time to decide"
     },
     "then": {

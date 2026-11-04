@@ -2890,8 +2890,15 @@ function OptionRow({
           <span
             className={`flex flex-wrap items-center gap-1.5 text-[15px] font-bold ${urgent ? 'text-warn' : ''}`}
           >
-            <Icon path={ICON.clock} size={18} />
-            {ctx.t('decide.by', { deadline: dayTime(ctx, option.decisionDeadline) })}
+            {/* 時計と時刻を一つにまとめる（長い言葉で折り返しても、時計だけが一行に残らない）。 */}
+            <span className="flex min-w-0 items-start gap-1.5">
+              <span className="mt-0.5 shrink-0">
+                <Icon path={ICON.clock} size={18} />
+              </span>
+              <span className="min-w-0">
+                {ctx.t('decide.by', { deadline: dayTime(ctx, option.decisionDeadline) })}
+              </span>
+            </span>
             {urgent && left !== undefined && (
               <span className="rounded-full bg-warn-soft px-2 text-[13px]">
                 {ctx.t('decide.daysLeft', { count: left })}
