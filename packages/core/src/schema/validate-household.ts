@@ -31,8 +31,12 @@ export function validateHousehold(household: Household): HouseholdIssue[] {
     ref(`places.${i}.nearStationId`, p.nearStationId, placeIds);
   }
 
-  for (const [i, day] of household.routines.entries()) {
-    const base = `routines.${i}`;
+  // ふだんの一日と、その日だけの一日の区間（同じ決まりで確かめる）。
+  const days = [
+    ...household.routines.map((day, i) => ({ day, base: `routines.${i}` })),
+    ...household.routineExceptions.map((day, i) => ({ day, base: `routineExceptions.${i}` })),
+  ];
+  for (const { day, base } of days) {
     ref(`${base}.memberId`, day.memberId, memberIds);
     let previous: RoutineSegment | undefined;
     for (const [j, s] of day.segments.entries()) {
@@ -57,6 +61,15 @@ export function validateHousehold(household: Household): HouseholdIssue[] {
     const key = `${day.memberId}:${day.weekday}`;
     if (seen.has(key)) issues.push({ path: `routines.${i}`, problem: 'duplicateId', detail: key });
     seen.add(key);
+  }
+  // その日だけの一日は、同じ人・同じ日に一つ。
+  const dated = new Set<string>();
+  for (const [i, day] of household.routineExceptions.entries()) {
+    const key = `${day.memberId}:${day.date}`;
+    if (dated.has(key)) {
+      issues.push({ path: `routineExceptions.${i}`, problem: 'duplicateId', detail: key });
+    }
+    dated.add(key);
   }
 
   for (const [i, o] of household.careOptions.entries()) {

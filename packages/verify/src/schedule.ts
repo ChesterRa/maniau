@@ -3,6 +3,7 @@ import { checkDetour } from './detour';
 import type { History } from './history';
 import { storeMapEvidence } from './map-evidence';
 import type { Collector } from './report';
+import { routinesOn } from './routine';
 import { executionScope, isRecommended } from './scope';
 import {
   coveredBy,
@@ -41,12 +42,9 @@ function allowedSegments(
   const intervals: Interval[] = [];
   const candidates: RoutineSegment[] = [];
   for (const day of days) {
-    const dayOfWeek = weekday(dateFromIndex(day));
-    const routines = household.routines.filter(
-      (routine) => routine.memberId === task.assigneeId && routine.weekday === dayOfWeek,
-    );
+    const routines = routinesOn(household, task.assigneeId, dateFromIndex(day));
     if (routines.length > 1) {
-      report.violation('duplicate_routine', task.key, '同じ人・曜日のふだんの週が重複している。');
+      report.violation('duplicate_routine', task.key, '同じ人・同じ日の一日の区間が重複している。');
     }
     for (const routine of routines) {
       for (const segment of routine.segments) {

@@ -25,11 +25,20 @@ export function activeAdultIds(household: Household): string[] {
   return household.members.filter((m) => m.kind === 'adult' && m.active).map((m) => m.id);
 }
 
+/**
+ * その人のその日の区間。その日だけの一日（routineExceptions）があればそれを、無ければふだんの曜日の一日を使う。
+ * 計算の区間は全部ここを通る（子の居場所・買い物・決め時・すること）。
+ */
 export function slotsOn(household: Household, memberId: string, date: LocalDate): Slot[] {
+  const exception = household.routineExceptions.find(
+    (e) => e.memberId === memberId && e.date === date,
+  );
   const weekday = weekdayOf(date);
-  const day = household.routines.find((r) => r.memberId === memberId && r.weekday === weekday);
-  if (!day) return [];
-  return day.segments.map((s) => toSlot(household, memberId, date, s));
+  const segments =
+    exception?.segments ??
+    household.routines.find((r) => r.memberId === memberId && r.weekday === weekday)?.segments;
+  if (!segments) return [];
+  return segments.map((s) => toSlot(household, memberId, date, s));
 }
 
 function toSlot(household: Household, memberId: string, date: LocalDate, s: RoutineSegment): Slot {

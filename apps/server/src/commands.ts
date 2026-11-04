@@ -1163,19 +1163,31 @@ function checkHouseholdEdit(
   }
   // 過ごし方と場所を食い違わせない：「家」は家の場所、外出・迎えは家以外（家で仕事をするのは受ける）。
   const homes = new Set(next.places.filter((p) => p.kind === 'home').map((p) => p.id));
-  for (const day of next.routines) {
-    if (!adults.has(day.memberId)) continue;
-    if (sameJson(dayOf(current, day.memberId, day.weekday)?.segments, day.segments)) continue;
-    if (day.segments.some((s, i) => i > 0 && s.start !== day.segments[i - 1]?.end)) {
-      return invalid('routineGap');
-    }
-    const mismatch = day.segments.some(
+  const badDay = (segments: Household['routines'][number]['segments']) => {
+    if (segments.some((s, i) => i > 0 && s.start !== segments[i - 1]?.end)) return 'routineGap';
+    const mismatch = segments.some(
       (s) =>
         s.placeId !== undefined &&
         ((s.kind === 'home' && !homes.has(s.placeId)) ||
           ((s.kind === 'away' || s.kind === 'pickup') && homes.has(s.placeId))),
     );
-    if (mismatch) return invalid('routinePlace');
+    return mismatch ? 'routinePlace' : undefined;
+  };
+  for (const day of next.routines) {
+    if (!adults.has(day.memberId)) continue;
+    if (sameJson(dayOf(current, day.memberId, day.weekday)?.segments, day.segments)) continue;
+    const bad = badDay(day.segments);
+    if (bad) return invalid(bad);
+  }
+  // その日だけの一日も、大人の物だけを、ふだんの一日と同じ決まりで受ける（直した・足した物を確かめる）。
+  for (const day of next.routineExceptions) {
+    const before = current.routineExceptions.find(
+      (e) => e.memberId === day.memberId && e.date === day.date,
+    );
+    if (sameJson(before?.segments, day.segments)) continue;
+    if (!adults.has(day.memberId)) return invalid('routineExceptionMember');
+    const bad = badDay(day.segments);
+    if (bad) return invalid(bad);
   }
   // 営業時間の調べた所と時刻はサーバーが持つ：時間（曜日ごとの区間・休みの日）を直していなければ、今の記録の
   // 物をそのまま使う（送られた調べた所・時刻は採らない）。直した・新しく入れた時間は、家族が確かめた物として

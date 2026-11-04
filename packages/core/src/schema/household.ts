@@ -114,6 +114,18 @@ export const RoutineDay = z.object({
 });
 export type RoutineDay = z.infer<typeof RoutineDay>;
 
+/**
+ * ある人のある日だけの一日（休む・その時間は外にいる・遅くなる等）。その日は、ふだんの曜日の一日の代わりに、
+ * この区間の全部を使う（差分でなく一日の写し。ふだんの週を後で直しても、この日は変わらない）。同じ人・同じ日は
+ * 一つ。外すと、その日はふだんに戻る。
+ */
+export const RoutineException = z.object({
+  memberId: Id,
+  date: LocalDate,
+  segments: z.array(RoutineSegment).min(1),
+});
+export type RoutineException = z.infer<typeof RoutineException>;
+
 /** 締切の決まり。手配が要る日から逆算する。 */
 export const DeadlineRule = z.discriminatedUnion('type', [
   /** 例：祖母は3日前の 21:00 まで。 */
@@ -243,6 +255,8 @@ export const Household = z.object({
   members: z.array(Member).min(1),
   places: z.array(Place),
   routines: z.array(RoutineDay),
+  /** その日だけの一日（ふだんの週より先に使う）。 */
+  routineExceptions: z.array(RoutineException).default([]),
   careOptions: z.array(CareOptionTemplate),
   /** 通用の「すること」のやり方（家族が確かめた物）。 */
   ways: z.array(Way).default([]),

@@ -3,8 +3,9 @@ import type { History } from './history';
 import { storeMapEvidence } from './map-evidence';
 import { proposalMatches } from './proposal';
 import type { Collector } from './report';
+import { routinesOn } from './routine';
 import { executionScope, isRecommended } from './scope';
-import { coveredBy, instantMinute, localMinute, overlaps, timeOfDay, weekday } from './time';
+import { coveredBy, instantMinute, localMinute, overlaps, timeOfDay } from './time';
 
 /** 同じ担当が直近の提案で見た時刻だけを、今の時刻の確認として扱う。 */
 function acceptedCurrentTime(task: Task, history: History): boolean {
@@ -38,14 +39,17 @@ function checkOtherAdult(
 ): void {
   const startLocal = localMinute(planned, household.timeZone);
   const endLocal = localMinute(delayed, household.timeZone);
-  const dayOfWeek = weekday(startLocal.date);
   let uncertain = false;
   for (const adult of household.members.filter(
     (member) => member.kind === 'adult' && member.active && member.id !== task.assigneeId,
   )) {
-    const routine = household.routines.find(
-      (entry) => entry.memberId === adult.id && entry.weekday === dayOfWeek,
-    );
+    const routines = routinesOn(household, adult.id, startLocal.date);
+    if (routines.length > 1) {
+      report.violation('duplicate_routine', task.key, '同じ人・同じ日の一日の区間が重複している。');
+      uncertain = true;
+      continue;
+    }
+    const routine = routines[0];
     if (!routine) {
       uncertain = true;
       continue;
@@ -151,12 +155,9 @@ export function checkDetour(
     report.undetermined('detour_crosses_day', task.key, '日をまたぐ帰宅の変更を確認できない。');
     return [];
   }
-  const dayOfWeek = weekday(plannedLocal.date);
-  const routines = household.routines.filter(
-    (entry) => entry.memberId === task.assigneeId && entry.weekday === dayOfWeek,
-  );
+  const routines = routinesOn(household, task.assigneeId, plannedLocal.date);
   if (routines.length > 1) {
-    report.violation('duplicate_routine', task.key, '同じ人・曜日のふだんの週が重複している。');
+    report.violation('duplicate_routine', task.key, '同じ人・同じ日の一日の区間が重複している。');
   }
   const routine = routines[0];
   const index =

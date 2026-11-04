@@ -10,6 +10,7 @@ import {
   type PlanResult,
   type Task,
 } from '@maniau/core';
+import { dayCoveredAtHome } from './child-care';
 import { checkEscort } from './escort';
 import { type FactState, historicalItem } from './facts';
 import { checkFamilyQuestions } from './family-question';
@@ -1028,7 +1029,10 @@ export function checkPlan(
     if (requirement.live && requirement.nature === 'required') {
       if (
         requirement.kind === 'childCare' &&
-        !plan.arrangements.some((entry) => entry.live && entry.requirementKey === requirement.key)
+        !plan.arrangements.some(
+          (entry) => entry.live && entry.requirementKey === requirement.key,
+        ) &&
+        !dayCoveredAtHome(household, plan, requirement.date)
       ) {
         report.undetermined(
           'required_arrangement_missing',
