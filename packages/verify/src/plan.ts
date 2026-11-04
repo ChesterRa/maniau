@@ -1318,10 +1318,36 @@ export function checkPlan(
         arrangement.kind === 'need'
           ? household.ways.find((entry) => entry.id === option.templateId)
           : undefined;
+      const stopped =
+        arrangement.kind === 'need' && household.stoppedWayIds?.includes(option.templateId);
+      if ((option.stopped === true) !== (stopped === true))
+        report.violation(
+          'stopped_way_flag_mismatch',
+          option.key,
+          '案の停止状態が、家族のやり方の記録と違う。',
+        );
       const careTemplate =
         arrangement.kind === 'need'
           ? undefined
           : household.careOptions.find((entry) => entry.id === option.templateId);
+      const registeredCost = way?.cost ?? careTemplate?.cost;
+      if (registeredCost) {
+        const fields = ['leaveMinutes', 'helperRequests', 'yen', 'extraTasks'] as const;
+        const expectedUnknown = new Set(registeredCost.unknown ?? []);
+        const shownUnknown = new Set(option.cost.unknown ?? []);
+        if (
+          fields.some(
+            (field) =>
+              registeredCost[field] !== option.cost[field] ||
+              expectedUnknown.has(field) !== shownUnknown.has(field),
+          )
+        )
+          report.violation(
+            'option_cost_mismatch',
+            option.key,
+            '案の代償または分からない欄が、家族の登録と違う。',
+          );
+      }
       checkNoSlot(household, option, way, careTemplate, report);
       if (!careTemplate && !way) {
         if (arrangement.kind === 'purchase') {
@@ -1458,6 +1484,59 @@ export function checkPlan(
         optionFailure(option, arrangement, plan, history, household.timeZone),
       ]),
     );
+    if (recommended && (arrangement.kind === 'need' || arrangement.kind === 'childCare')) {
+      const open = arrangement.options.filter(
+        (entry) =>
+          entry.decisionDeadline !== undefined && !entry.expired && !failures.get(entry.key),
+      );
+      const templates = open.map((entry) => ({
+        option: entry,
+        way:
+          arrangement.kind === 'need'
+            ? household.ways.find((way) => way.id === entry.templateId)
+            : undefined,
+        care:
+          arrangement.kind === 'childCare'
+            ? household.careOptions.find((care) => care.id === entry.templateId)
+            : undefined,
+      }));
+      if (templates.some(({ way }) => way && household.stoppedWayIds?.includes(way.id)))
+        report.violation(
+          'stopped_way_recommended',
+          arrangement.key,
+          'やめたやり方の開いた案があるのに、案を勧めている。',
+        );
+      if (
+        templates.some(({ way, care }) =>
+          (way?.steps ?? (care ? [...care.steps, ...care.extraSteps] : [])).some((step) => {
+            const place = household.places.find((entry) => entry.id === step.placeId);
+            return (
+              place !== undefined &&
+              place.kind !== 'home' &&
+              (!place.hours ||
+                place.hours.source === 'googlePlaces' ||
+                place.hours.periods.some((period) => period.open === period.close))
+            );
+          }),
+        )
+      )
+        report.violation(
+          'unverified_hours_recommended',
+          arrangement.key,
+          '行ける時間を確かめられない場所のある案が残るのに、案を勧めている。',
+        );
+      if (
+        open.length > 1 &&
+        templates.some(
+          ({ way, care }) => (way?.cost.unknown ?? care?.cost.unknown ?? []).length > 0,
+        )
+      )
+        report.violation(
+          'unknown_cost_recommended',
+          arrangement.key,
+          '代償の分からない案があり比較できないのに、案を勧めている。',
+        );
+    }
     for (const option of selected) {
       if (
         isPastDecision(option, plan) === true &&
@@ -1505,12 +1584,35 @@ export function checkPlan(
       isPastDecision(recommended, plan) === false
         ? recommended
         : undefined;
+    const inUseFailure = arrangement.inUseOptionKey
+      ? failures.get(arrangement.inUseOptionKey)
+      : undefined;
+    if (history.complete && inUseFailure?.code === 'turnedDown')
+      report.violation(
+        'failed_option_treated_as_valid',
+        arrangement.key,
+        '断られた本命・予備を使っている。',
+      );
+    else if (history.complete && inUseFailure?.code === 'missedDeadline')
+      report.undetermined(
+        'failed_option_treated_as_valid',
+        arrangement.key,
+        '進捗の記録がない案を使えるか分からない。',
+      );
+    // 推薦は、代償や行ける時間が分からず出せないことがある。推薦が無くても、開いた別の案があれば
+    // 「選び直せる」と言えるので、推薦の不在だけで違反にしない。
+    const openAlternative = arrangement.options.some(
+      (option) =>
+        option.decisionDeadline !== undefined && !option.expired && !failures.get(option.key),
+    );
     if (
       history.complete &&
       arrangement.status === 'decidable' &&
       selected.length > 0 &&
       !usable &&
-      !replacement
+      !replacement &&
+      !openAlternative &&
+      !inUseFailure
     ) {
       if (selected.some((option) => failures.get(option.key)?.code === 'missedDeadline'))
         report.undetermined(

@@ -219,6 +219,7 @@
     "need": {
       "ways": "Choose which ways to use. No tasks are made until you choose.",
       "waysChanged": "The details or the ways changed after you chose. Please choose the ways again.",
+      "waysStopped": "No option can be made the main plan right now (stopped ways can't be newly chosen). Choose another way or add one.",
       "choose": "Pick the way to go with.",
       "stuck": "With the chosen ways, we couldn't find a way to get this done in time. Choose other ways, or think of another way together.",
       "noSlot": "With the chosen ways, no time could be set in your usual schedule, so we can't check this can be done in time. Choose other ways too, or make one of these the main way and decide together when to do it.",
@@ -360,7 +361,14 @@
       "missing": "We couldn't work out what would happen for this option, so it can't be chosen now."
     },
     "previewFailed": "Couldn't load what would happen. Load it again before choosing.",
-    "previewRetry": "Load again"
+    "previewRetry": "Load again",
+    "noRecommendation": {
+      "stopped": "One of these ways has been stopped, so we don’t suggest one. Your family chooses.",
+      "hours": "One of these ways uses a place whose opening hours aren’t confirmed, so we don’t suggest one (we haven’t checked it can be done in time).",
+      "cost": "Some costs aren’t known, so we don’t suggest one (we don’t treat an unknown cost as zero)."
+    },
+    "stoppedWay": "This way has been stopped (it can’t be newly chosen).",
+    "noHours": "{{place}}: opening hours not confirmed. Please check that you can go then."
   },
   "ask": {
     "title": "Send this message",
@@ -465,10 +473,21 @@
     "body": "This item no longer exists. Please go back to Today."
   },
   "cost": {
-    "leave_one": "Paid leave: {{count}} day",
-    "leave_other": "Paid leave: {{count}} days",
+    "leaveHours_one": "Time off: {{count}} hour",
+    "leaveHours_other": "Time off: {{count}} hours",
+    "leaveMinutes_one": "Time off: {{count}} minute",
+    "leaveMinutes_other": "Time off: {{count}} minutes",
     "helper": "Asks someone for help",
-    "bento": "Needs a packed lunch"
+    "bento": "Needs a packed lunch",
+    "extraTasks_one": "Adds {{count}} task",
+    "extraTasks_other": "Adds {{count}} tasks",
+    "unknown": "Not known: {{fields}}",
+    "field": {
+      "leaveMinutes": "time off",
+      "helperRequests": "people to ask",
+      "yen": "cost",
+      "extraTasks": "extra tasks"
+    }
   },
   "list": {
     "separator": " · "
@@ -791,7 +810,8 @@
       "issues_one": "The check found {{count}} new problem.",
       "issues_other": "The check found {{count}} new problems.",
       "unverified_one": "{{count}} point couldn't be checked (part of the calculation is incomplete).",
-      "unverified_other": "{{count}} points couldn't be checked (part of the calculation is incomplete)."
+      "unverified_other": "{{count}} points couldn't be checked (part of the calculation is incomplete).",
+      "rechoose": "“{{what}}”: a way it uses changed, so its ways need to be chosen again."
     },
     "refused": {
       "householdInvalid": "This edit doesn't make valid family information (check the order and overlap of times).",
@@ -799,12 +819,14 @@
       "routineDayMissing": "An adult's usual day can't be removed here.",
       "routinePlace": "A block's kind and place don't match (“Home” must be at home; “Out” and “Pick-up” must be somewhere else).",
       "hoursOvernight": "Opening hours past midnight aren't supported yet (set the closing time after the opening time).",
-      "membersLocked": "Adding or removing people, or changing adult/child, isn't possible here.",
-      "placesLocked": "Removing a place or changing its type isn't possible here.",
+      "membersLocked": "Only helpers can be added here (adding or removing adults or children, or changing adult/child, isn’t possible).",
+      "placesLocked": "Removing a place, changing its type or adding a home isn’t possible here.",
       "careOptionsLocked": "The steps or the contact of a way can't be changed here.",
-      "waysLocked": "Ways of handling things can't be changed here.",
       "unavailable": "We couldn't calculate this right now. Please try again in a moment.",
-      "other": "This edit wasn't accepted."
+      "other": "This edit wasn't accepted.",
+      "wayRemoved": "Ways can’t be deleted (stop using the way instead).",
+      "wayInvalid": "Some of the way’s fields are missing or not valid (check the name, steps, times and costs).",
+      "wayRefUnknown": "Choose who does it, who to ask and where from the adults, helpers and places you registered."
     }
   },
   "need": {
@@ -824,7 +846,7 @@
     "look": "See what this changes",
     "ways": {
       "label": "Ways to use",
-      "none": "Your family has no ways registered yet (adding ways is not available yet).",
+      "none": "Your family has no ways yet. You can add one with “Add a way” below.",
       "note": "Choose from the ways your family registered. No tasks are made until you choose.",
       "changed": "The details or the ways changed after you chose, so please choose again.",
       "wait": {
@@ -837,7 +859,9 @@
       "noCover": "Nobody covers the time (only steps done beforehand)",
       "family": "someone in the family",
       "deadline": "Decide by: {{rule}}",
-      "save": "Save these ways"
+      "save": "Save these ways",
+      "stopped": "This way has been stopped. You can keep it in this choice (once removed, it can’t be chosen again).",
+      "add": "Add a way"
     },
     "add": {
       "title": "Add something to do",
@@ -872,7 +896,98 @@
       "needGone": "This item is gone or has changed.",
       "wayUnknown": "A chosen way is not in your family’s information.",
       "unavailable": "Could not work it out right now. Please try again shortly.",
-      "other": "This could not be saved as it is."
+      "other": "This could not be saved as it is.",
+      "wayInactive": "A stopped way can’t be newly chosen."
     }
+  },
+  "ways": {
+    "label": "Ways to get things done",
+    "used": "Your family chooses these for each thing to do. Before saving an addition, edit or stop, we show what the change would do.",
+    "none": "No ways yet.",
+    "add": "Add a way",
+    "edit": "Edit",
+    "stop": "Stop using",
+    "resume": "Use again",
+    "stopped": "Stopped ways (can’t be newly chosen)",
+    "inUse_one": "Chosen for {{count}} thing to do",
+    "inUse_other": "Chosen for {{count}} things to do",
+    "stopNote": "Once stopped, it can’t be newly chosen. Anything that already uses it keeps its choice, tasks and requests.",
+    "stopUsing": "Chosen for “{{what}}”. To take it off, choose that item’s ways again.",
+    "resumeNote": "It can be chosen again.",
+    "confirmStop": "Stop and save",
+    "confirmResume": "Use again and save",
+    "stepDeadline": "{{name}}: {{rule}}",
+    "noHours": "{{place}}: opening hours not confirmed",
+    "back": "Back"
+  },
+  "way": {
+    "title": {
+      "new": "Add a way",
+      "edit": "Edit a way"
+    },
+    "gone": "This way can’t be found.",
+    "backToNeed": "To do",
+    "intro": "Describe, in your own words, how your family gets this kind of thing done. Leave anything you don’t know as “Not known” (we won’t treat it as zero or as “no deadline”). Before saving, we show what the change would do.",
+    "name": "Name of the way",
+    "steps": "Steps (in order, up to 3)",
+    "step": "Step {{n}}",
+    "stepName": "What to do",
+    "who": "Who does it",
+    "anyone": "Any adult",
+    "to": "Ask someone outside the family?",
+    "toNone": "No (the family does it)",
+    "toNew": "Register someone new",
+    "newToName": "Name",
+    "newToKind": "Kind",
+    "newToKindHelper": "A person (helper)",
+    "newToKindPlace": "A facility or shop",
+    "newToLanguage": "Language for messages (choose one)",
+    "newToAddressAs": "How to address them (optional; used in messages, e.g. Mum)",
+    "wait": "Time to allow for a reply",
+    "choose": "Choose",
+    "waitNone": "Don’t allow extra time",
+    "waitHours_one": "{{count}} hour",
+    "waitHours_other": "{{count}} hours",
+    "waitDays_one": "{{count}} day",
+    "waitDays_other": "{{count}} days",
+    "waitKeep": "Keep as is ({{min}} min)",
+    "waitAfterKept": "Leaves {{min}} min before the next step (kept as is; not changed here)",
+    "waitDropped": "With no one to ask, the {{min}} min allowed for a reply is removed too",
+    "place": "Fixed place",
+    "placeNone": "No fixed place",
+    "placeNew": "Register a new place",
+    "newPlaceName": "Place name",
+    "newPlaceKind": "Kind of place",
+    "placeHoursNote": "If the place has no registered opening hours (or only hours from a map), we don’t check that you can go then, and we don’t suggest this way.",
+    "segments": "When it can be done (which part of the usual day)",
+    "minutes": "Minutes it takes",
+    "deadline": "By when",
+    "deadlineNone": "No rule (by the item’s own deadline or start)",
+    "deadlineDays": "By a time, some days before",
+    "deadlineBusinessDays": "By a time, some business days before",
+    "deadlineOnTheDay": "By a time on the day",
+    "deadlineKeep": "Keep as is ({{rule}})",
+    "days": "Days before",
+    "at": "Time",
+    "cover": "Whoever does this step (or the person asked) covers the time",
+    "coverNote": "Only used for things that need someone during a set time.",
+    "removeStep": "Remove this step",
+    "addStep": "Add a step",
+    "wayDeadline": "Deadline for the whole way",
+    "covers": "Hours it can cover (if known)",
+    "coversStart": "Start",
+    "coversEnd": "End",
+    "coversNote": "For example, care from 8:30 to 17:30. Leave empty if you don’t know (the other person’s “yes” confirms it).",
+    "cost": "Costs",
+    "costField": {
+      "leaveMinutes": "Time off (hours)",
+      "helperRequests": "People to ask",
+      "yen": "Cost (yen)",
+      "extraTasks": "Extra tasks"
+    },
+    "unknown": "Not known",
+    "costNote": "Leave unknown costs as “Not known”. When a way’s cost isn’t known, we don’t suggest one.",
+    "missing": "Some fields are still empty: name, what to do in each step, fixed place, by when, when it can be done, minutes, costs (and, when asking someone, who and the time to allow for a reply).",
+    "save": "Save this way"
   }
 }

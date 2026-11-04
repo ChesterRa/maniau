@@ -7,12 +7,11 @@ import {
   type NeedInterpretation,
   needStep,
   type PreviewCommand,
-  type Way,
   zonedToEpochMinutes,
 } from '@maniau/core';
 import { useState } from 'react';
 import { localDate } from './format';
-import { deadlineText, householdPreviewLines } from './household';
+import { householdPreviewLines } from './household';
 import {
   ConditionLine,
   type Ctx,
@@ -27,6 +26,7 @@ import {
   succeeded,
 } from './screens';
 import { Button, Card, Header, Label, Main, MoreLink, Row, Text } from './ui';
+import { wayLines } from './ways';
 
 const input =
   'min-h-11 rounded-xl border-[1.5px] border-btn-line bg-white px-2.5 text-base text-ink';
@@ -40,6 +40,7 @@ function refusedKey(reason: string): string {
     'needDeadlineMissing',
     'needGone',
     'wayUnknown',
+    'wayInactive',
     'unavailable',
   ].includes(reason)
     ? reason
@@ -291,12 +292,13 @@ export function NeedScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey: 
   const place = item?.interpretation.place;
   const forId = item?.interpretation.forMemberId;
   const source = item ? ctx.sources.get(item.sourceId) : undefined;
-  const choosingWays = step === 'ways' || step === 'waysChanged';
+  const choosingWays = step === 'ways' || step === 'waysChanged' || step === 'waysStopped';
   const ways = item && (
     <WaysPicker
       key={`${item.id}|${arrangement.options.map((o) => o.templateId).join(',')}`}
       ctx={ctx}
       itemId={item.id}
+      arrangementKey={arrangement.key}
       chosen={arrangement.options.map((o) => o.templateId)}
       changed={step === 'waysChanged'}
     />
@@ -338,7 +340,7 @@ export function NeedScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey: 
             <Text>{ctx.t('card.decide.turnedDown')}</Text>
           </Card>
         )}
-        {(step === 'stuck' || step === 'noSlot') && (
+        {(step === 'stuck' || step === 'noSlot' || step === 'waysStopped') && (
           <Card tone="warn">
             <Text>{ctx.t(`card.need.${step}`)}</Text>
           </Card>
@@ -366,56 +368,21 @@ export function NeedScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey: 
   );
 }
 
-/** やり方の中身を短く：手順（外の相手を待つ物は相手と待つ物）、受け持つ人と時間、決め時、代償。 */
-function wayLines(ctx: Ctx, way: Way): string[] {
-  const steps = way.steps
-    .map((step) =>
-      step.external
-        ? ctx.t(`need.ways.wait.${step.external.kind}`, {
-            name: step.name,
-            to: nameOf(ctx.household, step.external.to),
-          })
-        : step.name,
-    )
-    .join(' → ');
-  const covers = way.steps
-    .filter((step) => step.cover)
-    .map((step) =>
-      step.external
-        ? nameOf(ctx.household, step.external.to)
-        : step.assigneeId
-          ? nameOf(ctx.household, step.assigneeId)
-          : ctx.t('need.ways.family'),
-    );
-  const who = new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(covers);
-  const lines = [steps];
-  lines.push(
-    covers.length === 0
-      ? ctx.t('need.ways.noCover')
-      : way.covers
-        ? ctx.t('need.ways.coverTime', { who, from: way.covers.start, to: way.covers.end })
-        : ctx.t('need.ways.cover', { who }),
-  );
-  if (way.deadline) {
-    lines.push(ctx.t('need.ways.deadline', { rule: deadlineText(ctx, way.deadline) }));
-  }
-  const cost: string[] = [];
-  if (way.cost.yen > 0) cost.push(ctx.t('household.ways.yen', { yen: way.cost.yen }));
-  if (way.cost.leaveMinutes > 0) {
-    cost.push(ctx.t('cost.leave', { count: Math.round(way.cost.leaveMinutes / 480) || 1 }));
-  }
-  if (way.cost.helperRequests > 0) cost.push(ctx.t('cost.helper'));
-  if (cost.length > 0) lines.push(cost.join(ctx.t('list.separator')));
-  return lines;
-}
-
 /**
  * 使うやり方を選ぶ（家族が登録したやり方から。ここで作らない・推し量らない）。選ぶまで作業は作らない。選んだ後に
  * 中身かやり方が変わったら、選び直してもらう。保存の前に、変わることを見る。
  */
-function WaysPicker(props: { ctx: Ctx; itemId: string; chosen: string[]; changed: boolean }) {
-  const { ctx, itemId, chosen, changed } = props;
-  const ways = ctx.household.ways;
+function WaysPicker(props: {
+  ctx: Ctx;
+  itemId: string;
+  arrangementKey: string;
+  chosen: string[];
+  changed: boolean;
+}) {
+  const { ctx, itemId, arrangementKey, chosen, changed } = props;
+  // やめたやり方は、今の選びに入っている物だけ出す（残せる。外すと、もう選べない）。
+  const stopped = new Set(ctx.household.stoppedWayIds ?? []);
+  const ways = ctx.household.ways.filter((w) => !stopped.has(w.id) || chosen.includes(w.id));
   const [picked, setPicked] = useState<string[]>(chosen);
   const flow = usePreviewSave(ctx);
   // 家庭の並びで送る（同じ選びを、押した順で別の物にしない）。
@@ -447,6 +414,9 @@ function WaysPicker(props: { ctx: Ctx; itemId: string; chosen: string[]; changed
             />
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
               <span className="font-bold">{way.name}</span>
+              {stopped.has(way.id) && (
+                <span className="text-sm font-bold text-warn">{ctx.t('need.ways.stopped')}</span>
+              )}
               {wayLines(ctx, way).map((line) => (
                 <span key={line} className="text-sm text-sub">
                   {line}
@@ -457,6 +427,9 @@ function WaysPicker(props: { ctx: Ctx; itemId: string; chosen: string[]; changed
         ))
       )}
       <Text quiet>{ctx.t('need.ways.note')}</Text>
+      <MoreLink onClick={() => ctx.go({ name: 'way', from: arrangementKey })}>
+        {ctx.t('need.ways.add')}
+      </MoreLink>
       <PreviewBlock
         ctx={ctx}
         {...(shown ? { preview: shown } : {})}

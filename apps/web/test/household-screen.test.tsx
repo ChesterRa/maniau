@@ -33,6 +33,7 @@ const emptyChanges = {
   deadlines: [],
   windows: [],
   conflicts: [],
+  rechoose: [],
 };
 
 function ctxWith(result: HouseholdPreviewResult | undefined) {

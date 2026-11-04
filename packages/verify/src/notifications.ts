@@ -294,8 +294,21 @@ function checkTiming(
   }
 }
 
+/** 選んだ案を使っておらず、別の案を選べる状態。推薦の有無とは別に確かめる。 */
+function choiceNeededAgain(arrangement: Arrangement): boolean {
+  return (
+    arrangement.live &&
+    arrangement.status === 'decidable' &&
+    arrangement.chosenOptionKey !== undefined &&
+    arrangement.inUseOptionKey === undefined
+  );
+}
+
 /** 画面と通知の関数を呼ばず、手配の欄から次に決める事を照らす。 */
-function needDecision(arrangement: Arrangement): 'ways' | 'stuck' | 'choose' | 'gaps' | 'settled' {
+function needDecision(
+  arrangement: Arrangement,
+  household: Family,
+): 'ways' | 'stuck' | 'choose' | 'gaps' | 'settled' {
   const missing = arrangement.reasons.find((reason) => reason.code === 'inputMissing');
   if (missing?.refs.includes('waysChanged')) return 'ways';
   if (arrangement.reasons.some((reason) => reason.code === 'noSlot')) return 'stuck';
@@ -305,8 +318,21 @@ function needDecision(arrangement: Arrangement): 'ways' | 'stuck' | 'choose' | '
     arrangement.reasons.some((r) => r.code === 'noOptionLeft')
   )
     return 'stuck';
-  if (arrangement.chosenOptionKey === undefined || arrangement.recommendedOptionKey !== undefined)
+  if (arrangement.chosenOptionKey === undefined || choiceNeededAgain(arrangement)) {
+    const canChoose = arrangement.options.some(
+      (option) =>
+        !option.expired &&
+        (!household.stoppedWayIds?.includes(option.templateId) ||
+          arrangement.chosenOptionKey === option.key ||
+          arrangement.backupOptionKeys.includes(option.key)),
+    );
+    if (
+      !canChoose &&
+      arrangement.options.some((option) => household.stoppedWayIds?.includes(option.templateId))
+    )
+      return 'ways';
     return 'choose';
+  }
   return arrangement.reasons.some((reason) => reason.code === 'notCovered') ? 'gaps' : 'settled';
 }
 
@@ -378,6 +404,7 @@ function notificationNeedShape(
 function checkSubject(
   intent: Intent,
   plan: Plan,
+  household: Family,
   timeZone: string,
   needShapes: ReadonlyMap<string, 'by' | 'window'>,
   needRequestCurrent: ReadonlyMap<string, boolean>,
@@ -615,13 +642,13 @@ function checkSubject(
       arrangement.status === 'infeasible' ||
       arrangement.reasons.some((reason) => reason.code === 'noOptionLeft') ||
       (arrangement.options.length > 0 && arrangement.chosenOptionKey === undefined) ||
-      arrangement.recommendedOptionKey !== undefined ||
+      choiceNeededAgain(arrangement) ||
       (arrangement.reasons.some((reason) => reason.code === 'notCovered') &&
         (arrangement.inUseOptionKey === undefined ||
           toEpochMinutes(arrangement.start) - toEpochMinutes(plan.now) <= 26 * 60 ||
           (!waiting && !unfinished)));
     if (!hasCard) return wrong();
-    const decision = needDecision(arrangement);
+    const decision = needDecision(arrangement, household);
     if (
       (titleKey === 'notify.need' && decision !== 'ways') ||
       (titleKey === 'notify.needGaps' && decision !== 'gaps')
@@ -648,6 +675,12 @@ function checkSubject(
   const option = arrangement?.options.find((o) => o.key === subject.optionId);
   if (!arrangement?.live || !option?.decisionDeadline || option.expired) return wrong();
   const optionDeadline = option.decisionDeadline;
+  const selectable = (candidate: Arrangement['options'][number]) =>
+    arrangement.kind !== 'need' ||
+    !household.stoppedWayIds?.includes(candidate.templateId) ||
+    arrangement.chosenOptionKey === candidate.key ||
+    arrangement.backupOptionKeys.includes(candidate.key);
+  if (!selectable(option)) return wrong();
   if (titleKey === 'notify.backup') {
     const request = plan.requests.find((r) => r.requestId === subject.requestId);
     if (
@@ -667,7 +700,7 @@ function checkSubject(
         subject.requestId ||
         arrangement.status === 'askFirst' ||
         toEpochMinutes(arrangement.end) <= toEpochMinutes(plan.now) ||
-        needDecision(arrangement) !== 'choose'
+        needDecision(arrangement, household) !== 'choose'
       )
         return wrong();
       const evidence = notificationNeedShape(arrangement, plan, facts, timeZone, intent.key, out);
@@ -675,7 +708,7 @@ function checkSubject(
     } else if (
       arrangement.kind !== 'childCare' ||
       ['askFirst', 'dependsOnReply', 'infeasible'].includes(arrangement.status) ||
-      (arrangement.chosenOptionKey !== undefined && arrangement.recommendedOptionKey === undefined)
+      (arrangement.chosenOptionKey !== undefined && !choiceNeededAgain(arrangement))
     )
       return wrong();
     if (arrangement.chosenOptionKey === option.key) return wrong();
@@ -683,6 +716,7 @@ function checkSubject(
   const eligible = arrangement.options.filter((candidate) => {
     if (candidate.expired || !candidate.decisionDeadline) return false;
     if (candidate.key === arrangement.chosenOptionKey) return false;
+    if (!selectable(candidate)) return false;
     return titleKey !== 'notify.backup' || !arrangement.backupOptionKeys.includes(candidate.key);
   });
   if (
@@ -809,6 +843,7 @@ export function verifyNotifications(input: NotificationVerificationInput): Verif
     checkSubject(
       intent,
       plan.data,
+      household.data,
       household.data.timeZone,
       needShapes,
       needRequestCurrent,

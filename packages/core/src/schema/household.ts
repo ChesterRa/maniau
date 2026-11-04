@@ -162,12 +162,22 @@ export const StepTemplate = z.object({
 });
 export type StepTemplate = z.infer<typeof StepTemplate>;
 
+/** 代償の欄（Cost の四つ）。 */
+export const CostField = z.enum(['leaveMinutes', 'helperRequests', 'yen', 'extraTasks']);
+export type CostField = z.infer<typeof CostField>;
+
 /** 案を選ぶと払う物（§3 代償）。 */
 export const Cost = z.object({
   leaveMinutes: z.number().int().nonnegative().default(0),
   helperRequests: z.number().int().nonnegative().default(0),
   yen: z.number().int().nonnegative().default(0),
   extraTasks: z.number().int().nonnegative().default(0),
+  /**
+   * 家族が「分からない」とした欄（やり方だけ）。その欄の値は 0 にするが、分かった 0 ではない：画面は「分からない」と
+   * 書き、費用で比べたお勧めを出さない（plan の withStatus）。無いのは、どの欄も分かっている（初めに入れた家の
+   * 情報と同じ扱い）。
+   */
+  unknown: z.array(CostField).optional(),
 });
 export type Cost = z.infer<typeof Cost>;
 
@@ -220,8 +230,8 @@ export const Way = z.object({
    */
   covers: z.object({ start: LocalTime, end: LocalTime }).optional(),
   cost: Cost,
-  /** 後で取り消せるか。 */
-  cancellable: z.boolean(),
+  /** 後で取り消せるか（初めに入れた家の情報だけ。今は計算にも画面にも使わない。家族が足すやり方では聞かない）。 */
+  cancellable: z.boolean().optional(),
 });
 export type Way = z.infer<typeof Way>;
 
@@ -236,6 +246,12 @@ export const Household = z.object({
   careOptions: z.array(CareOptionTemplate),
   /** 通用の「すること」のやり方（家族が確かめた物）。 */
   ways: z.array(Way).default([]),
+  /**
+   * 家族が「やめる」としたやり方の ID。これからは新しく選べない（選ぶ所に出さず、命令が断る）。やり方の中身（版）は
+   * 替えないので、今選んである「すること」の選び・案・引き受け・依頼は、そのまま当たる（外すなら、その「すること」で
+   * 選び直す）。やり方は消さない（前の選びと控えのために残す）。無いのは、やめた物が無い。
+   */
+  stoppedWayIds: z.array(Id).optional(),
   /** 勤務先などの休み（営業日の計算に使う）。 */
   closedDates: z.array(LocalDate).default([]),
 });

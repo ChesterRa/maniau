@@ -14,3 +14,4 @@ export * from './view/notify';
 export * from './view/ours';
 export * from './view/preview';
 export * from './view/today';
+export * from './view/ways';

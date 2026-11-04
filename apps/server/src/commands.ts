@@ -11,13 +11,16 @@ import {
   isActiveTask,
   isNeedArrangementKey,
   type NeedInterpretation,
+  type PlaceKind,
   type PlanResult,
   proposalSnapshot,
   sameContent,
   sameProposal,
+  stoppedWay,
   taskContent,
   toEpochMinutes,
   validateHousehold,
+  type Way,
 } from '@maniau/core';
 import {
   currentReadings,
@@ -410,6 +413,14 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       // 新しく決める命令（選ぶ・担当を提案する・引き受ける）は、今も要る手配・作業にだけ。
       // 既に起きた事の記録（済んだ・送った・返事）は、要らなくなった後でも受け付ける。
       if (!arrangement.live) return { status: 'conflict', reason: 'arrangementGone' };
+      // やめたやり方の案は、新しくは選べない（今、本命か予備に選んである物は、役を替えて選び直せる）。
+      if (
+        stoppedWay(household, arrangement, option) &&
+        arrangement.chosenOptionKey !== option.key &&
+        !arrangement.backupOptionKeys.includes(option.key)
+      ) {
+        return { status: 'invalid', reason: 'wayInactive' };
+      }
       // 決め時を過ぎた案は、もう選べない。既に動き出した案（今の日の分の依頼を出した・今の用件に
       // 当たる済んだ手順がある）は、本命と予備の入れ替えのために選び直してよい（エンジンと同じ判断）。
       const started = optionStarted(state, arrangement, option, plan.tasks, household.timeZone);
@@ -915,9 +926,19 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       ) {
         return { status: 'invalid', reason: 'wayUnknown' };
       }
+      // やめたやり方は、新しくは選べない（今の選びに入っていれば、残してよい。選び直しで外せる）。
+      const current = state.needWays.get(command.itemId);
+      const kept =
+        current !== undefined &&
+        needWaysBasis(state, command.itemId, current.wayIds) === current.about
+          ? current.wayIds
+          : [];
+      const stopped = state.household?.stoppedWayIds ?? [];
+      if (command.wayIds.some((id) => stopped.includes(id) && !kept.includes(id))) {
+        return { status: 'invalid', reason: 'wayInactive' };
+      }
       const about = needWaysBasis(state, command.itemId, command.wayIds);
       if (about === undefined) return { status: 'conflict', reason: 'needGone' };
-      const current = state.needWays.get(command.itemId);
       if (current?.about === about && sameJson(current.wayIds, command.wayIds))
         return { bodies: [] };
       return {
@@ -940,12 +961,15 @@ const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringif
 /**
  * 家と暮らしの情報の直しを、エンジンが正しく扱える範囲に限る（validateHousehold に加えて。02-foundation §6）。
  * - 家庭の ID・地域・時区は替えない。
- * - 成員は消さず、足さず、ID・種類・有効を替えない（ログインの身元の正本は成員の表で、家の情報の事象では
- *   替えない。成員を止めるのは別の操作にする）。名前・言葉・送り迎えの決まりは直せる。
- * - 場所は消さない（場所には止める欄が無い）。種類は替えない。店を足せる。営業時間は同じ日の中の区間だけ
- *   （日をまたぐ営業は、買い物の計算が正しく扱えない）。直した営業時間は、家族が確かめた物として今の時刻を付ける。
+ * - 成員は消さず、ID・種類・有効を替えない（ログインの身元の正本は成員の表で、大人・子は家の情報の事象では
+ *   足さない。成員を止めるのは別の操作にする）。名前・言葉・送り迎えの決まりは直せる。足せるのは手伝いの人
+ *   （やり方の外の相手。ログインしない）だけ。
+ * - 場所は消さない（場所には止める欄が無い）。種類は替えない。店・祖母の家など・施設を足せる。営業時間は同じ日の
+ *   中の区間だけ（日をまたぐ営業は、買い物の計算が正しく扱えない）。直した営業時間は、家族が確かめた物として今の
+ *   時刻を付ける。
  * - 取れる手は、足さず消さず、ID の重なりも認めない。直せるのは締切の決まりの数と代償だけ（手順の形・担当・
  *   相手は替えない。新しい手は、やり方の表で足す）。
+ * - やり方は、足す・直す・やめるができ、消せない（checkWays）。
  * - 大人のふだんの一日には、家にいる区間が要る（家にいる区間が一つも無い日は、子の居場所の手配の要る時間を
  *   決められない）。
  */
@@ -1013,10 +1037,26 @@ function checkHouseholdEdit(
   ) {
     return invalid('householdIdentity');
   }
-  if (next.members.length !== current.members.length) return invalid('membersLocked');
   for (const member of current.members) {
     const edited = next.members.find((m) => m.id === member.id);
     if (!edited || edited.kind !== member.kind || edited.active !== member.active) {
+      return invalid('membersLocked');
+    }
+  }
+  // 足せる成員は、手伝いの人（やり方の外の相手。ログインしない）だけ：名前と呼び方・外に出す文の言葉。
+  const memberIds = new Set(current.members.map((m) => m.id));
+  const placeIds = new Set(current.places.map((p) => p.id));
+  for (const member of next.members) {
+    if (memberIds.has(member.id)) continue;
+    if (
+      member.kind !== 'helper' ||
+      !member.active ||
+      member.grade !== undefined ||
+      member.clubEscort !== undefined ||
+      !NEW_ID.test(member.id) ||
+      placeIds.has(member.id) ||
+      member.name.trim() === ''
+    ) {
       return invalid('membersLocked');
     }
   }
@@ -1024,8 +1064,17 @@ function checkHouseholdEdit(
     const edited = next.places.find((p) => p.id === place.id);
     if (!edited || edited.kind !== place.kind) return invalid('placesLocked');
   }
+  // 足せる場所は、店・祖母の家など・施設（家・学校・職場・駅・学童は、家の始まりの設定で入れる）。営業時間は無くて
+  // よい（分からない：計算は営業時間で絞らず、画面は「登録なし」と書き、お勧めを出さない）。
   for (const place of next.places) {
-    if (!current.places.some((p) => p.id === place.id) && place.kind !== 'store') {
+    if (
+      !placeIds.has(place.id) &&
+      (!NEW_PLACE_KINDS.has(place.kind) ||
+        !NEW_ID.test(place.id) ||
+        memberIds.has(place.id) ||
+        next.members.some((m) => m.id === place.id) ||
+        place.name.trim() === '')
+    ) {
       return invalid('placesLocked');
     }
     if (place.hours?.periods.some((p) => p.open >= p.close)) return invalid('hoursOvernight');
@@ -1040,9 +1089,11 @@ function checkHouseholdEdit(
     if (!edited) return invalid('careOptionsLocked');
     const { deadline: _d2, cost: _c2, ...editedRest } = edited;
     if (!sameJson(rest, editedRest)) return invalid('careOptionsLocked');
+    // 代償の「分からない」は、家族が足すやり方だけ（取れる手の勧め方と選び直しの札を替えない）。
+    if (edited.cost.unknown !== undefined) return invalid('careOptionsLocked');
   }
-  // やり方は、ここでは替えない（足す・直す入口は別に作る。送られた家の情報で消さない）。
-  if (!sameJson(current.ways, next.ways)) return invalid('waysLocked');
+  const ways = checkWays(current, next);
+  if ('reason' in ways) return ways;
   // 大人のふだんの一日：前からある曜日は消さず（区間の無い日にしない）、直した日は区間を切れ目なく続ける
   // （書かれていない時間を作らない）。分からない時間で、子の居場所の手配が要る時間を決めないため。
   const adults = new Set(next.members.filter((m) => m.kind === 'adult').map((m) => m.id));
@@ -1085,7 +1136,97 @@ function checkHouseholdEdit(
     if (!place.hours) return place;
     return { ...place, hours: { ...place.hours, source: 'family' as const, checkedAt: now } };
   });
-  return { household: { ...next, places } };
+  const { stoppedWayIds: _sent, ...rest } = next;
+  return {
+    household: {
+      ...rest,
+      places,
+      ways: ways.ways,
+      ...(ways.stoppedWayIds === undefined ? {} : { stoppedWayIds: ways.stoppedWayIds }),
+    },
+  };
+}
+
+/** 新しく足す成員・場所・やり方・手順の ID（画面が作る。ID は比べるだけで、区切って読まない。これは守りの形）。 */
+const NEW_ID = /^[a-z0-9][a-z0-9-]{0,47}$/;
+const NEW_PLACE_KINDS: ReadonlySet<PlaceKind> = new Set(['store', 'helperHome', 'other']);
+/** 手順のかかる時間・返事を待つ時間の上限（分。打ち間違いで、何日も先の置き方を探さない）。 */
+const MAX_STEP_MIN = 24 * 60;
+const MAX_WAIT_MIN = 7 * 24 * 60;
+
+/**
+ * やり方の直し（02-foundation §3.4・§6）。消さない（前の ID は全部残る。使わないなら、やめた物の一覧に入れる）。
+ * 足した・直したやり方は：名前と手順の題があり、手順の ID は重ならず、担当は今いる大人、外の相手は手伝いの人か家
+ * 以外の場所、決まった場所は家以外。費用の「分からない」は四つの欄の中で重ならず、その欄の値は 0。直していない
+ * やり方は、そのまま（初めに入れた家の情報の版を替えない）。空の「分からない」は欄が無いのと同じなので書かない
+ * （版を揃える）。やめた物の一覧は、あるやり方の ID だけで、重ならない（空なら書かない）。
+ */
+function checkWays(
+  current: Household,
+  next: Household,
+): { ways: Way[]; stoppedWayIds: string[] | undefined } | { status: 'invalid'; reason: string } {
+  const invalid = (reason: string) => ({ status: 'invalid' as const, reason });
+  if (current.ways.some((way) => !next.ways.some((w) => w.id === way.id))) {
+    return invalid('wayRemoved');
+  }
+  const stopped = next.stoppedWayIds ?? [];
+  if (
+    new Set(stopped).size !== stopped.length ||
+    stopped.some((id) => !next.ways.some((w) => w.id === id))
+  ) {
+    return invalid('wayInvalid');
+  }
+  const adults = new Set(
+    next.members.filter((m) => m.kind === 'adult' && m.active).map((m) => m.id),
+  );
+  const outside = new Set([
+    ...next.members.filter((m) => m.kind === 'helper' && m.active).map((m) => m.id),
+    ...next.places.filter((p) => p.kind !== 'home').map((p) => p.id),
+  ]);
+  const places = new Set(next.places.filter((p) => p.kind !== 'home').map((p) => p.id));
+  const ways: Way[] = [];
+  for (const sent of next.ways) {
+    const way = tidyWay(sent);
+    const before = current.ways.find((w) => w.id === way.id);
+    if (before && sameJson(tidyWay(before), way)) {
+      ways.push(before);
+      continue;
+    }
+    if (!before && !NEW_ID.test(way.id)) return invalid('wayInvalid');
+    if (way.name.trim() === '') return invalid('wayInvalid');
+    for (const step of way.steps) {
+      if (!NEW_ID.test(step.id) || step.name.trim() === '') return invalid('wayInvalid');
+      if (new Set(step.segments).size !== step.segments.length) return invalid('wayInvalid');
+      if (step.durationMin > MAX_STEP_MIN || step.waitAfterMin > MAX_WAIT_MIN) {
+        return invalid('wayInvalid');
+      }
+      if (step.assigneeId !== undefined && !adults.has(step.assigneeId)) {
+        return invalid('wayRefUnknown');
+      }
+      if (step.external !== undefined && !outside.has(step.external.to)) {
+        return invalid('wayRefUnknown');
+      }
+      if (step.placeId !== undefined && !places.has(step.placeId)) return invalid('wayRefUnknown');
+    }
+    const unknown = way.cost.unknown ?? [];
+    if (
+      new Set(unknown).size !== unknown.length ||
+      unknown.some((field) => way.cost[field] !== 0)
+    ) {
+      return invalid('wayInvalid');
+    }
+    ways.push(way);
+  }
+  return { ways, stoppedWayIds: stopped.length > 0 ? stopped : undefined };
+}
+
+/** 空の「分からない」を落とす（欄が無いのと同じ意味。版を揃える）。 */
+function tidyWay(way: Way): Way {
+  const { unknown, ...cost } = way.cost;
+  return {
+    ...way,
+    cost: unknown === undefined || unknown.length === 0 ? cost : { ...cost, unknown },
+  };
 }
 
 /**

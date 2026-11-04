@@ -143,6 +143,11 @@ export const OptionPlan = z.object({
    * 行く等）。
    */
   noSlot: z.literal(true).optional(),
+  /**
+   * 家族がやめたやり方の案（通用の「すること」だけ）。新しくは本命にも予備にも選べない。今の本命・予備なら残せて、
+   * 役も替えられる（choosable）。
+   */
+  stopped: z.literal(true).optional(),
   cost: Cost,
   taskKeys: z.array(z.string()),
 });

@@ -214,6 +214,11 @@ export interface PlanChanges {
   windows: WindowChange[];
   /** 新しく、ほかの作業と同じ人の同じ時間にしか置けなくなる手。 */
   conflicts: string[];
+  /**
+   * やり方の選びが新しく古くなる「すること」の手配のキー（選んだ時から、選んだやり方か「すること」の中身が替わった。
+   * 前の選びは当てず、家族に選び直してもらう）。
+   */
+  rechoose: string[];
 }
 
 /** 今の計画（before）と、変えた後の計画（after）を比べる。 */
@@ -350,7 +355,20 @@ export function planChanges(before: PlanResult, after: PlanResult): PlanChanges 
     deadlines,
     windows,
     conflicts: newConflicts(before, after),
+    rechoose: waysChanged(after).filter((key) => !waysChanged(before).includes(key)),
   };
+}
+
+/** やり方の選びが古い（選び直しが要る）「すること」の手配（生きている物）。 */
+function waysChanged(plan: PlanResult): string[] {
+  return plan.arrangements
+    .filter(
+      (a) =>
+        a.live &&
+        a.kind === 'need' &&
+        a.reasons.some((r) => r.code === 'inputMissing' && r.refs.includes('waysChanged')),
+    )
+    .map((a) => a.key);
 }
 
 /** 選ぶ前の計画（before）と、選んだ後の計画（after）を比べる。 */

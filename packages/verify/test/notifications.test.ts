@@ -345,6 +345,30 @@ describe('知らせの意図の検証', () => {
     ).toContain('notification_subject_mismatch');
   });
 
+  it('子の居場所の選び直しは、推薦が無くても開いた案の期限を知らせる', () => {
+    const choice = option('one', { decisionDeadline: at, deadlineCertainty: 'estimate' });
+    const intent = {
+      key: 'decide:arrangement:one:a',
+      toMemberId: 'a',
+      kind: 'decisionApproaching',
+      titleKey: 'notify.decide',
+      subject: { type: 'arrangement', id: 'arrangement', optionId: 'one' },
+      until: at,
+    };
+    const retry = {
+      chosenOptionKey: 'two',
+      options: [choice, option('two', { expired: true })],
+    };
+    expect(codes(check([intent], plan({ arrangements: [arrangement(retry)] })))).not.toContain(
+      'notification_subject_mismatch',
+    );
+    expect(
+      codes(
+        check([intent], plan({ arrangements: [arrangement({ ...retry, inUseOptionKey: 'two' })] })),
+      ),
+    ).toContain('notification_subject_mismatch');
+  });
+
   it('指定された問いはその本人だけに出す', () => {
     const question = {
       key: 'q',

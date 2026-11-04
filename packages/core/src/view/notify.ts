@@ -18,7 +18,7 @@ import {
   toEpochMinutes,
   zonedToEpochMinutes,
 } from '../time';
-import { BACKUP_LEAD_MIN, needStep, type TodayCard, todayCards } from './today';
+import { BACKUP_LEAD_MIN, choosable, needStep, type TodayCard, todayCards } from './today';
 
 /** 決める事・問いを知らせ始める時：期限のこの時間前から（予備の勧めと同じ、前の晩）。 */
 export const URGENT_LEAD_MIN = BACKUP_LEAD_MIN;
@@ -266,7 +266,9 @@ function intentOf(
       const first = arrangement.options
         .filter(
           (o) =>
-            !o.expired && o.decisionDeadline !== undefined && o.key !== arrangement.chosenOptionKey,
+            choosable(arrangement, o) &&
+            o.decisionDeadline !== undefined &&
+            o.key !== arrangement.chosenOptionKey,
         )
         .map((o) => ({ key: o.key, deadline: o.decisionDeadline as DateTime }))
         .sort((a, b) => toEpochMinutes(a.deadline) - toEpochMinutes(b.deadline))[0];
@@ -366,7 +368,7 @@ function intentOf(
         const first = arrangement.options
           .filter(
             (o) =>
-              !o.expired &&
+              choosable(arrangement, o) &&
               o.decisionDeadline !== undefined &&
               o.key !== arrangement.chosenOptionKey,
           )
@@ -383,7 +385,7 @@ function intentOf(
       }
       const end = toEpochMinutes(arrangement.end);
       if (now >= end) return undefined;
-      if (step === 'ways' || step === 'waysChanged') {
+      if (step === 'ways' || step === 'waysChanged' || step === 'waysStopped') {
         const by = window ? arrangement.start : arrangement.end;
         if (toEpochMinutes(by) - now > URGENT_LEAD_MIN) return undefined;
         return {

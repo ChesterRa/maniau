@@ -8,9 +8,9 @@ import type {
   TaskContent,
   Truth,
 } from '@maniau/core';
-import { Extraction } from '@maniau/core';
+import { Extraction, isNeedArrangementKey } from '@maniau/core';
 import { collectFacts, type FactState, historicalItem, needShape } from './facts';
-import { aboutMatches } from './need-proof';
+import { aboutMatches, sameValue } from './need-proof';
 import { Collector } from './report';
 import {
   instantMinute,
@@ -200,11 +200,51 @@ export function checkHistory(
   const requests = new Map<string, SentRequest>();
   const seenRequests = new Set<string>();
   const selections = new Map<string, Selection>();
+  const wayChoices = new Map<string, Extract<DomainEvent, { type: 'needWaysSet' }>>();
   const excluded = new Set<string>();
   let householdAtTime: Household | undefined;
   for (const event of ordered) {
     if (event.householdId !== household.id) continue;
-    if (event.type === 'householdSet') householdAtTime = event.household;
+    if (event.type === 'householdSet') {
+      const before = householdAtTime;
+      const after = event.household;
+      const changed =
+        before &&
+        (!sameValue(before.ways, after.ways) ||
+          !sameValue(before.stoppedWayIds ?? [], after.stoppedWayIds ?? []));
+      if (before && changed) {
+        const actor = before.members.find((entry) => entry.id === event.actorId);
+        if (actor?.kind !== 'adult' || !actor.active)
+          report.violation(
+            'way_edit_actor_invalid',
+            event.id,
+            'やり方を有効な大人以外が変更した。',
+          );
+        if (before.ways.some((way) => !after.ways.some((entry) => entry.id === way.id)))
+          report.violation('way_removed', event.id, '過去の用件が参照するやり方を削除した。');
+        const stopped = after.stoppedWayIds ?? [];
+        if (
+          new Set(stopped).size !== stopped.length ||
+          stopped.some((id) => !after.ways.some((way) => way.id === id))
+        )
+          report.violation('stopped_way_invalid', event.id, 'やめたやり方の一覧が不正。');
+        for (const way of after.ways) {
+          const previous = before.ways.find((entry) => entry.id === way.id);
+          if (previous && sameValue(previous, way)) continue;
+          const unknown = way.cost.unknown ?? [];
+          if (
+            new Set(unknown).size !== unknown.length ||
+            unknown.some((field) => way.cost[field] !== 0)
+          )
+            report.violation(
+              'way_unknown_cost_invalid',
+              event.id,
+              '分からない代償の欄が重複するか、値を持っている。',
+            );
+        }
+      }
+      householdAtTime = after;
+    }
     if (
       (event.type === 'notified' || event.type === 'sourceContentPurged') &&
       event.actorId !== 'system'
@@ -259,10 +299,83 @@ export function checkHistory(
         excluded.add(event.id);
         continue;
       }
+      const stopped = event.wayIds.filter((id) => householdAtTime?.stoppedWayIds?.includes(id));
+      if (stopped.length > 0) {
+        const previous = wayChoices.get(event.itemId);
+        if (!previous || stopped.some((id) => !previous.wayIds.includes(id))) {
+          if (complete)
+            report.violation('stopped_way_new_choice', event.id, 'やめたやり方を新たに選んだ。');
+          else
+            report.undetermined(
+              'stopped_way_choice_unverified',
+              event.id,
+              '以前の選びを確認できない。',
+            );
+        } else {
+          const prior = collectFacts(
+            ordered.filter(
+              (entry) =>
+                entry.householdId === household.id &&
+                entry.seq < event.seq &&
+                !excluded.has(entry.id),
+            ),
+            new Collector(),
+          );
+          const item = prior.items.get(event.itemId);
+          const ways = previous.wayIds.map((id) =>
+            householdAtTime?.ways.find((way) => way.id === id),
+          );
+          const valid =
+            item && ways.every((way) => way !== undefined)
+              ? aboutMatches(
+                  previous.about,
+                  item,
+                  ways.filter((way) => way !== undefined),
+                )
+              : undefined;
+          if (valid === false)
+            report.violation(
+              'stopped_way_new_choice',
+              event.id,
+              '古くなった選びでやめたやり方を再び選んだ。',
+            );
+          else if (valid === undefined)
+            report.undetermined(
+              'stopped_way_choice_unverified',
+              event.id,
+              '以前の選びが今も有効か確認できない。',
+            );
+        }
+      }
+      wayChoices.set(event.itemId, event);
     }
     if (event.type === 'optionChosen') {
       if (event.actorId === 'system')
         report.violation('system_chose_option', event.id, '家族が選ぶ案を仕組みが選んでいる。');
+      const oldSelection = selections.get(event.arrangementKey);
+      if (householdAtTime && isNeedArrangementKey(event.arrangementKey)) {
+        const stopped = householdAtTime.ways.some(
+          (way) =>
+            householdAtTime?.stoppedWayIds?.includes(way.id) &&
+            event.optionKey === `opt:${event.arrangementKey}:${way.id}`,
+        );
+        const wasChosen =
+          oldSelection?.primary === event.optionKey || oldSelection?.backups.has(event.optionKey);
+        if (stopped && !wasChosen) {
+          if (complete)
+            report.violation(
+              'stopped_way_new_option',
+              event.id,
+              'やめたやり方を本命・予備に新たに選んだ。',
+            );
+          else
+            report.undetermined(
+              'stopped_way_option_unverified',
+              event.id,
+              '以前に選んだ案か確認できない。',
+            );
+        }
+      }
       const selection = selections.get(event.arrangementKey) ?? {
         backups: new Set<string>(),
         dropped: new Set<string>(),

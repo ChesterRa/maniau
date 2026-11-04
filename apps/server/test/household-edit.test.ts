@@ -122,7 +122,7 @@ describe('家と暮らしの情報を直す', () => {
     expect((await app.events()).length).toBe(count);
   });
 
-  it('成員の種類・有効・数、場所の削除と種類、取れる手の形、家庭の ID は替えられない', async () => {
+  it('成員の種類・有効・削除と大人・子の追加、場所の削除と種類、取れる手の形、家庭の ID は替えられない', async () => {
     const app = await setup();
     const h = await app.household();
     const refused = async (edited: Household, reason: string) => {
@@ -139,10 +139,11 @@ describe('家と暮らしの情報を直す', () => {
     );
     // 取れる手が頼む相手として使っている人を消すと、家の情報として成り立たない（その前に断る）。
     await refused({ ...h, members: h.members.filter((m) => m.id !== 'g') }, 'householdInvalid');
+    // 大人・子は足せない（足せるのは手伝いの人だけ。ways-edit.test.ts）。
     await refused(
       {
         ...h,
-        members: [...h.members, { id: 'n', kind: 'helper', name: '近所の人', active: true }],
+        members: [...h.members, { id: 'n', kind: 'child', name: '架空の子', active: true }],
       },
       'membersLocked',
     );

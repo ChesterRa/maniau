@@ -77,9 +77,10 @@ const check = (
   overrides: Record<string, unknown> = {},
   now = '2026-12-06T16:00+09:00',
   events = eventsOf(shape),
+  family = household(),
 ) =>
   verifyNotifications({
-    household: household(),
+    household: family,
     events,
     intents: [intent],
     plan: plan({
@@ -190,6 +191,103 @@ describe('することの手配の知らせ', () => {
     expect(violations(check('by', decide, { ...choices, options: [option('early')] }))).toContain(
       'notification_subject_mismatch',
     );
+  });
+
+  it('選んだ案が使えず開いた案が残る時は、推薦が無くても選び直しを知らせる', () => {
+    const choices = {
+      status: 'decidable',
+      chosenOptionKey: 'old',
+      options: [
+        option('old', { decisionDeadline: '2026-12-06T18:00+09:00', expired: true }),
+        option('early', { decisionDeadline: '2026-12-06T20:00+09:00' }),
+      ],
+    };
+    expect(violations(check('by', decide, choices))).toEqual([]);
+    expect(violations(check('by', decide, { ...choices, inUseOptionKey: 'old' }))).toContain(
+      'notification_subject_mismatch',
+    );
+  });
+
+  it('やめたやり方を新たな本命や予備として知らせず、別の開いた案を照らす', () => {
+    const family = household();
+    family.stoppedWayIds = ['retired'];
+    const choices = {
+      status: 'decidable',
+      options: [
+        option('early', { templateId: 'retired', decisionDeadline: '2026-12-06T20:00+09:00' }),
+        option('late', { templateId: 'active', decisionDeadline: '2026-12-06T21:00+09:00' }),
+      ],
+    };
+    const checkFor = (intent: unknown, overrides: Record<string, unknown> = choices) =>
+      check('by', intent, overrides, '2026-12-06T16:00+09:00', eventsOf('by'), family);
+    expect(violations(checkFor(decide))).toContain('notification_subject_mismatch');
+    const late = {
+      ...decide,
+      key: 'decide:arrangement:late:a',
+      subject: { ...decide.subject, optionId: 'late' },
+      until: '2026-12-06T21:00+09:00',
+    };
+    expect(violations(checkFor(late))).not.toContain('notification_subject_mismatch');
+    // すでに予備として選んだ物は、やめた後も本命に替えられる。
+    expect(
+      violations(
+        checkFor(decide, {
+          ...choices,
+          chosenOptionKey: 'other',
+          backupOptionKeys: ['early'],
+        }),
+      ),
+    ).not.toContain('notification_subject_mismatch');
+  });
+
+  it('やめた案を返事待ちの予備として知らせない', () => {
+    const family = household();
+    const request = {
+      requestId: 'request',
+      taskKey: 'sent',
+      to: 'helper',
+      kind: 'reply',
+      sentAt: '2026-11-30T10:00+09:00',
+      sentBy: 'a',
+      state: 'awaitingReply',
+      basis: { itemIds: [], arrangementKey: 'arrangement' },
+      live: true,
+    };
+    const intent = {
+      ...decide,
+      key: 'backup:arrangement:early:a',
+      titleKey: 'notify.backup',
+      subject: { ...decide.subject, requestId: 'request' },
+    };
+    const current = plan({
+      now: '2026-12-06T16:00+09:00',
+      requests: [request],
+      arrangements: [
+        arrangementOf('by', {
+          status: 'dependsOnReply',
+          chosenOptionKey: 'other',
+          options: [option('early', { templateId: 'retired', decisionDeadline: intent.until })],
+        }),
+      ],
+    });
+    const checkFor = () =>
+      verifyNotifications({ household: family, plan: current, events: [], intents: [intent] });
+    expect(violations(checkFor())).not.toContain('notification_subject_mismatch');
+    family.stoppedWayIds = ['retired'];
+    expect(violations(checkFor())).toContain('notification_subject_mismatch');
+  });
+
+  it('選んだやり方が全て停止中なら、選び直しとして知らせる', () => {
+    const family = household();
+    family.stoppedWayIds = ['retired'];
+    const choices = {
+      status: 'decidable',
+      options: [option('early', { templateId: 'retired', decisionDeadline: decide.until })],
+    };
+    const checkFor = (intent: unknown) =>
+      check('by', intent, choices, '2026-12-06T16:00+09:00', eventsOf('by'), family);
+    expect(violations(checkFor(ways))).not.toContain('notification_subject_mismatch');
+    expect(violations(checkFor(decide))).toContain('notification_subject_mismatch');
   });
 
   it('受け持ち未確認は窓の形と notCovered が必要で、終了したら知らせない', () => {

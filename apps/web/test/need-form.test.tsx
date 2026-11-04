@@ -29,6 +29,7 @@ const NONE = {
   deadlines: [],
   windows: [],
   conflicts: [],
+  rechoose: [],
 };
 const shown = (seen: string): HouseholdPreview => ({
   changes: NONE,

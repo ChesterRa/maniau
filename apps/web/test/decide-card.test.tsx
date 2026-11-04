@@ -114,20 +114,21 @@ describe('決める画面の札', () => {
     expect(laterEn.some((l) => l.includes('健太 could still make it if they start by'))).toBe(true);
   });
 
-  it('休みの日数は、日英とも数に合わせて書く（英語で「day(s)」と書かない）', () => {
+  it('休みは、登録された長さのまま日英とも数に合わせて書く（日に換えない。英語で「hour(s)」と書かない）', () => {
     const ja = text(
       renderToStaticMarkup(
         <DecideScreen ctx={ctxFor('arrived', 'b', 'ja')} arrangementKey={care} />,
       ),
     );
-    expect(ja).toContain('有休を1日使います');
+    expect(ja).toContain('休みを8時間取ります');
+    expect(ja).not.toContain('1日使います');
     const en = text(
       renderToStaticMarkup(
         <DecideScreen ctx={ctxFor('arrived', 'b', 'en')} arrangementKey={care} />,
       ),
     );
-    expect(en).toContain('Paid leave: 1 day');
-    expect(en).not.toContain('day(s)');
+    expect(en).toContain('Time off: 8 hours');
+    expect(en).not.toContain('hour(s)');
   });
 
   it('お勧めは一つだけ（人に頼む手の返事の期限は、その手の札に事実として書く）', () => {

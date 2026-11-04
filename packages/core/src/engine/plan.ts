@@ -53,6 +53,7 @@ import {
 } from '../time';
 import { type DutyTurn, dutyTurn, statedTurn } from '../view/ours';
 import { isActiveTask } from '../view/today';
+import { hoursUnknownAt, stoppedWay } from '../view/ways';
 import { noAdultAtHome } from './availability';
 import { type Busy, optionDeadline, placeStep, ruleDeadline } from './deadline';
 import { bestOrder } from './joint';
@@ -1063,9 +1064,21 @@ function planNeed(
   if (!frame) return;
   const { ways, stale } = chosenWays(ctx, item);
   const own: Task[] = [];
-  const options = ways.map((way) =>
-    wayOption(ctx, way, frame, arrangementKey, requirementKey, item, live, own, busy),
-  );
+  const stoppedIds = new Set(ctx.household.stoppedWayIds ?? []);
+  const options = ways.map((way) => {
+    const option = wayOption(
+      ctx,
+      way,
+      frame,
+      arrangementKey,
+      requirementKey,
+      item,
+      live,
+      own,
+      busy,
+    );
+    return stoppedIds.has(way.id) ? { ...option, stopped: true as const } : option;
+  });
   addBusy(busy, own);
   out.tasks.push(...own);
   const base: Arrangement = {
@@ -1706,6 +1719,17 @@ function withStatus(ctx: Context, arrangement: Arrangement, tasks: Task[]): Arra
     }
     reasons.push({ code: 'noOptionLeft', refs: arrangement.options.map((o) => o.key) });
     return { ...arrangement, status: 'infeasible', reasons };
+  }
+  // 勧めるのは、代償と決め時で比べられる時だけ（比べられなければ、家族が選ぶ）：やめたやり方の案がある、営業時間の
+  // 分からない場所でする手順のある案がある（間に合うと言えない）、案が二つ以上で代償の分からない案がある時は、勧めない。
+  if (
+    open.some(
+      (o) =>
+        stoppedWay(ctx.household, arrangement, o) || hoursUnknownAt(ctx.household, arrangement, o),
+    ) ||
+    (open.length > 1 && open.some((o) => (o.cost.unknown?.length ?? 0) > 0))
+  ) {
+    return { ...arrangement, status: 'decidable', reasons };
   }
   const [recommended, next] = [...open].sort(
     (a, b) =>

@@ -119,6 +119,20 @@ export function isActiveTask(
 }
 
 /**
+ * 家族が本命を選び直す時か：選んだ本命・予備のどれも、今は使えない（断られた・決め時を逃した）が、開いた案は
+ * 残る（エンジンの withStatus で、使う案が無く、決めてよい）。勧めがあるかとは別（やめたやり方・代償や行ける時間の
+ * 分からない案があって勧めない時も、選び直しは要る）。
+ */
+export function mustChooseAgain(arrangement: Arrangement): boolean {
+  return (
+    arrangement.live &&
+    arrangement.chosenOptionKey !== undefined &&
+    arrangement.inUseOptionKey === undefined &&
+    arrangement.status === 'decidable'
+  );
+}
+
+/**
  * 通用の「すること」の手配で、家族が決めることが残っているか。やり方を選ぶ（選び直す）、本命を選ぶ（勧めがある時も）、
  * 間に合うやり方が見つからない、そして窓の「すること」で、今使うやり方の約束を進め終えた後も受け持ちを確かめ
  * られない時間が残る時。返事待ち・作業の途中は、その返事と作業の札が出すので、窓の始まりが近づくまで（NEED_LEAD_MIN）
@@ -133,7 +147,7 @@ export function needOpen(
   if (arrangement.status === 'undetermined' || arrangement.status === 'infeasible') return true;
   if (arrangement.reasons.some((r) => r.code === 'noOptionLeft')) return true;
   if (arrangement.options.length > 0 && arrangement.chosenOptionKey === undefined) return true;
-  if (arrangement.recommendedOptionKey !== undefined) return true;
+  if (mustChooseAgain(arrangement)) return true;
   if (!arrangement.reasons.some((r) => r.code === 'notCovered')) return false;
   const inUse = arrangement.inUseOptionKey;
   if (inUse === undefined) return true;
@@ -159,11 +173,12 @@ export function needOpen(
 
 /**
  * 「すること」で家族が次に決めること（札・画面・知らせが同じ物を使う）。やり方を選ぶ・選び直す、間に合う進め方が
- * 無い、本命を選ぶ、受け持ちを確かめられない時間が残る、の順に見る。
+ * 無い、本命を選ぶ（選べる案が、家族がやめたやり方の物しか無ければ、やり方を選び直す：waysStopped）、受け持ちを
+ * 確かめられない時間が残る、の順に見る。
  */
 export function needStep(
   arrangement: Arrangement,
-): 'ways' | 'waysChanged' | 'noSlot' | 'stuck' | 'choose' | 'gaps' | 'settled' {
+): 'ways' | 'waysChanged' | 'waysStopped' | 'noSlot' | 'stuck' | 'choose' | 'gaps' | 'settled' {
   const missing = arrangement.reasons.find((r) => r.code === 'inputMissing');
   if (missing?.refs.includes('waysChanged')) return 'waysChanged';
   // 選んだやり方の案が、ふだんの予定に置ける時間の無い手順を持つ物だけ（まだ判断できない。取れないとは言わない）。
@@ -175,8 +190,11 @@ export function needStep(
   ) {
     return 'stuck';
   }
-  if (arrangement.chosenOptionKey === undefined || arrangement.recommendedOptionKey !== undefined) {
-    return 'choose';
+  if (arrangement.chosenOptionKey === undefined || mustChooseAgain(arrangement)) {
+    const stoppedOnly =
+      !arrangement.options.some((o) => choosable(arrangement, o)) &&
+      arrangement.options.some((o) => o.stopped === true);
+    return stoppedOnly ? 'waysStopped' : 'choose';
   }
   return arrangement.reasons.some((r) => r.code === 'notCovered') ? 'gaps' : 'settled';
 }
@@ -221,6 +239,22 @@ function started(plan: PlanResult, arrangement: Arrangement, optionKey: string):
     plan.requests.some(
       (r) => r.basis.optionKey === optionKey && r.state !== 'cancelled' && forDay(r, arrangement),
     )
+  );
+}
+
+/**
+ * 案を今、本命か予備に選べるか：決め時を過ぎていない。家族がやめたやり方の案は、今の本命・予備の時だけ（残せて、
+ * 役を替えられる。新しくは選べない）。予備の勧め・決める事の知らせ・断られた時の次の案は、これで数える。
+ */
+export function choosable(
+  arrangement: Pick<Arrangement, 'chosenOptionKey' | 'backupOptionKeys'>,
+  option: Pick<OptionPlan, 'key' | 'expired' | 'stopped'>,
+): boolean {
+  return (
+    !option.expired &&
+    (option.stopped !== true ||
+      option.key === arrangement.chosenOptionKey ||
+      arrangement.backupOptionKeys.includes(option.key))
   );
 }
 
@@ -271,7 +305,9 @@ export function todayCards(
       );
       const taken = new Set([arrangement.chosenOptionKey, ...arrangement.backupOptionKeys]);
       const next = arrangement.options
-        .filter((o) => !taken.has(o.key) && !o.expired && o.decisionDeadline !== undefined)
+        .filter(
+          (o) => !taken.has(o.key) && choosable(arrangement, o) && o.decisionDeadline !== undefined,
+        )
         .sort((a, b) => (a.decisionDeadline ?? '').localeCompare(b.decisionDeadline ?? ''))[0];
       if (waitingFor && next?.decisionDeadline) {
         const left = toEpochMinutes(next.decisionDeadline) - now;
@@ -282,8 +318,7 @@ export function todayCards(
       continue;
     }
     if (arrangement.kind === 'childCare' && arrangement.status !== 'askFirst') {
-      const needsChoice =
-        arrangement.chosenOptionKey === undefined || arrangement.recommendedOptionKey !== undefined;
+      const needsChoice = arrangement.chosenOptionKey === undefined || mustChooseAgain(arrangement);
       if (needsChoice && arrangement.status !== 'infeasible') {
         const recommended = arrangement.options.find(
           (o) => o.key === arrangement.recommendedOptionKey,

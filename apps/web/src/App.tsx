@@ -27,6 +27,7 @@ import {
   WeekScreen,
 } from './screens';
 import { TabBar } from './ui';
+import { WayScreen } from './ways';
 
 const FIRST_STAGE = 'arrived';
 const FRAME = 'mx-auto flex min-h-dvh max-w-md flex-col';
@@ -158,7 +159,11 @@ function Body(props: {
       {ctx && (
         <TabBar
           active={
-            route.name === 'week' ? 'week' : route.name === 'household' ? 'household' : 'today'
+            route.name === 'week'
+              ? 'week'
+              : route.name === 'household' || route.name === 'way'
+                ? 'household'
+                : 'today'
           }
           labels={{
             today: t('nav.today'),
@@ -354,6 +359,14 @@ function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {
       return <WeekScreen ctx={ctx} />;
     case 'household':
       return <HouseholdScreen ctx={ctx} />;
+    case 'way':
+      return (
+        <WayScreen
+          ctx={ctx}
+          {...(route.wayId ? { wayId: route.wayId } : {})}
+          {...(route.from ? { from: route.from } : {})}
+        />
+      );
     case 'sources':
       return (
         <SourcesScreen

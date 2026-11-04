@@ -216,6 +216,22 @@ export function postgresStore(db: Db): Store {
             body: payload ? { ...row.body, payloadId: payload.id } : row.body,
           });
         }
+        // 家の情報の直しで足した成員（手伝いの人だけ。ログインしない）を、成員の表にも同じトランザクションで足す
+        // （二つの表の顔ぶれを揃える）。大人・子は家の情報の事象では足さない（命令が断る。ここに来れば誤り）。
+        const listed = new Set(people.map((m) => m.id));
+        for (const event of added) {
+          if (event.type !== 'householdSet') continue;
+          for (const member of event.household.members) {
+            if (listed.has(member.id)) continue;
+            if (member.kind !== 'helper') {
+              throw new Error(`家の情報の事象で足せない成員の種類：${member.kind}`);
+            }
+            await tx
+              .insert(members)
+              .values({ householdId, id: member.id, kind: member.kind, active: member.active });
+            listed.add(member.id);
+          }
+        }
         for (const operation of recorded) {
           await tx.insert(operations).values({
             householdId,

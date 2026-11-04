@@ -1,0 +1,1073 @@
+// 「すること」のやり方：家族が足す・直す・やめる（02-foundation §3.4・§6）。やり方は家族の言葉のデータで、場面の
+// 種類を持たない（どの「すること」にも同じ表）。分からない欄は分からないのまま（0・決まり無しに置き換えない）。保存の
+// 前に「この変更で変わること」を見せる（サーバーが書き込まずに、書く時と同じ命令と同じ計算で作った物）。やめるのは
+// これからの選びだけで、今選んである「すること」の選び・作業・頼み事は替えない。
+import {
+  type CostField,
+  type DeadlineRule,
+  type Household,
+  type HouseholdPreview,
+  type Member,
+  type Place,
+  placesWithoutHours,
+  type SegmentKind,
+  type Way,
+  type WayStep,
+} from '@maniau/core';
+import { useState } from 'react';
+import { deadlineText, householdPreviewLines } from './household';
+import { type Ctx, leaveText, nameOf, succeeded } from './screens';
+import { Button, Card, Header, Label, Main, MoreLink, Row, Text, Title } from './ui';
+
+const input =
+  'min-h-11 rounded-xl border-[1.5px] border-btn-line bg-white px-2.5 text-base text-ink';
+const COST_FIELDS: readonly CostField[] = ['leaveMinutes', 'helperRequests', 'yen', 'extraTasks'];
+const SEGMENTS: readonly SegmentKind[] = ['home', 'commute', 'work', 'pickup', 'away'];
+/** 返事までに見込む時間の選び（分）。 */
+const WAITS = [0, 60, 180, 720, 1440, 2880] as const;
+const NEW_PLACE_KINDS = ['other', 'store', 'helperHome'] as const;
+const MAX_STEPS = 3;
+
+/** 画面の ID（サーバーの形 ^[a-z0-9][a-z0-9-]{0,47}$ に合わせる。比べるだけで、区切って読まない）。 */
+const newId = (prefix: string) =>
+  `${prefix}-${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
+
+// ── 見せる ──────────────────────────────
+
+/** 代償の行（分かっている欄と、分からない欄）。 */
+export function costLines(ctx: Ctx, cost: Way['cost']): string[] {
+  const unknown = new Set(cost.unknown ?? []);
+  const parts: string[] = [];
+  if (!unknown.has('yen') && cost.yen > 0) {
+    parts.push(ctx.t('household.ways.yen', { yen: cost.yen }));
+  }
+  if (!unknown.has('leaveMinutes') && cost.leaveMinutes > 0) {
+    parts.push(leaveText(ctx, cost.leaveMinutes));
+  }
+  if (!unknown.has('helperRequests') && cost.helperRequests > 0) parts.push(ctx.t('cost.helper'));
+  if (!unknown.has('extraTasks') && cost.extraTasks > 0) {
+    parts.push(ctx.t('cost.extraTasks', { count: cost.extraTasks }));
+  }
+  const lines = parts.length > 0 ? [parts.join(ctx.t('list.separator'))] : [];
+  if (unknown.size > 0) {
+    const fields = COST_FIELDS.filter((f) => unknown.has(f)).map((f) => ctx.t(`cost.field.${f}`));
+    lines.push(
+      ctx.t('cost.unknown', {
+        fields: new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(fields),
+      }),
+    );
+  }
+  return lines;
+}
+
+/** やり方の中身を短く：手順（外の相手を待つ物は相手と待つ物）、受け持つ人と時間、締切、行ける時間、代償。 */
+export function wayLines(ctx: Ctx, way: Way): string[] {
+  const steps = way.steps
+    .map((step) =>
+      step.external
+        ? ctx.t(`need.ways.wait.${step.external.kind}`, {
+            name: step.name,
+            to: nameOf(ctx.household, step.external.to),
+          })
+        : step.name,
+    )
+    .join(' → ');
+  const covers = way.steps
+    .filter((step) => step.cover)
+    .map((step) =>
+      step.external
+        ? nameOf(ctx.household, step.external.to)
+        : step.assigneeId
+          ? nameOf(ctx.household, step.assigneeId)
+          : ctx.t('need.ways.family'),
+    );
+  const who = new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(covers);
+  const lines = [steps];
+  lines.push(
+    covers.length === 0
+      ? ctx.t('need.ways.noCover')
+      : way.covers
+        ? ctx.t('need.ways.coverTime', { who, from: way.covers.start, to: way.covers.end })
+        : ctx.t('need.ways.cover', { who }),
+  );
+  if (way.deadline) {
+    lines.push(ctx.t('need.ways.deadline', { rule: deadlineText(ctx, way.deadline) }));
+  }
+  for (const step of way.steps) {
+    if (step.deadline) {
+      lines.push(
+        ctx.t('ways.stepDeadline', { name: step.name, rule: deadlineText(ctx, step.deadline) }),
+      );
+    }
+  }
+  for (const place of placesWithoutHours(ctx.household, { kind: 'need' }, { templateId: way.id })) {
+    lines.push(ctx.t('ways.noHours', { place: place.name }));
+  }
+  lines.push(...costLines(ctx, way.cost));
+  return lines;
+}
+
+/** そのやり方を、今選んである「すること」（生きている手配の、家族の言葉の「何を」）。 */
+function usedBy(ctx: Ctx, wayId: string): { key: string; what: string }[] {
+  return ctx.plan.arrangements
+    .filter((a) => a.live && a.kind === 'need' && a.options.some((o) => o.templateId === wayId))
+    .map((a) => ({
+      key: a.key,
+      what: ctx.plan.requirements.find((r) => r.key === a.requirementKey)?.what ?? '',
+    }));
+}
+
+/** サーバーが直しを断った理由の符号を、画面の言葉の鍵にする（知らない物は一つにまとめる）。 */
+function refusedKey(reason: string): string {
+  return [
+    'householdInvalid',
+    'wayRemoved',
+    'wayInvalid',
+    'wayRefUnknown',
+    'membersLocked',
+    'placesLocked',
+    'unavailable',
+  ].includes(reason)
+    ? reason
+    : 'other';
+}
+
+/**
+ * 見る → 保存（家の情報の直し）。見た物は、見た時の家の情報と一緒に持ち、欄が替われば見せない（替わった中身を、
+ * 前に見た物で保存しない）。保存は、見た計画の番号と見た物の要約を付ける（サーバーが同じ計算で確かめる）。
+ */
+function useHouseholdSave(ctx: Ctx) {
+  const [shown, setShown] = useState<{ key: string; preview: HouseholdPreview }>();
+  const [refused, setRefused] = useState<{ key: string; reason: string }>();
+  const [busy, setBusy] = useState(false);
+  const keyOf = (household: Household) => JSON.stringify(household);
+  return {
+    busy,
+    shownFor: (household: Household) =>
+      shown?.key === keyOf(household) ? shown.preview : undefined,
+    refusedFor: (household: Household) =>
+      refused?.key === keyOf(household) ? refused.reason : undefined,
+    look: async (household: Household) => {
+      if (!ctx.previewHousehold) return;
+      const key = keyOf(household);
+      setBusy(true);
+      const result = await ctx.previewHousehold(household);
+      setBusy(false);
+      if (!result) setRefused({ key, reason: 'unavailable' });
+      else if ('refused' in result) setRefused({ key, reason: result.refused });
+      else {
+        setShown({ key, preview: result.preview });
+        setRefused(undefined);
+      }
+    },
+    save: async (household: Household): Promise<boolean> => {
+      const seen = shown?.key === keyOf(household) ? shown.preview : undefined;
+      if (!seen) return false;
+      setBusy(true);
+      const result = await ctx.send({
+        type: 'updateHousehold',
+        household,
+        seen: { throughSeq: seen.throughSeq, changes: seen.seen },
+      });
+      setBusy(false);
+      // 断られた時（見た後に計画が変わった等）は、見た物を捨てて、もう一度見てもらう。
+      setShown(undefined);
+      return succeeded(result);
+    },
+  };
+}
+
+/** 「この変更で変わること」（サーバーが同じ計算で出した物）か、保存できない理由。 */
+function Shown(props: { ctx: Ctx; preview?: HouseholdPreview; refused?: string }) {
+  const { ctx, preview, refused } = props;
+  if (refused) return <Text>{ctx.t(`household.refused.${refusedKey(refused)}`)}</Text>;
+  if (!preview) return null;
+  const lines = householdPreviewLines(ctx, preview);
+  return (
+    <div className="flex flex-col gap-1 rounded-xl bg-paper px-3 py-2.5">
+      <Label tone="accent">{ctx.t('household.preview.label')}</Label>
+      {lines.length === 0 ? (
+        <Text>{ctx.t('household.preview.none')}</Text>
+      ) : (
+        lines.map((line) => <Text key={line}>{line}</Text>)
+      )}
+    </div>
+  );
+}
+
+/**
+ * 「うちのこと」のやり方の一覧：使っているやり方（選んである「すること」の数）と、やめたやり方。足す・直すは別の
+ * 画面、やめる・使い直すはここで「この変更で変わること」を見てから保存する。
+ */
+export function WaysCard({ ctx }: { ctx: Ctx }) {
+  const [toggling, setToggling] = useState<string>();
+  const flow = useHouseholdSave(ctx);
+  const stopped = new Set(ctx.household.stoppedWayIds ?? []);
+  const ways = ctx.household.ways;
+  const draftFor = (wayId: string): Household => {
+    const next = structuredClone(ctx.household);
+    const ids = new Set(next.stoppedWayIds ?? []);
+    if (ids.has(wayId)) ids.delete(wayId);
+    else ids.add(wayId);
+    // やめた物の並びは、家の情報のやり方の並び（押した順で別の物にしない）。
+    const list = next.ways.map((w) => w.id).filter((id) => ids.has(id));
+    if (list.length > 0) next.stoppedWayIds = list;
+    else delete next.stoppedWayIds;
+    return next;
+  };
+  const draft = toggling ? draftFor(toggling) : undefined;
+  const shown = draft ? flow.shownFor(draft) : undefined;
+  const refused = draft ? flow.refusedFor(draft) : undefined;
+  const row = (way: Way) => {
+    const using = usedBy(ctx, way.id);
+    const isStopped = stopped.has(way.id);
+    const open = toggling === way.id;
+    return (
+      <div key={way.id} className="flex flex-col gap-1 rounded-xl border border-line bg-white p-3">
+        <Title>{way.name}</Title>
+        {wayLines(ctx, way).map((line) => (
+          <Text key={line} quiet>
+            {line}
+          </Text>
+        ))}
+        {using.length > 0 && <Text>{ctx.t('ways.inUse', { count: using.length })}</Text>}
+        {open && (
+          <div className="flex flex-col gap-1.5 rounded-xl bg-paper px-3 py-2.5">
+            <Text>{ctx.t(isStopped ? 'ways.resumeNote' : 'ways.stopNote')}</Text>
+            {!isStopped &&
+              using.map((u) => (
+                <Text key={u.key}>{ctx.t('ways.stopUsing', { what: u.what })}</Text>
+              ))}
+          </div>
+        )}
+        {open && draft && (
+          <Shown
+            ctx={ctx}
+            {...(shown ? { preview: shown } : {})}
+            {...(refused ? { refused } : {})}
+          />
+        )}
+        <Row>
+          {!open && !isStopped && (
+            <Button kind="secondary" onClick={() => ctx.go({ name: 'way', wayId: way.id })}>
+              {ctx.t('ways.edit')}
+            </Button>
+          )}
+          {!open && (
+            <Button kind="secondary" onClick={() => setToggling(way.id)}>
+              {ctx.t(isStopped ? 'ways.resume' : 'ways.stop')}
+            </Button>
+          )}
+          {open && draft && !shown && (
+            <Button
+              onClick={() => void flow.look(draft)}
+              disabled={flow.busy || !ctx.previewHousehold}
+            >
+              {ctx.t('need.look')}
+            </Button>
+          )}
+          {open && draft && shown && (
+            <Button
+              onClick={() =>
+                void flow.save(draft).then((ok) => {
+                  if (ok) setToggling(undefined);
+                })
+              }
+              disabled={flow.busy}
+            >
+              {ctx.t(isStopped ? 'ways.confirmResume' : 'ways.confirmStop')}
+            </Button>
+          )}
+          {open && (
+            <Button kind="secondary" onClick={() => setToggling(undefined)} disabled={flow.busy}>
+              {ctx.t('ways.back')}
+            </Button>
+          )}
+        </Row>
+      </div>
+    );
+  };
+  return (
+    <Card>
+      <Label tone="sub">{ctx.t('ways.label')}</Label>
+      {ways.length === 0 && <Text>{ctx.t('ways.none')}</Text>}
+      {ways.filter((w) => !stopped.has(w.id)).map(row)}
+      {ways.some((w) => stopped.has(w.id)) && <Label tone="sub">{ctx.t('ways.stopped')}</Label>}
+      {ways.filter((w) => stopped.has(w.id)).map(row)}
+      <Text quiet>{ctx.t('ways.used')}</Text>
+      <Row>
+        <Button kind="secondary" onClick={() => ctx.go({ name: 'way' })}>
+          {ctx.t('ways.add')}
+        </Button>
+      </Row>
+    </Card>
+  );
+}
+
+// ── 足す・直す ──────────────────────────────
+
+type DeadlineKind = '' | 'keep' | 'none' | 'daysBefore' | 'businessDaysBefore' | 'onTheDay';
+
+interface StepForm {
+  id: string;
+  name: string;
+  /** 空は大人のだれでも。 */
+  assigneeId: string;
+  /** 空は頼まない、+new は新しく登録、ほかは相手の ID。 */
+  to: string;
+  /** 新しく登録する相手。人なら、頼む文の言葉（空は選んでいない）と呼び方（任意）。 */
+  newTo: {
+    id: string;
+    name: string;
+    kind: 'helper' | 'place';
+    language: '' | 'ja' | 'en';
+    addressAs: string;
+  };
+  /** 返事までに見込む時間（分）。空は選んでいない。keep は今のまま。 */
+  wait: string;
+  /** 空は選んでいない、- は決まった場所は無い、+new は新しく登録、ほかは場所の ID。 */
+  place: string;
+  newPlace: { id: string; name: string; kind: (typeof NEW_PLACE_KINDS)[number] };
+  segments: SegmentKind[];
+  minutes: string;
+  deadline: DeadlineKind;
+  days: string;
+  at: string;
+  cover: boolean;
+  /** 直す時の元の手順（画面に出さない欄を残す）。 */
+  original?: WayStep;
+}
+
+interface WayForm {
+  id: string;
+  name: string;
+  steps: StepForm[];
+  coversStart: string;
+  coversEnd: string;
+  cost: Record<CostField, { value: string; unknown: boolean }>;
+  /** やり方全体の締切（前からある時だけ見せる）。 */
+  wayDeadline: DeadlineKind;
+  wayDays: string;
+  wayAt: string;
+  original?: Way;
+}
+
+function deadlineForm(rule: DeadlineRule | undefined): {
+  kind: DeadlineKind;
+  days: string;
+  at: string;
+} {
+  if (!rule) return { kind: 'none', days: '1', at: '21:00' };
+  switch (rule.type) {
+    case 'daysBefore':
+    case 'businessDaysBefore':
+      return { kind: rule.type, days: String(rule.days), at: rule.at };
+    case 'onTheDay':
+      return { kind: 'onTheDay', days: '1', at: rule.at };
+    case 'weekdayOfPreviousWeek':
+      return { kind: 'keep', days: '1', at: rule.at };
+  }
+}
+
+function emptyStep(n: number): StepForm {
+  return {
+    id: `s${n}`,
+    name: '',
+    assigneeId: '',
+    to: '',
+    newTo: { id: newId('h'), name: '', kind: 'helper', language: '', addressAs: '' },
+    wait: '',
+    place: '',
+    newPlace: { id: newId('p'), name: '', kind: 'other' },
+    segments: ['home', 'commute', 'work'],
+    minutes: '10',
+    deadline: '',
+    days: '1',
+    at: '21:00',
+    cover: false,
+  };
+}
+
+function formOf(way: Way | undefined): WayForm {
+  const cost = (field: CostField) => ({
+    value: way ? String(field === 'leaveMinutes' ? way.cost[field] / 60 : way.cost[field]) : '',
+    unknown: way ? (way.cost.unknown ?? []).includes(field) : true,
+  });
+  const whole = deadlineForm(way?.deadline);
+  return {
+    id: way?.id ?? newId('way'),
+    name: way?.name ?? '',
+    steps: way
+      ? way.steps.map((s, i) => {
+          const rule = deadlineForm(s.deadline);
+          return {
+            ...emptyStep(i + 1),
+            id: s.id,
+            name: s.name,
+            assigneeId: s.assigneeId ?? '',
+            to: s.external?.to ?? '',
+            wait: s.external
+              ? WAITS.some((w) => w === s.waitAfterMin)
+                ? String(s.waitAfterMin)
+                : 'keep'
+              : '',
+            place: s.placeId ?? '-',
+            segments: [...s.segments],
+            minutes: String(s.durationMin),
+            deadline: rule.kind,
+            days: rule.days,
+            at: rule.at,
+            cover: s.cover === true,
+            original: s,
+          };
+        })
+      : [emptyStep(1)],
+    coversStart: way?.covers?.start ?? '',
+    coversEnd: way?.covers?.end ?? '',
+    cost: {
+      leaveMinutes: cost('leaveMinutes'),
+      helperRequests: cost('helperRequests'),
+      yen: cost('yen'),
+      extraTasks: cost('extraTasks'),
+    },
+    wayDeadline: way?.deadline ? whole.kind : 'none',
+    wayDays: whole.days,
+    wayAt: whole.at,
+    ...(way ? { original: way } : {}),
+  };
+}
+
+const whole = (value: string) => (/^\d+$/.test(value) ? Number.parseInt(value, 10) : undefined);
+
+function ruleOf(
+  kind: DeadlineKind,
+  days: string,
+  at: string,
+  keep: DeadlineRule | undefined,
+): DeadlineRule | undefined | 'missing' {
+  switch (kind) {
+    case '':
+      return 'missing';
+    case 'keep':
+      return keep ?? 'missing';
+    case 'none':
+      return undefined;
+    case 'onTheDay':
+      return /^\d\d:\d\d$/.test(at) ? { type: 'onTheDay', at } : 'missing';
+    case 'daysBefore':
+    case 'businessDaysBefore': {
+      const n = whole(days);
+      return n !== undefined && n > 0 && /^\d\d:\d\d$/.test(at)
+        ? { type: kind, days: n, at }
+        : 'missing';
+    }
+  }
+}
+
+/**
+ * 表から、家の情報の直し（やり方と、新しく登録する相手・場所）を作る。足りない欄があれば作らない（分からない欄を
+ * 0・決まり無しに置き換えない：いつまでに・場所・返事までに見込む時間は、選ぶまで保存しない）。
+ */
+function draftOf(household: Household, form: WayForm): Household | undefined {
+  const members: Member[] = [];
+  const places: Place[] = [];
+  const steps: WayStep[] = [];
+  if (form.name.trim() === '' || form.steps.length === 0) return undefined;
+  for (const s of form.steps) {
+    const minutes = whole(s.minutes);
+    if (s.name.trim() === '' || minutes === undefined || s.segments.length === 0) return undefined;
+    const deadline = ruleOf(s.deadline, s.days, s.at, s.original?.deadline);
+    if (deadline === 'missing') return undefined;
+    let to: string | undefined;
+    if (s.to === '+new') {
+      if (s.newTo.name.trim() === '') return undefined;
+      if (s.newTo.kind === 'helper') {
+        // 頼む文の言葉は、家族が選ぶまで保存しない（分からないのを日本語にしない）。
+        if (s.newTo.language === '') return undefined;
+        const addressAs = s.newTo.addressAs.trim();
+        members.push({
+          id: s.newTo.id,
+          kind: 'helper',
+          name: s.newTo.name.trim(),
+          active: true,
+          outboundLanguage: s.newTo.language,
+          ...(addressAs === '' ? {} : { addressAs }),
+        });
+      } else {
+        places.push({ id: s.newTo.id, kind: 'other', name: s.newTo.name.trim(), goods: [] });
+      }
+      to = s.newTo.id;
+    } else if (s.to !== '') to = s.to;
+    let wait = 0;
+    if (to !== undefined) {
+      if (s.wait === '') return undefined;
+      wait = s.wait === 'keep' ? (s.original?.waitAfterMin ?? 0) : Number(s.wait);
+    } else if (s.original !== undefined && s.original.external === undefined) {
+      // 相手の無い手順の「次の手順まで空ける時間」は、この画面で直さないので元のまま残す。
+      // 相手を外した手順は、返事までに見込む時間も一緒に外す（画面にそう出す）。
+      wait = s.original.waitAfterMin;
+    }
+    let placeId: string | undefined;
+    if (s.place === '') return undefined;
+    if (s.place === '+new') {
+      if (s.newPlace.name.trim() === '') return undefined;
+      places.push({
+        id: s.newPlace.id,
+        kind: s.newPlace.kind,
+        name: s.newPlace.name.trim(),
+        goods: [],
+      });
+      placeId = s.newPlace.id;
+    } else if (s.place !== '-') placeId = s.place;
+    // 画面に出さない欄（店の種類・品物・相手の返事の種類）は、元の手順のまま残す。
+    const {
+      name: _n,
+      assigneeId: _a,
+      external: _e,
+      placeId: _p,
+      deadline: _d,
+      cover: _c,
+      segments: _s,
+      durationMin: _m,
+      waitAfterMin: _w,
+      ...kept
+    } = s.original ?? { name: '', segments: [], durationMin: 0, waitAfterMin: 0, id: s.id };
+    steps.push({
+      ...kept,
+      id: s.id,
+      name: s.name.trim(),
+      durationMin: minutes,
+      segments: SEGMENTS.filter((k) => s.segments.includes(k)),
+      waitAfterMin: wait,
+      ...(s.assigneeId === '' ? {} : { assigneeId: s.assigneeId }),
+      ...(to === undefined
+        ? {}
+        : { external: { to, kind: s.original?.external?.kind ?? 'reply' } }),
+      ...(placeId === undefined ? {} : { placeId }),
+      ...(deadline === undefined ? {} : { deadline }),
+      ...(s.cover ? { cover: true as const } : {}),
+    });
+  }
+  const unknown = COST_FIELDS.filter((f) => form.cost[f].unknown);
+  const cost: Way['cost'] = { leaveMinutes: 0, helperRequests: 0, yen: 0, extraTasks: 0 };
+  for (const f of COST_FIELDS) {
+    if (form.cost[f].unknown) continue;
+    const n = whole(form.cost[f].value);
+    if (n === undefined) return undefined;
+    cost[f] = f === 'leaveMinutes' ? n * 60 : n;
+  }
+  if (unknown.length > 0) cost.unknown = unknown;
+  if ((form.coversStart === '') !== (form.coversEnd === '')) return undefined;
+  const wayDeadline = form.original?.deadline
+    ? ruleOf(form.wayDeadline, form.wayDays, form.wayAt, form.original.deadline)
+    : undefined;
+  if (wayDeadline === 'missing') return undefined;
+  const { deadline: _d, covers: _c, ...kept } = form.original ?? {};
+  const way: Way = {
+    ...kept,
+    id: form.id,
+    name: form.name.trim(),
+    steps,
+    cost,
+    ...(wayDeadline === undefined ? {} : { deadline: wayDeadline }),
+    ...(form.coversStart === ''
+      ? {}
+      : { covers: { start: form.coversStart, end: form.coversEnd } }),
+  };
+  const next = structuredClone(household);
+  next.members.push(...members);
+  next.places.push(...places);
+  const at = next.ways.findIndex((w) => w.id === way.id);
+  if (at === -1) next.ways.push(way);
+  else next.ways[at] = way;
+  return next;
+}
+
+/** やり方を足す・直す（wayId があれば直す）。保存したら、来た所（「すること」か「うちのこと」）へ戻る。 */
+export function WayScreen({ ctx, wayId, from }: { ctx: Ctx; wayId?: string; from?: string }) {
+  const original = wayId ? ctx.household.ways.find((w) => w.id === wayId) : undefined;
+  const [form, setForm] = useState<WayForm>(() => formOf(original));
+  const flow = useHouseholdSave(ctx);
+  const back = () => ctx.go(from ? { name: 'need', key: from } : { name: 'household' });
+  const draft = draftOf(ctx.household, form);
+  const shown = draft ? flow.shownFor(draft) : undefined;
+  const refused = draft ? flow.refusedFor(draft) : undefined;
+  const update = (change: (f: WayForm) => void) =>
+    setForm((now) => {
+      const next = structuredClone(now);
+      change(next);
+      return next;
+    });
+  const step = (i: number, change: (s: StepForm) => void) =>
+    update((f) => {
+      const s = f.steps[i];
+      if (s) change(s);
+    });
+  const adults = ctx.household.members.filter((m) => m.kind === 'adult' && m.active);
+  const contacts = [
+    ...ctx.household.members.filter((m) => m.kind === 'helper' && m.active),
+    ...ctx.household.places.filter((p) => p.kind !== 'home'),
+  ];
+  const places = ctx.household.places.filter((p) => p.kind !== 'home');
+  if (wayId && !original) {
+    return (
+      <>
+        <Header
+          back={{ label: ctx.t('nav.household'), onClick: back }}
+          title={ctx.t('way.title.edit')}
+        />
+        <Main>
+          <Text>{ctx.t('way.gone')}</Text>
+        </Main>
+      </>
+    );
+  }
+  return (
+    <>
+      <Header
+        back={{
+          label: ctx.t(from ? 'way.backToNeed' : 'nav.household'),
+          onClick: back,
+        }}
+        title={ctx.t(original ? 'way.title.edit' : 'way.title.new')}
+      />
+      <Main>
+        <Text quiet>{ctx.t('way.intro')}</Text>
+        <Card>
+          <label className="flex flex-col gap-1">
+            <span className="font-bold">{ctx.t('way.name')}</span>
+            <input
+              className={input}
+              value={form.name}
+              onChange={(e) => update((f) => (f.name = e.target.value))}
+            />
+          </label>
+        </Card>
+        <Label tone="sub">{ctx.t('way.steps')}</Label>
+        {form.steps.map((s, i) => (
+          <Card key={s.id}>
+            <Label tone="accent">{ctx.t('way.step', { n: i + 1 })}</Label>
+            <label className="flex flex-col gap-1">
+              <span className="font-bold">{ctx.t('way.stepName')}</span>
+              <input
+                className={input}
+                value={s.name}
+                onChange={(e) => step(i, (x) => (x.name = e.target.value))}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="font-bold">{ctx.t('way.who')}</span>
+              <select
+                className={input}
+                value={s.assigneeId}
+                onChange={(e) => step(i, (x) => (x.assigneeId = e.target.value))}
+              >
+                <option value="">{ctx.t('way.anyone')}</option>
+                {adults.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="font-bold">{ctx.t('way.to')}</span>
+              <select
+                className={input}
+                value={s.to}
+                onChange={(e) => step(i, (x) => (x.to = e.target.value))}
+              >
+                <option value="">{ctx.t('way.toNone')}</option>
+                {contacts.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+                <option value="+new">{ctx.t('way.toNew')}</option>
+              </select>
+            </label>
+            {s.to === '+new' && (
+              <div className="flex flex-wrap gap-2">
+                <input
+                  aria-label={ctx.t('way.newToName')}
+                  placeholder={ctx.t('way.newToName')}
+                  className={`${input} min-w-0 flex-1`}
+                  value={s.newTo.name}
+                  onChange={(e) => step(i, (x) => (x.newTo.name = e.target.value))}
+                />
+                <select
+                  aria-label={ctx.t('way.newToKind')}
+                  className={input}
+                  value={s.newTo.kind}
+                  onChange={(e) =>
+                    step(i, (x) => (x.newTo.kind = e.target.value === 'place' ? 'place' : 'helper'))
+                  }
+                >
+                  <option value="helper">{ctx.t('way.newToKindHelper')}</option>
+                  <option value="place">{ctx.t('way.newToKindPlace')}</option>
+                </select>
+                {s.newTo.kind === 'helper' && (
+                  <>
+                    <select
+                      aria-label={ctx.t('way.newToLanguage')}
+                      className={input}
+                      value={s.newTo.language}
+                      onChange={(e) =>
+                        step(i, (x) => {
+                          const v = e.target.value;
+                          x.newTo.language = v === 'ja' || v === 'en' ? v : '';
+                        })
+                      }
+                    >
+                      <option value="">{ctx.t('way.newToLanguage')}</option>
+                      <option value="ja">日本語</option>
+                      <option value="en">English</option>
+                    </select>
+                    <input
+                      aria-label={ctx.t('way.newToAddressAs')}
+                      placeholder={ctx.t('way.newToAddressAs')}
+                      className={`${input} min-w-0 flex-1`}
+                      value={s.newTo.addressAs}
+                      onChange={(e) => step(i, (x) => (x.newTo.addressAs = e.target.value))}
+                    />
+                  </>
+                )}
+              </div>
+            )}
+            {s.to !== '' && (
+              <label className="flex flex-col gap-1">
+                <span className="font-bold">{ctx.t('way.wait')}</span>
+                <select
+                  className={input}
+                  value={s.wait}
+                  onChange={(e) => step(i, (x) => (x.wait = e.target.value))}
+                >
+                  <option value="">{ctx.t('way.choose')}</option>
+                  {s.original?.external && s.wait === 'keep' && (
+                    <option value="keep">
+                      {ctx.t('way.waitKeep', { min: s.original.waitAfterMin })}
+                    </option>
+                  )}
+                  {WAITS.map((w) => (
+                    <option key={w} value={String(w)}>
+                      {w === 0
+                        ? ctx.t('way.waitNone')
+                        : w < 1440
+                          ? ctx.t('way.waitHours', { count: w / 60 })
+                          : ctx.t('way.waitDays', { count: w / 1440 })}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {s.to === '' && s.original !== undefined && s.original.waitAfterMin > 0 && (
+              <p className="text-sm text-sub">
+                {s.original.external
+                  ? ctx.t('way.waitDropped', { min: s.original.waitAfterMin })
+                  : ctx.t('way.waitAfterKept', { min: s.original.waitAfterMin })}
+              </p>
+            )}
+            <label className="flex flex-col gap-1">
+              <span className="font-bold">{ctx.t('way.place')}</span>
+              <select
+                className={input}
+                value={s.place}
+                onChange={(e) => step(i, (x) => (x.place = e.target.value))}
+              >
+                <option value="">{ctx.t('way.choose')}</option>
+                <option value="-">{ctx.t('way.placeNone')}</option>
+                {places.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+                <option value="+new">{ctx.t('way.placeNew')}</option>
+              </select>
+            </label>
+            {s.place === '+new' && (
+              <div className="flex flex-wrap gap-2">
+                <input
+                  aria-label={ctx.t('way.newPlaceName')}
+                  placeholder={ctx.t('way.newPlaceName')}
+                  className={`${input} min-w-0 flex-1`}
+                  value={s.newPlace.name}
+                  onChange={(e) => step(i, (x) => (x.newPlace.name = e.target.value))}
+                />
+                <select
+                  aria-label={ctx.t('way.newPlaceKind')}
+                  className={input}
+                  value={s.newPlace.kind}
+                  onChange={(e) =>
+                    step(i, (x) => {
+                      const kind = NEW_PLACE_KINDS.find((k) => k === e.target.value);
+                      if (kind) x.newPlace.kind = kind;
+                    })
+                  }
+                >
+                  {NEW_PLACE_KINDS.map((k) => (
+                    <option key={k} value={k}>
+                      {ctx.t(`household.places.kind.${k}`)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {s.place !== '' && s.place !== '-' && <Text quiet>{ctx.t('way.placeHoursNote')}</Text>}
+            <fieldset className="flex flex-col gap-1">
+              <legend className="font-bold">{ctx.t('way.segments')}</legend>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {SEGMENTS.map((k) => (
+                  <label key={k} className="flex min-h-11 items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="size-5 accent-accent"
+                      checked={s.segments.includes(k)}
+                      onChange={() =>
+                        step(i, (x) => {
+                          x.segments = x.segments.includes(k)
+                            ? x.segments.filter((y) => y !== k)
+                            : [...x.segments, k];
+                        })
+                      }
+                    />
+                    {ctx.t(`household.week.kind.${k}`)}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <label className="flex items-center gap-2">
+              <span className="font-bold">{ctx.t('way.minutes')}</span>
+              <input
+                type="number"
+                min={0}
+                max={1440}
+                className={`${input} w-24`}
+                value={s.minutes}
+                onChange={(e) => step(i, (x) => (x.minutes = e.target.value))}
+              />
+            </label>
+            <DeadlineField
+              ctx={ctx}
+              label={ctx.t('way.deadline')}
+              kind={s.deadline}
+              days={s.days}
+              at={s.at}
+              {...(s.original?.deadline ? { keep: s.original.deadline } : {})}
+              onChange={(kind, days, at) =>
+                step(i, (x) => {
+                  x.deadline = kind;
+                  x.days = days;
+                  x.at = at;
+                })
+              }
+            />
+            <label className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                className="mt-1 size-5 shrink-0 accent-accent"
+                checked={s.cover}
+                onChange={() => step(i, (x) => (x.cover = !x.cover))}
+              />
+              <span className="flex flex-col">
+                <span>{ctx.t('way.cover')}</span>
+                <span className="text-sm text-sub">{ctx.t('way.coverNote')}</span>
+              </span>
+            </label>
+            {form.steps.length > 1 && (
+              <MoreLink onClick={() => update((f) => f.steps.splice(i, 1))}>
+                {ctx.t('way.removeStep')}
+              </MoreLink>
+            )}
+          </Card>
+        ))}
+        {form.steps.length < MAX_STEPS && (
+          <MoreLink
+            onClick={() =>
+              update((f) => {
+                let n = f.steps.length + 1;
+                while (f.steps.some((s) => s.id === `s${n}`)) n += 1;
+                f.steps.push(emptyStep(n));
+              })
+            }
+          >
+            {ctx.t('way.addStep')}
+          </MoreLink>
+        )}
+        <Card>
+          {form.original?.deadline && (
+            <DeadlineField
+              ctx={ctx}
+              label={ctx.t('way.wayDeadline')}
+              kind={form.wayDeadline}
+              days={form.wayDays}
+              at={form.wayAt}
+              keep={form.original.deadline}
+              onChange={(kind, days, at) =>
+                update((f) => {
+                  f.wayDeadline = kind;
+                  f.wayDays = days;
+                  f.wayAt = at;
+                })
+              }
+            />
+          )}
+          <span className="font-bold">{ctx.t('way.covers')}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="time"
+              aria-label={ctx.t('way.coversStart')}
+              className={input}
+              value={form.coversStart}
+              onChange={(e) => update((f) => (f.coversStart = e.target.value))}
+            />
+            <span>–</span>
+            <input
+              type="time"
+              aria-label={ctx.t('way.coversEnd')}
+              className={input}
+              value={form.coversEnd}
+              onChange={(e) => update((f) => (f.coversEnd = e.target.value))}
+            />
+          </div>
+          <Text quiet>{ctx.t('way.coversNote')}</Text>
+        </Card>
+        <Card>
+          <span className="font-bold">{ctx.t('way.cost')}</span>
+          {COST_FIELDS.map((f) => (
+            <div key={f} className="flex flex-wrap items-center gap-2">
+              <span className="min-w-36">{ctx.t(`way.costField.${f}`)}</span>
+              <input
+                type="number"
+                min={0}
+                aria-label={ctx.t(`way.costField.${f}`)}
+                className={`${input} w-24`}
+                value={form.cost[f].unknown ? '' : form.cost[f].value}
+                disabled={form.cost[f].unknown}
+                onChange={(e) => update((x) => (x.cost[f].value = e.target.value))}
+              />
+              <label className="flex min-h-11 items-center gap-2">
+                <input
+                  type="checkbox"
+                  className="size-5 accent-accent"
+                  checked={form.cost[f].unknown}
+                  onChange={() =>
+                    update((x) => {
+                      x.cost[f].unknown = !x.cost[f].unknown;
+                      if (!x.cost[f].unknown && x.cost[f].value === '') x.cost[f].value = '0';
+                    })
+                  }
+                />
+                {ctx.t('way.unknown')}
+              </label>
+            </div>
+          ))}
+          <Text quiet>{ctx.t('way.costNote')}</Text>
+        </Card>
+        <Card tone="accent">
+          {!draft && <Text>{ctx.t('way.missing')}</Text>}
+          {draft && (
+            <Shown
+              ctx={ctx}
+              {...(shown ? { preview: shown } : {})}
+              {...(refused ? { refused } : {})}
+            />
+          )}
+          <Row>
+            {shown && draft ? (
+              <Button
+                onClick={() =>
+                  void flow.save(draft).then((ok) => {
+                    if (ok) back();
+                  })
+                }
+                disabled={flow.busy}
+              >
+                {ctx.t('way.save')}
+              </Button>
+            ) : (
+              <Button
+                onClick={() => draft && void flow.look(draft)}
+                disabled={!draft || flow.busy || !ctx.previewHousehold}
+              >
+                {ctx.t('need.look')}
+              </Button>
+            )}
+            <Button kind="secondary" onClick={back} disabled={flow.busy}>
+              {ctx.t('ways.back')}
+            </Button>
+          </Row>
+        </Card>
+      </Main>
+    </>
+  );
+}
+
+/** いつまでに：選ぶまで保存しない（決まり無しは、選ぶ物の一つ）。 */
+function DeadlineField(props: {
+  ctx: Ctx;
+  label: string;
+  kind: DeadlineKind;
+  days: string;
+  at: string;
+  keep?: DeadlineRule;
+  onChange: (kind: DeadlineKind, days: string, at: string) => void;
+}) {
+  const { ctx, kind, days, at, keep, onChange } = props;
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="flex flex-col gap-1">
+        <span className="font-bold">{props.label}</span>
+        <select
+          className={input}
+          value={kind}
+          onChange={(e) => {
+            const next = (
+              ['', 'keep', 'none', 'daysBefore', 'businessDaysBefore', 'onTheDay'] as const
+            ).find((k) => k === e.target.value);
+            if (next !== undefined) onChange(next, days, at);
+          }}
+        >
+          <option value="">{ctx.t('way.choose')}</option>
+          {keep?.type === 'weekdayOfPreviousWeek' && (
+            <option value="keep">
+              {ctx.t('way.deadlineKeep', { rule: deadlineText(ctx, keep) })}
+            </option>
+          )}
+          <option value="none">{ctx.t('way.deadlineNone')}</option>
+          <option value="daysBefore">{ctx.t('way.deadlineDays')}</option>
+          <option value="businessDaysBefore">{ctx.t('way.deadlineBusinessDays')}</option>
+          <option value="onTheDay">{ctx.t('way.deadlineOnTheDay')}</option>
+        </select>
+      </label>
+      {(kind === 'daysBefore' || kind === 'businessDaysBefore' || kind === 'onTheDay') && (
+        <div className="flex flex-wrap items-center gap-2">
+          {kind !== 'onTheDay' && (
+            <label className="flex items-center gap-1.5">
+              <input
+                type="number"
+                min={1}
+                max={30}
+                aria-label={ctx.t('way.days')}
+                className={`${input} w-20`}
+                value={days}
+                onChange={(e) => onChange(kind, e.target.value, at)}
+              />
+              {ctx.t(
+                kind === 'daysBefore'
+                  ? 'household.ways.daysUnit'
+                  : 'household.ways.businessDaysUnit',
+              )}
+            </label>
+          )}
+          <input
+            type="time"
+            aria-label={ctx.t('way.at')}
+            className={input}
+            value={at}
+            onChange={(e) => onChange(kind, days, e.target.value)}
+          />
+        </div>
+      )}
+    </div>
+  );
+}

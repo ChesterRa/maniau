@@ -14,6 +14,7 @@ import {
   type Ctx,
   day,
   dayTime,
+  leaveText,
   nameOf,
   optionList,
   releasedTitle,
@@ -21,6 +22,7 @@ import {
   timeOnly,
 } from './screens';
 import { Button, Card, Header, Label, Main, Row, Text, Title } from './ui';
+import { WaysCard } from './ways';
 
 type Mode = 'week' | 'places' | 'ways';
 const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
@@ -99,7 +101,7 @@ function costText(ctx: Ctx, way: CareOptionTemplate): string {
   const parts: string[] = [];
   if (way.cost.yen > 0) parts.push(ctx.t('household.ways.yen', { yen: way.cost.yen }));
   if (way.cost.leaveMinutes > 0) {
-    parts.push(ctx.t('cost.leave', { count: Math.round(way.cost.leaveMinutes / 480) || 1 }));
+    parts.push(leaveText(ctx, way.cost.leaveMinutes));
   }
   if (way.cost.helperRequests > 0) parts.push(ctx.t('cost.helper'));
   return parts.join(ctx.t('list.separator'));
@@ -264,6 +266,12 @@ export function householdPreviewLines(ctx: Ctx, preview: HouseholdPreview): stri
         },
       ),
     );
+  }
+  // やり方の選びが古くなる「すること」（前の選びは当てない。家族に選び直してもらう）。
+  for (const key of changes.rechoose) {
+    const arrangement = ctx.plan.arrangements.find((a) => a.key === key);
+    const what = ctx.plan.requirements.find((r) => r.key === arrangement?.requirementKey)?.what;
+    lines.push(ctx.t('household.preview.rechoose', { what: what ?? '' }));
   }
   for (const request of changes.cancels) {
     lines.push(ctx.t('household.preview.cancel', { to: nameOf(ctx.household, request.to) }));
@@ -659,6 +667,8 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
           )}
         </Card>
 
+        {mode === undefined && <WaysCard ctx={ctx} />}
+
         {mode !== undefined && (
           <Card tone="accent">
             <Label tone="accent">{ctx.t('household.preview.label')}</Label>
@@ -693,7 +703,6 @@ function refusedKey(reason: string): string {
     'routineGap',
     'routineDayMissing',
     'routinePlace',
-    'waysLocked',
     'hoursOvernight',
     'membersLocked',
     'placesLocked',

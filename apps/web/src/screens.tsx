@@ -7,9 +7,12 @@ import {
   type ChoicePreview,
   type Command,
   type ConditionView,
+  choosable,
   type ExternalRequest,
   formatDateTime,
   type Household,
+  hoursUnconfirmed,
+  hoursUnknownAt,
   type Item,
   isActiveTask,
   isNeedArrangementKey,
@@ -19,12 +22,14 @@ import {
   type OptionPlan,
   type PlanResult,
   type PreviewCommand,
+  placesWithoutHours,
   proposalSnapshot,
   type Released,
   type Requirement,
   type ShownFrom,
   type ShownTarget,
   type Source,
+  stoppedWay,
   type Task,
   type TodayCard,
   taskContent,
@@ -88,6 +93,8 @@ export type Route =
   | { name: 'stateNeed' }
   /** モデルが読んだ「すること」の読み取りを、家族が直す（事項の ID）。 */
   | { name: 'needFix'; itemId: string }
+  /** やり方を足す・直す（wayId があれば直す）。from は来た「すること」の手配の key（保存したら戻る）。 */
+  | { name: 'way'; wayId?: string; from?: string }
   | { name: 'ask'; taskKey: string }
   | { name: 'week' }
   | { name: 'sources'; sourceId?: string; highlight?: string[] };
@@ -220,6 +227,23 @@ function templateOf(household: Household, option: OptionPlan) {
   return household.careOptions.find((o) => o.id === option.templateId);
 }
 
+/** 作業の手順の決まった場所で、行ける時間（営業時間など）を確かめていない物（hoursUnconfirmed）。 */
+function stepPlaceWithoutHours(household: Household, task: Task) {
+  const step = task.step;
+  if (!step) return undefined;
+  const steps: readonly { id: string; placeId?: string }[] = isNeedArrangementKey(
+    task.basis.arrangementKey,
+  )
+    ? (household.ways.find((w) => w.id === step.templateId)?.steps ?? [])
+    : (() => {
+        const template = household.careOptions.find((o) => o.id === step.templateId);
+        return template ? [...template.steps, ...template.extraSteps] : [];
+      })();
+  const placeId = steps.find((s) => s.id === step.stepId)?.placeId;
+  const place = household.places.find((p) => p.id === placeId);
+  return place && hoursUnconfirmed(place) ? place : undefined;
+}
+
 /** 案の最初の手順に決まった担当（取れる手・家族のやり方の手順で決まっている時）。 */
 function firstStepAssignee(household: Household, option: OptionPlan): string | undefined {
   return option.titleKey === 'option.way'
@@ -252,18 +276,78 @@ function optionParams(ctx: Ctx, option: OptionPlan): Record<string, string> {
 const optionTitle = (ctx: Ctx, option: OptionPlan) =>
   ctx.t(`${option.titleKey}.title`, optionParams(ctx, option));
 
+/**
+ * 休みの代償を、登録された長さのまま書く（時間か分。日に換えない・有休と決めない：家族が入れたのは休みの時間で、
+ * 種類は分からない）。
+ */
+export function leaveText(ctx: Ctx, minutes: number): string {
+  return minutes % 60 === 0
+    ? ctx.t('cost.leaveHours', { count: minutes / 60 })
+    : ctx.t('cost.leaveMinutes', { count: minutes });
+}
+
 function optionNote(ctx: Ctx, option: OptionPlan): string {
   const notes: string[] = [];
-  if (option.cost.leaveMinutes > 0) {
-    notes.push(ctx.t('cost.leave', { count: Math.round(option.cost.leaveMinutes / 480) || 1 }));
+  // 分からない欄は、0 として書かない（分からないと書く）。
+  const unknown = new Set(option.cost.unknown ?? []);
+  if (!unknown.has('leaveMinutes') && option.cost.leaveMinutes > 0) {
+    notes.push(leaveText(ctx, option.cost.leaveMinutes));
   }
-  if (option.cost.helperRequests > 0) notes.push(ctx.t('cost.helper'));
-  if (option.cost.yen > 0) notes.push(ctx.t('household.ways.yen', { yen: option.cost.yen }));
+  if (!unknown.has('helperRequests') && option.cost.helperRequests > 0) {
+    notes.push(ctx.t('cost.helper'));
+  }
+  if (!unknown.has('yen') && option.cost.yen > 0) {
+    notes.push(ctx.t('household.ways.yen', { yen: option.cost.yen }));
+  }
+  // 取れる手の増える作業は、当日の準備（お弁当など）で書く。家族のやり方は数で書く。
+  if (
+    option.titleKey === 'option.way' &&
+    !unknown.has('extraTasks') &&
+    option.cost.extraTasks > 0
+  ) {
+    notes.push(ctx.t('cost.extraTasks', { count: option.cost.extraTasks }));
+  }
   const template = templateOf(ctx.household, option);
   if (template?.extraSteps.some((s) => s.titleKey.startsWith('task.bento'))) {
     notes.push(ctx.t('cost.bento'));
   }
+  if (unknown.size > 0) {
+    const fields = (['leaveMinutes', 'helperRequests', 'yen', 'extraTasks'] as const)
+      .filter((f) => unknown.has(f))
+      .map((f) => ctx.t(`cost.field.${f}`));
+    notes.push(
+      ctx.t('cost.unknown', {
+        fields: new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(fields),
+      }),
+    );
+  }
   return notes.join(ctx.t('list.separator'));
+}
+
+/**
+ * お勧めを出していない理由（エンジンの決まりと同じ：やめたやり方の案・行ける時間の分からない場所でする手順のある案・
+ * 案が二つ以上で代償の分からない案）。まだ何も進めていない時だけ。
+ */
+function noRecommendation(ctx: Ctx, arrangement: Arrangement): string | undefined {
+  if (
+    arrangement.status !== 'decidable' ||
+    arrangement.recommendedOptionKey !== undefined ||
+    arrangement.inUseOptionKey !== undefined
+  ) {
+    return undefined;
+  }
+  const open = arrangement.options.filter((o) => !o.expired && o.decisionDeadline !== undefined);
+  if (open.length === 0) return undefined;
+  if (open.some((o) => stoppedWay(ctx.household, arrangement, o))) {
+    return ctx.t('decide.noRecommendation.stopped');
+  }
+  if (open.some((o) => hoursUnknownAt(ctx.household, arrangement, o))) {
+    return ctx.t('decide.noRecommendation.hours');
+  }
+  if (open.length > 1 && open.some((o) => (o.cost.unknown?.length ?? 0) > 0)) {
+    return ctx.t('decide.noRecommendation.cost');
+  }
+  return undefined;
 }
 
 export function taskTitle(ctx: Ctx, task: Task): string {
@@ -528,7 +612,9 @@ function replyBy(
   optionKey: string | undefined,
 ): { fallback: OptionPlan; deadline: string; evening?: string } | undefined {
   const [fallback] = arrangement.options
-    .filter((o) => o.key !== optionKey && !o.expired && o.decisionDeadline !== undefined)
+    .filter(
+      (o) => o.key !== optionKey && choosable(arrangement, o) && o.decisionDeadline !== undefined,
+    )
     .sort(
       (a, b) =>
         toEpochMinutes(a.decisionDeadline as string) - toEpochMinutes(b.decisionDeadline as string),
@@ -1743,6 +1829,7 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
   const store = task.atPlaceId
     ? ctx.household.places.find((p) => p.id === task.atPlaceId)
     : undefined;
+  const unvisited = stepPlaceWithoutHours(ctx.household, task);
   const late = task.detour
     ? minutesBetween(task.detour.plannedArrival, task.detour.delayedArrival)
     : 0;
@@ -1751,6 +1838,7 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
       <Label tone="accent">{ctx.t('card.proposal.label')}</Label>
       <Title>{taskTitle(ctx, task)}</Title>
       <ConditionLine ctx={ctx} basis={task.basis} />
+      {unvisited && <Text quiet>{ctx.t('decide.noHours', { place: unvisited.name })}</Text>}
       {/* 書かれた時刻の決まった作業は、置けていなくても書かれた時間を見せる（置いた時刻と同じ）。 */}
       {task.timing !== undefined && <WrittenTime ctx={ctx} task={task} />}
       {task.timing === undefined && task.start && task.end && (
@@ -2368,6 +2456,9 @@ export function OptionChooser({ ctx, arrangement }: { ctx: Ctx; arrangement: Arr
           <Button onClick={reread}>{ctx.t('decide.previewRetry')}</Button>
         </Card>
       )}
+      {noRecommendation(ctx, arrangement) && (
+        <Text quiet>{noRecommendation(ctx, arrangement)}</Text>
+      )}
       {options.map((option) => {
         const shown = previews?.get(option.key);
         // 「選んだら」を読める画面で、この手の分がまだ無い（読んでいる・読めなかった・出せなかった）。
@@ -2541,6 +2632,9 @@ function OptionRow({
   const urgent = left !== undefined && left <= 5 && !option.expired;
   const current = arrangement.chosenOptionKey === option.key;
   const backup = arrangement.backupOptionKeys.includes(option.key);
+  // やめたやり方の案は、新しくは選べない（今、本命か予備に選んである物は、そのまま）。
+  const stopped = stoppedWay(ctx.household, arrangement, option);
+  const unvisited = placesWithoutHours(ctx.household, arrangement, option);
   // 勧めるのは、まだ何も進めていない時だけ（エンジンが決まりで選ぶ。理由も決まりから）。
   const recommended = arrangement.recommendedOptionKey === option.key;
   // 人に頼む手には、いつまでに返事が要るかを添える（頼む文と同じ：断られた時に移る手の決め時の前の晩）。
@@ -2553,7 +2647,7 @@ function OptionRow({
     <button
       type="button"
       onClick={onChoose}
-      disabled={option.expired || current || waiting !== undefined}
+      disabled={option.expired || current || waiting !== undefined || (stopped && !backup)}
       className={`flex w-full items-center gap-2.5 rounded-[18px] border bg-white px-4 py-3.5 text-left disabled:opacity-55 ${recommended ? 'border-accent-line' : 'border-line'}`}
     >
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -2590,6 +2684,14 @@ function OptionRow({
           </span>
         )}
         <span className="text-sm text-sub">{optionNote(ctx, option)}</span>
+        {stopped && (
+          <span className="text-sm font-bold text-warn">{ctx.t('decide.stoppedWay')}</span>
+        )}
+        {unvisited.map((place) => (
+          <span key={place.id} className="text-sm">
+            {ctx.t('decide.noHours', { place: place.name })}
+          </span>
+        ))}
         {reply && (
           <span className="text-sm">
             {reply.evening
