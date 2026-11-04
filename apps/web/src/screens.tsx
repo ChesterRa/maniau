@@ -3261,7 +3261,14 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
         if (option.expired || !option.decisionDeadline) continue;
         if (localDate(option.decisionDeadline, ctx.tz) !== date) continue;
         if (!deadlineKeys.has(option.key)) continue;
-        lines.push(ctx.t('week.deadline', { option: optionTitle(ctx, option) }));
+        // 買う手の題は「買う」だけなので、何を買うかが分かるよう、その作業の題（「白い長袖シャツを買う」）で書く。
+        const buy =
+          arrangement.kind === 'purchase'
+            ? ctx.plan.tasks.find((t) => t.key === option.taskKeys[0])
+            : undefined;
+        lines.push(
+          ctx.t('week.deadline', { option: buy ? taskTitle(ctx, buy) : optionTitle(ctx, option) }),
+        );
       }
     }
     return lines;

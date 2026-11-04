@@ -27,3 +27,11 @@ it('平日でも、きょうから始める（英語も同じ）', () => {
   expect(en).toContain('The 7 days after');
   expect(en).not.toContain('Next week');
 });
+
+it('買う手の決め時は、何を買うかを書く（「買うの決め時」だけにしない。英語も同じ）', () => {
+  const ja = text(renderToStaticMarkup(<WeekScreen ctx={ctxFor('asked', 'b', 'ja')} />));
+  expect(ja).toContain('白い長袖シャツを買うの決め時');
+  expect(ja).not.toMatch(/(^|\s)買うの決め時/);
+  const en = text(renderToStaticMarkup(<WeekScreen ctx={ctxFor('asked', 'b', 'en')} />));
+  expect(en).toMatch(/Deadline: Buy [^ ]/);
+});
