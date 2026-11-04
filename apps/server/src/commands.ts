@@ -1150,6 +1150,8 @@ function checkHouseholdEdit(
   }
   const ways = checkWays(current, next);
   if ('reason' in ways) return ways;
+  const around = checkResources(current, next, now);
+  if ('reason' in around) return around;
   // 大人のふだんの一日：前からある曜日は消さず（区間の無い日にしない）、直した日は区間を切れ目なく続ける
   // （書かれていない時間を作らない）。分からない時間で、子の居場所の手配が要る時間を決めないため。
   const adults = new Set(next.members.filter((m) => m.kind === 'adult').map((m) => m.id));
@@ -1209,10 +1211,62 @@ function checkHouseholdEdit(
     household: {
       ...rest,
       places,
+      resources: around.resources,
+      preparations: around.preparations,
       ways: ways.ways,
       ...(ways.stoppedWayIds === undefined ? {} : { stoppedWayIds: ways.stoppedWayIds }),
     },
   };
+}
+
+/**
+ * 周りの資源と、一度だけ済ませておく前提の直し（02-foundation §3.5）。今は、家族の扱い（いつも・候補・使わない）と、
+ * 前提の状態・有効な最後の日だけを直せる。消さない・足さない（調べた候補から入れる道は別）、ほかの欄（名前・種類・
+ * 出典・だれの前提か・家族が確かめた日数）は替えない。直した時刻はサーバーが付ける（送られた時刻は採らない）。
+ */
+function checkResources(
+  current: Household,
+  next: Household,
+  now: DateTime,
+):
+  | { resources: Household['resources']; preparations: Household['preparations'] }
+  | { status: 'invalid'; reason: string } {
+  const invalid = (reason: string) => ({ status: 'invalid' as const, reason });
+  if (
+    next.resources.length !== current.resources.length ||
+    next.preparations.length !== current.preparations.length
+  ) {
+    return invalid('resourcesLocked');
+  }
+  const resources: Household['resources'] = [];
+  for (const before of current.resources) {
+    const sent = next.resources.find((r) => r.id === before.id);
+    if (!sent) return invalid('resourcesLocked');
+    const { use, decidedAt: _decidedAt, ...rest } = sent;
+    const { use: beforeUse, decidedAt, ...beforeRest } = before;
+    if (!sameJson(rest, beforeRest)) return invalid('resourcesLocked');
+    resources.push(use === beforeUse ? before : { ...beforeRest, use, decidedAt: now });
+  }
+  const preparations: Household['preparations'] = [];
+  for (const before of current.preparations) {
+    const sent = next.preparations.find((p) => p.id === before.id);
+    if (!sent) return invalid('resourcesLocked');
+    const { state, validUntil, stateCheckedAt: _checked, ...rest } = sent;
+    const { state: beforeState, validUntil: beforeValid, stateCheckedAt, ...beforeRest } = before;
+    if (!sameJson(rest, beforeRest)) return invalid('resourcesLocked');
+    const same = state === beforeState && validUntil === beforeValid;
+    preparations.push(
+      same
+        ? before
+        : {
+            ...beforeRest,
+            state,
+            ...(validUntil === undefined ? {} : { validUntil }),
+            stateCheckedAt: now,
+          },
+    );
+  }
+  return { resources, preparations };
 }
 
 /** 新しく足す成員・場所・やり方・手順の ID（画面が作る。ID は比べるだけで、区切って読まない。これは守りの形）。 */
@@ -1270,6 +1324,9 @@ function checkWays(
     }
     if (!before && !NEW_ID.test(way.id)) return invalid('wayInvalid');
     if (way.name.trim() === '') return invalid('wayInvalid');
+    // やり方の前提（requires）と使う資源（resourceIds）は、今は直せない（前と同じだけ。足したやり方には付けない）。
+    if (!sameJson(before?.requires, way.requires)) return invalid('wayInvalid');
+    if (!sameJson(before?.resourceIds, way.resourceIds)) return invalid('wayInvalid');
     for (const step of way.steps) {
       if (!NEW_ID.test(step.id) || step.name.trim() === '') return invalid('wayInvalid');
       if (new Set(step.segments).size !== step.segments.length) return invalid('wayInvalid');

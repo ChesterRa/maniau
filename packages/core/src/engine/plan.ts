@@ -54,6 +54,7 @@ import {
   zonedToEpochMinutes,
 } from '../time';
 import { type DutyTurn, dutyTurn, statedTurn } from '../view/ours';
+import { preparationGaps, unusedResources } from '../view/preparations';
 import { isActiveTask } from '../view/today';
 import { hoursUnknownAt, stoppedWay } from '../view/ways';
 import { noAdultAtHome } from './availability';
@@ -1101,7 +1102,16 @@ function planNeed(
       own,
       busy,
     );
-    return stoppedIds.has(way.id) ? { ...option, stopped: true as const } : option;
+    // やり方の前提（事前の登録など）のうち、使う日・だれのために満たされていない物を印にする（勧めない）。
+    const gaps = preparationGaps(ctx.household, way, frame.date, item.interpretation.forMemberId);
+    // やり方が使う資源のうち、家族が「使わない」とした物（勧める候補にしない）。
+    const unused = unusedResources(ctx.household, way);
+    return {
+      ...option,
+      ...(stoppedIds.has(way.id) ? { stopped: true as const } : {}),
+      ...(gaps.length > 0 ? { needsPreparation: gaps } : {}),
+      ...(unused.length > 0 ? { unusedResources: unused } : {}),
+    };
   });
   addBusy(busy, own);
   out.tasks.push(...own);
@@ -1744,18 +1754,25 @@ function withStatus(ctx: Context, arrangement: Arrangement, tasks: Task[]): Arra
     reasons.push({ code: 'noOptionLeft', refs: arrangement.options.map((o) => o.key) });
     return { ...arrangement, status: 'infeasible', reasons };
   }
+  // 家族が「使わない」とした資源を使う案は、勧める候補にしない（選べる。ほかの案は比べて勧める）。候補が残らな
+  // ければ、勧めない。
+  const candidates = open.filter((o) => (o.unusedResources?.length ?? 0) === 0);
   // 勧めるのは、代償と決め時で比べられる時だけ（比べられなければ、家族が選ぶ）：やめたやり方の案がある、営業時間の
-  // 分からない場所でする手順のある案がある（間に合うと言えない）、案が二つ以上で代償の分からない案がある時は、勧めない。
+  // 分からない場所でする手順のある案がある（間に合うと言えない）、前もっての前提（事前の登録など）が済んだと
+  // 確かめられていない案がある、案が二つ以上で代償の分からない案がある時は、勧めない。
   if (
-    open.some(
+    candidates.length === 0 ||
+    candidates.some(
       (o) =>
-        stoppedWay(ctx.household, arrangement, o) || hoursUnknownAt(ctx.household, arrangement, o),
+        stoppedWay(ctx.household, arrangement, o) ||
+        hoursUnknownAt(ctx.household, arrangement, o) ||
+        (o.needsPreparation?.length ?? 0) > 0,
     ) ||
-    (open.length > 1 && open.some((o) => (o.cost.unknown?.length ?? 0) > 0))
+    (candidates.length > 1 && candidates.some((o) => (o.cost.unknown?.length ?? 0) > 0))
   ) {
     return { ...arrangement, status: 'decidable', reasons };
   }
-  const [recommended, next] = [...open].sort(
+  const [recommended, next] = [...candidates].sort(
     (a, b) =>
       costScore(a.cost) - costScore(b.cost) ||
       (b.decisionDeadline ?? '').localeCompare(a.decisionDeadline ?? ''),

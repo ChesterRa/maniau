@@ -375,8 +375,26 @@ function optionNote(ctx: Ctx, option: OptionPlan): string {
 }
 
 /**
+ * 案の前もっての前提（事前の登録など）が満たされていない訳と、済ませておく目安（家族が確かめた日数がある時だけ。
+ * 無ければ「早めに確かめる」）。前提の名前は家の情報の家族の言葉。
+ */
+export function preparationGapText(
+  ctx: Ctx,
+  gap: NonNullable<OptionPlan['needsPreparation']>[number],
+): string {
+  const name =
+    ctx.household.preparations.find((p) => p.id === gap.preparationId)?.name ??
+    ctx.t('decide.preparation.unnamed');
+  const state = ctx.t(`decide.preparation.state.${gap.state}`);
+  return gap.by
+    ? ctx.t('decide.preparation.by', { name, state, by: day(ctx, gap.by) })
+    : ctx.t('decide.preparation.soon', { name, state });
+}
+
+/**
  * お勧めを出していない理由（エンジンの決まりと同じ：やめたやり方の案・行ける時間の分からない場所でする手順のある案・
- * 案が二つ以上で代償の分からない案）。まだ何も進めていない時だけ。
+ * 前もっての前提〔事前の登録など〕が済んだと確かめていない案・案が二つ以上で代償の分からない案）。まだ何も進めて
+ * いない時だけ。
  */
 function noRecommendation(ctx: Ctx, arrangement: Arrangement): string | undefined {
   if (
@@ -393,6 +411,9 @@ function noRecommendation(ctx: Ctx, arrangement: Arrangement): string | undefine
   }
   if (open.some((o) => hoursUnknownAt(ctx.household, arrangement, o))) {
     return ctx.t('decide.noRecommendation.hours');
+  }
+  if (open.some((o) => (o.needsPreparation?.length ?? 0) > 0)) {
+    return ctx.t('decide.noRecommendation.preparation');
   }
   if (open.length > 1 && open.some((o) => (o.cost.unknown?.length ?? 0) > 0)) {
     return ctx.t('decide.noRecommendation.cost');
@@ -2846,6 +2867,18 @@ function OptionRow({
         {unvisited.map((place) => (
           <span key={place.id} className="text-sm">
             {ctx.t('decide.noHours', { place: place.name })}
+          </span>
+        ))}
+        {(option.needsPreparation ?? []).map((gap) => (
+          <span key={gap.preparationId} className="text-sm font-bold text-warn">
+            {preparationGapText(ctx, gap)}
+          </span>
+        ))}
+        {(option.unusedResources ?? []).map((id) => (
+          <span key={id} className="text-sm font-bold text-warn">
+            {ctx.t('decide.unusedResource', {
+              name: ctx.household.resources.find((r) => r.id === id)?.name ?? id,
+            })}
           </span>
         ))}
         {reply && (

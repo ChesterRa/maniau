@@ -376,10 +376,26 @@
     "noRecommendation": {
       "stopped": "One of these ways has been stopped, so we don’t suggest one. Your family chooses.",
       "hours": "One of these ways uses a place whose opening hours aren’t confirmed, so we don’t suggest one (we haven’t checked it can be done in time).",
-      "cost": "Some costs aren’t known, so we don’t suggest one (we don’t treat an unknown cost as zero)."
+      "cost": "Some costs aren’t known, so we don’t suggest one (we don’t treat an unknown cost as zero).",
+      "preparation": "Some options need something done beforehand (such as registering in advance) that hasn’t been confirmed, so we don’t recommend one. You can enter whether it’s done under “Around us” in Family."
     },
     "stoppedWay": "This way has been stopped (it can’t be newly chosen).",
-    "noHours": "{{place}}: opening hours not confirmed. Please check that you can go then."
+    "noHours": "{{place}}: opening hours not confirmed. Please check that you can go then.",
+    "preparation": {
+      "unnamed": "Advance preparation",
+      "by": "{{name}}: {{state}}. Aim to finish it by {{by}} (from the confirmed number of days).",
+      "soon": "{{name}}: {{state}}. Check it early, before you need it.",
+      "state": {
+        "unknown": "not known whether it’s done",
+        "notDone": "not done yet",
+        "inProgress": "in progress",
+        "expired": "expired",
+        "appliesUnknown": "not known who it covers",
+        "personUnknown": "not known who this to-do is for, so we can’t say it’s done",
+        "otherPerson": "it’s for someone else, not this person"
+      }
+    },
+    "unusedResource": "You marked “{{name}}” as “Don’t use” (not recommended; you can still choose it)."
   },
   "ask": {
     "title": "Send this message",
@@ -852,7 +868,21 @@
       "issues_other": "The check found {{count}} new problems.",
       "unverified_one": "{{count}} point couldn't be checked (part of the calculation is incomplete).",
       "unverified_other": "{{count}} points couldn't be checked (part of the calculation is incomplete).",
-      "rechoose": "“{{what}}”: a way it uses changed, so its ways need to be chosen again."
+      "rechoose": "“{{what}}”: a way it uses changed, so its ways need to be chosen again.",
+      "preparation": {
+        "added": "{{name}}: it will need an advance step ({{what}}) not confirmed as done (not recommended).",
+        "changed": "{{name}}: the reason for the advance step ({{what}}) changes.",
+        "cleared": "{{name}}: the advance step mark ({{what}}) goes away."
+      },
+      "unused": {
+        "added": "{{name}}: it will use a place you marked “Don’t use” ({{what}}) (not recommended).",
+        "cleared": "{{name}}: the “Don’t use” mark ({{what}}) goes away."
+      },
+      "recommend": {
+        "changed": "The recommended option for {{what}} changes from {{before}} to {{after}}.",
+        "new": "{{name}} will be recommended for {{what}}.",
+        "gone": "{{name}} will no longer be recommended for {{what}}."
+      }
     },
     "refused": {
       "householdInvalid": "This edit doesn't make valid family information (check the order and overlap of times).",
@@ -1284,6 +1314,57 @@
       "none": "No days recorded.",
       "item": "{{day}} {{name}}: {{segments}}",
       "add": "Change just one day"
+    }
+  },
+  "resources": {
+    "label": "Around us",
+    "none": "Nothing yet.",
+    "used": "Facilities and services near home that your family added, and what must be done before using them (such as registering in advance). You enter whether it’s done (research alone never marks it done). Options needing an advance step not confirmed as done are not recommended.",
+    "area": "Area: {{area}}",
+    "source": {
+      "demo": "Source: a made-up rule for the demo (not a real page)",
+      "family": "Source: entered by your family",
+      "officialQuoted": "Source: {{title}} (page read on {{when}}; quote checked against the page text)",
+      "officialUnchecked": "Source: {{title}} (page read on {{when}}; quote not checked against the page text)",
+      "noDate": "no date",
+      "quote": "“{{quote}}”"
+    },
+    "applies": {
+      "household": "For the whole family",
+      "unknown": "Not known who it covers (even if done, it isn’t used for any to-do)",
+      "members": "For {{names}}",
+      "joiner": ", "
+    },
+    "preparation": {
+      "title": "Beforehand: {{name}}",
+      "state": {
+        "unknown": "Not known whether it’s done",
+        "notDone": "Not done yet",
+        "inProgress": "In progress",
+        "done": "Done"
+      },
+      "choice": {
+        "unknown": "Don’t know",
+        "notDone": "Not yet",
+        "inProgress": "In progress",
+        "done": "Done"
+      },
+      "checked": " (confirmed by your family on {{when}})",
+      "validUntil": "Valid until",
+      "validUntilText": "Valid until {{date}}",
+      "lead": "Finish {{days}} days before the day of use (number of days your family confirmed from the source)",
+      "noLead": "How many days ahead hasn’t been confirmed (check early)",
+      "ways": "Used by: {{ways}}"
+    },
+    "use": {
+      "usual": "Usually use",
+      "candidate": "A candidate for us",
+      "notUsed": "Don’t use",
+      "choice": {
+        "usual": "Usual",
+        "candidate": "Candidate",
+        "notUsed": "Don’t use"
+      }
     }
   }
 }

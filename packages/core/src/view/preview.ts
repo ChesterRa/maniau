@@ -174,9 +174,44 @@ export interface WindowChange {
 export interface DeadlineChange {
   arrangementKey: string;
   optionKey: string;
+  /** 手の決まり（取れる手の型・家族のやり方）の ID。今の計画に無い手も、画面がこれで名前を引く。 */
+  templateId: string;
   titleKey: string;
   before?: DeadlineState;
   after?: DeadlineState;
+}
+
+/**
+ * 手の前もっての前提（事前の登録など）の印の変化：付く・消える・訳や目安の日が替わる。無い側は空（印が無い）。
+ * 手が新しく出る・無くなる時は、印のある側だけを比べる（手そのものの出入りは deadlines に出る）。
+ */
+export interface PreparationChange {
+  arrangementKey: string;
+  optionKey: string;
+  templateId: string;
+  before: NonNullable<OptionPlan['needsPreparation']>;
+  after: NonNullable<OptionPlan['needsPreparation']>;
+}
+
+/** 手が使う資源のうち、家族が「使わない」とした物の変化（無い側は空）。 */
+export interface UnusedResourceChange {
+  arrangementKey: string;
+  optionKey: string;
+  templateId: string;
+  before: string[];
+  after: string[];
+}
+
+/** 勧める手の変化（前も後もある生きている手配だけ。無いのは、勧めていない）。 */
+export interface RecommendationChange {
+  arrangementKey: string;
+  /** 何の手配か（画面が主語を書く。手配の時間の変化と同じ形）。 */
+  kind: Arrangement['kind'];
+  childId?: string;
+  /** 通用の「すること」だけ：何を（家族の言葉・原文）。 */
+  what?: string;
+  before?: { optionKey: string; templateId: string };
+  after?: { optionKey: string; templateId: string };
 }
 
 /**
@@ -212,6 +247,12 @@ export interface PlanChanges {
   deadlines: DeadlineChange[];
   /** 手配の時間が変わる・新しく要る・要らなくなる。 */
   windows: WindowChange[];
+  /** 前もっての前提の印が変わる手。 */
+  preparations: PreparationChange[];
+  /** 「使わない」とした資源を使う印が変わる手。 */
+  unusedResources: UnusedResourceChange[];
+  /** 勧める手が替わる・出る・無くなる手配。 */
+  recommendations: RecommendationChange[];
   /** 新しく、ほかの作業と同じ人の同じ時間にしか置けなくなる手。 */
   conflicts: string[];
   /**
@@ -302,9 +343,44 @@ export function planChanges(before: PlanResult, after: PlanResult): PlanChanges 
     deadlines.push({
       arrangementKey: either.a.key,
       optionKey: either.o.key,
+      templateId: either.o.templateId,
       titleKey: either.o.titleKey,
       ...(earlier ? { before: shape(earlier.o) } : {}),
       ...(later ? { after: shape(later.o) } : {}),
+    });
+  }
+  const preparations: PreparationChange[] = [];
+  for (const key of new Set([...optionsBefore.keys(), ...optionsAfter.keys()])) {
+    const earlier = optionsBefore.get(key);
+    const later = optionsAfter.get(key);
+    const gapsBefore = earlier?.o.needsPreparation ?? [];
+    const gapsAfter = later?.o.needsPreparation ?? [];
+    if (JSON.stringify(gapsBefore) === JSON.stringify(gapsAfter)) continue;
+    const either = later ?? earlier;
+    if (!either) continue;
+    preparations.push({
+      arrangementKey: either.a.key,
+      optionKey: either.o.key,
+      templateId: either.o.templateId,
+      before: gapsBefore,
+      after: gapsAfter,
+    });
+  }
+  const unusedResources: UnusedResourceChange[] = [];
+  for (const key of new Set([...optionsBefore.keys(), ...optionsAfter.keys()])) {
+    const earlier = optionsBefore.get(key);
+    const later = optionsAfter.get(key);
+    const usedBefore = earlier?.o.unusedResources ?? [];
+    const usedAfter = later?.o.unusedResources ?? [];
+    if (JSON.stringify(usedBefore) === JSON.stringify(usedAfter)) continue;
+    const either = later ?? earlier;
+    if (!either) continue;
+    unusedResources.push({
+      arrangementKey: either.a.key,
+      optionKey: either.o.key,
+      templateId: either.o.templateId,
+      before: usedBefore,
+      after: usedAfter,
     });
   }
   const liveArrangements = (plan: PlanResult) =>
@@ -339,6 +415,30 @@ export function planChanges(before: PlanResult, after: PlanResult): PlanChanges 
       ...(later ? { after: { start: later.start, end: later.end } } : {}),
     });
   }
+  const recommendations: RecommendationChange[] = [];
+  // 勧める手と、その手の決まりの ID（新しく出た手は今の計画に無いので、画面が名前を引けるように）。
+  const recommended = (a: Arrangement) => {
+    const option = a.options.find((o) => o.key === a.recommendedOptionKey);
+    return option ? { optionKey: option.key, templateId: option.templateId } : undefined;
+  };
+  for (const [key, later] of arrangementsAfter) {
+    const earlier = arrangementsBefore.get(key);
+    if (!earlier || earlier.recommendedOptionKey === later.recommendedOptionKey) continue;
+    const what =
+      later.kind === 'need'
+        ? after.requirements.find((r) => r.key === later.requirementKey)?.what
+        : undefined;
+    const was = recommended(earlier);
+    const now = recommended(later);
+    recommendations.push({
+      arrangementKey: key,
+      kind: later.kind,
+      ...(later.childId === undefined ? {} : { childId: later.childId }),
+      ...(what === undefined ? {} : { what }),
+      ...(was === undefined ? {} : { before: was }),
+      ...(now === undefined ? {} : { after: now }),
+    });
+  }
   return {
     added,
     removed,
@@ -354,6 +454,9 @@ export function planChanges(before: PlanResult, after: PlanResult): PlanChanges 
     checks: newChecks(before, after),
     deadlines,
     windows,
+    preparations,
+    unusedResources,
+    recommendations,
     conflicts: newConflicts(before, after),
     rechoose: waysChanged(after).filter((key) => !waysChanged(before).includes(key)),
   };

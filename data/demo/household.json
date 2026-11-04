@@ -1023,7 +1023,9 @@
       "cost": {
         "yen": 2000
       },
-      "cancellable": true
+      "cancellable": true,
+      "requires": ["prep-sick-care"],
+      "resourceIds": ["res-sick-care"]
     },
     {
       "id": "way-grandma",
@@ -1079,6 +1081,33 @@
       ],
       "cost": {},
       "cancellable": false
+    }
+  ],
+  "resources": [
+    {
+      "id": "res-sick-care",
+      "kind": "sickChildCare",
+      "name": "みらい橋病児保育室（架空）",
+      "area": "豊洲",
+      "placeId": "sick-care",
+      "notes": [
+        {
+          "text": "使う前に、子どもごとの事前の登録が要る。",
+          "source": {
+            "kind": "demo"
+          }
+        }
+      ],
+      "use": "candidate"
+    }
+  ],
+  "preparations": [
+    {
+      "id": "prep-sick-care",
+      "name": "病児保育の事前登録",
+      "resourceId": "res-sick-care",
+      "appliesTo": { "kind": "members", "memberIds": ["c"] },
+      "state": "unknown"
     }
   ]
 }

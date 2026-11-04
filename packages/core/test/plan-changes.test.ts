@@ -134,6 +134,7 @@ describe('計画の差分', () => {
       {
         arrangementKey: 'arr',
         optionKey: 'opt',
+        templateId: 'opt-grandma',
         titleKey: 'option.askHelper',
         before: {
           decisionDeadline: '2026-12-04T20:55+09:00',

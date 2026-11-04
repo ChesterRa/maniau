@@ -137,8 +137,14 @@ describe('うちのこと', () => {
     };
     const { ctx, sent, looked } = ctxWith({ preview });
     await step(() => root.render(<HouseholdScreen ctx={ctx} />));
-    const edits = [...host.querySelectorAll('button')].filter((b) => b.textContent === '直す');
-    await step(() => edits[2]?.click());
+    // 「取れる手」の札の「直す」（札の並びの順に頼らない）。
+    const waysCard = [...host.querySelectorAll('section')].find((section) =>
+      section.textContent?.startsWith('取れる手'),
+    );
+    const edit = [...(waysCard?.querySelectorAll('button') ?? [])].find(
+      (b) => b.textContent === '直す',
+    );
+    await step(() => edit?.click());
     const days = [...host.querySelectorAll('input[type="number"]')] as HTMLInputElement[];
     // 祖母の手（3日前。取れる手の最後）の欄を5日前にする（有休の「3営業日前」と取り違えない）。
     const grandma = days.at(-1);

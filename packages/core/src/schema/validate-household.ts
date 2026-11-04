@@ -81,7 +81,29 @@ export function validateHousehold(household: Household): HouseholdIssue[] {
       ref(`${base}.steps.${j}.assigneeId`, s.assigneeId, memberIds);
     }
   }
-  // やり方：ID は一意、手順の参照は実在、受け持てる時間は始まりが終わりより前。
+  // 周りの資源と、一度だけ済ませておく前提：ID は一意、参照は実在（場所・資源・成員）。
+  const resourceIds = new Set<string>();
+  for (const [i, r] of household.resources.entries()) {
+    if (resourceIds.has(r.id)) {
+      issues.push({ path: `resources.${i}`, problem: 'duplicateId', detail: r.id });
+    }
+    resourceIds.add(r.id);
+    ref(`resources.${i}.placeId`, r.placeId, placeIds);
+  }
+  const preparationIds = new Set<string>();
+  for (const [i, p] of household.preparations.entries()) {
+    if (preparationIds.has(p.id)) {
+      issues.push({ path: `preparations.${i}`, problem: 'duplicateId', detail: p.id });
+    }
+    preparationIds.add(p.id);
+    ref(`preparations.${i}.resourceId`, p.resourceId, resourceIds);
+    if (p.appliesTo.kind === 'members') {
+      for (const [j, id] of p.appliesTo.memberIds.entries()) {
+        ref(`preparations.${i}.appliesTo.memberIds.${j}`, id, memberIds);
+      }
+    }
+  }
+  // やり方：ID は一意、手順の参照は実在、受け持てる時間は始まりが終わりより前、前提は実在して重ならない。
   const wayIds = new Set<string>();
   for (const [i, w] of household.ways.entries()) {
     const base = `ways.${i}`;
@@ -103,6 +125,22 @@ export function validateHousehold(household: Household): HouseholdIssue[] {
         problem: 'badSegment',
         detail: `${w.covers.start}–${w.covers.end}`,
       });
+    }
+    const required = new Set<string>();
+    for (const [j, id] of (w.requires ?? []).entries()) {
+      if (required.has(id)) {
+        issues.push({ path: `${base}.requires.${j}`, problem: 'duplicateId', detail: id });
+      }
+      required.add(id);
+      ref(`${base}.requires.${j}`, id, preparationIds);
+    }
+    const used = new Set<string>();
+    for (const [j, id] of (w.resourceIds ?? []).entries()) {
+      if (used.has(id)) {
+        issues.push({ path: `${base}.resourceIds.${j}`, problem: 'duplicateId', detail: id });
+      }
+      used.add(id);
+      ref(`${base}.resourceIds.${j}`, id, resourceIds);
     }
   }
   return issues;

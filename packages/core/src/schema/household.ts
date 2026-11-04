@@ -244,8 +244,98 @@ export const Way = z.object({
   cost: Cost,
   /** 後で取り消せるか（初めに入れた家の情報だけ。今は計算にも画面にも使わない。家族が足すやり方では聞かない）。 */
   cancellable: z.boolean().optional(),
+  /**
+   * このやり方を使う前に済ませておく前提（Preparation の id。事前の登録など）。済んでいなければ、案に印を付けて
+   * 勧めない（家族は選べる）。いくつのやり方が同じ前提を指しても、前提は家に一つ。
+   */
+  requires: z.array(Id).optional(),
+  /**
+   * このやり方が使う周りの資源（Resource の id。病児保育室など）。家族が「使わない」とした資源を使うやり方の案は
+   * 勧めない（家族は選べる）。前提（requires）からは使う資源を推し量らない（前提の資源を使うとは限らない）。
+   */
+  resourceIds: z.array(Id).optional(),
 });
 export type Way = z.infer<typeof Way>;
+
+/**
+ * 調べた事の出典。公式の頁なら、URL・頁の題・短い引用と、頁を読んだ時刻、引用が読んだ頁の本文に文字のとおりに
+ * あったか（コードが確かめた。PDF や読めなかった頁は確かめていない）。
+ */
+export const ResourceSource = z.object({
+  /** officialPage：公式の頁。family：家族が言った。demo：デモのために作った架空の決まり（本当の頁ではない）。 */
+  kind: z.enum(['officialPage', 'family', 'demo']),
+  url: z.string().url().optional(),
+  title: z.string().optional(),
+  quote: z.string().optional(),
+  fetchedAt: DateTime.optional(),
+  quoteFound: z.boolean().optional(),
+});
+export type ResourceSource = z.infer<typeof ResourceSource>;
+
+/**
+ * 周りの資源（家の周りの施設・サービス。02-foundation §3.5）。種類（kind）はデータで、計算も検証も種類で分けない。
+ * 調べた候補は、家族が「この家の候補にする」を押した時だけ入る（調べただけでは入れない）。入れても、登録が済んだ・
+ * 使える・その日に空いている、とは言わない（それぞれ別の事実）。
+ */
+export const Resource = z.object({
+  id: Id,
+  kind: z.string().min(1),
+  name: z.string().min(1),
+  /** 区や駅の粒度。番地は持たない。 */
+  area: z.string().optional(),
+  /** 地図の場所（Place）に結ぶ時。 */
+  placeId: Id.optional(),
+  /** 調べて分かった事（家族に見せる文と、その出典）。計算には使わない。 */
+  notes: z.array(z.object({ text: z.string().min(1), source: ResourceSource })).default([]),
+  /** 家族の扱い：いつも使う・候補・使わない。家族が決める（調べ直しで替えない）。 */
+  use: z.enum(['usual', 'candidate', 'notUsed']),
+  /** 家族が扱いを決めた時刻。 */
+  decidedAt: DateTime.optional(),
+});
+export type Resource = z.infer<typeof Resource>;
+
+/**
+ * 一度だけ済ませておく前提（事前の登録・会員の登録・申込など）。状態は家族が確かめて入れる（調べた候補からは
+ * 「済んだ」にしない）。
+ */
+export const Preparation = z.object({
+  id: Id,
+  /** 家族の言葉の名前（例：病児保育の事前登録）。 */
+  name: z.string().min(1),
+  resourceId: Id.optional(),
+  /** この前提が要ると分かった出典（調べた頁の引用など）。 */
+  source: ResourceSource.optional(),
+  /**
+   * だれの前提か。household：家全体（家族がそう言った時だけ）。members：その人たちだけ。unknown：まだ分からない
+   * （済んでも、どの「すること」にも借りない）。欄が無いことを家全体とは読まない。
+   */
+  appliesTo: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('household') }),
+    z.object({ kind: z.literal('members'), memberIds: z.array(Id).min(1) }),
+    z.object({ kind: z.literal('unknown') }),
+  ]),
+  /** unknown：分からない。notDone：まだ。inProgress：手続き中。done：済んだ。 */
+  state: z.enum(['unknown', 'notDone', 'inProgress', 'done']),
+  /** 家族が状態を確かめた時刻（出典を読んだ時刻とは別）。 */
+  stateCheckedAt: DateTime.optional(),
+  /** 済んだ前提が有効な最後の日（年度の終わり等。分かっている時だけ）。 */
+  validUntil: LocalDate.optional(),
+  /**
+   * 使う日の何日前（暦の日）までに済ませるか。家族が出典の原文を見て確かめた時だけ持つ。今は「使う日の N 日前
+   * （暦の日）」だけを持ち、営業日や時刻つきの締切は持たない（そう書かれていれば持たず、「早めに確かめる」とだけ
+   * 言う）。
+   */
+  lead: z
+    .object({
+      days: z.number().int().positive().max(366),
+      from: z.literal('useDate'),
+      unit: z.literal('calendarDays'),
+      source: ResourceSource,
+      confirmedAt: DateTime,
+    })
+    .optional(),
+});
+export type Preparation = z.infer<typeof Preparation>;
 
 export const Household = z.object({
   id: Id,
@@ -268,5 +358,9 @@ export const Household = z.object({
   stoppedWayIds: z.array(Id).optional(),
   /** 勤務先などの休み（営業日の計算に使う）。 */
   closedDates: z.array(LocalDate).default([]),
+  /** 周りの資源（家族が入れた物だけ）。 */
+  resources: z.array(Resource).default([]),
+  /** 一度だけ済ませておく前提。 */
+  preparations: z.array(Preparation).default([]),
 });
 export type Household = z.infer<typeof Household>;

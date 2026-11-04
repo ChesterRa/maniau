@@ -4,6 +4,7 @@ import { checkHistory, checkRequestNeed } from './history';
 import { checkNeedConfirmation } from './need-confirmation';
 import { checkNeedCoverage, checkNeedSelections } from './need-coverage';
 import { checkPlan } from './plan';
+import { checkPreparations } from './preparations';
 import { checkProposals } from './proposal';
 import { checkReleased } from './released';
 import { Collector, type VerificationReport } from './report';
@@ -84,6 +85,7 @@ export function verifyPlan(input: VerificationInput): VerificationReport {
   checkProposals(plan.data, history, report, household.data, facts);
   checkRequestNeed(plan.data, history, facts, report, household.data.timeZone);
   checkPlan(household.data, plan.data, facts, history, report);
+  checkPreparations(household.data, plan.data, facts, history, report);
   checkNeedSelections(household.data, plan.data, facts, history, report);
   checkNeedCoverage(household.data, plan.data, facts, history, report);
   checkSchedule(household.data, plan.data, history, report);

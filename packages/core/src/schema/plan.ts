@@ -149,6 +149,33 @@ export const OptionPlan = z.object({
    * 役も替えられる（choosable）。
    */
   stopped: z.literal(true).optional(),
+  /**
+   * やり方の前提（事前の登録など。家の情報の preparations）のうち、この「すること」の使う日・だれのために満たされて
+   * いない物の全部（通用の「すること」だけ。view/preparations）。あれば勧めない（家族は選べる。済んだとは見せない）。
+   * by は、家族が確かめた日数から求めた、済ませておく最後の日。
+   */
+  needsPreparation: z
+    .array(
+      z.object({
+        preparationId: Id,
+        state: z.enum([
+          'unknown',
+          'notDone',
+          'inProgress',
+          'expired',
+          'appliesUnknown',
+          'personUnknown',
+          'otherPerson',
+        ]),
+        by: LocalDate.optional(),
+      }),
+    )
+    .optional(),
+  /**
+   * やり方が使う周りの資源のうち、家族が「使わない」とした物（通用の「すること」だけ。家の情報の resources の use）。
+   * あれば、その案は勧める候補にしない（ほかの案は比べて勧める）。家族は選べる。
+   */
+  unusedResources: z.array(Id).optional(),
   cost: Cost,
   taskKeys: z.array(z.string()),
 });

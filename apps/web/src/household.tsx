@@ -11,6 +11,7 @@ import type {
 } from '@maniau/core';
 import { useState } from 'react';
 import { RecordedDays } from './member-day';
+import { ResourcesCard } from './resources';
 import {
   type Ctx,
   day,
@@ -141,17 +142,53 @@ export function householdPreviewLines(
     const task = ctx.plan.tasks.find((t) => t.key === key);
     return task ? taskTitle(ctx, task) : key;
   };
-  // 今の計画に無い手（直した後に新しく選べる手）は、手の決まり（取れる手の型）の名前で書く。それも無ければ「ある手」。
+  // 頼む手順の題に入れる、頼む相手（取れる手の型。作業の鍵の手の部分の最後が型の ID）。
   const templateOf = (key: string) =>
     ctx.household.careOptions.find((o) => o.id === key.split(':').at(-1));
-  const optionName = (key: string) => {
-    const named = optionList(ctx, [key]);
-    if (named) return named;
-    const template = templateOf(key);
-    return template
-      ? ctx.t('decide.quoted', { title: wayTitle(ctx, template) })
-      : ctx.t('household.preview.aWay');
+  // 今の計画に無い手（直した後に新しく選べる手）は、差分が持つ手の決まりの ID で、直した後の家の情報（無ければ今の
+  // 物）のやり方・取れる手の型から名前を引く。手配が今の計画にあり、日のある「すること」なら日も添える（今の計画の
+  // 手と同じ書き方）。どれも無ければ「ある手」。
+  const templateTitle = (templateId: string) => {
+    for (const household of after ? [after, ctx.household] : [ctx.household]) {
+      const way = household.ways.find((w) => w.id === templateId);
+      if (way) return ctx.t('option.way.title', { name: way.name });
+      const template = household.careOptions.find((o) => o.id === templateId);
+      if (template) return wayTitle(ctx, template);
+    }
+    return undefined;
   };
+  const optionName = (option: {
+    arrangementKey: string;
+    optionKey: string;
+    templateId: string;
+  }) => {
+    const named = optionList(ctx, [option.optionKey]);
+    if (named) return named;
+    const title = templateTitle(option.templateId);
+    if (title === undefined) return ctx.t('household.preview.aWay');
+    const arrangement = ctx.plan.arrangements.find((a) => a.key === option.arrangementKey);
+    const date = arrangement
+      ? ctx.plan.requirements.find((r) => r.key === arrangement.requirementKey)?.date
+      : undefined;
+    return ctx.t('decide.quoted', {
+      title: date ? ctx.t('decide.onDay', { title, day: day(ctx, date) }) : title,
+    });
+  };
+  // 手配の主語（手配の時間の変化と勧める手の変化で同じ書き方）。
+  const arrangementName = (a: {
+    kind: HouseholdPreview['changes']['windows'][number]['kind'];
+    childId?: string;
+    what?: string;
+  }) =>
+    a.kind === 'childCare'
+      ? ctx.t('household.preview.window.childCare', {
+          child: a.childId
+            ? nameOf(ctx.household, a.childId)
+            : ctx.t('household.preview.window.aChild'),
+        })
+      : a.kind === 'need'
+        ? ctx.t('household.preview.window.need', { what: a.what ?? '' })
+        : ctx.t('household.preview.window.purchase');
   // 手配の時間（子の居場所が要る時間など）：同じ日の中なら終わりは時刻だけ。締切までに済ませる「すること」は、
   // 締切だけ（始まりは今で、要る時間ではない）。日だけの締切（その日の終わり。計画の時刻は家庭の時区で書いて
   // ある）は日だけ（書かれていない時刻を見せない）。
@@ -163,16 +200,7 @@ export function householdPreviewLines(
       : `${dayTime(ctx, x.start)}–${day(ctx, x.end) === day(ctx, x.start) ? timeOnly(ctx, x.end) : dayTime(ctx, x.end)}`;
   for (const w of changes.windows) {
     const span = spanOf(w);
-    const what =
-      w.kind === 'childCare'
-        ? ctx.t('household.preview.window.childCare', {
-            child: w.childId
-              ? nameOf(ctx.household, w.childId)
-              : ctx.t('household.preview.window.aChild'),
-          })
-        : w.kind === 'need'
-          ? ctx.t('household.preview.window.need', { what: w.what ?? '' })
-          : ctx.t('household.preview.window.purchase');
+    const what = arrangementName(w);
     if (w.before && w.after) {
       lines.push(
         ctx.t('household.preview.window.moved', {
@@ -188,7 +216,7 @@ export function householdPreviewLines(
     }
   }
   for (const d of changes.deadlines) {
-    const name = optionName(d.optionKey);
+    const name = optionName(d);
     const { before, after } = d;
     if (!after) {
       lines.push(ctx.t('household.preview.wayGone', { name }));
@@ -221,6 +249,62 @@ export function householdPreviewLines(
           after: dayTime(ctx, after.decisionDeadline),
         }),
       );
+    }
+  }
+  // 前もっての前提（事前の登録など）の印と、「使わない」とした資源の印、勧める手の変化。
+  const preparationNames = (gaps: { preparationId: string }[]) =>
+    gaps
+      .map(
+        (g) =>
+          (after ?? ctx.household).preparations.find((p) => p.id === g.preparationId)?.name ??
+          ctx.t('decide.preparation.unnamed'),
+      )
+      .join(ctx.t('resources.applies.joiner'));
+  for (const p of changes.preparations ?? []) {
+    const name = optionName(p);
+    if (p.after.length === 0) {
+      lines.push(
+        ctx.t('household.preview.preparation.cleared', { name, what: preparationNames(p.before) }),
+      );
+    } else {
+      lines.push(
+        ctx.t(
+          p.before.length === 0
+            ? 'household.preview.preparation.added'
+            : 'household.preview.preparation.changed',
+          { name, what: preparationNames(p.after) },
+        ),
+      );
+    }
+  }
+  const resourceNames = (ids: string[]) =>
+    ids
+      .map((id) => (after ?? ctx.household).resources.find((r) => r.id === id)?.name ?? id)
+      .join(ctx.t('resources.applies.joiner'));
+  for (const u of changes.unusedResources ?? []) {
+    const name = optionName(u);
+    lines.push(
+      u.after.length > 0
+        ? ctx.t('household.preview.unused.added', { name, what: resourceNames(u.after) })
+        : ctx.t('household.preview.unused.cleared', { name, what: resourceNames(u.before) }),
+    );
+  }
+  for (const r of changes.recommendations ?? []) {
+    const what = arrangementName(r);
+    const named = (o: { optionKey: string; templateId: string }) =>
+      optionName({ arrangementKey: r.arrangementKey, ...o });
+    if (r.before && r.after) {
+      lines.push(
+        ctx.t('household.preview.recommend.changed', {
+          what,
+          before: named(r.before),
+          after: named(r.after),
+        }),
+      );
+    } else if (r.after) {
+      lines.push(ctx.t('household.preview.recommend.new', { what, name: named(r.after) }));
+    } else if (r.before) {
+      lines.push(ctx.t('household.preview.recommend.gone', { what, name: named(r.before) }));
     }
   }
   for (const step of changes.added) {
@@ -610,6 +694,8 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
             </Row>
           )}
         </Card>
+
+        {mode === undefined && <ResourcesCard ctx={ctx} />}
 
         <Card>
           <Label tone="sub">{ctx.t('household.ways.label')}</Label>
