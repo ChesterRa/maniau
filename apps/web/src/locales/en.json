@@ -881,6 +881,7 @@
       "issues_other": "The check found {{count}} new problems.",
       "unverified_one": "{{count}} point couldn't be checked (part of the calculation is incomplete).",
       "unverified_other": "{{count}} points couldn't be checked (part of the calculation is incomplete).",
+      "unverifiedRoute": "The route to a place hasn’t been checked (times are estimates).",
       "rechoose": "“{{what}}”: a way it uses changed, so its ways need to be chosen again.",
       "preparation": {
         "added": "{{name}}: it will need an advance step ({{what}}) not confirmed as done (not recommended).",

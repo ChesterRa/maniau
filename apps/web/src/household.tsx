@@ -126,6 +126,14 @@ export function segmentText(ctx: Ctx, segment: RoutineSegment): string {
     : ctx.t('household.week.segment', { range, kind });
 }
 
+/** 検証器の「確かめられない」のうち、行き先までの道のり（徒歩・乗り換え・通る駅）を照らせない物。 */
+const ROUTE_UNVERIFIED = new Set([
+  'route_is_estimate',
+  'route_estimate_missing',
+  'route_evidence_missing',
+  'route_unconfirmed',
+]);
+
 /**
  * 「この変更で変わること」の行（何も変わらなければ一行）。after は直した後の家の情報（新しく足す場所の名前を、
  * 保存する前にも書けるように。無ければ今の家の情報）。
@@ -402,9 +410,12 @@ export function householdPreviewLines(
   if (preview.issues.length > 0) {
     lines.push(ctx.t('household.preview.issues', { count: preview.issues.length }));
   }
-  if (preview.unverified.length > 0) {
-    lines.push(ctx.t('household.preview.unverified', { count: preview.unverified.length }));
-  }
+  // 道のりを確かめられない点は、家族に一つの意味で伝わるので、何かを言う（例：架空の店に替えた時）。ほかの
+  // 決まりは、名前を家族に見せず、数だけ言う。
+  const route = preview.unverified.filter((code) => ROUTE_UNVERIFIED.has(code));
+  if (route.length > 0) lines.push(ctx.t('household.preview.unverifiedRoute'));
+  const others = preview.unverified.length - route.length;
+  if (others > 0) lines.push(ctx.t('household.preview.unverified', { count: others }));
   return lines;
 }
 
