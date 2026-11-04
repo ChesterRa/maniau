@@ -10,7 +10,13 @@ import {
 } from '../apps/server/src/demo-sessions';
 
 type Expected =
-  | { type: 'answer'; unknownId: string; what: string; value: 'yes' | 'no' }
+  | {
+      type: 'answer';
+      unknownId: string;
+      what: string;
+      value: 'yes' | 'no';
+      blocked: 'otherUnknowns';
+    }
   | { type: 'recordReply'; requestId: string; reply: 'yes' | 'no' }
   | { type: 'question'; itemId: string };
 
@@ -27,34 +33,64 @@ export const belongingsCases: readonly BelongingsCase[] = [
     id: 'home-yes',
     stage: 'arrived',
     text: '白い長袖シャツは家にあります。',
-    expected: { type: 'answer', unknownId: 'u-atHome:n1:i5', what: '白い長袖シャツ', value: 'yes' },
+    expected: {
+      type: 'answer',
+      unknownId: 'u-atHome:n1:i5',
+      what: '白い長袖シャツ',
+      value: 'yes',
+      blocked: 'otherUnknowns',
+    },
   },
   {
     id: 'home-no',
     stage: 'arrived',
     text: '白い長袖シャツは家にはありません。',
-    expected: { type: 'answer', unknownId: 'u-atHome:n1:i5', what: '白い長袖シャツ', value: 'no' },
+    expected: {
+      type: 'answer',
+      unknownId: 'u-atHome:n1:i5',
+      what: '白い長袖シャツ',
+      value: 'no',
+      blocked: 'otherUnknowns',
+    },
   },
   {
     id: 'home-correct-no',
     stage: 'arrived',
     setup: 'yes-first',
     text: 'さっきあると言ったけど、白い長袖シャツはやっぱり家になかった。',
-    expected: { type: 'answer', unknownId: 'u-atHome:n1:i5', what: '白い長袖シャツ', value: 'no' },
+    expected: {
+      type: 'answer',
+      unknownId: 'u-atHome:n1:i5',
+      what: '白い長袖シャツ',
+      value: 'no',
+      blocked: 'otherUnknowns',
+    },
   },
   {
     id: 'bought-found-home',
     stage: 'chase',
     setup: 'bought',
     text: '白い長袖シャツは家にありました。',
-    expected: { type: 'answer', unknownId: 'u-atHome:n1:i5', what: '白い長袖シャツ', value: 'yes' },
+    expected: {
+      type: 'answer',
+      unknownId: 'u-atHome:n1:i5',
+      what: '白い長袖シャツ',
+      value: 'yes',
+      blocked: 'otherUnknowns',
+    },
   },
   {
     id: 'bought-missing',
     stage: 'chase',
     setup: 'bought',
     text: '買った白い長袖シャツが見つからなくなりました。',
-    expected: { type: 'answer', unknownId: 'u-atHome:n1:i5', what: '白い長袖シャツ', value: 'no' },
+    expected: {
+      type: 'answer',
+      unknownId: 'u-atHome:n1:i5',
+      what: '白い長袖シャツ',
+      value: 'no',
+      blocked: 'otherUnknowns',
+    },
   },
   {
     id: 'helper-reply',
@@ -73,14 +109,26 @@ export const belongingsCases: readonly BelongingsCase[] = [
     stage: 'arrived',
     setup: 'handkerchief',
     text: 'ハンカチは家にないよ。',
-    expected: { type: 'answer', unknownId: 'u-atHome:u1:i1', what: 'ハンカチ', value: 'no' },
+    expected: {
+      type: 'answer',
+      unknownId: 'u-atHome:u1:i1',
+      what: 'ハンカチ',
+      value: 'no',
+      blocked: 'otherUnknowns',
+    },
   },
   {
     id: 'same-name-dated',
     stage: 'arrived',
     setup: 'second-shirt',
     text: '12月14日に使う白い長袖シャツは、家にはありません。',
-    expected: { type: 'answer', unknownId: 'u-atHome:u1:i1', what: '白い長袖シャツ', value: 'no' },
+    expected: {
+      type: 'answer',
+      unknownId: 'u-atHome:u1:i1',
+      what: '白い長袖シャツ',
+      value: 'no',
+      blocked: 'otherUnknowns',
+    },
   },
 ];
 
@@ -115,6 +163,7 @@ function fixtureNotice(
             conditionNodeId: null,
             inferred: false,
             familyAction: false,
+            shape: 'none',
             effects: [],
           },
         ],
@@ -177,9 +226,26 @@ export interface BelongingsObservation {
   targetMatches?: boolean;
   previewNoWrite?: boolean;
   confirmation?: string;
-  stateAfter?: 'matches' | 'mismatch' | 'not_checked';
+  blockedReason?: string;
+  stateAfter?: 'matches' | 'mismatch' | 'unchanged' | 'not_checked';
   /** 画面の見え方は、この実行器では採点しない。 */
   screen: 'not_run';
+}
+
+/** 候補の読みと記録の道を別々に採点する。札に任せる場面は、記録できたと数えない。 */
+export function passedBelongingsCase(test: BelongingsCase, result: BelongingsObservation): boolean {
+  if (result.result !== 'observed' || !result.targetMatches || !result.previewNoWrite) return false;
+  if (test.expected.type === 'question') {
+    return result.confirmation === 'not_applicable' && result.stateAfter === 'not_checked';
+  }
+  if (test.expected.type === 'answer') {
+    return (
+      result.confirmation === 'blocked' &&
+      result.blockedReason === test.expected.blocked &&
+      result.stateAfter === 'unchanged'
+    );
+  }
+  return result.confirmation === 'ok' && result.stateAfter === 'matches';
 }
 
 /** 見せる前と確認後の状態も、それぞれ別に記録する。 */
@@ -270,30 +336,22 @@ export async function runBelongingsCase(
           proposal.command.value === expected.value &&
           proposal.command.seen?.what === expected.what;
   let confirmation = 'not_applicable';
+  let blockedReason: string | undefined;
   let stateAfter: BelongingsObservation['stateAfter'] = 'not_checked';
   if (targetMatches && proposal) {
-    const done = await sessions.confirm(sid, 'b', proposal.id, `confirm-${test.id}`);
-    confirmation = done?.status ?? 'session_gone';
-    if (done?.status === 'ok') {
-      if (expected.type === 'answer') {
-        const target = done.view.plan.arrangements.find(
-          (a) => a.atHomeUnknownId === expected.unknownId,
-        );
-        const answer = done.view.plan.requirements.find(
-          (requirement) => requirement.atHomeUnknownId === expected.unknownId,
-        )?.atHome;
-        const question = done.view.plan.questions.some((q) => q.unknownId === expected.unknownId);
-        const right =
-          answer === expected.value &&
-          done.view.plan.throughSeq > heard.view.plan.throughSeq &&
-          (expected.value === 'yes' ? !target : Boolean(target && !question));
-        const shown =
-          test.setup !== 'handkerchief' ||
-          done.view.today.main.some(
-            (c) => c.kind === 'stuck' && c.arrangement.atHomeUnknownId === expected.unknownId,
-          );
-        stateAfter = right && shown ? 'matches' : 'mismatch';
-      } else if (expected.type === 'recordReply') {
+    if (proposal.blocked) {
+      // 画面は記録ボタンを出さない。押したことにせず、読み取り後も事象が変わっていないか別に確かめる。
+      confirmation = 'blocked';
+      blockedReason = proposal.blocked;
+      const after = await sessions.view(sid, 'b');
+      stateAfter = after?.plan.throughSeq === heard.view.plan.throughSeq ? 'unchanged' : 'mismatch';
+    } else if (expected.type === 'answer') {
+      // この場面は別の問いもある。記録可能になったら試行では押さず、道が変わった失敗として残す。
+      confirmation = 'unexpected_available';
+    } else {
+      const done = await sessions.confirm(sid, 'b', proposal.id, `confirm-${test.id}`);
+      confirmation = done?.status ?? 'session_gone';
+      if (done?.status === 'ok' && expected.type === 'recordReply') {
         stateAfter = done.view.plan.requests.some(
           (r) => r.requestId === expected.requestId && r.state === 'confirmed',
         )
@@ -315,6 +373,7 @@ export async function runBelongingsCase(
     targetMatches: Boolean(targetMatches),
     previewNoWrite: before?.plan.throughSeq === heard.view.plan.throughSeq,
     confirmation,
+    ...(blockedReason ? { blockedReason } : {}),
     stateAfter,
     screen: 'not_run',
   };

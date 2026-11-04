@@ -1,7 +1,12 @@
 // 開発用場面の形と採点の試験。読み取りは偽物で、モデルの能力を示さない。
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { belongingsCases, fixtureUtterance, runBelongingsCase } from '../belongings-utterance';
+import {
+  belongingsCases,
+  fixtureUtterance,
+  passedBelongingsCase,
+  runBelongingsCase,
+} from '../belongings-utterance';
 
 test('製品の計画を前提に、架空の九場面を通信せずに再生できる', async () => {
   assert.equal(belongingsCases.length, 9);
@@ -21,10 +26,16 @@ test('製品の計画を前提に、架空の九場面を通信せずに再生�
     assert.equal(result.screen, 'not_run', scenario.id);
     if (scenario.expected.type === 'question') {
       assert.equal(result.confirmation, 'not_applicable', scenario.id);
+      assert.equal(result.stateAfter, 'not_checked', scenario.id);
+    } else if (scenario.expected.type === 'answer') {
+      assert.equal(result.confirmation, 'blocked', scenario.id);
+      assert.equal(result.blockedReason, 'otherUnknowns', scenario.id);
+      assert.equal(result.stateAfter, 'unchanged', scenario.id);
     } else {
       assert.equal(result.confirmation, 'ok', scenario.id);
       assert.equal(result.stateAfter, 'matches', scenario.id);
     }
+    assert.equal(passedBelongingsCase(scenario, result), true, scenario.id);
     if (scenario.id === 'home-correct-no') {
       assert.equal(result.context?.unknowns.find((u) => u.id === 'u-atHome:n1:i5')?.answer, 'yes');
     }
@@ -67,4 +78,19 @@ test('答えを取り違えた候補は合格にせず、確認を実行しな�
   assert.equal(result.previewNoWrite, true);
   assert.equal(result.confirmation, 'not_applicable');
   assert.equal(result.stateAfter, 'not_checked');
+  assert.equal(passedBelongingsCase(scenario, result), false);
+});
+
+test('記録を塞ぐ場面は、対象・理由・書かれていない事を別々に確かめる', async () => {
+  const scenario = belongingsCases.find((entry) => entry.id === 'home-yes');
+  assert.ok(scenario);
+  const result = await runBelongingsCase(scenario, fixtureUtterance(scenario));
+  assert.equal(passedBelongingsCase(scenario, result), true);
+  assert.equal(passedBelongingsCase(scenario, { ...result, blockedReason: 'missing' }), false);
+  assert.equal(
+    passedBelongingsCase(scenario, { ...result, confirmation: 'unexpected_available' }),
+    false,
+  );
+  assert.equal(passedBelongingsCase(scenario, { ...result, stateAfter: 'mismatch' }), false);
+  assert.equal(passedBelongingsCase(scenario, { ...result, previewNoWrite: false }), false);
 });

@@ -10,6 +10,7 @@ import {
   type BelongingsObservation,
   belongingsCases,
   fixtureUtterance,
+  passedBelongingsCase,
   runBelongingsCase,
 } from './belongings-utterance';
 import { instrumentUtteranceClient } from './utterance-api.mjs';
@@ -31,19 +32,6 @@ const instrument = instrumentUtteranceClient as unknown as (
   client: UtteranceClient,
   options: { ledger: (entry: object) => Promise<void>; pricing: Pricing | null },
 ) => UtteranceClient;
-const passed = (entry: {
-  result: string;
-  targetMatches?: boolean;
-  previewNoWrite?: boolean;
-  confirmation?: string;
-  stateAfter?: string;
-}) =>
-  entry.result === 'observed' &&
-  entry.targetMatches === true &&
-  entry.previewNoWrite === true &&
-  ((entry.confirmation === 'ok' && entry.stateAfter === 'matches') ||
-    (entry.confirmation === 'not_applicable' && entry.stateAfter === 'not_checked'));
-
 async function filesUnder(dir: string): Promise<string[]> {
   const entries = await readdir(path.join(root, dir), { withFileTypes: true });
   const paths = await Promise.all(
@@ -99,10 +87,12 @@ async function main() {
   if (!values.execute) {
     for (const scenario of cases) {
       const result = await runBelongingsCase(scenario, fixtureUtterance(scenario));
-      if (!passed(result)) {
+      if (!passedBelongingsCase(scenario, result)) {
         throw new Error(`形の試験を完了できません：${scenario.id}`);
       }
-      process.stdout.write(`${scenario.id}：偽物で形を確認（モデルは未評価）\n`);
+      process.stdout.write(
+        `${scenario.id}：偽物で形を確認、記録 ${result.confirmation}（モデル・画面は未評価）\n`,
+      );
     }
     return;
   }
@@ -199,13 +189,20 @@ async function main() {
   await ledger({ event: 'run_finished', complete, comparable, resultPath, source_after: after });
   for (const result of results) {
     process.stdout.write(
-      `${result.caseId}：${result.result}、対象 ${result.targetMatches ? '一致' : '未一致'}、画面 ${result.screen}\n`,
+      `${result.caseId}：${result.result}、対象 ${result.targetMatches ? '一致' : '未一致'}、記録 ${result.confirmation ?? '未実施'}、画面 ${result.screen}\n`,
     );
   }
   process.stdout.write(
     `台帳：${path.relative(root, ledgerPath)}\n結果：${path.relative(root, resultPath)}\n`,
   );
-  if (!complete || results.some((entry) => !passed(entry))) process.exitCode = 1;
+  if (
+    !complete ||
+    results.some((entry) => {
+      const scenario = cases.find((item) => item.id === entry.caseId);
+      return !scenario || !passedBelongingsCase(scenario, entry);
+    })
+  )
+    process.exitCode = 1;
 }
 
 main().catch(() => {
