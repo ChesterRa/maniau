@@ -525,6 +525,16 @@ export function DemoBar(props: {
           onChange={(v) => isUiLanguage(v) && props.onLang(v)}
         />
       </div>
+      {/* 場面ごとの見どころ（初めて見る人が、どこを見ればよいか分かるように）。用意した状態の説明で、操作や
+          時計を進めると変わるので、「場面のはじめ」と示す。 */}
+      {props.stages.includes(props.stage) && (
+        <p className="leading-snug text-sub">
+          <span className="me-1.5 rounded bg-warn-soft px-1 font-bold text-warn">
+            {t('demo.guideLead')}
+          </span>
+          {t(`demo.guide.${props.stage}`)}
+        </p>
+      )}
     </div>
   );
 }

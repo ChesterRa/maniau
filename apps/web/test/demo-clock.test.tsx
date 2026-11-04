@@ -34,3 +34,27 @@ it('「+1時間」「+1日」で、その分だけ進める', async () => {
   expect(button('+1日')).toBeUndefined();
   await step(() => root.unmount());
 });
+
+it('場面ごとの見どころを、日本語と英語で一行出す', async () => {
+  const host = document.createElement('div');
+  const root = createRoot(host);
+  for (const stage of ['arrived', 'asked', 'chase', 'backup', 'postponed']) {
+    await step(() =>
+      root.render(<DemoBar {...props} stages={[stage]} stage={stage} onAdvance={undefined} />),
+    );
+    expect(host.textContent).not.toMatch(/demo\.guide/);
+    // 用意した状態の説明だと示す（操作や時計を進めると、画面の方が変わる）。
+    expect(host.textContent).toContain('場面のはじめ');
+  }
+  await step(() =>
+    root.render(<DemoBar {...props} stages={['chase']} stage="chase" onAdvance={undefined} />),
+  );
+  expect(host.textContent).toContain('「断られたら？」で、断られた時の計算を見られます');
+  // 「断られたら？」は頼んだ人（彩）にだけ出るので、どちらの画面かを書く。
+  expect(host.textContent).toContain('彩の画面');
+  await step(() =>
+    root.render(<DemoBar {...props} stages={['backup']} stage="backup" onAdvance={undefined} />),
+  );
+  expect(host.textContent).toContain('彩の画面');
+  await step(() => root.unmount());
+});

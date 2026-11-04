@@ -116,6 +116,31 @@ describe('お知らせの文を入れる', () => {
     expect(host.textContent).toContain('Anthropic の Claude API');
   });
 
+  it('デモでは「例文を入れる」で架空のお知らせを欄に入れる（読み取りは押した時だけ）', async () => {
+    const { ctx, reads } = setup(OK);
+    await step(() => root.render(<SourcesScreen ctx={ctx} />));
+    const sample = [...host.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('例文を入れる（架空のお知らせ）'),
+    );
+    await step(() => sample?.click());
+    const sampleText = '12月7日(月)は通常授業です。学習発表会は12月8日(火)に延期します。';
+    const area = host.querySelector('textarea') as HTMLTextAreaElement;
+    expect(area.value).toBe(sampleText);
+    expect(reads).toEqual([]);
+    // 欄に文がある間は出さない。
+    expect(host.textContent).not.toContain('例文を入れる');
+    await step(() => button()?.click());
+    expect(reads).toEqual([
+      expect.objectContaining({ text: sampleText, sender: 'school', medium: 'text' }),
+    ]);
+  });
+
+  it('家族の試しの家庭では「例文を入れる」を出さない', async () => {
+    const { ctx } = setup(OK);
+    await step(() => root.render(<SourcesScreen ctx={{ ...ctx, trialInput: true }} />));
+    expect(host.textContent).not.toContain('例文を入れる');
+  });
+
   it('読む間は、文と出どころを変えられない（読み終えた時に、後から打った文を消さない）', async () => {
     let finish = (_: ReadResult) => {};
     const { ctx } = setup(OK);

@@ -34,6 +34,14 @@
       "chase": "11/29 No reply yet",
       "backup": "11/30 Backup booked",
       "postponed": "12/4 Postponed"
+    },
+    "guideLead": "At the start",
+    "guide": {
+      "arrived": "A school-event notice has created child care for 陽菜 on 12/7 and a shirt to prepare. Tap “Decide” to compare each option's decision deadline and what happens if you choose it.",
+      "asked": "彩 asked おばあちゃん and is waiting for the reply. 健太 has a task to buy the shirt at a shop on the way home. Switch “Viewing as” to 彩 to try “What if they say no?”.",
+      "chase": "おばあちゃん hasn't replied, and the after-school care deadline is close. On 彩's screen, Maniau asks whether to hold a backup, and “What if they say no?” shows the calculation if the answer is no.",
+      "backup": "After-school care is held as a backup. If おばあちゃん says no, the plan moves on to it (see “What if they say no?” on 彩's screen).",
+      "postponed": "A postponement notice means child care on 12/7 is no longer needed. The cancellations to send are split between the two adults."
     }
   },
   "notice": {
@@ -589,7 +597,8 @@
     "limitTrial": "Can't read right now (the text is too long, or the limit was reached; the limit resets at 9:00 Japan time).",
     "lost": "We can't tell whether your earlier reading finished (the server may have stopped partway). Check the plan and the notice list; if it isn't there, press \"Read it\" again (it will be a new reading).",
     "testOnly": "Reading with Claude isn't available for this household (trial households only).",
-    "clockTrial": "Words like “tomorrow” are read against the current time ({{now}})."
+    "clockTrial": "Words like “tomorrow” are read against the current time ({{now}}).",
+    "sample": "Insert a sample notice (fictional)"
   },
   "say": {
     "label": "Quick update",

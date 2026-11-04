@@ -3804,6 +3804,12 @@ export function SayCard({
 /** 一度に読めるお知らせの文の長さ（サーバーの上限と同じ）。 */
 const MAX_NOTICE_CHARS = 4000;
 
+/**
+ * デモで試す架空のお知らせ（学習発表会の延期。デモの家の 11/25 のお知らせを変える）。お知らせの原文なので、画面の
+ * 言葉に合わせて訳さない（日本の園や学校のお知らせを読む例）。
+ */
+const SAMPLE_NOTICE = '12月7日(月)は通常授業です。学習発表会は12月8日(火)に延期します。';
+
 function NoticeInputCard({
   ctx,
   read,
@@ -4020,6 +4026,12 @@ function NoticeInputCard({
         placeholder={ctx.t('input.placeholder')}
         className="w-full rounded-lg border border-line bg-card p-3 text-base leading-relaxed"
       />
+      {/* デモだけ：初めて試す人が文を用意しなくてよいように、架空のお知らせを欄に入れる（読み取りは押した時だけ）。 */}
+      {!ctx.trialInput && text.length === 0 && !busy && (
+        <MoreLink onClick={() => change(() => setText(SAMPLE_NOTICE))}>
+          {ctx.t('input.sample')}
+        </MoreLink>
+      )}
       <Text quiet>
         {ctx.t(ctx.trialInput ? 'input.clockTrial' : 'input.clock', { now: dayTime(ctx, ctx.now) })}
       </Text>
