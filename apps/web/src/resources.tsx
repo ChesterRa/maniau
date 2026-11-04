@@ -4,6 +4,7 @@
 // Claude の読みとして見せ、家族が選ぶ）。種類（kind）で画面を分けない（種類の名前を出すだけ）。
 import type {
   Household,
+  Place,
   Preparation,
   Resource,
   ResourceSource,
@@ -51,6 +52,21 @@ export function SourceLink({ ctx, source }: { ctx: Ctx; source: ResourceSource }
       {ctx.t('resources.source.open')}
     </a>
   );
+}
+
+/**
+ * 家の店の資源（家族の好み。02-foundation §3.5）：店の場所を指し、名前は店の名前、分かった事は無し。ID は店から
+ * 決める（一つの店に一つ）。扱い（いつも使う・候補・使わない）は家族が選ぶ。
+ */
+export function storeResource(store: Place, use: Resource['use']): Resource {
+  return {
+    id: `res-store-${store.id}`,
+    kind: 'store',
+    name: store.name,
+    placeId: store.id,
+    notes: [],
+    use,
+  };
 }
 
 /** だれの分を家族が選ぶ（家族みんな・人ごと・分からない）。人を一人も選ばなければ分からない。 */
@@ -142,6 +158,10 @@ export function ResourcesCard({ ctx }: { ctx: Ctx }) {
   const refused = draft ? flow.refusedFor(draft) : undefined;
   const unattached = household.preparations.filter(
     (p) => !household.resources.some((r) => r.id === p.resourceId),
+  );
+  // 家の店のうち、店の資源（家族の扱い）がまだ無い店。
+  const stores = household.places.filter(
+    (p) => p.kind === 'store' && !household.resources.some((r) => r.placeId === p.id),
   );
 
   const preparationBlock = (p: Preparation) => {
@@ -282,6 +302,34 @@ export function ResourcesCard({ ctx }: { ctx: Ctx }) {
         <Text quiet>{ctx.t('resources.none')}</Text>
       )}
       {household.resources.map(resourceBlock)}
+      {/* 家の店で、まだ扱いを決めていない店：直す時に、家族が扱いを選ぶと、その店の資源を作る（一つの店に一つ）。 */}
+      {!editing && stores.length > 0 && (
+        <Text quiet>
+          {ctx.t('resources.stores.hint', {
+            names: stores.map((p) => p.name).join(ctx.t('list.separator')),
+          })}
+        </Text>
+      )}
+      {editing &&
+        stores.map((p) => (
+          <div key={p.id} className="flex flex-col gap-1.5">
+            <Title>{p.name}</Title>
+            <Text quiet>{ctx.t('resources.stores.kind')}</Text>
+            <div className="flex flex-wrap gap-1.5">
+              {USES.map((u) => (
+                <button
+                  key={u}
+                  type="button"
+                  aria-pressed={false}
+                  className={toggle(false)}
+                  onClick={() => change((h) => h.resources.push(storeResource(p, u)))}
+                >
+                  {ctx.t(`resources.use.choice.${u}`)}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
       {unattached.map(preparationBlock)}
       <Text quiet>{ctx.t('resources.used')}</Text>
       {!editing && ctx.survey && (

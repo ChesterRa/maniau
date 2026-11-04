@@ -30,6 +30,7 @@ const household = {
   ],
   careOptions: [],
   ways: [],
+  resources: [],
 };
 
 const mapInputs: MapInputs = {

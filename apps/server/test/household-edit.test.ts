@@ -282,7 +282,8 @@ describe('家と暮らしの情報を直す', () => {
     const events = () => store.withHousehold('demo', (log) => [...log.events()]);
     const run = (command: Parameters<typeof runCommand>[3], id: string) =>
       runCommand(store, 'demo', { memberId: 'b', now, operationId: id, demo: true }, command);
-    // 位置・営業時間・駅からの歩きが同じ衣料品店を、もう一軒足して保存する。
+    // 位置・営業時間・駅からの歩きが同じ衣料品店を、もう一軒足して保存する。デモの家は一軒目を「いつも使う」に
+    // してあるので、二軒目も「いつも使う」にする（いつもの店どうしなら、寄れる方に置く）。
     const current = foldEvents(await events()).household;
     const first = current?.places.find((p) => p.id === 'store-clothing-toyosu');
     if (!current || !first) throw new Error('衣料品店が無い');
@@ -291,7 +292,21 @@ describe('家と暮らしの情報を直す', () => {
       id: 'store-clothing-toyosu-2',
       name: '二軒目の衣料品店',
     };
-    const withTwin = { ...structuredClone(current), places: [...current.places, twin] };
+    const withTwin = {
+      ...structuredClone(current),
+      places: [...current.places, twin],
+      resources: [
+        ...current.resources,
+        {
+          id: `res-store-${twin.id}`,
+          kind: 'store',
+          name: twin.name,
+          placeId: twin.id,
+          notes: [],
+          use: 'usual' as const,
+        },
+      ],
+    };
     const added = previewHousehold(await events(), { memberId: 'b', now }, withTwin);
     if ('reason' in added) throw new Error(added.reason);
     expect(
@@ -345,7 +360,9 @@ describe('家と暮らしの情報を直す', () => {
     const shown = previewHousehold(events, { memberId: 'b', now }, shortHours);
     if ('reason' in shown) throw new Error(shown.reason);
     const change = shown.changes.deadlines.find((d) => d.arrangementKey === buy.key);
-    expect(change?.after).toEqual({ deadlineCertainty: 'undetermined', expired: true });
+    // 衣料品店はデモの家の「いつもの店」：寄れる時が無いので、ほかの店に移さず決めない（過ぎたとは言わない。
+    // ほかの店で買うかは家族が選ぶ）。
+    expect(change?.after).toEqual({ deadlineCertainty: 'undetermined', expired: false });
     expect(change?.before?.deadlineCertainty).not.toBe('undetermined');
   });
 

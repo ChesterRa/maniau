@@ -1284,6 +1284,28 @@ function checkResources(
       resources.push(use === beforeUse ? before : { ...beforeRest, use, decidedAt: now });
       continue;
     }
+    // 家族が家の店から作る店の資源（好み）：店の場所を指し、ID は店から決め、名前は店の名前、分かった事は無し。
+    // 一つの店に一つ（扱いの食い違う二つを作らない）。扱いは家族が選ぶ。
+    const store =
+      sent.kind === 'store'
+        ? next.places.find((p) => p.kind === 'store' && p.id === sent.placeId)
+        : undefined;
+    if (store) {
+      const { placeId: _placeId, ...own } = rest;
+      if (
+        !sameJson(own, {
+          id: `res-store-${store.id}`,
+          kind: 'store',
+          name: store.name,
+          notes: [],
+        }) ||
+        next.resources.filter((r) => r.placeId === store.id).length > 1
+      ) {
+        return invalid('resourcesLocked');
+      }
+      resources.push({ ...rest, use, decidedAt: now });
+      continue;
+    }
     const shown = surveyed.find((c) => c.resource.id === sent.id);
     if (!shown) return invalid('resourcesLocked');
     const { use: _shownUse, decidedAt: _shownAt, ...shownRest } = shown.resource;

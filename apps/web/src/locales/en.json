@@ -122,7 +122,8 @@
       "fixedBusy": "Your usual schedule (work, etc.) or another task overlaps the written time. If you can't do it, please ask someone else.",
       "fixedPast": "The written time has passed. If it's done, tap Done.",
       "cover": "You would cover this whole time (no other tasks are placed then).",
-      "whereMaps": "{{place}} · {{walk}} min walk from the station ({{back}} min back)"
+      "whereMaps": "{{place}} · {{walk}} min walk from the station ({{back}} min back)",
+      "usualStore": "Your usual store (change it in “Around us” under “Family”)"
     },
     "backup": {
       "label": "Just in case",
@@ -190,7 +191,11 @@
       "purchaseTitle": "{{what}}",
       "purchase": "It's needed by {{date}}, but no time to buy it was found on your registered routes and stores. If you get it another way, tap \"Got it\".",
       "childCare": "No way was found to arrange {{child}} with your registered options and deadlines. Please think of another way together.",
-      "ready": "Got it"
+      "ready": "Got it",
+      "usualLabel": "No time at your usual store",
+      "usual": "It’s needed by {{date}}, but no time to stop at your usual store ({{stores}}) was found. We won’t move it to another store until your family chooses one. To buy it elsewhere, change your stores in “Around us” under “Family”. If you get it another way, tap \"Got it\".",
+      "notUsedLabel": "Only stores you don’t use",
+      "notUsed": "It’s needed by {{date}}, but the only stores that sell it are ones your family marked “Don’t use” ({{stores}}). To buy it there, change that in “Around us” under “Family”. If you get it another way, tap \"Got it\"."
     },
     "timing": {
       "fixed": "{{day}} {{from}}–{{to}}",
@@ -1246,7 +1251,8 @@
     "askNote": "Only the item name ({{what}}) is sent (to the Anthropic API).",
     "noIdeas": "No ideas came back. Type your own search words.",
     "already": "You already buy this item here",
-    "addGoods": "You'll also buy {{what}} at “{{name}}”."
+    "addGoods": "You'll also buy {{what}} at “{{name}}”.",
+    "kindOnly": "“{{what}}” is the same as a kind of goods, so a store for this item can't be chosen here."
   },
   "memberDay": {
     "title": "Just this day",
@@ -1448,6 +1454,10 @@
         "other": "To use it in another way, choose this place as who to ask or where to go on that way’s screen.",
         "noPlace": "It isn’t linked to a place, so it can’t be who you ask or where you go in a way."
       }
+    },
+    "stores": {
+      "hint": "You can also mark your stores ({{names}}) as usual or not used with “Edit”. If you have a usual store, shopping goes there (even if another store is on the way sooner).",
+      "kind": "One of your stores (not decided yet)"
     }
   }
 }

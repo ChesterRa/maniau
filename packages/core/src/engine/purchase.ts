@@ -152,6 +152,33 @@ function openness(route: StoreRoute, start: EpochMinutes, end: EpochMinutes, tz:
   return { status: open ? 'open' : 'closed', basis: 'family' };
 }
 
+/** 買い物を探す店の集まり（家族の好みで絞った物）。 */
+export interface PurchaseStores {
+  stores: Place[];
+  /** 家族が「いつも使う」とした店だけに絞った。 */
+  usual: boolean;
+  /** 品物を扱うが、家族が「使わない」とした店。 */
+  notUsed: Place[];
+  /** いつもの店に絞った時の、ほかの使える店（「使わない」でない店。家族が選べば使える）。絞っていなければ空。 */
+  others: Place[];
+}
+
+/**
+ * 品物（の種類）を買う店の集まり（家族の好み。02-foundation §3.5）：扱う店から、家族が「使わない」とした店を外し、
+ * 「いつも使う」とした店があれば、その店だけ（ほかの店が先に寄れても、ほかの店にしない）。家族の扱いは、店の場所を
+ * 指す資源の use（店の資源は、一つの店に一つ）。「いつも使う」の店が無ければ、「使わない」を除いた店の全部。
+ */
+export function purchaseStores(household: Household, goods: string): PurchaseStores {
+  const all = household.places.filter((p) => p.kind === 'store' && p.goods.includes(goods));
+  const useOf = (store: Place) => household.resources.find((r) => r.placeId === store.id)?.use;
+  const notUsed = all.filter((store) => useOf(store) === 'notUsed');
+  const usable = all.filter((store) => useOf(store) !== 'notUsed');
+  const usual = usable.filter((store) => useOf(store) === 'usual');
+  return usual.length > 0
+    ? { stores: usual, usual: true, notUsed, others: usable.filter((s) => !usual.includes(s)) }
+    : { stores: usable, usual: false, notUsed, others: [] };
+}
+
 export function purchaseOpportunities(
   household: Household,
   goods: string,
@@ -159,10 +186,15 @@ export function purchaseOpportunities(
   from: EpochMinutes,
   until: EpochMinutes,
   maps?: MapInputs,
+  stores: readonly Place[] = purchaseStores(household, goods).stores,
 ): PurchaseOpportunity[] {
-  return searchPurchase(household, goods, durationMin, from, until, maps).opportunities;
+  return searchPurchase(household, goods, durationMin, from, until, maps, stores).opportunities;
 }
 
+/**
+ * 店の集まり（無ければ家族の好みで絞った物）の、大人ごとの機会。置いた店と決め時は、同じ集まりから求める（いつもの
+ * 店にしか行かないのに、ほかの店の最後の機会を決め時にしない）。
+ */
 export function searchPurchase(
   household: Household,
   goods: string,
@@ -170,9 +202,9 @@ export function searchPurchase(
   from: EpochMinutes,
   until: EpochMinutes,
   maps?: MapInputs,
+  stores: readonly Place[] = purchaseStores(household, goods).stores,
 ): PurchaseSearch {
   const tz = household.timeZone;
-  const stores = household.places.filter((p) => p.kind === 'store' && p.goods.includes(goods));
   const routes = stores
     .map((store) => routeOf(household, store, maps))
     .filter((r): r is StoreRoute => r !== undefined);

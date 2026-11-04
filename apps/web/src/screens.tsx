@@ -1380,6 +1380,11 @@ function FamilyQuestionCard({
   );
 }
 
+/** 家族が「いつも使う」とした店か（店の場所を指す資源の扱い）。 */
+export function usualStore(household: Ctx['household'], placeId: string): boolean {
+  return household.resources.some((r) => r.placeId === placeId && r.use === 'usual');
+}
+
 /**
  * 登録した手立てでは間に合う方法が見つからなかった（01-model §8「このままでは無理」）。探した範囲で
  * 見つからなかっただけと書き、ほかの手を家族で考えてもらう。買い物は、ほかの手で用意できたら閉じられる。
@@ -1401,6 +1406,13 @@ export function StuckCard({
     purchase && arrangement.reasons.some((r) => r.code === 'inputMissing' && r.refs.includes(ref));
   const noStore = missing('storeKind');
   const unconfirmed = !noStore && missing('storeHours');
+  // 家族の好み：いつもの店に寄れる時が無い・扱う店が「使わない」の店だけ（ほかの店に黙って移さない）。
+  const storesOf = (code: 'usualStoreUnavailable' | 'storeNotUsed') => {
+    const reason = purchase ? arrangement.reasons.find((r) => r.code === code) : undefined;
+    return reason?.refs.map((id) => nameOf(ctx.household, id)).join(ctx.t('list.separator'));
+  };
+  const usual = storesOf('usualStoreUnavailable');
+  const notUsed = storesOf('storeNotUsed');
   return (
     <Card>
       <Label tone="warn">
@@ -1409,7 +1421,11 @@ export function StuckCard({
             ? 'card.stuck.noStoreLabel'
             : unconfirmed
               ? 'card.stuck.unconfirmedLabel'
-              : 'card.stuck.label',
+              : usual !== undefined
+                ? 'card.stuck.usualLabel'
+                : notUsed !== undefined
+                  ? 'card.stuck.notUsedLabel'
+                  : 'card.stuck.label',
         )}
       </Label>
       <Title>
@@ -1435,8 +1451,15 @@ export function StuckCard({
                 ? 'card.stuck.noStore'
                 : unconfirmed
                   ? 'card.stuck.unconfirmed'
-                  : 'card.stuck.purchase',
-              { date: due(ctx, date, requirement?.basis.itemIds ?? []) },
+                  : usual !== undefined
+                    ? 'card.stuck.usual'
+                    : notUsed !== undefined
+                      ? 'card.stuck.notUsed'
+                      : 'card.stuck.purchase',
+              {
+                date: due(ctx, date, requirement?.basis.itemIds ?? []),
+                stores: usual ?? notUsed ?? '',
+              },
             )
           : ctx.t('card.stuck.childCare', { child: childLabel(ctx, arrangement.childId) })}
       </Text>
@@ -2041,6 +2064,9 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
             </span>
           )}
           {task.travelSource === 'maps' && <MapsFacts ctx={ctx} task={task} />}
+          {store && usualStore(ctx.household, store.id) && (
+            <span className="text-[15px] text-sub">{ctx.t('card.proposal.usualStore')}</span>
+          )}
         </div>
       )}
       {task.travelSource === 'maps' && task.atPlaceId && (

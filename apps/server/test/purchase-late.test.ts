@@ -189,6 +189,14 @@ it('ふだんの週に一度も買える時が無く、家に無いと答えて�
             places: e.household.places.filter(
               (p) => !(p.kind === 'store' && p.goods.includes('kidsClothing')),
             ),
+            // 外した店を指す店の資源（家族の扱い）も外す（参照を切らない）。
+            resources: e.household.resources.filter(
+              (r) =>
+                !e.household.places.some(
+                  (p) =>
+                    p.id === r.placeId && p.kind === 'store' && p.goods.includes('kidsClothing'),
+                ),
+            ),
           },
         }
       : e,

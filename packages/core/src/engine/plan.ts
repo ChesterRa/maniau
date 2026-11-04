@@ -17,13 +17,14 @@ import {
   sameProposal,
   type TaskContent,
 } from '../schema/events';
-import type {
-  CareOptionTemplate,
-  Cost,
-  DeadlineRule,
-  Household,
-  StepTemplate,
-  Way,
+import {
+  type CareOptionTemplate,
+  type Cost,
+  type DeadlineRule,
+  GOODS_KINDS,
+  type Household,
+  type StepTemplate,
+  type Way,
 } from '../schema/household';
 import type { MapInputs } from '../schema/maps';
 import type {
@@ -60,7 +61,7 @@ import { hoursUnknownAt, stoppedWay } from '../view/ways';
 import { noAdultAtHome } from './availability';
 import { type Busy, optionDeadline, placeStep, ruleDeadline } from './deadline';
 import { bestOrder } from './joint';
-import { purchaseOpportunities, searchPurchase } from './purchase';
+import { purchaseOpportunities, purchaseStores, searchPurchase } from './purchase';
 import {
   awaitingConfirmation,
   currentItems,
@@ -125,10 +126,12 @@ export function costScore(cost: Cost, weights = DEFAULT_COST_WEIGHTS): number {
 }
 
 /**
- * 品物を買う店を見分ける種類。家族がこの品物のために選んだ店（扱う物に品物の名前そのものがある店）があれば、
- * その名前を使い、その店だけで買う（ほかの店より先）。無ければ、小さな対応表の種類（服・食材）。
+ * 品物を買う店を見分ける種類。品物の名前が種類の名前そのもの（例：groceries）なら、その種類（家族が品物のために
+ * 選んだ店とは見なさない）。家族がこの品物のために選んだ店（扱う物に品物の名前そのものがある店）があれば、その名前を
+ * 使い、その店だけで買う（ほかの店より先）。無ければ、小さな対応表の種類（服・食材）。
  */
 export function purchaseGoods(household: Household, what: string): string | undefined {
+  if (GOODS_KINDS.has(what)) return what;
   const chosen = household.places.some((p) => p.kind === 'store' && p.goods.includes(what));
   return chosen ? what : goodsFor(what);
 }
@@ -2323,7 +2326,17 @@ function purchase(
     // 済んだ買い物は、置き直さない。
     const assignee = ctx.state.assignees.get(key);
     const done = bought;
-    const search = searchPurchase(ctx.household, goods, PURCHASE_MINUTES, ctx.now, by, ctx.maps);
+    // 店は家族の好みで絞る（「使わない」の店を外し、「いつも使う」の店があればその店だけ）。置く店と決め時は同じ集まり。
+    const shops = purchaseStores(ctx.household, goods);
+    const search = searchPurchase(
+      ctx.household,
+      goods,
+      PURCHASE_MINUTES,
+      ctx.now,
+      by,
+      ctx.maps,
+      shops.stores,
+    );
     const all = search.opportunities;
     const chances = assignee === undefined ? all : all.filter((c) => c.memberId === assignee);
     const first = chances[0];
@@ -2347,6 +2360,11 @@ function purchase(
           live,
         }),
       );
+    } else if (shops.stores.length === 0 && shops.notUsed.length > 0) {
+      // 品物を扱う店が、家族が「使わない」とした店だけ：無理とは言わず、決めない（ほかの店は家族が選ぶ）。
+      status = 'undetermined';
+      reasons.push({ code: 'storeNotUsed', refs: shops.notUsed.map((s) => s.id) });
+      if (atHome === undefined) askFirst(by);
     } else if ((!first || !last) && search.droppedUnconfirmed) {
       // 区間はあるのに、確かめていない営業時間（地図のふだんの営業時間の目安・営業時間が分からない）で
       // 置けなかった。閉まっているとも、買える時が過ぎたとも言わない（まだ判断できない。家族が確かめる）。
@@ -2365,22 +2383,50 @@ function purchase(
         ctx.now - LOOKBACK_MIN,
         by,
         ctx.maps,
+        shops.stores,
       )
         .filter((c) => c.start < ctx.now && (assignee === undefined || c.memberId === assignee))
         .at(-1);
-      option.expired = true;
-      if (missed) {
-        option.decisionDeadline = ctx.fmt(missed.start);
-        option.deadlineCertainty = 'estimate';
-      }
-      reasons.push({ code: 'noOptionLeft', refs: [optionKey] });
-      if (atHome === undefined) {
-        // 答えが役に立つのは、持って行く時まで（無ければ、ほかの手を考える時が要る）。
-        askFirst(by);
+      // いつもの店に絞った時、ほかの使える店に、これから寄れる時（または確かめていない営業時間）があるか。
+      const elsewhere =
+        shops.others.length > 0
+          ? searchPurchase(
+              ctx.household,
+              goods,
+              PURCHASE_MINUTES,
+              ctx.now,
+              by,
+              ctx.maps,
+              shops.others,
+            )
+          : undefined;
+      const otherOpen =
+        elsewhere !== undefined &&
+        (elsewhere.droppedUnconfirmed ||
+          elsewhere.opportunities.some((c) => assignee === undefined || c.memberId === assignee));
+      if (shops.usual && (!missed || otherOpen)) {
+        // いつもの店に、これから寄れる時が無い：ほかの店に黙って移さず、決めない（ほかの店で買うかは家族が選ぶ）。
+        // ほかの店ならまだ寄れる（かもしれない）か、いつもの店にさかのぼっても寄れる時が無い（閉まっている・ふだんの
+        // 週で寄れない）時は、過ぎたとも、無理とも言わない。どの店にも、もう寄れる時が無く、いつもの店の機会が
+        // 過ぎただけなら、下のとおり（その店の過ぎた最後の機会を決め時として示す）。
+        status = 'undetermined';
+        reasons.push({ code: 'usualStoreUnavailable', refs: shops.stores.map((s) => s.id) });
+        if (atHome === undefined) askFirst(by);
       } else {
-        // 家に無く、買える時も過ぎた。過ぎた決め時を示せる時だけ「このままでは無理」と言い、示せなければ
-        // 判断できないとする（確かめられない時刻で、不可能と言わない）。
-        status = missed ? 'infeasible' : 'undetermined';
+        option.expired = true;
+        if (missed) {
+          option.decisionDeadline = ctx.fmt(missed.start);
+          option.deadlineCertainty = 'estimate';
+        }
+        reasons.push({ code: 'noOptionLeft', refs: [optionKey] });
+        if (atHome === undefined) {
+          // 答えが役に立つのは、持って行く時まで（無ければ、ほかの手を考える時が要る）。
+          askFirst(by);
+        } else {
+          // 家に無く、買える時も過ぎた。過ぎた決め時を示せる時だけ「このままでは無理」と言い、示せなければ
+          // 判断できないとする（確かめられない時刻で、不可能と言わない）。
+          status = missed ? 'infeasible' : 'undetermined';
+        }
       }
     } else {
       option.decisionDeadline = ctx.fmt(last.start);

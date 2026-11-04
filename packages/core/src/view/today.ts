@@ -353,13 +353,16 @@ export function todayCards(
     if (!arrangement.live || arrangement.status === 'askFirst' || arrangement.kind === 'need')
       continue;
     // 間に合う手が見つからない時と、買い物でどの店で買えるか分からない時・店の営業時間か道のりを確かめられず
-    // 買う時を決められない時（家に無いと分かった後）。
+    // 買う時を決められない時・いつもの店に寄れる時が無い時・扱う店が「使わない」の店だけの時（家に無いと分かった後。
+    // どれも、ほかの店で買うかは家族が選ぶ）。
     const noStore =
       arrangement.kind === 'purchase' &&
       arrangement.reasons.some(
         (r) =>
-          r.code === 'inputMissing' &&
-          (r.refs.includes('storeKind') || r.refs.includes('storeHours')),
+          (r.code === 'inputMissing' &&
+            (r.refs.includes('storeKind') || r.refs.includes('storeHours'))) ||
+          r.code === 'usualStoreUnavailable' ||
+          r.code === 'storeNotUsed',
       );
     if (!noStore && !arrangement.reasons.some((r) => r.code === 'noOptionLeft')) continue;
     if (toEpochMinutes(arrangement.end) <= now) continue;

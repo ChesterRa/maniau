@@ -1,7 +1,7 @@
 // 家の最寄りの駅の近くで、品物を買う店を地図で探して選ぶ（デモ）。探す言葉は、Claude の案（推定）を家族が確かめて（要れば直して）
 // 「探す」を押した時だけ、そのまま Google に送る。見つけた店の名前・住所は見せるだけで取っておかない。選んだ店は、
 // place ID と家族の呼び名だけを家の情報に足す（見る → 保存。足した後の計画は、サーバーが同じ計算で見せる）。
-import { formatDateTime, type Household, type Place } from '@maniau/core';
+import { formatDateTime, GOODS_KINDS, type Household, type Place } from '@maniau/core';
 import { useState } from 'react';
 import type { FoundStore, StoreSearchResult } from './family';
 import { Attributions, GoogleMapsMark, TermsLink } from './maps';
@@ -93,6 +93,9 @@ export function StoreSearch(props: { ctx: Ctx; what: string; first?: boolean }) 
   const [chosen, setChosen] = useState<Chosen>();
 
   if (!search || !station) return null;
+  // 品物の名前が、店の扱う種類の名前と同じ字（kidsClothing など）なら、この品物のための店は選べない（店の goods では、
+  // 品物のために選んだ店と、店の扱う種類を見分けられない。選んでも計算はその店にしないので、「この店で買う」と言わない）。
+  if (GOODS_KINDS.has(what)) return <Text quiet>{ctx.t('stores.kindOnly', { what })}</Text>;
 
   // 案は、家族が押した時だけ聞く（送るのは品物の名前だけ）。直していなければ、最初の案を探す言葉に入れる。
   const ask = async () => {

@@ -10,6 +10,7 @@ import { checkReleased } from './released';
 import { Collector, type VerificationReport } from './report';
 import { checkExceptionTransitions } from './routine';
 import { checkSchedule } from './schedule';
+import { checkStorePreferences } from './store-preferences';
 
 export type {
   NotificationMessageVerificationInput,
@@ -86,6 +87,7 @@ export function verifyPlan(input: VerificationInput): VerificationReport {
   checkRequestNeed(plan.data, history, facts, report, household.data.timeZone);
   checkPlan(household.data, plan.data, facts, history, report);
   checkPreparations(household.data, plan.data, facts, history, report);
+  checkStorePreferences(household.data, plan.data, facts, history, report);
   checkNeedSelections(household.data, plan.data, facts, history, report);
   checkNeedCoverage(household.data, plan.data, facts, history, report);
   checkSchedule(household.data, plan.data, history, report);

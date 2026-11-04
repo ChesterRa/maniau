@@ -43,6 +43,7 @@ const household = {
   routines: [],
   careOptions: [],
   ways: [],
+  resources: [],
 } as unknown as Household;
 
 const buy = {
@@ -289,6 +290,18 @@ describe('駅の近くで店を探す', () => {
     expect(host.textContent).toContain(
       'うちの店「豊洲駅の近くの衣料品店」で、白い長袖シャツも買うことにします。',
     );
+  });
+
+  it('品物の名前が種類の名前と同じ字なら、この品物のための店は選ばせない（「この店で買う」と言わない）', async () => {
+    const ctx = ctxWith(log, 'noKinds');
+    const requirement = ctx.plan.requirements[0] as { what: string };
+    requirement.what = 'kidsClothing';
+    await step(() => root.render(<TodayScreen ctx={ctx} />));
+    expect(button('ほかの店を探す')).toBeUndefined();
+    expect(host.textContent).toContain(
+      '「kidsClothing」は店の扱う品物の種類の名前と同じなので、この品物のための店は、ここでは選べません。',
+    );
+    expect(log.previews).toEqual([]);
   });
 
   it('地図の口の無い画面では、店を探す手を出さない', async () => {

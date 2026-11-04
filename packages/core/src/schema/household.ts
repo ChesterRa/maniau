@@ -84,6 +84,12 @@ export const Place = z.object({
 });
 export type Place = z.infer<typeof Place>;
 
+/**
+ * 店の goods に入る、品物の種類の名前（服・子ども服・食材）。goods のほかの字は、家族がその品物のために選んだ店の印
+ * （品物の名前そのもの）。品物の名前がこの種類の名前と同じ字なら、その種類として扱う（品物のために選んだ店とは見なさない）。
+ */
+export const GOODS_KINDS: ReadonlySet<string> = new Set(['clothing', 'kidsClothing', 'groceries']);
+
 /** ふだんの週の区間の種類。区間に無い時刻は、作業を置けない時刻として扱う。 */
 export const SegmentKind = z.enum(['home', 'commute', 'work', 'pickup', 'away']);
 export type SegmentKind = z.infer<typeof SegmentKind>;

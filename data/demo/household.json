@@ -224,6 +224,55 @@
       }
     },
     {
+      "id": "store-kids-toyosu",
+      "kind": "store",
+      "name": "豊洲駅の近くの子ども服の店（架空）",
+      "area": "豊洲",
+      "nearStationId": "st-toyosu",
+      "walkFromStationMin": 2,
+      "goods": ["kidsClothing"],
+      "hours": {
+        "periods": [
+          {
+            "weekday": 1,
+            "open": "10:00",
+            "close": "20:00"
+          },
+          {
+            "weekday": 2,
+            "open": "10:00",
+            "close": "20:00"
+          },
+          {
+            "weekday": 3,
+            "open": "10:00",
+            "close": "20:00"
+          },
+          {
+            "weekday": 4,
+            "open": "10:00",
+            "close": "20:00"
+          },
+          {
+            "weekday": 5,
+            "open": "10:00",
+            "close": "20:00"
+          },
+          {
+            "weekday": 6,
+            "open": "10:00",
+            "close": "20:00"
+          },
+          {
+            "weekday": 7,
+            "open": "10:00",
+            "close": "20:00"
+          }
+        ],
+        "source": "family"
+      }
+    },
+    {
       "id": "sick-care",
       "kind": "other",
       "name": "みらい橋病児保育室（架空）",
@@ -1099,6 +1148,14 @@
         }
       ],
       "use": "candidate"
+    },
+    {
+      "id": "res-store-store-clothing-toyosu",
+      "kind": "store",
+      "name": "豊洲駅の近くの衣料品店",
+      "placeId": "store-clothing-toyosu",
+      "notes": [],
+      "use": "usual"
     }
   ],
   "preparations": [
@@ -1106,7 +1163,10 @@
       "id": "prep-sick-care",
       "name": "病児保育の事前登録",
       "resourceId": "res-sick-care",
-      "appliesTo": { "kind": "members", "memberIds": ["c"] },
+      "appliesTo": {
+        "kind": "members",
+        "memberIds": ["c"]
+      },
       "state": "unknown"
     }
   ]
