@@ -125,6 +125,14 @@ export function previewChange(
   const now =
     state.clock === undefined ? context.now : formatDateTime(state.clock, current.timeZone);
   const plan = planFromState(state, now);
+  // 返事の仮定は、今の計画で返事を待っている、生きている依頼だけ（返事のあった依頼や要らなくなった依頼を、仮に
+  // 上書きして見せない。古い画面の ID で来ても）。本当の返事の記録と直しは、この口を通らない（命令の道）。
+  if (command.type === 'recordReply') {
+    const request = plan.requests.find((r) => r.requestId === command.requestId);
+    if (request?.state !== 'awaitingReply' || !request.live) {
+      return { status: 'conflict', reason: 'notWaiting' };
+    }
+  }
   // 事項の直しと外しは、「すること」の物だけ見せる（ほかの事項は、今の札の確かめのまま）。モデルが読んだ「すること」
   // は書く時に見せた番号が要るので、今の番号で通す（見るのは今の中身。書く時に番号と要約を確かめる）。
   let asCommand: Command = command;

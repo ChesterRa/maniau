@@ -49,6 +49,26 @@ describe('断られたら？（返事の仮定）', () => {
     ]);
   });
 
+  it('返事を待っていない依頼は、仮に計算しない（返事のあった依頼を上書きして見せない）', () => {
+    // 学童に申し込んだ後の場面：学童（r-gakudo）は「はい」の返事があり、祖母はまだ返事待ち。
+    const events = demoEvents('backup');
+    const real = computePlan(events, nowOf('backup'));
+    expect(real.requests.find((r) => r.requestId === 'r-gakudo')?.state).toBe('confirmed');
+    const shown = previewChange(
+      events,
+      { memberId: 'b', now: nowOf('backup') },
+      { type: 'recordReply', requestId: 'r-gakudo', reply: 'no' },
+    );
+    expect(shown).toEqual({ status: 'conflict', reason: 'notWaiting' });
+    // 無い依頼も同じ。
+    const missing = previewChange(
+      events,
+      { memberId: 'b', now: nowOf('backup') },
+      { type: 'recordReply', requestId: 'r-none', reply: 'no' },
+    );
+    expect(missing).toEqual({ status: 'conflict', reason: 'notWaiting' });
+  });
+
   it('家と暮らしの情報の直しなどでは、手配の姿を返さない（今までどおり）', () => {
     const events = demoEvents('asked');
     const household = events.find((e) => e.type === 'householdSet');
