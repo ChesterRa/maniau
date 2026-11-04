@@ -62,7 +62,10 @@ test('「すること」を足し、やり方を選んで、頼んだ後の返�
     'aria-pressed',
     'true',
   );
-  await expect(task).toHaveCount(0);
+  // 健太には、彩がまだ引き受けていない作業として静かに見えるが、健太が代わりに引き受ける押し口は出ない。
+  await expect(task).toBeVisible();
+  await expect(task.getByText('彩さんが、まだ引き受けていません')).toBeVisible();
+  await expect(task.getByRole('button', { name: 'やります', exact: true })).toHaveCount(0);
 
   const ayaView = page.waitForResponse(
     (response) => response.url().includes('/view?member=b') && response.status() === 200,
