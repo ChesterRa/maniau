@@ -8,6 +8,7 @@ import {
   Household,
   MAX_CONDITION_NODES,
   NO_CONDITION,
+  sameNamePairs,
   type Unknown,
   validateConditions,
   validateHousehold,
@@ -37,6 +38,27 @@ describe('デモの家族', () => {
     const problems = validateHousehold(household).map((i) => i.problem);
     expect(problems).toContain('unknownRef');
     expect(problems).toContain('overlap');
+  });
+
+  it('同じ名前の物の組は、物ごと（種類と ID）に数え、種類をまたぎ、並びに依らない', () => {
+    const household = Household.parse(demoHousehold());
+    expect(sameNamePairs(household).size).toBe(0);
+    const helper = { id: 'h1', kind: 'helper' as const, name: '山田さん', active: true };
+    household.members.push(helper, { ...helper, id: 'h2', name: ' 山田さん' });
+    household.places.push({ id: 'h1', kind: 'other', name: '山田さん', goods: [] });
+    const pairs = sameNamePairs(household);
+    // 三つの物から三つの組（同じ ID でも、人と場所は別の物）。
+    expect(pairs.size).toBe(3);
+    const reversed = { ...household, members: [...household.members].reverse() };
+    expect([...sameNamePairs(reversed)].sort()).toEqual([...pairs].sort());
+    // 名前の集まりは同じでも、組の中の物が替われば、別の組。
+    const adultId = household.members.find((m) => m.kind === 'adult')?.id;
+    const swapped = structuredClone(household);
+    for (const m of swapped.members) {
+      if (m.id === 'h2') m.name = '山田さん（二丁目）';
+      if (m.id === adultId) m.name = '山田さん';
+    }
+    expect([...sameNamePairs(swapped)].some((pair) => !pairs.has(pair))).toBe(true);
   });
 });
 

@@ -17,6 +17,7 @@ import { type Vapid, webPushSender } from './push';
 import { extractNotice, ReadingError } from './reading/extract';
 import { PhotoTooLarge, transcribePhoto } from './reading/transcribe';
 import { readUtterance } from './reading/utterance';
+import { readWayIdeas } from './reading/way-ideas';
 
 // 設定は環境変数だけから読む。手元の .env は、起動の命令（package.json の dev・start の
 // --env-file-if-exists）が読む。入口そのものは .env を読まない（試験で起こす入口が、手元の鍵や DB の
@@ -135,6 +136,22 @@ const listener = anthropic
       }
     }
   : undefined;
+// やり方の案も、モデル名と使った量だけを記録する（家庭の中身や案は出さない）。
+const ideaReader = anthropic
+  ? async (context: Parameters<typeof readWayIdeas>[1]) => {
+      try {
+        const result = await readWayIdeas(anthropic, context);
+        console.log(
+          `やり方の案：${result.model} 入力 ${result.usage.input_tokens}・出力 ${result.usage.output_tokens} tokens`,
+        );
+        return result;
+      } catch (error) {
+        const kind = error instanceof ReadingError ? error.reason : 'error';
+        console.log(`やり方の案：失敗（${kind}）。使った量は分からない`);
+        throw error;
+      }
+    }
+  : undefined;
 // 写真・PDF の書き起こしも、同じ鍵と同じ記録の仕方で（写真は残さない）。
 const transcriber = anthropic
   ? async (photo: Parameters<typeof transcribePhoto>[1]) => {
@@ -168,6 +185,7 @@ const app = createApp({
     : {}),
   ...(reader ? { reader } : {}),
   ...(listener ? { listener } : {}),
+  ...(ideaReader ? { ideaReader } : {}),
   ...(transcriber ? { transcriber } : {}),
 });
 const webDist = fileURLToPath(new URL('../../web/dist', import.meta.url));

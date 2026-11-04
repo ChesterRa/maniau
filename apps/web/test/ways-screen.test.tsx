@@ -120,7 +120,7 @@ describe('やり方を足す', () => {
   it('分からない代償は分からないのまま、新しく登録する相手と一緒に送り、見てから保存して戻る', async () => {
     const { ctx, looked, sent, went } = ctxWith();
     await step(() => root.render(<WayScreen ctx={ctx} from="arr:need:f-1:i1" />));
-    expect(host.textContent).toContain('まだ入っていない欄があります');
+    expect(host.textContent).toContain('まだ入っていない欄か、選んでいない欄があります');
     expect(button('この変更で変わることを見る')?.disabled).toBe(true);
     await step(() => enter(field<HTMLInputElement>('やり方の名前'), '近所の山田さんに来てもらう'));
     await step(() => enter(field<HTMLInputElement>('何をする'), '山田さんに来てもらえるか聞く'));

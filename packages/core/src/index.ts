@@ -1,5 +1,6 @@
 export * from './reading/output';
 export * from './reading/utterance';
+export * from './reading/way-ideas';
 export * from './schema/commands';
 export * from './schema/condition';
 export * from './schema/events';

@@ -6,6 +6,9 @@
 送った「すること」を直す・要らないにする前に変わることを見て、取り消しの文が送った時の控えに戻る道筋も通す。
 日常の `pnpm check` には含めない。ブラウザは初回だけ用意する。
 
+「すること」に Claude の架空の案を表示し、分からない欄を選び、見てから保存する道筋も通す。
+この道筋では案の API 応答をブラウザの中で作るため、読み取りの口やモデルの応答は確かめていない。
+
 ```sh
 PLAYWRIGHT_BROWSERS_PATH=.local/e2e-browsers pnpm exec playwright install chromium
 pnpm e2e

@@ -15,8 +15,11 @@ import {
   type PlaceKind,
   type PlanResult,
   proposalSnapshot,
+  repeatedNames,
   sameContent,
+  sameNamePairs,
   sameProposal,
+  shownName,
   stoppedWay,
   taskContent,
   toEpochMinutes,
@@ -1106,6 +1109,11 @@ function checkHouseholdEdit(
     }
     if (place.hours?.periods.some((p) => p.open >= p.close)) return invalid('hoursOvernight');
   }
+  // 家族に見せる名前（成員と場所）を新しく重ねない：同じ名前の人・場所があると、画面でどれのことか見分けられず、
+  // 別の人に頼むことがある。前からある重なり（同じ物どうしの組）だけなら断らない（ほかの欄の直しを止めない）。
+  // 前からある重なりの名前へ別の物を入れる（足す・名前を変えて入れる・一人と入れ替える）のは、新しい組なので断る。
+  const pairsBefore = sameNamePairs(current);
+  if ([...sameNamePairs(next)].some((pair) => !pairsBefore.has(pair))) return invalid('nameTaken');
   const ids = next.careOptions.map((o) => o.id);
   if (new Set(ids).size !== ids.length || ids.length !== current.careOptions.length) {
     return invalid('careOptionsLocked');
@@ -1211,6 +1219,14 @@ function checkWays(
     ...next.places.filter((p) => p.kind !== 'home').map((p) => p.id),
   ]);
   const places = new Set(next.places.filter((p) => p.kind !== 'home').map((p) => p.id));
+  // 同じ名前の人・場所（前からある重なり）は、新しく選ばせない（画面で見分けられない）。前から選んであった物は残せる。
+  const repeated = repeatedNames(next);
+  const ambiguous = (id: string | undefined) => {
+    if (id === undefined) return false;
+    const name =
+      next.members.find((m) => m.id === id)?.name ?? next.places.find((p) => p.id === id)?.name;
+    return name !== undefined && repeated.has(shownName(name));
+  };
   const ways: Way[] = [];
   for (const sent of next.ways) {
     const way = tidyWay(sent);
@@ -1234,6 +1250,14 @@ function checkWays(
         return invalid('wayRefUnknown');
       }
       if (step.placeId !== undefined && !places.has(step.placeId)) return invalid('wayRefUnknown');
+      const old = before?.steps.find((s) => s.id === step.id);
+      if (
+        (ambiguous(step.assigneeId) && step.assigneeId !== old?.assigneeId) ||
+        (ambiguous(step.external?.to) && step.external?.to !== old?.external?.to) ||
+        (ambiguous(step.placeId) && step.placeId !== old?.placeId)
+      ) {
+        return invalid('nameTaken');
+      }
     }
     const unknown = way.cost.unknown ?? [];
     if (

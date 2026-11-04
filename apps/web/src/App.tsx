@@ -27,6 +27,7 @@ import {
   WeekScreen,
 } from './screens';
 import { TabBar } from './ui';
+import { ideaDraft, WayIdeasScreen } from './way-ideas';
 import { WayScreen } from './ways';
 
 const FIRST_STAGE = 'arrived';
@@ -130,7 +131,7 @@ function Body(props: {
           items: view.items,
           sources: new Map(view.sources.map((s) => [s.id, s])),
           readings: withLive(props.readings, view.readings ?? []),
-          ...(props.canRead ? { read: live.read } : {}),
+          ...(props.canRead ? { read: live.read, wayIdeas: live.wayIdeas } : {}),
           ...(props.canRead && props.canPhoto ? { transcribe: live.transcribe } : {}),
           ...(props.canHear ? { hear: live.hear, confirm: live.confirm } : {}),
           ...(props.trial ? { trialInput: true as const } : {}),
@@ -379,14 +380,23 @@ function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {
       return <WeekScreen ctx={ctx} />;
     case 'household':
       return <HouseholdScreen ctx={ctx} />;
-    case 'way':
+    case 'way': {
+      const idea =
+        route.idea !== undefined && route.from && !route.wayId
+          ? ideaDraft(ctx, route.from, route.idea)
+          : undefined;
       return (
         <WayScreen
+          key={`${route.wayId ?? ''}|${route.from ?? ''}|${route.idea ?? ''}`}
           ctx={ctx}
           {...(route.wayId ? { wayId: route.wayId } : {})}
           {...(route.from ? { from: route.from } : {})}
+          {...(idea ? { idea } : {})}
         />
       );
+    }
+    case 'wayIdeas':
+      return <WayIdeasScreen ctx={ctx} arrangementKey={route.key} />;
     case 'sources':
       return (
         <SourcesScreen

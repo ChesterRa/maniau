@@ -707,6 +707,7 @@ function refusedKey(reason: string): string {
     'membersLocked',
     'placesLocked',
     'careOptionsLocked',
+    'nameTaken',
     'unavailable',
   ].includes(reason)
     ? reason

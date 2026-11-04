@@ -517,6 +517,11 @@ function WaysPicker(props: {
       <MoreLink onClick={() => ctx.go({ name: 'way', from: arrangementKey })}>
         {ctx.t('need.ways.add')}
       </MoreLink>
+      {ctx.wayIdeas && (
+        <MoreLink onClick={() => ctx.go({ name: 'wayIdeas', key: arrangementKey })}>
+          {ctx.t('wayIdeas.entry')}
+        </MoreLink>
+      )}
       <PreviewBlock
         ctx={ctx}
         {...(shown ? { preview: shown } : {})}

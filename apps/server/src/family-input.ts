@@ -2,7 +2,9 @@
 // もう一度確かめる。候補は本人が確かめるまで記録せず、読み取りは出典と一緒に一度だけ足す。
 import { randomUUID } from 'node:crypto';
 import {
+  type CheckedIdeas,
   type Command,
+  checkWayIdeas,
   type DateTime,
   type DomainEvent,
   Extraction,
@@ -18,6 +20,9 @@ import {
   toExtraction,
   toUtteranceReply,
   UtteranceOutput,
+  type WayIdeasContext,
+  WayIdeasOutput,
+  wayIdeasContext,
 } from '@maniau/core';
 import { computePlan, currentItems, foldEvents } from '@maniau/core/engine';
 import { and, count, eq, gte, like } from 'drizzle-orm';
@@ -33,6 +38,8 @@ import {
   type ShownProposal,
   type ShownReply,
   type UtteranceReader,
+  type WayIdeasInput,
+  type WayIdeasReader,
 } from './demo-sessions';
 import { sha256Of } from './digest';
 import type { FamilyMember } from './members';
@@ -58,7 +65,8 @@ type Failure =
         | 'busy'
         | 'limit'
         | 'uncertain'
-        | 'gone';
+        | 'gone'
+        | 'needGone';
     }
   | { status: 'failed'; reason: string };
 
@@ -67,6 +75,9 @@ export type FamilyNoticeResult =
   | Failure;
 export type FamilyUtteranceResult = { status: 'ok'; reply: ShownReply; view: View } | Failure;
 export type FamilyConfirmResult = { status: 'ok'; view: View } | Failure;
+export type FamilyWayIdeasResult =
+  | { status: 'ok'; ideas: CheckedIdeas; sent: WayIdeasContext }
+  | Failure;
 
 interface FamilyInputOptions {
   store: Store;
@@ -165,6 +176,28 @@ function familyUtteranceContext(
   };
 }
 
+/** 案の前提は、確認済みの事項・今の手配・家庭の最小限の名前から作る。 */
+function familyWayIdeasContext(
+  events: readonly DomainEvent[],
+  memberId: string,
+  now: DateTime,
+  input: WayIdeasInput,
+): WayIdeasContext | undefined {
+  const view = viewFor(events, memberId, now);
+  return wayIdeasContext(
+    {
+      plan: view.plan,
+      items: view.items.map((entry) => entry.item),
+      household: view.household,
+      sources: view.sources,
+    },
+    input.arrangementKey,
+    input.text,
+    input.language,
+    memberId,
+  );
+}
+
 /** 現行の一言候補と同じ、見せた時の対象と内容を命令に添える。 */
 function withSeen(command: Command, plan: PlanResult, throughSeq: number): Command {
   if (command.type === 'recordSent') {
@@ -207,6 +240,18 @@ export function familyInput(options: FamilyInputOptions) {
       expires: number;
     }
   >();
+  const ideaReplies = new Map<
+    string,
+    {
+      digest: string;
+      owner: string;
+      ideas: CheckedIdeas;
+      sent: WayIdeasContext;
+      at: DateTime;
+      throughSeq: number;
+      expires: number;
+    }
+  >();
   const active = new Set<string>();
 
   // 使わなくなった家庭も、次の要求を待たずに一言の候補をメモリから外す。
@@ -229,6 +274,7 @@ export function familyInput(options: FamilyInputOptions) {
     for (const [id, value] of proposals) if (value.expires <= now) proposals.delete(id);
     for (const [id, value] of utteranceReplies)
       if (value.expires <= now) utteranceReplies.delete(id);
+    for (const [id, value] of ideaReplies) if (value.expires <= now) ideaReplies.delete(id);
     while (proposals.size > MAX_PROPOSALS) {
       const first = proposals.keys().next().value;
       if (!first) break;
@@ -239,6 +285,11 @@ export function familyInput(options: FamilyInputOptions) {
       if (!first) break;
       utteranceReplies.delete(first);
     }
+    while (ideaReplies.size > MAX_PROPOSALS) {
+      const first = ideaReplies.keys().next().value;
+      if (!first) break;
+      ideaReplies.delete(first);
+    }
   };
 
   /** 読む前に操作を永続的に予約する。再起動・応答不明でも同じ操作を自動で外へ送り直さない。 */
@@ -247,6 +298,8 @@ export function familyInput(options: FamilyInputOptions) {
     key: string,
     digest: string,
     make: (events: readonly DomainEvent[], at: DateTime) => unknown | undefined,
+    missing: 'limit' | 'needGone' = 'limit',
+    maxChars?: number,
   ): Promise<
     | { status: 'start'; data: unknown; throughSeq: number; at: DateTime }
     | { status: 'finished'; outcome: Outcome }
@@ -272,7 +325,9 @@ export function familyInput(options: FamilyInputOptions) {
         const at = nowIn(member.timeZone, options.clock?.());
         const events = log.events();
         const data = make(events, at);
-        if (data === undefined) return { status: 'limit' } as const;
+        if (data === undefined) return { status: missing } as const;
+        if (maxChars !== undefined && JSON.stringify(data).length > maxChars)
+          return { status: 'limit' } as const;
         if (active.has(member.householdId) || active.size >= MAX_READINGS_IN_FLIGHT)
           return { status: 'busy' } as const;
         const midnight = new Date();
@@ -683,6 +738,141 @@ export function familyInput(options: FamilyInputOptions) {
     }
   }
 
+  /** 事象を足さず、今の「すること」に対する案と、モデルに送った前提を返す。 */
+  async function wayIdeas(
+    member: FamilyMember,
+    input: WayIdeasInput,
+    read: WayIdeasReader,
+    recheck: Recheck,
+  ): Promise<FamilyWayIdeasResult> {
+    prune();
+    const key = operationKey(member, input.operationId);
+    const text = input.text?.trim() ?? '';
+    const digest = sha256Of({
+      kind: 'way-ideas',
+      arrangementKey: input.arrangementKey,
+      text,
+      language: input.language,
+    });
+    const reserved = await reserve(
+      member,
+      key,
+      digest,
+      (events, at) => familyWayIdeasContext(events, member.memberId, at, input),
+      'needGone',
+      MAX_READING_INPUT_CHARS,
+    );
+
+    /** 読んだ時の時刻で内容を照らし、現在時刻では手配が今も生きているかを見る。 */
+    const inspect = async (
+      log: HouseholdLog,
+      sent: WayIdeasContext,
+      at: DateTime,
+      throughSeq: number,
+    ): Promise<'ok' | 'forbidden' | 'testOnly' | 'needGone' | 'stale'> => {
+      if (!bound(log, member)) return 'forbidden';
+      if (!(await testHousehold(log, member))) return 'testOnly';
+      const events = log.events();
+      const now = nowIn(member.timeZone, options.clock?.());
+      if (!familyWayIdeasContext(events, member.memberId, now, input)) return 'needGone';
+      const sameAt = familyWayIdeasContext(events, member.memberId, at, input);
+      if (!sameAt || currentSeq(events) !== throughSeq || sha256Of(sameAt) !== sha256Of(sent))
+        return 'stale';
+      return 'ok';
+    };
+
+    if (reserved.status === 'finished') {
+      if (reserved.outcome === 'stale') return { status: 'stale' };
+      if (reserved.outcome !== 'ok') return { status: 'failed', reason: 'previous' };
+      const cached = ideaReplies.get(key);
+      if (!cached || cached.owner !== identity(member) || cached.digest !== digest)
+        return { status: 'uncertain' };
+      return store.withHousehold(member.householdId, async (log): Promise<FamilyWayIdeasResult> => {
+        const valid = await inspect(log, cached.sent, cached.at, cached.throughSeq);
+        return valid === 'ok'
+          ? { status: 'ok', ideas: cached.ideas, sent: cached.sent }
+          : { status: valid };
+      });
+    }
+    if (reserved.status !== 'start') return reserved;
+    const sent = reserved.data as WayIdeasContext;
+    let started = false;
+    let writing = false;
+    try {
+      const ready = await beforeCall(member, reserved.throughSeq, recheck);
+      if (ready !== 'ok') {
+        active.delete(member.householdId);
+        await finish(member, key, digest, ready === 'testOnly' ? 'forbidden' : ready);
+        return { status: ready };
+      }
+      const current = await store.withHousehold(member.householdId, (log) =>
+        inspect(log, sent, reserved.at, reserved.throughSeq),
+      );
+      if (current !== 'ok') {
+        active.delete(member.householdId);
+        await finish(
+          member,
+          key,
+          digest,
+          current === 'forbidden' || current === 'testOnly' ? 'forbidden' : 'stale',
+        );
+        return { status: current };
+      }
+      started = true;
+      const result = await call(member, () => read(sent));
+      const output = WayIdeasOutput.parse(result.output);
+      if (!(await recheck())) {
+        await finish(member, key, digest, 'forbidden');
+        return { status: 'forbidden' };
+      }
+      writing = true;
+      const done = await store.withHousehold(
+        member.householdId,
+        async (log): Promise<FamilyWayIdeasResult> => {
+          const valid = await inspect(log, sent, reserved.at, reserved.throughSeq);
+          if (valid !== 'ok') return { status: valid };
+          const household = foldEvents(log.events()).household;
+          if (!household) return { status: 'forbidden' };
+          const ideas = checkWayIdeas(output, sent, household);
+          log.recordOperation({
+            id: endId(key),
+            actorId: member.memberId,
+            digest: `ok:${digest}`,
+            throughSeq: currentSeq(log.events()),
+          });
+          const expires = Date.now() + proposalTtlMs;
+          ideaReplies.set(key, {
+            digest,
+            owner: identity(member),
+            ideas,
+            sent,
+            at: reserved.at,
+            throughSeq: reserved.throughSeq,
+            expires,
+          });
+          expire(ideaReplies, key, expires);
+          prune();
+          return { status: 'ok', ideas, sent };
+        },
+      );
+      writing = false;
+      if (done.status !== 'ok')
+        await finish(
+          member,
+          key,
+          digest,
+          done.status === 'forbidden' || done.status === 'testOnly' ? 'forbidden' : 'stale',
+        );
+      return done;
+    } catch (error) {
+      if (!started) active.delete(member.householdId);
+      if (error instanceof InputTimeout) return { status: 'uncertain' };
+      if (writing) return { status: 'failed', reason: 'store' };
+      await finish(member, key, digest, 'failed');
+      return { status: 'failed', reason: errorOf(error) };
+    }
+  }
+
   async function confirm(
     member: FamilyMember,
     proposalId: string,
@@ -769,5 +959,5 @@ export function familyInput(options: FamilyInputOptions) {
       bound(log, member) ? testHousehold(log, member) : false,
     );
 
-  return { notice, utterance, confirm, canUse };
+  return { notice, utterance, wayIdeas, confirm, canUse };
 }

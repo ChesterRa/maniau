@@ -54,6 +54,8 @@ import {
   type ReadResult,
   type SendResult,
   type ShownProposal,
+  type WayIdeasRequest,
+  type WayIdeasResult,
 } from './family';
 import {
   daysBetween,
@@ -93,8 +95,13 @@ export type Route =
   | { name: 'stateNeed' }
   /** モデルが読んだ「すること」の読み取りを、家族が直す（事項の ID）。 */
   | { name: 'needFix'; itemId: string }
-  /** やり方を足す・直す（wayId があれば直す）。from は来た「すること」の手配の key（保存したら戻る）。 */
-  | { name: 'way'; wayId?: string; from?: string }
+  /**
+   * やり方を足す・直す（wayId があれば直す）。from は来た「すること」の手配の key（保存したら戻る）。idea は、
+   * その「すること」で Claude が出した案の番号（表に写して、家族が直してから保存する）。
+   */
+  | { name: 'way'; wayId?: string; from?: string; idea?: number }
+  /** 「すること」（手配の key）に、Claude がやり方の案を出す。 */
+  | { name: 'wayIdeas'; key: string }
   | { name: 'ask'; taskKey: string }
   | { name: 'week' }
   | { name: 'sources'; sourceId?: string; highlight?: string[] };
@@ -151,6 +158,8 @@ export interface Ctx {
   transcribe?: (input: PhotoUpload) => Promise<PhotoResult>;
   /** 家族の一言を読む・その候補を記録する（同じく、使える時だけ）。 */
   hear?: (text: string, operationId: string) => Promise<HearResult>;
+  /** 「すること」に Claude がやり方の案を出す（お知らせを読めるのと同じ時だけ。何も書かない）。 */
+  wayIdeas?: (input: WayIdeasRequest) => Promise<WayIdeasResult>;
   /**
    * 家族の試しの家庭の入力か（お知らせ・一言の欄に「架空の文だけ」と、送る物と、上限の戻る時刻を出す）。
    * デモの家庭には無い。

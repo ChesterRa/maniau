@@ -14,6 +14,7 @@ import {
   type NoticeReader,
   type PhotoReader,
   type UtteranceReader,
+  type WayIdeasReader,
 } from './demo-sessions';
 import { familyInput } from './family-input';
 import { type FamilyMember, type Invitations, memberFor } from './members';
@@ -56,6 +57,8 @@ export function createApp(
     reader?: NoticeReader;
     /** 家族の一言を Claude で読む口（同じく鍵がある時だけ）。 */
     listener?: UtteranceReader;
+    /** 「すること」のやり方の案を Claude で考える口。 */
+    ideaReader?: WayIdeasReader;
     /** お知らせの写真・PDF を Claude で書き起こす口（同じく鍵がある時だけ）。 */
     transcriber?: PhotoReader;
     /**
@@ -79,6 +82,7 @@ export function createApp(
   const reader = family ? undefined : options.reader;
   // 一言も同じ（デモの家族の名前を前提に送るので、家族の家庭では開けない。01-model §10）。
   const listener = family ? undefined : options.listener;
+  const ideaReader = family ? undefined : options.ideaReader;
   // 写真の書き起こしも同じ（家族の家庭では、まだ開けない）。
   const transcriber = family ? undefined : options.transcriber;
   const familyInputs = family
@@ -284,6 +288,13 @@ export function createApp(
     as: z.string().min(1),
     operationId: z.string().min(1).max(100),
   });
+  const WayIdeasFields = {
+    operationId: z.string().min(1).max(100),
+    arrangementKey: z.string().min(1).max(512),
+    text: z.string().trim().max(500).optional(),
+    language: z.enum(['ja', 'en']),
+  };
+  const FamilyWayIdeasBody = z.object({ as: z.string().min(1), ...WayIdeasFields });
   const inputError = (c: Context, status: string, reason?: string) => {
     switch (status) {
       case 'forbidden':
@@ -302,6 +313,8 @@ export function createApp(
         return c.json({ error: 'readingLimit' }, 429);
       case 'gone':
         return c.json({ error: 'unknownProposal' }, 404);
+      case 'needGone':
+        return c.json({ error: 'needGone' }, 409);
       default:
         return c.json({ error: 'readingFailed', ...(reason ? { reason } : {}) }, 502);
     }
@@ -365,6 +378,36 @@ export function createApp(
     if (view.throughSeq !== done.view.throughSeq || view.now !== done.view.now)
       return inputError(c, 'stale');
     return c.json({ view, reply: done.reply });
+  });
+  // 確かめた「すること」の案だけを作る。保存は別の画面のプレビューと命令に任せる。
+  app.post('/api/way-ideas', async (c) => {
+    if (!family || !familyInputs) return c.json({ error: 'familyDisabled' }, 404);
+    const refused = refuseWrite(c, family);
+    if (refused) return refused;
+    const member = await memberOf(c, family);
+    if (member instanceof Response) return member;
+    const body = FamilyWayIdeasBody.safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badWayIdeas' }, 400);
+    if (body.data.as !== member.memberId) return switched(c);
+    if (!options.ideaReader) return c.json({ error: 'readingUnavailable' }, 503);
+    const recheck = async () => {
+      const current = await memberOf(c, family);
+      return (
+        !(current instanceof Response) &&
+        current.householdId === member.householdId &&
+        current.memberId === member.memberId &&
+        current.identityId === member.identityId
+      );
+    };
+    const done = await familyInputs.wayIdeas(member, body.data, options.ideaReader, recheck);
+    if (done.status !== 'ok')
+      return inputError(c, done.status, 'reason' in done ? done.reason : undefined);
+    if (!(await recheck())) return notAMember(c);
+    // 身元を引き直す間にも事象・家庭の印は変わりうる。同じ操作の控えで今の前提をもう一度照らす（外へ送り直さない）。
+    const current = await familyInputs.wayIdeas(member, body.data, options.ideaReader, recheck);
+    if (current.status !== 'ok')
+      return inputError(c, current.status, 'reason' in current ? current.reason : undefined);
+    return c.json({ ideas: current.ideas, sent: current.sent });
   });
   app.post('/api/proposals/:pid', async (c) => {
     if (!family || !familyInputs) return c.json({ error: 'familyDisabled' }, 404);
@@ -654,6 +697,35 @@ export function createApp(
         return c.json({ error: 'operationReused' }, 409);
       case 'stale':
         return c.json({ error: 'readingStale' }, 409);
+      case 'failed':
+        return c.json({ error: 'readingFailed', reason: done.reason }, 502);
+    }
+  });
+  // デモの家庭で、同じ前提と検査を使ってやり方の案を作る。
+  app.post('/api/demo/sessions/:sid/way-ideas', async (c) => {
+    if (!ideaReader) return c.json({ error: 'readingUnavailable' }, 503);
+    const body = z
+      .object({ memberId: z.string().min(1), ...WayIdeasFields })
+      .safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badWayIdeas' }, 400);
+    const { memberId, ...input } = body.data;
+    const done = await sessions.wayIdeas(c.req.param('sid'), memberId, input, ideaReader);
+    if (!done) return c.json({ error: 'unknownSession' }, 404);
+    switch (done.status) {
+      case 'ok':
+        return c.json({ ideas: done.ideas, sent: done.sent });
+      case 'limit':
+        return c.json({ error: 'readingLimit' }, 429);
+      case 'busy':
+        return c.json({ error: 'readingBusy' }, 429);
+      case 'invalid':
+        return c.json({ error: 'notAMember' }, 400);
+      case 'conflict':
+        return c.json({ error: 'operationReused' }, 409);
+      case 'stale':
+        return c.json({ error: 'readingStale' }, 409);
+      case 'needGone':
+        return c.json({ error: 'needGone' }, 409);
       case 'failed':
         return c.json({ error: 'readingFailed', reason: done.reason }, 502);
     }

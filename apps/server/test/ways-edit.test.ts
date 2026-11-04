@@ -424,6 +424,101 @@ describe('家族がやり方を足す', () => {
     );
   });
 
+  it('同じ名前の人・場所は新しく重ねられない。前からある重なりは、ほかの直しを止めず、選んであった物は残せるが、新しくは選べない', async () => {
+    const app = await setup();
+    const h = await app.household();
+    const step = NEIGHBOR.steps[0];
+    if (!step) throw new Error('手順が無い');
+    // 今の頼める人と同じ名前（前後の空白は同じとみなす）・大人と同じ名前の場所（種類をまたいでも）は断る。
+    for (const edited of [
+      { ...h, members: [...h.members, { ...YAMADA, name: ' おばあちゃん ' }] },
+      {
+        ...h,
+        places: [...h.places, { id: 'p-aya', kind: 'other' as const, name: '彩', goods: [] }],
+      },
+    ]) {
+      expect(await app.preview({ type: 'updateHousehold', household: edited })).toMatchObject({
+        status: 'invalid',
+        reason: 'nameTaken',
+      });
+    }
+    // 初めの家の情報に、同じ名前の二人（前からある重なり）と、その一人に頼むやり方がある。
+    const legacy = await setup((x) => {
+      x.members.push(YAMADA, { ...YAMADA, id: 'yamada2' });
+      x.ways.push(NEIGHBOR);
+    });
+    expect(
+      await legacy.edit((x) => {
+        const way = x.ways.find((w) => w.id === 'way-apply-online');
+        if (way) way.name = '区のサイトで申し込む';
+      }),
+    ).toMatchObject({ status: 'ok' });
+    expect(
+      await legacy.edit((x) => {
+        const way = x.ways.find((w) => w.id === 'way-neighbor');
+        if (way) way.name = '近所の山田さんに頼む';
+      }),
+    ).toMatchObject({ status: 'ok' });
+    const next = await legacy.household();
+    next.ways.push({
+      ...NEIGHBOR,
+      id: 'way-neighbor-2',
+      steps: [{ ...step, external: { to: 'yamada2', kind: 'reply' } }],
+    });
+    expect(await legacy.preview({ type: 'updateHousehold', household: next })).toMatchObject({
+      status: 'invalid',
+      reason: 'nameTaken',
+    });
+  });
+
+  it('前からある同じ名前の組へ、別の物を入れない（足す・名前を変えて入れる・一人と入れ替える）。組を減らす直しはできる', async () => {
+    const legacy = await setup((x) => {
+      x.members.push(YAMADA, { ...YAMADA, id: 'yamada2' });
+    });
+    const refused = { status: 'invalid', reason: 'nameTaken' };
+    const changed = async (update: (h: Household) => void) => {
+      const next = await legacy.household();
+      update(next);
+      return next;
+    };
+    const rename = (h: Household, id: string, name: string) => {
+      const member = h.members.find((m) => m.id === id);
+      if (!member) throw new Error(`${id} がいない`);
+      member.name = name;
+    };
+    expect(
+      (await legacy.household()).ways.some((w) => w.steps.some((s) => s.external?.to === 'g')),
+    ).toBe(true);
+    for (const next of [
+      // 三人目を足す。
+      await changed((h) => h.members.push({ ...YAMADA, id: 'yamada3' })),
+      // やり方で頼んでいる相手（今は見分けられる）を、同じ名前に変える（前後の空白は同じとみなす）。
+      await changed((h) => rename(h, 'g', ' 山田さん')),
+      // 一人は名前を変えて出し、別の人が入る（同じ名前の数は変わらないが、組は新しい）。
+      await changed((h) => {
+        rename(h, 'yamada2', '山田さん（二丁目）');
+        rename(h, 'g', '山田さん');
+      }),
+    ]) {
+      expect(await legacy.preview({ type: 'updateHousehold', household: next })).toMatchObject(
+        refused,
+      );
+      // 書く道へ直接送っても、同じ理由で断る（今の番号を添えて）。
+      const throughSeq = (await legacy.plan()).throughSeq;
+      expect(
+        await legacy.run({
+          type: 'updateHousehold',
+          household: next,
+          seen: { throughSeq, changes: 'x' },
+        }),
+      ).toMatchObject(refused);
+    }
+    // 組を減らす直し（一人を見分けられる名前にする）はできる。
+    expect(await legacy.edit((h) => rename(h, 'yamada2', '山田さん（二丁目）'))).toMatchObject({
+      status: 'ok',
+    });
+  });
+
   it('空の「分からない」は書かず、直していないやり方は初めの版のまま', async () => {
     const app = await setup();
     const before = await app.household();

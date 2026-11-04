@@ -2,8 +2,10 @@
 // 一人の操作が、別の人の見るデモを変えないようにする。古い物から捨てる。
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  type CheckedIdeas,
   type ChoicePreview,
   type Command,
+  checkWayIdeas,
   type DateTime,
   type DomainEvent,
   type Extraction,
@@ -23,6 +25,8 @@ import {
   type UtteranceContext,
   type UtteranceRefs,
   type UtteranceReply,
+  type WayIdeasContext,
+  wayIdeasContext,
 } from '@maniau/core';
 import { computePlan, currentItems, foldEvents } from '@maniau/core/engine';
 import { type CommandGuard, type CommandResult, reopened, runCommand } from './commands';
@@ -36,6 +40,7 @@ import {
 } from './reading/extract';
 import { type PhotoInput, PhotoTooLarge, type TranscribeResult } from './reading/transcribe';
 import { buildUtteranceInput, type UtteranceResult } from './reading/utterance';
+import type { WayIdeasResult } from './reading/way-ideas';
 import { memoryStore } from './store';
 import { utteranceContext } from './utterance-context';
 import { type View, viewFor } from './views';
@@ -117,6 +122,39 @@ export type UtteranceOutcome =
   /** 読む間に計画が変わった（古い前提の答えを、今の事実として見せない）。もう一度読んでもらう。 */
   | { status: 'stale' }
   | { status: 'failed'; reason: string };
+
+/** 一つのデモで出せる、やり方の案の数（一日の数と、同時に読む数は、お知らせと同じ枠を使う）。 */
+export const MAX_WAY_IDEAS_PER_SESSION = 5;
+
+/** 新しい「すること」に、Claude がやり方の案を出す（試験では偽物に替える）。 */
+export type WayIdeasReader = (context: WayIdeasContext) => Promise<WayIdeasResult>;
+
+export interface WayIdeasInput {
+  arrangementKey: string;
+  /** 家族の考え（任意）。 */
+  text?: string;
+  /** 案を書く言葉（画面の言葉）。 */
+  language: 'ja' | 'en';
+  /** 画面が付ける操作の ID。送り直しで、二度作らない。 */
+  operationId: string;
+}
+
+export type WayIdeasOutcome =
+  /** sent：モデルに送った物（画面が、送った物として見せる）。何も書かない。 */
+  | { status: 'ok'; ideas: CheckedIdeas; sent: WayIdeasContext }
+  | { status: 'limit' | 'busy' | 'invalid' | 'conflict' }
+  /** 作る間に、「すること」か家の情報が変わった（古い前提の案を見せない）。 */
+  | { status: 'stale' }
+  /** 手配が今の計画に無いか、生きていない。 */
+  | { status: 'needGone' }
+  | { status: 'failed'; reason: string };
+
+interface WayIdeasOperation {
+  digest: string;
+  state: 'reading' | 'done';
+  ideas?: CheckedIdeas;
+  sent?: WayIdeasContext;
+}
 
 export type ConfirmOutcome =
   | { status: 'ok'; view: View }
@@ -201,6 +239,9 @@ interface Session {
   /** このデモで読んだ（読もうとした）一言の数。 */
   utterances: number;
   utteranceOperations: Map<string, UtteranceOperation>;
+  /** このデモで出した（出そうとした）やり方の案の数と、操作ごとの控え。 */
+  wayIdeas: number;
+  wayIdeasOperations: Map<string, WayIdeasOperation>;
   /** 見せた候補（確かめるまで、何も書かない）。 */
   proposals: Map<string, StoredProposal>;
 }
@@ -455,6 +496,76 @@ export function demoSessions(
   };
 
   /** 今の計画を前提に一言を読み、確かめた候補を返す。何も書かない。 */
+  /** 今の事象から、やり方の案の前提を作る（家族の大人でなければ invalid、手配が無ければ needGone）。 */
+  function ideasContextOf(
+    events: readonly DomainEvent[],
+    memberId: string,
+    now: DateTime,
+    input: WayIdeasInput,
+  ): WayIdeasContext | 'invalid' | 'needGone' {
+    const view = viewFor(events, memberId, now);
+    if (!view.household.members.some((m) => m.id === memberId && m.kind === 'adult' && m.active)) {
+      return 'invalid';
+    }
+    const context = wayIdeasContext(
+      {
+        plan: view.plan,
+        items: view.items.map((l) => l.item),
+        household: view.household,
+        sources: view.sources,
+      },
+      input.arrangementKey,
+      input.text,
+      input.language,
+      memberId,
+    );
+    return context ?? 'needGone';
+  }
+
+  /** 前提を取り、Claude で案を作り、前提が変わっていない時だけ、確かめた案を返す（何も書かない）。 */
+  async function ideas(
+    id: string,
+    session: Session,
+    memberId: string,
+    input: WayIdeasInput,
+    digest: string,
+    read: WayIdeasReader,
+  ): Promise<WayIdeasOutcome | undefined> {
+    const before = await store.withHousehold(id, (log) =>
+      ideasContextOf(log.events(), memberId, session.now, input),
+    );
+    if (!alive(id, session)) return undefined;
+    if (before === 'invalid') return { status: 'invalid' };
+    if (before === 'needGone') return { status: 'needGone' };
+    let result: WayIdeasResult;
+    try {
+      result = await read(before);
+    } catch (error) {
+      return { status: 'failed', reason: error instanceof ReadingError ? error.reason : 'error' };
+    }
+    if (!alive(id, session)) return undefined;
+    return store
+      .withHousehold(id, (log): WayIdeasOutcome | undefined => {
+        if (!alive(id, session)) return undefined;
+        // 作る間に「すること」・家の人・やり方が変わったら、古い前提の案を見せない。
+        const after = ideasContextOf(log.events(), memberId, session.now, input);
+        if (after === 'invalid') return { status: 'invalid' };
+        if (after === 'needGone') return { status: 'needGone' };
+        if (JSON.stringify(after) !== JSON.stringify(before)) return { status: 'stale' };
+        const household = foldEvents(log.events()).household;
+        if (!household) return { status: 'invalid' };
+        const checked = checkWayIdeas(result.output, before, household);
+        session.wayIdeasOperations.set(input.operationId, {
+          digest,
+          state: 'done',
+          ideas: checked,
+          sent: before,
+        });
+        return { status: 'ok', ideas: checked, sent: before };
+      })
+      .catch((): WayIdeasOutcome => ({ status: 'failed', reason: 'error' }));
+  }
+
   async function hear(
     id: string,
     session: Session,
@@ -522,6 +633,8 @@ export function demoSessions(
         photos: 0,
         photoOperations: new Map(),
         utteranceOperations: new Map(),
+        wayIdeas: 0,
+        wayIdeasOperations: new Map(),
         proposals: new Map(),
       });
       return id;
@@ -775,6 +888,75 @@ export function demoSessions(
         inFlight -= 1;
         if (session.utteranceOperations.get(input.operationId)?.state === 'reading') {
           session.utteranceOperations.delete(input.operationId);
+        }
+      }
+    },
+    /**
+     * 新しい「すること」に、Claude がやり方の案を出す（何も書かない。家族が表で確かめて保存する）。数と同時に
+     * 読む数は、お知らせ・一言と同じ枠で抑える。同じ操作 ID の送り直しは、作り直さずに同じ案を返す（前提が
+     * 変わっていれば stale）。
+     */
+    async wayIdeas(
+      id: string,
+      memberId: string,
+      input: WayIdeasInput,
+      read: WayIdeasReader,
+    ): Promise<WayIdeasOutcome | undefined> {
+      const session = touch(id);
+      if (!session) return undefined;
+      const text = input.text?.trim() ?? '';
+      const digest = createHash('sha256')
+        .update(JSON.stringify(['way-ideas', memberId, input.arrangementKey, text, input.language]))
+        .digest('hex');
+      const previous = session.wayIdeasOperations.get(input.operationId);
+      if (previous) {
+        if (previous.digest !== digest) return { status: 'conflict' };
+        if (previous.state === 'reading' || !previous.ideas || !previous.sent) {
+          return { status: 'busy' };
+        }
+        const { ideas: shown, sent } = previous;
+        return store.withHousehold(id, (log): WayIdeasOutcome => {
+          const now = ideasContextOf(log.events(), memberId, session.now, input);
+          if (now === 'invalid') return { status: 'invalid' };
+          if (now === 'needGone') return { status: 'needGone' };
+          if (JSON.stringify(now) !== JSON.stringify(sent)) return { status: 'stale' };
+          return { status: 'ok', ideas: shown, sent };
+        });
+      }
+      const today = new Date(clock()).toISOString().slice(0, 10);
+      if (daily.day !== today) Object.assign(daily, { day: today, count: 0 });
+      if (session.wayIdeas >= MAX_WAY_IDEAS_PER_SESSION || daily.count >= perDay) {
+        return { status: 'limit' };
+      }
+      if (session.reading !== undefined || inFlight >= MAX_READINGS_IN_FLIGHT) {
+        return { status: 'busy' };
+      }
+      session.wayIdeas += 1;
+      daily.count += 1;
+      const day = daily.day;
+      session.reading = input.operationId;
+      inFlight += 1;
+      session.wayIdeasOperations.set(input.operationId, { digest, state: 'reading' });
+      try {
+        const result = await ideas(
+          id,
+          session,
+          memberId,
+          { ...input, ...(text ? { text } : {}) },
+          digest,
+          read,
+        );
+        // 呼ぶ前に断った物（家族の大人でない・手配が無い）は数えない。
+        if (result?.status === 'invalid' || result?.status === 'needGone') {
+          session.wayIdeas -= 1;
+          if (daily.day === day) daily.count -= 1;
+        }
+        return result;
+      } finally {
+        session.reading = undefined;
+        inFlight -= 1;
+        if (session.wayIdeasOperations.get(input.operationId)?.state === 'reading') {
+          session.wayIdeasOperations.delete(input.operationId);
         }
       }
     },

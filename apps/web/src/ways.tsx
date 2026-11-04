@@ -1,8 +1,10 @@
 // 「すること」のやり方：家族が足す・直す・やめる（02-foundation §3.4・§6）。やり方は家族の言葉のデータで、場面の
 // 種類を持たない（どの「すること」にも同じ表）。分からない欄は分からないのまま（0・決まり無しに置き換えない）。保存の
 // 前に「この変更で変わること」を見せる（サーバーが書き込まずに、書く時と同じ命令と同じ計算で作った物）。やめるのは
-// これからの選びだけで、今選んである「すること」の選び・作業・頼み事は替えない。
+// これからの選びだけで、今選んである「すること」の選び・作業・頼み事は替えない。Claude の案（W4）は、この表に写して
+// から家族が直す：Claude に分からなかった欄と外の事実の欄は、家族が選ぶまで保存しない。
 import {
+  type CheckedDraft,
   type CostField,
   type DeadlineRule,
   type Household,
@@ -10,7 +12,9 @@ import {
   type Member,
   type Place,
   placesWithoutHours,
+  repeatedNames,
   type SegmentKind,
+  shownName,
   type Way,
   type WayStep,
 } from '@maniau/core';
@@ -18,6 +22,7 @@ import { useState } from 'react';
 import { deadlineText, householdPreviewLines } from './household';
 import { type Ctx, leaveText, nameOf, succeeded } from './screens';
 import { Button, Card, Header, Label, Main, MoreLink, Row, Text, Title } from './ui';
+import { noteText } from './way-ideas';
 
 const input =
   'min-h-11 rounded-xl border-[1.5px] border-btn-line bg-white px-2.5 text-base text-ink';
@@ -126,6 +131,7 @@ function refusedKey(reason: string): string {
     'wayRefUnknown',
     'membersLocked',
     'placesLocked',
+    'nameTaken',
     'unavailable',
   ].includes(reason)
     ? reason
@@ -311,9 +317,9 @@ type DeadlineKind = '' | 'keep' | 'none' | 'daysBefore' | 'businessDaysBefore' |
 interface StepForm {
   id: string;
   name: string;
-  /** 空は大人のだれでも。 */
+  /** 空は大人のだれでも。? は Claude の案で分からない（選ぶまで保存しない）。 */
   assigneeId: string;
-  /** 空は頼まない、+new は新しく登録、ほかは相手の ID。 */
+  /** 空は頼まない、+new は新しく登録、? は Claude の案で分からない（選ぶまで保存しない）、ほかは相手の ID。 */
   to: string;
   /** 新しく登録する相手。人なら、頼む文の言葉（空は選んでいない）と呼び方（任意）。 */
   newTo: {
@@ -334,6 +340,10 @@ interface StepForm {
   days: string;
   at: string;
   cover: boolean;
+  /** Claude の案で、受け持つか分からない（選ぶまで保存しない）。 */
+  coverAsk?: true;
+  /** Claude の案の手順なら、引用とその出どころ（null は Claude の提案）。家族が足した手順には無い。 */
+  quote?: { text: string; from: 'written' | 'words' | 'both' } | null;
   /** 直す時の元の手順（画面に出さない欄を残す）。 */
   original?: WayStep;
 }
@@ -344,7 +354,17 @@ interface WayForm {
   steps: StepForm[];
   coversStart: string;
   coversEnd: string;
+  /**
+   * Claude の案で、受け持つ時間が分からない時だけ（受け持つ手順がある時に、選ぶまで保存しない）。whole は「すること」
+   * の時間の全部を頼む・受け持つ（相手の「はい」か家族の予定で確かめる）、part は下の時間だけ。
+   */
+  coversAsk?: '' | 'whole' | 'part';
   cost: Record<CostField, { value: string; unknown: boolean }>;
+  /**
+   * Claude の案から写した表で、頼める人に頼む数を手順から数えている間（家族が数を直すまで）。手順の相手を替えると
+   * 数え直す（前の手順で数えた数を、今の手順の代償にしない）。
+   */
+  derivedHelpers?: true;
   /** やり方全体の締切（前からある時だけ見せる）。 */
   wayDeadline: DeadlineKind;
   wayDays: string;
@@ -438,6 +458,105 @@ function formOf(way: Way | undefined): WayForm {
 }
 
 const whole = (value: string) => (/^\d+$/.test(value) ? Number.parseInt(value, 10) : undefined);
+/** その ID の人・場所の名前が、ほかの物と重なっているか（重なっていれば、画面で見分けられない）。 */
+function sameNamed(household: Household): (id: string) => boolean {
+  const repeated = repeatedNames(household);
+  return (id) => {
+    const name = nameOf(household, id);
+    return name !== '' && repeated.has(shownName(name));
+  };
+}
+
+/** 表の手順から、頼める人に頼む数を数える（相手の分からない手順があれば数えない）。 */
+function helperCount(household: Household, steps: StepForm[]): number | undefined {
+  let n = 0;
+  for (const s of steps) {
+    if (s.to === '?') return undefined;
+    if (s.to === '+new') {
+      if (s.newTo.kind === 'helper') n += 1;
+    } else if (s.to !== '' && household.members.some((m) => m.id === s.to && m.kind === 'helper')) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+/** 休みの時間（0.5 時間きざみ）を分にする。 */
+const halfHours = (value: string) =>
+  /^\d+(\.5)?$/.test(value) ? Math.round(Number.parseFloat(value) * 60) : undefined;
+
+/**
+ * Claude の案を表に写す（新しいやり方として）。分からない欄は、選ぶまで保存できない形にする：だれ・相手が分からない
+ * なら「?」、場所は未選択、かかる時間は空、できる時は無し、受け持つかは選ぶ。外の事実（いつまでに・返事までに見込む
+ * 時間・値段・受け持てる時間）は案に無いので、いつまでには未選択、返事は未選択、値段は「分からない」にする。今の家に
+ * 無い ID は、分からないと同じに扱う。
+ */
+export function formOfDraft(household: Household, draft: CheckedDraft): WayForm {
+  const base = formOf(undefined);
+  const adults = new Set(
+    household.members.filter((m) => m.kind === 'adult' && m.active).map((m) => m.id),
+  );
+  const contacts = new Set([
+    ...household.members.filter((m) => m.kind === 'helper' && m.active).map((m) => m.id),
+    ...household.places.filter((p) => p.kind !== 'home').map((p) => p.id),
+  ]);
+  const places = new Set(household.places.filter((p) => p.kind !== 'home').map((p) => p.id));
+  const steps = draft.steps.map((d, i): StepForm => {
+    const s: StepForm = {
+      ...emptyStep(i + 1),
+      name: d.name,
+      quote: d.quote && d.quoteFrom ? { text: d.quote, from: d.quoteFrom } : null,
+    };
+    s.assigneeId =
+      d.assignee.kind === 'anyAdult'
+        ? ''
+        : d.assignee.kind === 'adult' && adults.has(d.assignee.id)
+          ? d.assignee.id
+          : '?';
+    const c = d.counterpart;
+    if (c.kind === 'none') s.to = '';
+    else if ((c.kind === 'helper' || c.kind === 'place') && contacts.has(c.id)) s.to = c.id;
+    else if (c.kind === 'newHelper' || c.kind === 'newPlace') {
+      s.to = '+new';
+      s.newTo = { ...s.newTo, name: c.name, kind: c.kind === 'newHelper' ? 'helper' : 'place' };
+    } else s.to = '?';
+    const p = d.place;
+    if (p.kind === 'none') s.place = '-';
+    else if (p.kind === 'place' && places.has(p.id)) s.place = p.id;
+    else if (p.kind === 'newPlace') {
+      s.place = '+new';
+      s.newPlace = { ...s.newPlace, name: p.name };
+    } else s.place = '';
+    s.segments = d.segments ? [...d.segments] : [];
+    s.minutes = d.minutes === null ? '' : String(d.minutes);
+    s.wait = '';
+    s.deadline = '';
+    if (d.cover === null) {
+      s.cover = false;
+      s.coverAsk = true;
+    } else s.cover = d.cover;
+    return s;
+  });
+  const known = (value: number | null, perHour = false) =>
+    value === null
+      ? { value: '', unknown: true }
+      : { value: String(perHour ? value / 60 : value), unknown: false };
+  const covering = steps.some((s) => s.cover || s.coverAsk === true);
+  return {
+    ...base,
+    name: draft.name,
+    steps,
+    ...(covering && draft.covers === 'unknown' ? { coversAsk: '' as const } : {}),
+    cost: {
+      leaveMinutes: known(draft.cost.leaveMinutes, true),
+      // 手順から数える（確かめた案と同じ数え方。今の家に無い・見分けられない相手は「?」なので数えない）。
+      helperRequests: known(helperCount(household, steps) ?? null),
+      yen: { value: '', unknown: true },
+      extraTasks: known(draft.cost.extraTasks),
+    },
+    derivedHelpers: true,
+  };
+}
 
 function ruleOf(
   kind: DeadlineKind,
@@ -473,9 +592,20 @@ function draftOf(household: Household, form: WayForm): Household | undefined {
   const places: Place[] = [];
   const steps: WayStep[] = [];
   if (form.name.trim() === '' || form.steps.length === 0) return undefined;
+  // 同じ名前の人・場所（前からある重なり）は、新しく選ばない（前から選んであった物は残せる）。
+  const ambiguous = sameNamed(household);
   for (const s of form.steps) {
     const minutes = whole(s.minutes);
     if (s.name.trim() === '' || minutes === undefined || s.segments.length === 0) return undefined;
+    // Claude の案で分からなかった欄は、家族が選ぶまで保存しない。
+    if (s.assigneeId === '?' || s.to === '?' || s.coverAsk) return undefined;
+    if (
+      (ambiguous(s.assigneeId) && s.assigneeId !== s.original?.assigneeId) ||
+      (ambiguous(s.to) && s.to !== s.original?.external?.to) ||
+      (ambiguous(s.place) && s.place !== s.original?.placeId)
+    ) {
+      return undefined;
+    }
     const deadline = ruleOf(s.deadline, s.days, s.at, s.original?.deadline);
     if (deadline === 'missing') return undefined;
     let to: string | undefined;
@@ -552,12 +682,19 @@ function draftOf(household: Household, form: WayForm): Household | undefined {
   const cost: Way['cost'] = { leaveMinutes: 0, helperRequests: 0, yen: 0, extraTasks: 0 };
   for (const f of COST_FIELDS) {
     if (form.cost[f].unknown) continue;
-    const n = whole(form.cost[f].value);
+    const n = f === 'leaveMinutes' ? halfHours(form.cost[f].value) : whole(form.cost[f].value);
     if (n === undefined) return undefined;
-    cost[f] = f === 'leaveMinutes' ? n * 60 : n;
+    cost[f] = n;
   }
   if (unknown.length > 0) cost.unknown = unknown;
-  if ((form.coversStart === '') !== (form.coversEnd === '')) return undefined;
+  // 受け持つ時間を選ぶ欄（Claude の案）：受け持つ手順がある時だけ要る。全部なら時刻を使わない。
+  const covering = form.steps.some((s) => s.cover);
+  const coversMode = covering ? form.coversAsk : undefined;
+  if (coversMode === '') return undefined;
+  if (coversMode === 'part' && (form.coversStart === '' || form.coversEnd === '')) return undefined;
+  const coversStart = coversMode === 'whole' ? '' : form.coversStart;
+  const coversEnd = coversMode === 'whole' ? '' : form.coversEnd;
+  if ((coversStart === '') !== (coversEnd === '')) return undefined;
   const wayDeadline = form.original?.deadline
     ? ruleOf(form.wayDeadline, form.wayDays, form.wayAt, form.original.deadline)
     : undefined;
@@ -570,9 +707,7 @@ function draftOf(household: Household, form: WayForm): Household | undefined {
     steps,
     cost,
     ...(wayDeadline === undefined ? {} : { deadline: wayDeadline }),
-    ...(form.coversStart === ''
-      ? {}
-      : { covers: { start: form.coversStart, end: form.coversEnd } }),
+    ...(coversStart === '' ? {} : { covers: { start: coversStart, end: coversEnd } }),
   };
   const next = structuredClone(household);
   next.members.push(...members);
@@ -583,10 +718,26 @@ function draftOf(household: Household, form: WayForm): Household | undefined {
   return next;
 }
 
-/** やり方を足す・直す（wayId があれば直す）。保存したら、来た所（「すること」か「うちのこと」）へ戻る。 */
-export function WayScreen({ ctx, wayId, from }: { ctx: Ctx; wayId?: string; from?: string }) {
+/**
+ * やり方を足す・直す（wayId があれば直す）。保存したら、来た所（「すること」か「うちのこと」）へ戻る。idea は、
+ * Claude が出した案（新しいやり方として表に写す。推定と示し、分からない欄は家族が選ぶまで保存しない）。
+ */
+export function WayScreen({
+  ctx,
+  wayId,
+  from,
+  idea,
+}: {
+  ctx: Ctx;
+  wayId?: string;
+  from?: string;
+  idea?: CheckedDraft;
+}) {
   const original = wayId ? ctx.household.ways.find((w) => w.id === wayId) : undefined;
-  const [form, setForm] = useState<WayForm>(() => formOf(original));
+  const fromIdea = idea !== undefined && wayId === undefined ? idea : undefined;
+  const [form, setForm] = useState<WayForm>(() =>
+    fromIdea ? formOfDraft(ctx.household, fromIdea) : formOf(original),
+  );
   const flow = useHouseholdSave(ctx);
   const back = () => ctx.go(from ? { name: 'need', key: from } : { name: 'household' });
   const draft = draftOf(ctx.household, form);
@@ -596,6 +747,11 @@ export function WayScreen({ ctx, wayId, from }: { ctx: Ctx; wayId?: string; from
     setForm((now) => {
       const next = structuredClone(now);
       change(next);
+      if (next.derivedHelpers) {
+        const n = helperCount(ctx.household, next.steps);
+        next.cost.helperRequests =
+          n === undefined ? { value: '', unknown: true } : { value: String(n), unknown: false };
+      }
       return next;
     });
   const step = (i: number, change: (s: StepForm) => void) =>
@@ -609,6 +765,16 @@ export function WayScreen({ ctx, wayId, from }: { ctx: Ctx; wayId?: string; from
     ...ctx.household.places.filter((p) => p.kind !== 'home'),
   ];
   const places = ctx.household.places.filter((p) => p.kind !== 'home');
+  const ambiguous = sameNamed(ctx.household);
+  /** 同じ名前の物は、前から選んであった時だけ選べる（新しくは選べない。見分けられないので）。 */
+  const option = (id: string, name: string, kept: string | undefined) => (
+    <option key={id} value={id} disabled={ambiguous(id) && id !== kept}>
+      {ambiguous(id) ? `${name}${ctx.t('way.sameName')}` : name}
+    </option>
+  );
+  // Claude の案で受け持つ時間が分からず、受け持つ手順がある時だけ、全部か一部かを選んでもらう。
+  const asksCovers =
+    form.coversAsk !== undefined && form.steps.some((s) => s.cover || s.coverAsk === true);
   if (wayId && !original) {
     return (
       <>
@@ -633,6 +799,7 @@ export function WayScreen({ ctx, wayId, from }: { ctx: Ctx; wayId?: string; from
       />
       <Main>
         <Text quiet>{ctx.t('way.intro')}</Text>
+        {fromIdea && <IdeaBanner ctx={ctx} draft={fromIdea} />}
         <Card>
           <label className="flex flex-col gap-1">
             <span className="font-bold">{ctx.t('way.name')}</span>
@@ -655,6 +822,13 @@ export function WayScreen({ ctx, wayId, from }: { ctx: Ctx; wayId?: string; from
                 onChange={(e) => step(i, (x) => (x.name = e.target.value))}
               />
             </label>
+            {s.quote !== undefined && (
+              <span className="text-sm text-sub">
+                {s.quote
+                  ? ctx.t(`wayIdeas.quote.${s.quote.from}`, { quote: s.quote.text })
+                  : ctx.t('wayIdeas.proposed')}
+              </span>
+            )}
             <label className="flex flex-col gap-1">
               <span className="font-bold">{ctx.t('way.who')}</span>
               <select
@@ -662,12 +836,9 @@ export function WayScreen({ ctx, wayId, from }: { ctx: Ctx; wayId?: string; from
                 value={s.assigneeId}
                 onChange={(e) => step(i, (x) => (x.assigneeId = e.target.value))}
               >
+                {s.assigneeId === '?' && <option value="?">{ctx.t('way.choose')}</option>}
                 <option value="">{ctx.t('way.anyone')}</option>
-                {adults.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
+                {adults.map((m) => option(m.id, m.name, s.original?.assigneeId))}
               </select>
             </label>
             <label className="flex flex-col gap-1">
@@ -677,12 +848,9 @@ export function WayScreen({ ctx, wayId, from }: { ctx: Ctx; wayId?: string; from
                 value={s.to}
                 onChange={(e) => step(i, (x) => (x.to = e.target.value))}
               >
+                {s.to === '?' && <option value="?">{ctx.t('way.choose')}</option>}
                 <option value="">{ctx.t('way.toNone')}</option>
-                {contacts.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
+                {contacts.map((c) => option(c.id, c.name, s.original?.external?.to))}
                 <option value="+new">{ctx.t('way.toNew')}</option>
               </select>
             </label>
@@ -776,11 +944,7 @@ export function WayScreen({ ctx, wayId, from }: { ctx: Ctx; wayId?: string; from
               >
                 <option value="">{ctx.t('way.choose')}</option>
                 <option value="-">{ctx.t('way.placeNone')}</option>
-                {places.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
+                {places.map((p) => option(p.id, p.name, s.original?.placeId))}
                 <option value="+new">{ctx.t('way.placeNew')}</option>
               </select>
             </label>
@@ -861,18 +1025,41 @@ export function WayScreen({ ctx, wayId, from }: { ctx: Ctx; wayId?: string; from
                 })
               }
             />
-            <label className="flex items-start gap-2">
-              <input
-                type="checkbox"
-                className="mt-1 size-5 shrink-0 accent-accent"
-                checked={s.cover}
-                onChange={() => step(i, (x) => (x.cover = !x.cover))}
-              />
-              <span className="flex flex-col">
-                <span>{ctx.t('way.cover')}</span>
+            {s.coverAsk ? (
+              <label className="flex flex-col gap-1">
+                <span className="font-bold">{ctx.t('way.cover')}</span>
+                <select
+                  className={input}
+                  value=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v !== 'yes' && v !== 'no') return;
+                    step(i, (x) => {
+                      x.cover = v === 'yes';
+                      delete x.coverAsk;
+                    });
+                  }}
+                >
+                  <option value="">{ctx.t('way.choose')}</option>
+                  <option value="yes">{ctx.t('way.coverYes')}</option>
+                  <option value="no">{ctx.t('way.coverNo')}</option>
+                </select>
                 <span className="text-sm text-sub">{ctx.t('way.coverNote')}</span>
-              </span>
-            </label>
+              </label>
+            ) : (
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-1 size-5 shrink-0 accent-accent"
+                  checked={s.cover}
+                  onChange={() => step(i, (x) => (x.cover = !x.cover))}
+                />
+                <span className="flex flex-col">
+                  <span>{ctx.t('way.cover')}</span>
+                  <span className="text-sm text-sub">{ctx.t('way.coverNote')}</span>
+                </span>
+              </label>
+            )}
             {form.steps.length > 1 && (
               <MoreLink onClick={() => update((f) => f.steps.splice(i, 1))}>
                 {ctx.t('way.removeStep')}
@@ -912,24 +1099,41 @@ export function WayScreen({ ctx, wayId, from }: { ctx: Ctx; wayId?: string; from
             />
           )}
           <span className="font-bold">{ctx.t('way.covers')}</span>
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              type="time"
-              aria-label={ctx.t('way.coversStart')}
+          {asksCovers && (
+            <select
+              aria-label={ctx.t('way.covers')}
               className={input}
-              value={form.coversStart}
-              onChange={(e) => update((f) => (f.coversStart = e.target.value))}
-            />
-            <span>–</span>
-            <input
-              type="time"
-              aria-label={ctx.t('way.coversEnd')}
-              className={input}
-              value={form.coversEnd}
-              onChange={(e) => update((f) => (f.coversEnd = e.target.value))}
-            />
-          </div>
-          <Text quiet>{ctx.t('way.coversNote')}</Text>
+              value={form.coversAsk}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === '' || v === 'whole' || v === 'part') update((f) => (f.coversAsk = v));
+              }}
+            >
+              <option value="">{ctx.t('way.choose')}</option>
+              <option value="whole">{ctx.t('way.coversWhole')}</option>
+              <option value="part">{ctx.t('way.coversPart')}</option>
+            </select>
+          )}
+          {(!asksCovers || form.coversAsk === 'part') && (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="time"
+                aria-label={ctx.t('way.coversStart')}
+                className={input}
+                value={form.coversStart}
+                onChange={(e) => update((f) => (f.coversStart = e.target.value))}
+              />
+              <span>–</span>
+              <input
+                type="time"
+                aria-label={ctx.t('way.coversEnd')}
+                className={input}
+                value={form.coversEnd}
+                onChange={(e) => update((f) => (f.coversEnd = e.target.value))}
+              />
+            </div>
+          )}
+          <Text quiet>{ctx.t(asksCovers ? 'way.coversAskNote' : 'way.coversNote')}</Text>
         </Card>
         <Card>
           <span className="font-bold">{ctx.t('way.cost')}</span>
@@ -939,11 +1143,17 @@ export function WayScreen({ ctx, wayId, from }: { ctx: Ctx; wayId?: string; from
               <input
                 type="number"
                 min={0}
+                step={f === 'leaveMinutes' ? 0.5 : 1}
                 aria-label={ctx.t(`way.costField.${f}`)}
                 className={`${input} w-24`}
                 value={form.cost[f].unknown ? '' : form.cost[f].value}
                 disabled={form.cost[f].unknown}
-                onChange={(e) => update((x) => (x.cost[f].value = e.target.value))}
+                onChange={(e) =>
+                  update((x) => {
+                    x.cost[f].value = e.target.value;
+                    if (f === 'helperRequests') delete x.derivedHelpers;
+                  })
+                }
               />
               <label className="flex min-h-11 items-center gap-2">
                 <input
@@ -954,6 +1164,7 @@ export function WayScreen({ ctx, wayId, from }: { ctx: Ctx; wayId?: string; from
                     update((x) => {
                       x.cost[f].unknown = !x.cost[f].unknown;
                       if (!x.cost[f].unknown && x.cost[f].value === '') x.cost[f].value = '0';
+                      if (f === 'helperRequests') delete x.derivedHelpers;
                     })
                   }
                 />
@@ -961,6 +1172,7 @@ export function WayScreen({ ctx, wayId, from }: { ctx: Ctx; wayId?: string; from
               </label>
             </div>
           ))}
+          {form.derivedHelpers && <Text quiet>{ctx.t('way.helpersDerived')}</Text>}
           <Text quiet>{ctx.t('way.costNote')}</Text>
         </Card>
         <Card tone="accent">
@@ -999,6 +1211,37 @@ export function WayScreen({ ctx, wayId, from }: { ctx: Ctx; wayId?: string; from
         </Card>
       </Main>
     </>
+  );
+}
+
+/** Claude の案を写した表の上に、推定であることと、Claude が埋めない欄・確かめてほしいことを出す。 */
+function IdeaBanner({ ctx, draft }: { ctx: Ctx; draft: CheckedDraft }) {
+  return (
+    <Card tone="accent">
+      <Label tone="accent">{ctx.t('wayIdeas.formLabel')}</Label>
+      <Text>{ctx.t('wayIdeas.formIntro')}</Text>
+      {draft.why !== '' && <Text quiet>{draft.why}</Text>}
+      <Text quiet>{ctx.t('wayIdeas.formOutside')}</Text>
+      <Text quiet>{ctx.t('wayIdeas.formEstimates')}</Text>
+      {draft.unclear.length > 0 && (
+        <>
+          <Label tone="sub">{ctx.t('wayIdeas.unclearLabel')}</Label>
+          {draft.unclear.map((u) => (
+            <Text key={u}>{u}</Text>
+          ))}
+        </>
+      )}
+      {draft.notes.length > 0 && (
+        <>
+          <Label tone="sub">{ctx.t('wayIdeas.notesLabel')}</Label>
+          {draft.notes.map((n) => (
+            <Text key={JSON.stringify(n)} quiet>
+              {noteText(ctx, n)}
+            </Text>
+          ))}
+        </>
+      )}
+    </Card>
   );
 }
 

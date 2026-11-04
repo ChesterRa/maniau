@@ -94,3 +94,47 @@ export function validateHousehold(household: Household): HouseholdIssue[] {
   }
   return issues;
 }
+
+/** 家族に見せる名前の比べ方（全角・半角を NFKC で揃え、前後の空白を除く）。 */
+export const shownName = (name: string): string => name.normalize('NFKC').trim();
+
+/**
+ * 成員と場所の名前のうち、二つ以上の物が使っている名前（種類をまたいでも数える）。同じ名前の物があると、画面では
+ * どれのことか見分けられず、別の人に頼むことがある（その名前の物は、新しく選ばせない。家族が足す・直す時に重ねた
+ * かは sameNamePairs で比べる。02-foundation §3.4）。
+ */
+export function repeatedNames(household: Household): Set<string> {
+  const counts = new Map<string, number>();
+  for (const name of [
+    ...household.members.map((m) => m.name),
+    ...household.places.map((p) => p.name),
+  ]) {
+    const key = shownName(name);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return new Set([...counts].filter(([, n]) => n > 1).map(([name]) => name));
+}
+
+/**
+ * 名前の重なる物の組（成員と場所。種類をまたいでも組にする）。一つの組は、二つの物の種類と ID を並べた文字列。
+ * 重なっている名前の集まりだけを比べると、前からある重なりの名前へ別の物が入っても（足す・名前を変えて入れる・
+ * 一人と入れ替える）変わらないので、家族が足す・直す時は、前に無かった組ができたかで比べる。
+ */
+export function sameNamePairs(household: Household): Set<string> {
+  const byName = new Map<string, [kind: 'member' | 'place', id: string][]>();
+  const add = (kind: 'member' | 'place', id: string, name: string): void => {
+    const key = shownName(name);
+    byName.set(key, [...(byName.get(key) ?? []), [kind, id]]);
+  };
+  for (const m of household.members) add('member', m.id, m.name);
+  for (const p of household.places) add('place', p.id, p.name);
+  const pairs = new Set<string>();
+  for (const things of byName.values()) {
+    // 物ごとに［種類, ID］の JSON にして並べ、二つずつ空白でつなぐ（JSON は自分で閉じるので、つないでも取り違えない）。
+    const keys = things.map((thing) => JSON.stringify(thing)).sort();
+    for (const [i, a] of keys.entries()) {
+      for (const b of keys.slice(i + 1)) pairs.add(`${a} ${b}`);
+    }
+  }
+  return pairs;
+}

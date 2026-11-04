@@ -4,6 +4,7 @@
 // 返事の行き違い（遅れた返事・切り替え・途切れ）の扱いは、どちらも同じ（useServerView）。
 import type {
   ChangeSummary,
+  CheckedIdeas,
   ChoicePreview,
   Command,
   DateTime,
@@ -13,6 +14,7 @@ import type {
   PreviewCommand,
   Source,
   TodayCard,
+  WayIdeasContext,
 } from '@maniau/core';
 import type { LiveItem } from '@maniau/core/engine';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -114,6 +116,22 @@ export type ReadResult =
   | { status: 'limit' | 'busy' | 'uncertain' | 'stale' | 'lost' | 'testOnly' }
   | { status: 'failed'; reason?: string };
 
+/** やり方の案を頼む（W4）。操作 ID は、返事が届かない時の送り直しに同じ物を使う。 */
+export interface WayIdeasRequest {
+  arrangementKey: string;
+  /** 家族の考え（任意）。 */
+  text?: string;
+  language: 'ja' | 'en';
+  operationId: string;
+}
+
+export type WayIdeasResult =
+  /** sent：Claude に送った物（画面が、送った物として見せる）。何も書いていない。 */
+  | { status: 'ok'; ideas: CheckedIdeas; sent: WayIdeasContext }
+  /** needGone：「すること」の手配が、もう無いか生きていない。ほかは ReadResult と同じ。 */
+  | { status: 'limit' | 'busy' | 'uncertain' | 'stale' | 'lost' | 'testOnly' | 'needGone' }
+  | { status: 'failed'; reason?: string };
+
 /** 一言の候補（サーバーが控えを持つ。画面は命令から説明を作る）。 */
 export interface ShownProposal {
   id: string;
@@ -212,7 +230,7 @@ const commandBody = (w: Where, operationId: string, command: Command) =>
 /** 身元を確かめられない・家族の大人でない（家族の家庭だけ）。 */
 const DENIED = new Set(['unauthenticated', 'notAMember']);
 // 読み取り（お知らせ・一言）と一言の候補の記録の送り先と本文。家族の家庭は as を添える（比べるためだけ）。
-const inputUrl = (w: Where, path: 'notices' | 'utterances') =>
+const inputUrl = (w: Where, path: 'notices' | 'utterances' | 'way-ideas') =>
   w.kind === 'demo' ? `/api/demo/sessions/${w.sessionId}/${path}` : `/api/${path}`;
 const proposalUrl = (w: Where, proposalId: string) =>
   w.kind === 'demo'
@@ -609,6 +627,55 @@ export function useServerView(where: Where | undefined) {
   );
 
   /**
+   * 「すること」に、Claude がやり方の案を出す（デモの家庭と、家族の試しの家庭）。何も書かないので、見せる物は
+   * 替えない。待つ間に段・使う人が替わっていたら、その返事は使わない。
+   */
+  const wayIdeas = useCallback(
+    async (input: WayIdeasRequest): Promise<WayIdeasResult> => {
+      const now = current.current;
+      if (!kind || !memberId || now.key !== key || (kind === 'demo' && !sessionId)) {
+        return { status: 'failed', reason: 'stale' };
+      }
+      if (now.memberId !== memberId) return { status: 'failed', reason: 'stale' };
+      const target: Where =
+        kind === 'demo' ? { kind, sessionId: sessionId ?? '', memberId } : { kind, memberId };
+      if (busy.current === now.epoch) return { status: 'busy' };
+      busy.current = now.epoch;
+      try {
+        const response = await fetch(inputUrl(target, 'way-ideas'), {
+          method: 'POST',
+          headers: json,
+          body: JSON.stringify(inputBody(target, { ...input })),
+          signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+        });
+        const body = (await response.json()) as
+          | { ideas: CheckedIdeas; sent: WayIdeasContext }
+          | { error: string; reason?: string };
+        if (!isCurrent(now.epoch)) return { status: 'failed', reason: 'stale' };
+        if ('ideas' in body) return { status: 'ok', ideas: body.ideas, sent: body.sent };
+        if (body.error === 'unknownSession') {
+          setNotice('expired');
+          return { status: 'failed', reason: 'unknownSession' };
+        }
+        if (DENIED.has(body.error)) setDenied(true);
+        else if (body.error === 'identityChanged') setSwitched(true);
+        if (body.error === 'needGone') return { status: 'needGone' };
+        return (
+          readRefusal(body.error, body.reason) ?? {
+            status: 'failed',
+            reason: body.reason ?? body.error,
+          }
+        );
+      } catch {
+        return { status: 'uncertain' };
+      } finally {
+        if (busy.current === now.epoch) busy.current = undefined;
+      }
+    },
+    [kind, key, sessionId, memberId, isCurrent],
+  );
+
+  /**
    * 一言の候補の記録を送る（送り直しも同じ ID で）。サーバーが、見せた時と今の対象の状態を比べ、違えば
    * 記録しない。返事が届かない時は、記録したか分からないので、命令と同じく取っておき（確かめるまで、
    * ほかの書き込みを送らない）、見せる物を読み直す（同じ ID の送り直しは二度記録しない）。
@@ -783,6 +850,7 @@ export function useServerView(where: Where | undefined) {
     transcribe,
     hear,
     confirm,
+    wayIdeas,
     preview,
     previewHousehold,
     previewChange,
