@@ -7,6 +7,7 @@ import { checkPlan } from './plan';
 import { checkProposals } from './proposal';
 import { checkReleased } from './released';
 import { Collector, type VerificationReport } from './report';
+import { checkExceptionTransitions } from './routine';
 import { checkSchedule } from './schedule';
 
 export type {
@@ -77,6 +78,7 @@ export function verifyPlan(input: VerificationInput): VerificationReport {
     );
   }
   const facts = collectFacts(history.events, report);
+  checkExceptionTransitions(household.data, report);
   checkNeedConfirmation(plan.data, facts, history, report);
   checkReleased(household.data, plan.data, facts, history, report);
   checkProposals(plan.data, history, report, household.data, facts);

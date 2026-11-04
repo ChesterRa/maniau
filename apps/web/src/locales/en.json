@@ -632,7 +632,7 @@
     "otherAdult": "This looks like another adult's task. That person records changes such as not being able to do it or having done it.",
     "unowned": "One of these tasks has no one assigned yet. Choose who does it on the Today card first.",
     "unsupported": {
-      "routineChange": "Changes to the usual week (pickups, work) can't be recorded yet.",
+      "routineChange": "Ongoing changes, changes for several people or days, pick-up-only changes and working from home can't be taken from a message yet. For a single day, say whose day and which day (e.g. “What if I take 12/7 off?”).",
       "otherAdultsTask": "This looks like another adult's task. That person records it.",
       "notInPlan": "Nothing in the plan matches this.",
       "replyOrWhatIf": "We couldn’t tell whether this is a real reply or a what-if. Say them separately, such as “Grandma says it’s fine” for a reply or “What if Grandma says no?” for a what-if.",
@@ -765,7 +765,9 @@
         "pickup": "Pick-up",
         "away": "Out"
       },
-      "route": "{{from}} → {{to}}"
+      "route": "{{from}} → {{to}}",
+      "segment": "{{range}} {{kind}}",
+      "segmentAt": "{{range}} {{kind}} ({{where}})"
     },
     "places": {
       "label": "Places and shops",
@@ -866,7 +868,8 @@
       "wayRemoved": "Ways can’t be deleted (stop using the way instead).",
       "wayInvalid": "Some of the way’s fields are missing or not valid (check the name, steps, times and costs).",
       "wayRefUnknown": "Choose who does it, who to ask and where from the adults, helpers and places you registered.",
-      "nameTaken": "A person or place with the same name already exists. Use a different name so you can tell them apart (for example, “Grandma Sato”)."
+      "nameTaken": "A person or place with the same name already exists. Use a different name so you can tell them apart (for example, “Grandma Sato”).",
+      "routineExceptionMember": "Single-day changes can be recorded only for adults."
     }
   },
   "need": {
@@ -1192,5 +1195,95 @@
     "noIdeas": "No ideas came back. Type your own search words.",
     "already": "You already buy this item here",
     "addGoods": "You'll also buy {{what}} at “{{name}}”."
+  },
+  "memberDay": {
+    "title": "Just this day",
+    "eyebrow": {
+      "hypothetical": "What if (hypothetical)",
+      "undetermined": "Calculated as a what-if",
+      "actual": "A change to that day",
+      "edit": "Change just one day"
+    },
+    "said": {
+      "hypothetical": "Read as a what-if. Nothing is recorded here.",
+      "undetermined": "We couldn't tell whether this is a real plan or a what-if, so we calculate it as a what-if. Nothing is recorded.",
+      "actual": "Read as a change to that day. You can see the calculation before deciding whether to record it."
+    },
+    "summary": "{{name}} · {{day}} · {{change}}",
+    "unknownPerson": "(who?)",
+    "unknownDay": "(which day?)",
+    "change": {
+      "off": "Day off",
+      "home": "Home for a while",
+      "away": "Out for a while",
+      "late": "Work end time"
+    },
+    "text": {
+      "home": "home {{from}}–{{to}}",
+      "away": "out {{from}}–{{to}}",
+      "late": "working until {{to}}"
+    },
+    "ask": {
+      "person": "We couldn't tell whose day this is. Choose below.",
+      "date": "We couldn't tell which day (past days aren't calculated). Enter the date below.",
+      "weekday": "The date and the weekday don't match. Check the date below.",
+      "time": "We couldn't tell the time. Enter it below (we don't guess times).",
+      "change": "Choose how the day changes.",
+      "offWithTime": "We couldn't tell whether it's a whole day off or only the time you mentioned at home. Choose “Day off” or “Home for a while” below."
+    },
+    "fill": "Fill in the details",
+    "compute": "Calculate with these details",
+    "heardText": "You said: “{{text}}” (check that the details below match)",
+    "premise": {
+      "said": "What we read from your message (you can edit it)",
+      "edit": "This day"
+    },
+    "field": {
+      "person": "Who",
+      "choose": "Choose",
+      "date": "Date",
+      "change": "What changes",
+      "from": "From",
+      "to": "To",
+      "workEnds": "Work ends at"
+    },
+    "problem": {
+      "noDay": "No usual-week plan is registered for this person on this weekday.",
+      "noHome": "No home is registered.",
+      "badTime": "Check the times (start before end; work must end after it starts).",
+      "outsideDay": "That time doesn't connect to this day's plan (use a time within the day or right next to it).",
+      "travel": "Making this time “home” would need travel to and from work or the pick-up place that we can't work out, so we don't calculate it. If work ends earlier or later, choose “Work end time”; if you don't go to work, choose “Day off”.",
+      "noWork": "There's no work on this day, so the work end time can't change.",
+      "pickup": "This day has a pick-up after work. What happens to the pick-up when work ends at a different time (going late, someone covering, picking up early) can't be calculated yet. Edit the usual week in Home, or choose “Day off”.",
+      "overnight": "Plans past midnight can't be calculated yet.",
+      "afterWork": "On this day, there's a plan after work other than going home (such as time out), or the way home would run into it. What happens to that plan when work ends at a different time isn't known, so it isn't calculated. Change that plan first (for example with “Out for a while”), or choose “Day off”."
+    },
+    "assumed": {
+      "label": "Assumptions we added",
+      "off": "We calculate as if this person is home all day and can look after the child (“Home” blocks count as time someone can look after the child). Their usual work, commute, outings and pick-ups are skipped that day.",
+      "home": "We calculate as if this person is home and can look after the child during that time. The rest of the day stays as usual.",
+      "away": "We calculate as if this person is out during that time. Include where they go and the travel in this time. The rest of the day stays as usual.",
+      "late": "Only the commute home right after work moves earlier or later, keeping its usual length. Plans after you get home stay where they are.",
+      "notRecorded": "Seeing the calculation doesn't record anything."
+    },
+    "days": {
+      "label": "This person's day",
+      "usual": "Usual: ",
+      "recorded": "Recorded for this day: ",
+      "draft": "With these details: ",
+      "backToUsual": "Remove the recorded day and go back to the usual day."
+    },
+    "loading": "Calculating…",
+    "retry": "Calculate again",
+    "record": "Record this day",
+    "restore": "Go back to usual and record",
+    "recordNote": "Recording changes only this day (the same weekday before and after stays the same). If the plan changed after you looked, we recalculate and show it again instead of recording.",
+    "toUsual": "Set this day back to usual",
+    "list": {
+      "label": "Single-day changes",
+      "none": "No days recorded.",
+      "item": "{{day}} {{name}}: {{segments}}",
+      "add": "Change just one day"
+    }
   }
 }

@@ -15,6 +15,7 @@ import {
 import { formatDayTime } from './format';
 import { HouseholdScreen } from './household';
 import { isUiLanguage, rememberedLanguage, rememberLanguage, type UiLanguage } from './i18n';
+import { MemberDayScreen } from './member-day';
 import { NeedFixScreen, NeedScreen, StateNeedScreen } from './need';
 import { usePush } from './push';
 import {
@@ -418,6 +419,8 @@ function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {
       return <WayIdeasScreen ctx={ctx} arrangementKey={route.key} />;
     case 'whatIf':
       return <WhatIfScreen ctx={ctx} requestId={route.requestId} />;
+    case 'memberDay':
+      return <MemberDayScreen key={JSON.stringify(route)} ctx={ctx} route={route} />;
     case 'sources':
       return (
         <SourcesScreen

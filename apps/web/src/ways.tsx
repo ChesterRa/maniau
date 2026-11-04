@@ -126,6 +126,9 @@ function usedBy(ctx: Ctx, wayId: string): { key: string; what: string }[] {
 function refusedKey(reason: string): string {
   return [
     'householdInvalid',
+    'routineGap',
+    'routinePlace',
+    'routineExceptionMember',
     'wayRemoved',
     'wayInvalid',
     'wayRefUnknown',

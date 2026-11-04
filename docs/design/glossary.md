@@ -18,6 +18,8 @@
 | できなくなった | can no longer do | 引き受けた後に、本人ができなくなった | `withdrawn` |
 | 取り消し | cancellation | 前提が消えた準備を外すこと。頼んだ後なら、取り消しの連絡になる | `cancel` |
 | 取り消しの連絡 | cancellation message | 頼んだ相手に「要らなくなった」と伝える文。下書きまで作り、送るのは家族 | `cancellationMessage` |
+| その日だけの一日 | single-day change（画面：Just this day） | 大人のある日の区間の全部。その日はふだんの曜日の一日の代わりに使う。一日休み（Day off）・その時間は家（Home for a while）・その時間は外出（Out for a while）・仕事の終わり（Work end time）で作る | `routineExceptions` |
+| 仮に置いた前提 | assumptions we added | 家族が言っていないが、計算のために置いた前提（「家」の区間は子を見られる時間など）。言われた事と分けて見せ、直せるようにする | — |
 | 頼み事 | request | 外の相手への依頼 | `request` |
 | 下書き | draft | 送る前の文。まにあうは自分では送らない | `draft` |
 | 予備の案 | backup option | 本命の返事を待つ間に押さえておく案。要らなくなれば取り消す | `backup` |

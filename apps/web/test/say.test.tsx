@@ -230,7 +230,7 @@ describe('ひとこと', () => {
       render(ctx, { kind: 'question', refs: { taskKeys: [], requestIds: [], itemIds: [] } }),
     ).toContain('当てはまる物は見つかりませんでした。');
     expect(render(ctx, { kind: 'unsupported', reason: 'routineChange' })).toContain(
-      'ふだんの週（お迎え・勤務）の変更は、まだ受け付けられません。',
+      'ずっと続く変更、二人以上・二日以上の話、お迎えや送りだけの話、在宅勤務は、まだ一言では受け付けられません。',
     );
   });
 

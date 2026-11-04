@@ -57,16 +57,16 @@ const reader =
 let op = 0;
 const say = (text: string) => ({ text, operationId: `say-${++op}` });
 
-async function heard(stage = 'chase', out = replyYes, calls: UtteranceContext[] = []) {
+async function heard(
+  stage = 'chase',
+  out = replyYes,
+  calls: UtteranceContext[] = [],
+  text = 'おばあちゃん大丈夫だって',
+) {
   const sessions = demoSessions();
   const id = sessions.create(stage as 'chase');
   const before = await sessions.view(id, 'b');
-  const done = await sessions.utterance(
-    id,
-    'b',
-    say('おばあちゃん大丈夫だって'),
-    reader(out, calls),
-  );
+  const done = await sessions.utterance(id, 'b', say(text), reader(out, calls));
   if (done?.status !== 'ok') throw new Error(`読めない：${done?.status}`);
   return { sessions, id, before, done };
 }
@@ -118,6 +118,56 @@ describe('家族の一言', () => {
     const after = await sessions.view(id, 'b');
     expect(after?.plan.throughSeq).toBe(before?.plan.throughSeq);
     expect(after && grandma(after)).toBe('awaitingReply');
+  });
+
+  it('大人のある一日の話は、確かめた一日だけを返し、何も書かない（記録の候補を作らない）', async () => {
+    const memberDay = output({
+      kind: 'memberDay',
+      memberDay: {
+        mode: 'hypothetical',
+        memberId: 'b',
+        date: '2026-12-07',
+        dateText: '12/7',
+        change: 'off',
+        from: null,
+        to: null,
+      },
+    });
+    const { sessions, id, before, done } = await heard(
+      'chase',
+      memberDay,
+      [],
+      '12/7 に私が休めたら？',
+    );
+    expect(done.reply).toEqual({
+      kind: 'memberDay',
+      day: { mode: 'hypothetical', change: 'off', memberId: 'b', date: '2026-12-07', problems: [] },
+    });
+    const after = await sessions.view(id, 'b');
+    expect(after?.plan.throughSeq).toBe(before?.plan.throughSeq);
+    expect(after?.household.routineExceptions).toEqual([]);
+  });
+
+  it('一日の話の日は家族の原文で確かめ、モデルが「明日」を別の日と読んだら日を空けて聞く', async () => {
+    // 追いかけの場面の今は 11/29（日）。「明日」は 11/30 で、モデルの 12/7 は受けない（黙って 11/30 にも直さない）。
+    const misread = output({
+      kind: 'memberDay',
+      memberDay: {
+        mode: 'hypothetical',
+        memberId: 'b',
+        date: '2026-12-07',
+        dateText: '明日',
+        change: 'off',
+        from: null,
+        to: null,
+      },
+    });
+    const { done } = await heard('chase', misread, [], '明日、彩が休んだら？');
+    expect(done.view.now.startsWith('2026-11-29')).toBe(true);
+    expect(done.reply).toEqual({
+      kind: 'memberDay',
+      day: { mode: 'hypothetical', change: 'off', memberId: 'b', problems: ['date'] },
+    });
   });
 
   it('本当か仮か決められないと印の付いた出力は、記録の候補を一緒に出していても候補にしない', async () => {

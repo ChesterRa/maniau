@@ -131,6 +131,70 @@ describe('その日だけの一日を独立に照らす', () => {
     expect(checkDetour(family, '2026-12-03')).not.toContain('detour_other_adult_absent');
   });
 
+  it('相接する家と職場の区間の間に移動がなければ、場所のつながりを未判定とする', () => {
+    const original = household();
+    const family = Household.parse({
+      ...original,
+      places: [...original.places, { id: 'office', kind: 'workplace', name: '職場' }],
+      routineExceptions: [
+        changedDay('a', '2026-12-07', [
+          { start: '08:00', end: '09:00', kind: 'work', placeId: 'office' },
+          { start: '09:00', end: '17:00', kind: 'home', placeId: 'home' },
+          { start: '17:00', end: '18:00', kind: 'work', placeId: 'office' },
+        ]),
+      ],
+    });
+    const report = verifyPlan({ household: family, plan: plan(), events: [] });
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({ kind: 'undetermined', code: 'routine_transition_unverified' }),
+    );
+  });
+
+  it('家・通勤・到着地がつながる一日は許し、場所不明の外出はつながると決めない', () => {
+    const valid = Household.parse({
+      ...household(),
+      routineExceptions: [
+        {
+          memberId: 'a',
+          date: '2026-12-07',
+          segments: [
+            { start: '08:00', end: '08:30', kind: 'home', placeId: 'home' },
+            { start: '08:30', end: '09:00', kind: 'commute', fromId: 'home', toId: 'station' },
+            { start: '09:00', end: '10:00', kind: 'away', placeId: 'station' },
+          ],
+        },
+      ],
+    });
+    expect(codes(verifyPlan({ household: valid, plan: plan(), events: [] }))).not.toContain(
+      'routine_transition_unverified',
+    );
+    const unknown = structuredClone(valid);
+    delete unknown.routineExceptions[0]?.segments[2]?.placeId;
+    expect(codes(verifyPlan({ household: unknown, plan: plan(), events: [] }))).toContain(
+      'routine_transition_unverified',
+    );
+  });
+
+  it('同じ曜日のふだんの一日から、そのまま写した場所の境界は新たな未判定にしない', () => {
+    const family = household();
+    const ordinary = family.routines.find((entry) => entry.memberId === 'a' && entry.weekday === 1);
+    if (!ordinary) throw new Error('月曜の区間がない');
+    family.routineExceptions = [
+      { memberId: 'a', date: '2026-12-07', segments: structuredClone(ordinary.segments) },
+    ];
+    expect(codes(verifyPlan({ household: family, plan: plan(), events: [] }))).not.toContain(
+      'routine_transition_unverified',
+    );
+    const previous = family.routineExceptions[0]?.segments[1];
+    const next = family.routineExceptions[0]?.segments[2];
+    if (!previous || !next) throw new Error('外出の区間がない');
+    previous.end = '13:30';
+    next.start = '13:30';
+    expect(codes(verifyPlan({ household: family, plan: plan(), events: [] }))).toContain(
+      'routine_transition_unverified',
+    );
+  });
+
   it('一日を家にいて他の作業もない大人がいる時だけ、手配が無い理由を確認できる', () => {
     const family = Household.parse({
       ...household(),

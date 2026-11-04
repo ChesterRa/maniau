@@ -10,6 +10,8 @@ import {
   isNeedArrangementKey,
   type PlanResult,
 } from '../schema/plan';
+import { LocalDate, LocalTime, weekdayOf } from '../time';
+import { datesSaid } from './said-date';
 
 export const UTTERANCE_ACTION_TYPES = [
   'withdraw',
@@ -42,9 +44,31 @@ export const UNSUPPORTED_REASONS = [
 ] as const;
 export type UnsupportedReason = (typeof UNSUPPORTED_REASONS)[number];
 
-/** モデルの出力（構造化出力の形）。 */
-export const UtteranceOutput = z.object({
-  kind: z.enum(['change', 'clarify', 'whatIf', 'question', 'unsupported']),
+/**
+ * 大人のある一日が、いつもと違う（違ったら）という話（utterance.v3）。区間はモデルに書かせず、コードがその人の
+ * ふだんの一日から作る。言われていない時刻は null（推さない）。
+ */
+export const MemberDayOutput = z.object({
+  /** 仮の話（「〜たら？」）か、本当にそうする・した話か、どちらか決められないか。 */
+  mode: z.enum(['hypothetical', 'actual', 'undetermined']),
+  /** だれの一日か（members の大人の id）。 */
+  memberId: z.string().nullable(),
+  /** どの日か（YYYY-MM-DD）。 */
+  date: z.string().nullable(),
+  /** 一言の中の日の言い方（そのまま。読みの控え。日と曜日は、コードが家族の原文で確かめる）。 */
+  dateText: z.string(),
+  /**
+   * off：休んで一日家にいる。home：その時間だけ家にいる。away：その時間は家の外にいる。late：仕事の終わりが
+   * 遅くなる。
+   */
+  change: z.enum(['off', 'home', 'away', 'late']),
+  from: z.string().nullable(),
+  to: z.string().nullable(),
+});
+export type MemberDayOutput = z.infer<typeof MemberDayOutput>;
+
+const OUTPUT_FIELDS = {
+  kind: z.enum(['change', 'clarify', 'whatIf', 'memberDay', 'question', 'unsupported']),
   actions: z.array(UtteranceAction),
   refs: z.object({
     taskKeys: z.array(z.string()),
@@ -52,8 +76,20 @@ export const UtteranceOutput = z.object({
     itemIds: z.array(z.string()),
   }),
   unsupported: z.enum(UNSUPPORTED_REASONS).nullable(),
+};
+
+/** モデルの出力（読む側の形。前の版の記録には memberDay の欄が無い）。 */
+export const UtteranceOutput = z.object({
+  ...OUTPUT_FIELDS,
+  memberDay: MemberDayOutput.nullable().optional(),
 });
 export type UtteranceOutput = z.infer<typeof UtteranceOutput>;
+
+/** モデルに渡す構造化出力の形（どの欄も必ず返す。使わない欄は null）。 */
+export const UtteranceModelOutput = z.object({
+  ...OUTPUT_FIELDS,
+  memberDay: MemberDayOutput.nullable(),
+});
 
 export interface UtteranceTask {
   key: string;
@@ -141,8 +177,81 @@ export type UtteranceReply =
    * 記録しない（家族が選んでから、書かない計算を見せる）。
    */
   | { kind: 'whatIf'; requestIds: string[] }
+  /**
+   * 大人のある一日の話（休む・その時間は外・遅くなる）。何も記録しない（家族が前提を見て、書かない計算を見る。
+   * 記録は家族が別に押す）。problem があれば、その欄を決められなかった（計算せず、家族に聞く）。
+   */
+  | { kind: 'memberDay'; day: MemberDayReply }
   | { kind: 'question'; refs: UtteranceRefs }
   | { kind: 'unsupported'; reason: UnsupportedReason };
+
+/** 一言から読んだ、大人のある一日（コードが確かめた後の形）。 */
+export interface MemberDayReply {
+  /** undetermined は仮の話と同じに見せる（本当の話と言わない）。どれでも、記録は家族が前提の画面で別に押す。 */
+  mode: 'hypothetical' | 'actual' | 'undetermined';
+  change: 'off' | 'home' | 'away' | 'late';
+  memberId?: string;
+  date?: string;
+  from?: string;
+  to?: string;
+  /**
+   * 決められなかった欄：person（だれ）、date（どの日か原文から一つに決まらない・原文の日とモデルの日が違う・過ぎた
+   * 日）、weekday（日と、添えた曜日の食い違い）、time（時刻）。
+   */
+  problems: ('person' | 'date' | 'weekday' | 'time')[];
+}
+
+/**
+ * モデルの読んだ一日を確かめる：人は家族の大人。日は、家族の原文の言い方（今日・明日・12/7・来週の月曜 など）から
+ * コードが一つに決めた日と同じで、今日より前でなく、添えた曜日と食い違わない（原文から決まらない、違う日を読んだ、
+ * 時は、黙って直さずに聞く）。時刻は HH:MM。その時間だけ家・外出は始まりと終わり、遅くなるは終わりが要る。一日の
+ * 休みに時刻が付いていれば、一日か、その時間だけかを決められない（限られた時間を一日にしない）。決められない欄は
+ * problems に入れ、推し量らない。
+ */
+export function memberDayReply(output: MemberDayOutput, context: UtteranceContext): MemberDayReply {
+  const problems: MemberDayReply['problems'] = [];
+  const adult = context.members.find((m) => m.id === output.memberId && m.kind === 'adult');
+  if (!adult) problems.push('person');
+  const today = context.now.slice(0, 10);
+  const read =
+    output.date !== null && LocalDate.safeParse(output.date).success ? output.date : undefined;
+  const said = datesSaid(
+    context.utterance,
+    today,
+    context.members.map((m) => m.name),
+  );
+  const date =
+    read !== undefined && said.dates.length === 1 && said.dates[0] === read ? read : undefined;
+  if (date === undefined || date < today) problems.push('date');
+  if (date !== undefined && said.weekdays.some((w) => w !== weekdayOf(date))) {
+    problems.push('weekday');
+  }
+  const time = (t: string | null) => (t !== null && LocalTime.safeParse(t).success ? t : undefined);
+  const from = time(output.from);
+  const to = time(output.to);
+  const needs =
+    output.change === 'home' || output.change === 'away'
+      ? from === undefined || to === undefined || from >= to
+      : output.change === 'late'
+        ? to === undefined
+        : output.from !== null || output.to !== null;
+  if (
+    needs ||
+    (output.from !== null && from === undefined) ||
+    (output.to !== null && to === undefined)
+  ) {
+    problems.push('time');
+  }
+  return {
+    mode: output.mode,
+    change: output.change,
+    ...(adult ? { memberId: adult.id } : {}),
+    ...(date !== undefined ? { date } : {}),
+    ...(from !== undefined ? { from } : {}),
+    ...(to !== undefined ? { to } : {}),
+    problems,
+  };
+}
 
 type Checked =
   | { ok: true; proposal: UtteranceProposal }
@@ -342,6 +451,11 @@ export function toUtteranceReply(
         itemIds: unique(output.refs.itemIds, items),
       },
     };
+  }
+  if (output.kind === 'memberDay') {
+    // 一日の話の欄が無い出力は、読めなかった物として扱う（推し量らない）。
+    if (!output.memberDay) return { kind: 'unsupported', reason: 'routineChange' };
+    return { kind: 'memberDay', day: memberDayReply(output.memberDay, context) };
   }
   if (output.kind === 'whatIf') {
     const waiting = new Set(

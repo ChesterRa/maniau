@@ -4,17 +4,17 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { type UtteranceContext, UtteranceOutput } from '@maniau/core';
+import { type UtteranceContext, UtteranceModelOutput, type UtteranceOutput } from '@maniau/core';
 import { ReadingError } from './extract';
 import { FAST_SPEED, PRODUCT_EFFORT, PRODUCT_MODEL } from './model';
 
-export const UTTERANCE_PROMPT_VERSION = 'utterance.v2';
+export const UTTERANCE_PROMPT_VERSION = 'utterance.v3';
 /**
  * 一言の解釈も、製品の呼び出しと同じ Opus 5.5・medium・速いモード（model.ts。作り手の指示 2026-11-04：読みの
  * 確かさと速さを先にする）。
  */
 export const DEFAULT_UTTERANCE_MODEL = PRODUCT_MODEL;
-const PROMPT = readFileSync(new URL('./prompts/utterance.v2.md', import.meta.url), 'utf8');
+const PROMPT = readFileSync(new URL('./prompts/utterance.v3.md', import.meta.url), 'utf8');
 
 export interface UtteranceResult {
   output: UtteranceOutput;
@@ -42,7 +42,8 @@ export async function readUtterance(
     system: PROMPT,
     messages: [{ role: 'user', content: input }],
     output_config: {
-      format: zodOutputFormat(UtteranceOutput),
+      // どの欄も必ず返させる形（使わない欄は null）。読む側の形 UtteranceOutput は、前の版の記録も読める。
+      format: zodOutputFormat(UtteranceModelOutput),
       // 呼び出しごとに明示する（model.ts）。
       effort: options.effort ?? PRODUCT_EFFORT,
     },

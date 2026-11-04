@@ -12,6 +12,7 @@ export * from './schema/source';
 export * from './schema/validate-household';
 export * from './time';
 export * from './view/changes';
+export * from './view/member-day';
 export * from './view/notify';
 export * from './view/ours';
 export * from './view/preview';

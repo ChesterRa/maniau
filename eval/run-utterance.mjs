@@ -15,7 +15,7 @@ const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 const VALUE_FLAGS = new Set(['case', 'pricing-model', 'pricing-speed', 'input-usd-per-million', 'output-usd-per-million', 'pricing-url', 'pricing-checked']);
 const SOURCE_PATHS = [
   'apps/server/src/reading/utterance.ts',
-  'apps/server/src/reading/prompts/utterance.v2.md',
+  'apps/server/src/reading/prompts/utterance.v3.md',
   'apps/server/src/reading/model.ts',
   'apps/server/src/reading/extract.ts',
   'packages/core/src/reading/utterance.ts',

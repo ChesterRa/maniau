@@ -10,6 +10,7 @@ import type {
   DateTime,
   Household,
   HouseholdPreview,
+  MemberDayReply,
   PlaceAttribution,
   PlanResult,
   PreviewCommand,
@@ -206,6 +207,8 @@ export type Heard =
     }
   /** 仮の話：断られたと仮に置く頼み事の候補（返事待ちの物だけ。空なら無い）。何も記録しない。 */
   | { kind: 'whatIf'; requestIds: string[] }
+  /** 大人のある一日の話（休む・その時間は家・外出・遅くなる）。何も記録しない（前提の画面で見て、別に押す）。 */
+  | { kind: 'memberDay'; day: MemberDayReply }
   | { kind: 'question'; refs: { taskKeys: string[]; requestIds: string[]; itemIds: string[] } }
   | {
       kind: 'unsupported';

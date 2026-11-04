@@ -73,6 +73,7 @@ import {
 } from './format';
 import type { UiLanguage } from './i18n';
 import { Attributions, GoogleMapsMark, TermsLink, WalkMap } from './maps';
+import { SayMemberDay } from './member-day';
 import { type NotUploadable, toUploadable, type Uploadable } from './photo';
 import { StoreSearch } from './stores';
 import {
@@ -111,6 +112,23 @@ export type Route =
   | { name: 'ask'; taskKey: string }
   /** 「断られたら？」：返事を待っている頼み事（依頼の ID）を、断られたと仮に置いて計算する（何も書かない）。 */
   | { name: 'whatIf'; requestId: string }
+  /**
+   * その日だけの一日（「もし……なら」と本当にそうする日）：ある大人のある日を作り直し、書かない計算を見せる。said は
+   * 一言から来た時の読み（仮・本当・決められない）。無ければ「うち」から来た。
+   */
+  | {
+      name: 'memberDay';
+      memberId?: string;
+      date?: string;
+      change?: 'off' | 'home' | 'away' | 'late';
+      from?: string;
+      to?: string;
+      said?: 'hypothetical' | 'actual' | 'undetermined';
+      /** 一言から決められなかった欄（家族が直すまで計算しない）。 */
+      asks?: ('person' | 'date' | 'weekday' | 'time' | 'offWithTime')[];
+      /** 家族の一言の原文（読んだ前提と並べて見せるだけ。どこにも送らない）。 */
+      text?: string;
+    }
   | { name: 'week' }
   | { name: 'sources'; sourceId?: string; highlight?: string[] };
 
@@ -3666,12 +3684,15 @@ function SayAnswer({
 export function SayReply({
   ctx,
   reply,
+  text,
   busy,
   onRecord,
   onClear,
 }: {
   ctx: Ctx;
   reply: Heard;
+  /** 読んだ一言の原文（大人の一日の前提の画面で、読んだ前提と並べて見せる）。 */
+  text?: string;
   busy: boolean;
   onRecord: (proposal: ShownProposal) => void;
   onClear: () => void;
@@ -3757,6 +3778,9 @@ export function SayReply({
       )}
       {reply.kind === 'whatIf' && (
         <SayWhatIf ctx={ctx} requestIds={reply.requestIds} onClear={onClear} />
+      )}
+      {reply.kind === 'memberDay' && (
+        <SayMemberDay ctx={ctx} day={reply.day} text={text} onClear={onClear} />
       )}
       {reply.kind === 'question' && <SayAnswer ctx={ctx} refs={reply.refs} />}
       {reply.kind === 'unsupported' && <Text>{ctx.t(`say.unsupported.${reply.reason}`)}</Text>}
@@ -3858,7 +3882,7 @@ export function SayCard({
   const [text, setText] = useState('');
   // 答えは、読んだ時の計画の版と一緒に持つ。計画が先へ進んだら（記録・答え・時計など）、古い答えを
   // 今の計画と並べて見せない（閉じて、もう一度伝えてもらう）。
-  const [heard, setHeard] = useState<{ reply: Heard; throughSeq: number }>();
+  const [heard, setHeard] = useState<{ reply: Heard; throughSeq: number; text: string }>();
   const [state, setState] = useState<SayState>('idle');
   const seq = ctx.plan.throughSeq;
   const reply = heard && heard.throughSeq === seq ? heard.reply : undefined;
@@ -3873,7 +3897,8 @@ export function SayCard({
     const result = await hear(text, operation.current);
     if (result.status === 'ok') {
       operation.current = undefined;
-      setHeard({ reply: result.reply, throughSeq: result.throughSeq });
+      // 原文は、この読みに送った文（押した時の text）を持つ。後で入力を直しても、読んだ前提と並べる原文は替わらない。
+      setHeard({ reply: result.reply, throughSeq: result.throughSeq, text });
       setState('idle');
       return;
     }
@@ -3949,6 +3974,7 @@ export function SayCard({
         <SayReply
           ctx={ctx}
           reply={reply}
+          text={heard?.text}
           busy={busy}
           onRecord={(proposal) => void record(proposal)}
           onClear={clear}

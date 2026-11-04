@@ -12,6 +12,7 @@ import {
   type Extraction,
   formatDateTime,
   type Household,
+  type MemberDayReply,
   type PlaceAttribution,
   type PlanResult,
   type PreviewCommand,
@@ -125,6 +126,8 @@ export type ShownReply =
     }
   /** 仮の話：断られたと仮に置く頼み事の候補（返事待ちの物だけ。空なら無い）。何も記録しない。 */
   | { kind: 'whatIf'; requestIds: string[] }
+  /** 大人のある一日の話（休む・外出・遅くなる）。何も記録しない（家族が前提の画面で見て、別に押す）。 */
+  | { kind: 'memberDay'; day: MemberDayReply }
   | { kind: 'question'; refs: UtteranceRefs }
   | { kind: 'unsupported'; reason: UnsupportedReason };
 
@@ -539,7 +542,12 @@ export function demoSessions(
     plan: PlanResult,
     throughSeq: number,
   ): ShownReply => {
-    if (reply.kind === 'question' || reply.kind === 'unsupported' || reply.kind === 'whatIf') {
+    if (
+      reply.kind === 'question' ||
+      reply.kind === 'unsupported' ||
+      reply.kind === 'whatIf' ||
+      reply.kind === 'memberDay'
+    ) {
       return reply;
     }
     const proposals = reply.proposals.map((p): ShownProposal => {

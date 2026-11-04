@@ -10,6 +10,7 @@ import type {
   RoutineSegment,
 } from '@maniau/core';
 import { useState } from 'react';
+import { RecordedDays } from './member-day';
 import {
   type Ctx,
   day,
@@ -107,7 +108,7 @@ function costText(ctx: Ctx, way: CareOptionTemplate): string {
   return parts.join(ctx.t('list.separator'));
 }
 
-function segmentText(ctx: Ctx, segment: RoutineSegment): string {
+export function segmentText(ctx: Ctx, segment: RoutineSegment): string {
   const range = `${segment.start}–${segment.end}`;
   const kind = ctx.t(`household.week.kind.${segment.kind}`);
   const where =
@@ -119,7 +120,9 @@ function segmentText(ctx: Ctx, segment: RoutineSegment): string {
       : segment.placeId && segment.kind !== 'home'
         ? nameOf(ctx.household, segment.placeId)
         : '';
-  return where ? `${range} ${kind}（${where}）` : `${range} ${kind}`;
+  return where
+    ? ctx.t('household.week.segmentAt', { range, kind, where })
+    : ctx.t('household.week.segment', { range, kind });
 }
 
 /**
@@ -138,7 +141,17 @@ export function householdPreviewLines(
     const task = ctx.plan.tasks.find((t) => t.key === key);
     return task ? taskTitle(ctx, task) : key;
   };
-  const optionName = (key: string) => optionList(ctx, [key]) || ctx.t('household.preview.aWay');
+  // 今の計画に無い手（直した後に新しく選べる手）は、手の決まり（取れる手の型）の名前で書く。それも無ければ「ある手」。
+  const templateOf = (key: string) =>
+    ctx.household.careOptions.find((o) => o.id === key.split(':').at(-1));
+  const optionName = (key: string) => {
+    const named = optionList(ctx, [key]);
+    if (named) return named;
+    const template = templateOf(key);
+    return template
+      ? ctx.t('decide.quoted', { title: wayTitle(ctx, template) })
+      : ctx.t('household.preview.aWay');
+  };
   // 手配の時間（子の居場所が要る時間など）：同じ日の中なら終わりは時刻だけ。締切までに済ませる「すること」は、
   // 締切だけ（始まりは今で、要る時間ではない）。日だけの締切（その日の終わり。計画の時刻は家庭の時区で書いて
   // ある）は日だけ（書かれていない時刻を見せない）。
@@ -211,7 +224,17 @@ export function householdPreviewLines(
     }
   }
   for (const step of changes.added) {
-    const what = ctx.t(step.titleKey, step.titleParams);
+    // 頼む手順の題は、頼む相手の名前を手の決まりから入れる（作業の鍵は task:<手の鍵>:<手順>。手の鍵の最後が型の ID）。
+    const template =
+      step.titleKey === 'task.helper.ask'
+        ? templateOf(step.taskKey.split(':').slice(0, -1).join(':'))
+        : undefined;
+    const what =
+      step.titleKey === 'task.helper.ask'
+        ? ctx.t('task.helper.ask', {
+            name: template?.kind === 'askHelper' ? nameOf(ctx.household, template.providerId) : '',
+          })
+        : ctx.t(step.titleKey, step.titleParams);
     lines.push(
       step.start
         ? ctx.t('household.preview.added', { what, when: dayTime(ctx, step.start) })
@@ -526,6 +549,7 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
               </Button>
             </Row>
           )}
+          {mode === undefined && <RecordedDays ctx={ctx} />}
         </Card>
 
         <Card>
@@ -711,6 +735,7 @@ function refusedKey(reason: string): string {
     'routineGap',
     'routineDayMissing',
     'routinePlace',
+    'routineExceptionMember',
     'hoursOvernight',
     'membersLocked',
     'placesLocked',
