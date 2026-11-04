@@ -472,6 +472,9 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
       <Main>
         <Text quiet>{ctx.t('household.intro')}</Text>
 
+        {/* 周りの資源（家族と Claude が一緒に保つ。核の層）を最初に置く。ほかの札を直している間は出さない。 */}
+        {mode === undefined && <ResourcesCard ctx={ctx} />}
+
         <Card>
           <Label tone="sub">{ctx.t('household.people.label')}</Label>
           {people.map((m) => (
@@ -694,8 +697,6 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
             </Row>
           )}
         </Card>
-
-        {mode === undefined && <ResourcesCard ctx={ctx} />}
 
         <Card>
           <Label tone="sub">{ctx.t('household.ways.label')}</Label>

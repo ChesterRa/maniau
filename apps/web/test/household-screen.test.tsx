@@ -85,6 +85,13 @@ afterEach(async () => {
   host.remove();
 });
 
+/** 見出しで始まる札の「直す」（札の並びの順に頼らない）。 */
+const editIn = (label: string) =>
+  [
+    ...([...host.querySelectorAll('section')]
+      .find((section) => section.textContent?.startsWith(label))
+      ?.querySelectorAll('button') ?? []),
+  ].find((b) => b.textContent === '直す');
 const button = (text: string) =>
   [...host.querySelectorAll('button')].find((b) => b.textContent === text);
 
@@ -175,8 +182,7 @@ describe('うちのこと', () => {
   it('直せない直しはサーバーの理由を言葉にし、保存のボタンを出さない', async () => {
     const { ctx, sent } = ctxWith({ refused: 'hoursOvernight' });
     await step(() => root.render(<HouseholdScreen ctx={ctx} />));
-    const edits = [...host.querySelectorAll('button')].filter((b) => b.textContent === '直す');
-    await step(() => edits[0]?.click());
+    await step(() => editIn('ふだんの一週間')?.click());
     await step(() => button('変わることを見る')?.click());
     expect(host.textContent).toContain('日をまたぐ営業時間は、まだ扱えません');
     expect(button('この内容で保存')).toBeUndefined();
@@ -282,8 +288,7 @@ describe('うちのこと', () => {
       preview: { changes: emptyChanges, issues: [], unverified: [], seen: 'x', throughSeq: 9 },
     });
     await step(() => root.render(<HouseholdScreen ctx={ctx} />));
-    const edits = [...host.querySelectorAll('button')].filter((b) => b.textContent === '直す');
-    await step(() => edits[0]?.click());
+    await step(() => editIn('ふだんの一週間')?.click());
     const times = [...host.querySelectorAll('input[type="time"]')] as HTMLInputElement[];
     // 二つ目の区間の始まり（三つ目の欄）を 07:50 にする。
     const second = times[2];
@@ -313,8 +318,7 @@ describe('うちのこと', () => {
         preview: { changes: emptyChanges, issues: [], unverified: [], seen: 'x', throughSeq: 9 },
       });
       await step(() => root.render(<HouseholdScreen ctx={ctx} />));
-      const edits = [...host.querySelectorAll('button')].filter((b) => b.textContent === '直す');
-      await step(() => edits[0]?.click());
+      await step(() => editIn('ふだんの一週間')?.click());
       const select = host.querySelector('select');
       if (!select) throw new Error('過ごし方の欄が無い');
       await step(() => {
@@ -356,8 +360,7 @@ describe('うちのこと', () => {
       preview: { changes: emptyChanges, issues: [], unverified: [], seen: 'x', throughSeq: 9 },
     });
     await step(() => root.render(<HouseholdScreen ctx={ctx} />));
-    const edits = [...host.querySelectorAll('button')].filter((b) => b.textContent === '直す');
-    await step(() => edits[1]?.click());
+    await step(() => editIn('場所と店')?.click());
     await step(() => button('変わることを見る')?.click());
     expect(host.textContent).toContain('計画は変わりません。');
   });

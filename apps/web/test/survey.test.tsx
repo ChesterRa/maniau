@@ -116,14 +116,38 @@ const click = async (host: HTMLElement, text: string, index = 0) => {
   if (!button) throw new Error(`押す物が無い：${text}`);
   await step(() => button.click());
 };
+/** 調べを開いて、まだ家に入れていない候補の決める欄を開く（入れた候補は、はじめから開いている）。 */
+const survey = async (host: HTMLElement) => {
+  await click(host, '周りを調べる');
+  const open = buttons(host, 'この家での扱いを決める')[0];
+  if (open) await step(() => open.click());
+};
 
 describe('周りを調べる', () => {
+  it('まだ入れていない候補は、何が見つかったかを先に見せ、決める欄は押した時だけ開く', async () => {
+    const { ctx } = withSurvey('ja');
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    await step(() => root.render(<ResourcesCard ctx={ctx} />));
+    await click(host, '周りを調べる');
+    // 見つかった物（名前・まとめ・出典・登録の読み）は出し、扱い・登録・やり方の欄はまだ出さない。
+    expect(host.textContent).toContain('みなと橋病児保育室（架空）');
+    expect(host.textContent).toContain('Claude のまとめ：');
+    expect(buttons(host, '要る（確かめた）')).toHaveLength(0);
+    expect(buttons(host, 'この家の候補にする')).toHaveLength(0);
+    await click(host, 'この家での扱いを決める');
+    expect(buttons(host, '要る（確かめた）')).toHaveLength(1);
+    expect(buttons(host, 'この家の候補にする')).toHaveLength(1);
+    expect(buttons(host, 'この家での扱いを決める')).toHaveLength(0);
+    root.unmount();
+  });
+
   it('記録した調べを見せ、家族が登録・だれの分・やり方を選んで、確かめに渡す', async () => {
     const { ctx, runs, looked } = withSurvey('ja');
     const host = document.createElement('div');
     const root = createRoot(host);
     await step(() => root.render(<ResourcesCard ctx={ctx} />));
-    await click(host, '周りを調べる');
+    await survey(host);
     expect(runs).toEqual([{ live: false }]);
     const text = host.textContent ?? '';
     expect(text).toContain('豊洲（豊洲駅） の周りを 11/5（木） に Claude が調べて記録した結果です');
@@ -186,7 +210,7 @@ describe('周りを調べる', () => {
     const host = document.createElement('div');
     const root = createRoot(host);
     await step(() => root.render(<ResourcesCard ctx={{ ...ctx, household: addedHousehold() }} />));
-    await click(host, '周りを調べる');
+    await survey(host);
     expect(host.textContent).toContain('家の情報に入っています');
     expect(buttons(host, 'この家の候補にする')).toHaveLength(0);
     expect(host.textContent).toContain(
@@ -213,7 +237,7 @@ describe('周りを調べる', () => {
     const again = document.createElement('div');
     const second = createRoot(again);
     await step(() => second.render(<ResourcesCard ctx={{ ...ctx, household: unplaced }} />));
-    await click(again, '周りを調べる');
+    await survey(again);
     expect(again.textContent).toContain(
       '場所に結んでいないので、やり方の頼む先・行く所には使えません',
     );
@@ -226,7 +250,7 @@ describe('周りを調べる', () => {
     const host = document.createElement('div');
     const root = createRoot(host);
     await step(() => root.render(<ResourcesCard ctx={{ ...ctx, household: addedHousehold() }} />));
-    await click(host, '周りを調べる');
+    await survey(host);
     // 「同じ登録」に選べるのは、ほかの資源の登録だけ。
     expect(buttons(host, '病児保育の事前登録と同じ登録')).toHaveLength(1);
     await click(host, '要る（確かめた）');
@@ -249,7 +273,7 @@ describe('周りを調べる', () => {
       ],
     };
     await step(() => second.render(<ResourcesCard ctx={{ ...ctx, household: withPrep }} />));
-    await click(own, '周りを調べる');
+    await survey(own);
     expect(buttons(own, 'みなと橋病児保育室（架空）の事前の登録と同じ登録')).toHaveLength(0);
     expect(buttons(own, '病児保育の事前登録と同じ登録')).toHaveLength(1);
     await step(() => second.unmount());
@@ -267,7 +291,7 @@ describe('周りを調べる', () => {
     const host = document.createElement('div');
     const root = createRoot(host);
     await step(() => root.render(<ResourcesCard ctx={{ ...ctx, household: withOwn }} />));
-    await click(host, '周りを調べる');
+    await survey(host);
     expect(host.textContent).toContain('同じ所と確かめなければ、場所に結ばずに入れます');
     await click(host, 'この家の候補にする');
     expect(looked[0]?.resources.find((r) => r.id === CANDIDATE.id)).not.toHaveProperty('placeId');
@@ -277,7 +301,7 @@ describe('周りを調べる', () => {
     const again = document.createElement('div');
     const second = createRoot(again);
     await step(() => second.render(<ResourcesCard ctx={{ ...ctx, household: withOwn }} />));
-    await click(again, '周りを調べる');
+    await survey(again);
     await click(again, `家の情報の「${own.name}」と同じ所です`);
     await click(again, 'この家の候補にする');
     expect(looked[1]?.resources.find((r) => r.id === CANDIDATE.id)).toMatchObject({
@@ -293,7 +317,7 @@ describe('周りを調べる', () => {
     const later = document.createElement('div');
     const third = createRoot(later);
     await step(() => third.render(<ResourcesCard ctx={{ ...ctx, household: unlinked }} />));
-    await click(later, '周りを調べる');
+    await survey(later);
     expect(later.textContent).toContain(
       '場所に結んでいないので、やり方の頼む先・行く所には使えません',
     );
@@ -308,7 +332,7 @@ describe('周りを調べる', () => {
     await step(() =>
       linked.render(<ResourcesCard ctx={{ ...ctx, household: looked[2] ?? unlinked }} />),
     );
-    await click(later, '周りを調べる');
+    await survey(later);
     expect(buttons(later, '写して')).toHaveLength(1);
     expect(buttons(later, '同じ所です')).toHaveLength(0);
     await step(() => linked.unmount());
@@ -320,6 +344,7 @@ describe('周りを調べる', () => {
     const root = createRoot(host);
     await step(() => root.render(<ResourcesCard ctx={ctx} />));
     await click(host, 'Look around us');
+    await click(host, 'Decide how your family treats it');
     const text = host.textContent ?? '';
     expect(text).toContain('What Claude found around 豊洲（豊洲駅） on');
     expect(text).toContain('not that the page is official or still correct');

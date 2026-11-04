@@ -1407,12 +1407,13 @@
     },
     "survey": {
       "button": "Look around us",
+      "decide": "Decide how your family treats it",
       "again": "Ask Claude to look again now (about a minute)",
       "intro": "Claude searches the web for places near home that can look after your children or lend a hand (sick-child care, temporary childcare, family support) and reads their pages. Only what your family decides to add goes into your household information.",
       "working": "Looking… (when Claude looks now, it takes about a minute)",
       "recordedAt": "What Claude found around {{area}} on {{when}}, saved for this demo (the quotes were checked then).",
       "liveAt": "What Claude found around {{area}} on {{when}}.",
-      "checkedNote": "Shown here are only places whose quote appears word for word in the text of a page Claude read. That checks the words are on the page — not that the page is official or still correct. Please check the link.",
+      "checkedNote": "Shown here are only places whose quote appears in the text of a page Claude read (compared after normalizing character width and spaces). That checks the words are on the page — not that the page is official or still correct. Please check the link. Claude’s summaries are in Japanese (the survey asks Claude in Japanese); quotes are in the page’s own words.",
       "dropped": "{{count}} more are not shown because they couldn’t be checked ({{reasons}}).",
       "reason": {
         "notRead": "{{count}} whose page text couldn’t be read",

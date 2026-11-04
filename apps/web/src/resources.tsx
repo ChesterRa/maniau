@@ -537,6 +537,8 @@ function SurveyPanel({
   onAdd: (next: Household) => void;
 }) {
   const [state, setState] = useState<SurveyState>('idle');
+  // 決める欄を開いている候補（一度に一つ）。まだ家に入れていない候補は、まず何が見つかったかだけを見せる。
+  const [open, setOpen] = useState<string>();
   const survey = ctx.survey;
   if (!survey) return null;
   const run = async (live: boolean) => {
@@ -564,16 +566,9 @@ function SurveyPanel({
     .join(ctx.t('resources.applies.joiner'));
 
   const candidateBlock = (c: SurveyCandidate) => {
-    const choice = choiceOf(c.id);
-    // もう家に入れた候補：扱いは上で直す。登録とやり方は、ここで後から確かめられる。
+    // もう家に入れた候補：扱いは上で直す。登録とやり方は、ここで後から確かめられる（決める欄を開いたまま）。
     const added = household.resources.some((r) => r.id === c.id);
     const note = c.resource.notes[0];
-    // 前提にできるのは、家族が登録を「要る」か「同じ登録」とした時だけ。同じ名前の場所は、家族が同じ所か確かめる。
-    const linkable = requiredOf(household, c, choice) !== undefined;
-    const same = sameNamePlace(household, c);
-    // 入れた後：この所を使う新しいやり方の元（同じ種類の資源を使うやり方と、その資源）。
-    const placed = household.resources.find((r) => r.id === c.id)?.placeId !== undefined;
-    const bases = copyBases(household, c);
     return (
       <div key={c.id} className="flex flex-col gap-1.5 rounded-xl bg-paper px-3 py-2.5">
         <Title>{c.resource.name}</Title>
@@ -605,6 +600,31 @@ function SurveyPanel({
         {c.leadDays && (
           <Text quiet>{ctx.t('resources.survey.lead', { quote: c.leadDays.quote })}</Text>
         )}
+        {!added && open !== c.id ? (
+          <Row>
+            <Button kind="secondary" onClick={() => setOpen(c.id)}>
+              {ctx.t('resources.survey.decide')}
+            </Button>
+          </Row>
+        ) : (
+          decideForm(c)
+        )}
+      </div>
+    );
+  };
+
+  /** 候補を家に入れるかと、その扱い・事前の登録・前提にするやり方（家に入れた後は、登録と前提を後から確かめる）。 */
+  const decideForm = (c: SurveyCandidate) => {
+    const choice = choiceOf(c.id);
+    const added = household.resources.some((r) => r.id === c.id);
+    // 前提にできるのは、家族が登録を「要る」か「同じ登録」とした時だけ。同じ名前の場所は、家族が同じ所か確かめる。
+    const linkable = requiredOf(household, c, choice) !== undefined;
+    const same = sameNamePlace(household, c);
+    // 入れた後：この所を使う新しいやり方の元（同じ種類の資源を使うやり方と、その資源）。
+    const placed = household.resources.find((r) => r.id === c.id)?.placeId !== undefined;
+    const bases = copyBases(household, c);
+    return (
+      <>
         {added ? (
           <Text>{ctx.t('resources.survey.added')}</Text>
         ) : (
@@ -751,7 +771,7 @@ function SurveyPanel({
             </Text>
           </>
         )}
-      </div>
+      </>
     );
   };
 
