@@ -310,6 +310,7 @@
     "backupReady": "断られても、予備の「{{option}}」に進めます（手順は済んでいます）。",
     "backupReadyAccepted": "断られても、予備の「{{option}}」に進めます（手順は済み、受け付けられています）。",
     "backupExtra": "当日の準備は、予備に進む時に出します。",
+    "pending": "{{name}}さんが、まだ引き受けていません",
     "replyYes": "OK だった",
     "replyNo": "断られた",
     "notSent": "まだ送っていなかった（押し間違い）",

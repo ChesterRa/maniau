@@ -40,14 +40,20 @@ describe('きょうの画面', () => {
     expect(decide?.kind === 'decide' && decide.recommended?.key).toBe(opt('opt-gakudo'));
   });
 
-  it('祖母に頼んだ後：頼んだ彩には返事待ち、健太には帰りの買い物を頼む', () => {
+  it('祖母に頼んだ後：頼んだ彩には返事待ちと、健太がまだ引き受けていない買い物、健太には帰りの買い物を頼む', () => {
     const plan = computePlan(asked().events, '2026-11-26T12:10+09:00');
     const b = todayCards(plan, 'b');
     expect(kinds(b.main)).toEqual([]);
-    expect(kinds(b.quiet)).toEqual(['waiting']);
+    expect(kinds(b.quiet)).toEqual(['waiting', 'pending']);
     const a = todayCards(plan, 'a');
     expect(kinds(a.main)).toEqual(['proposal']);
     expect(a.main[0]?.kind === 'proposal' && a.main[0].task.titleKey).toBe('task.buy');
+    // 彩に静かに見せるのは、健太への提案と同じ作業（相手の側から）。
+    const pending = b.quiet.find((c) => c.kind === 'pending');
+    expect(pending?.kind === 'pending' && pending.task.key).toBe(
+      a.main[0]?.kind === 'proposal' ? a.main[0].task.key : 'missing',
+    );
+    expect(kinds(a.quiet)).not.toContain('pending');
   });
 
   it('学童の決め時の前の晩：返事を待つ彩にだけ、予備を押さえるかを出す', () => {

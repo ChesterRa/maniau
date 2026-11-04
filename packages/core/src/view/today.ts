@@ -66,6 +66,12 @@ export type TodayCard =
   /** 自分が引き受けた、まだ済んでいない作業。 */
   | { kind: 'todo'; task: Task }
   /**
+   * もう一人の大人に提案した作業で、まだ引き受けられていない物（提案の札の裏返し：同じ作業を、提案を受けた人で
+   * ない側から静かに見せる）。だれが頼んだかは言わない（仕組みの提案もある）。引き受けたら相手の作業に、断ったら
+   * 「だれがやるか」の札になり、ここから消える。
+   */
+  | { kind: 'pending'; task: Task }
+  /**
    * 使う日の前の日と使う日の、持って行く物（家にあると答えた物、買い終えた物、用意の締切の後に無いと
    * 答えた物）。大人の全員に、静かに出す。reanswer：家にあるかを、まだ答え直せるか（atHomeAnswerable）。
    */
@@ -489,6 +495,20 @@ export function todayCards(
     )
     .map((request) => ({ kind: 'waiting', request }));
 
+  // 提案の札と同じ作業（生きていて、取り消しの連絡でなく、選んだ案の物）のうち、もう一人の大人が、まだ引き受けて
+  // いない物。引き受けた後に中身が変わった作業（確かめ直し）は、まだ引き受けていないとは言わないので出さない。
+  const pending: TodayCard[] = plan.tasks
+    .filter(
+      (task) =>
+        task.live &&
+        task.cancels === undefined &&
+        task.assigneeId !== undefined &&
+        task.assigneeId !== memberId &&
+        task.commitment === 'proposed' &&
+        isActiveTask(plan, task),
+    )
+    .map((task) => ({ kind: 'pending', task }));
+
   // 担当の決まっていない作業と、引き受けを待つ作業は、要る時の早い順に並べる（遠い日の当日の準備で、明日の
   // 作業を下に押しやらない。初めに見せる札の数は限られる）。要る時：置いた時刻、無ければ始められる時、締切、
   // 案の決め時の順。分からない物は後。同じなら、担当の決まっていない物を先に（元の順を保つ）。
@@ -518,6 +538,6 @@ export function todayCards(
       ...work,
       ...question,
     ],
-    quiet: [...bring, ...waiting, ...todo],
+    quiet: [...bring, ...waiting, ...pending, ...todo],
   };
 }

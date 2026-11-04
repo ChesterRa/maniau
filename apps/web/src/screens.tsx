@@ -1049,6 +1049,7 @@ function cardKey(card: TodayCard): string {
     case 'cancel':
     case 'proposal':
     case 'todo':
+    case 'pending':
     case 'unowned':
       return `${card.kind}:${card.task.key}`;
     case 'backup':
@@ -2557,6 +2558,29 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
           <MoreLink onClick={reanswer}>
             {ctx.t(missing ? 'quiet.bringReady' : 'quiet.bringMissing')}
           </MoreLink>
+        )}
+      </div>
+    );
+  }
+  if (card.kind === 'pending') {
+    const { task } = card;
+    const condition = conditionOf(ctx, task.basis);
+    return (
+      <div className={`flex flex-col gap-0.5 py-2.5 ${border}`}>
+        <span className="flex items-center gap-2 text-sub">
+          <Icon path={ICON.clock} size={18} />
+          {ctx.t('quiet.pending', { name: nameOf(ctx.household, task.assigneeId) })}
+        </span>
+        <span>{taskTitle(ctx, task)}</span>
+        {task.timing !== undefined ? (
+          <span className="text-sm text-sub tabular-nums">{writtenWhen(ctx, task)}</span>
+        ) : (
+          task.start && (
+            <span className="text-sm text-sub tabular-nums">{dayTime(ctx, task.start)}</span>
+          )
+        )}
+        {condition && (
+          <span className="text-sm text-sub">{condition.when ?? ctx.t('say.conditional')}</span>
         )}
       </div>
     );
