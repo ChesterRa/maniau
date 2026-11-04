@@ -5,6 +5,7 @@ export * from './schema/commands';
 export * from './schema/condition';
 export * from './schema/events';
 export * from './schema/household';
+export * from './schema/maps';
 export * from './schema/plan';
 export * from './schema/sentences';
 export * from './schema/source';

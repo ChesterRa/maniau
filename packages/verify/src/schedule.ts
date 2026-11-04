@@ -1,11 +1,13 @@
 import type { Household, Place, PlanResult, RoutineSegment, Task } from '@maniau/core';
 import { checkDetour } from './detour';
 import type { History } from './history';
+import { storeMapEvidence } from './map-evidence';
 import type { Collector } from './report';
 import { executionScope, isRecommended } from './scope';
 import {
   coveredBy,
   dateFromIndex,
+  dateIndex,
   dayStarts,
   type Interval,
   instantMinute,
@@ -78,11 +80,20 @@ function allowedSegments(
 
 function checkOpeningHours(
   household: Household,
+  plan: PlanResult,
   scheduled: ScheduledTask,
   place: Place,
   report: Collector,
 ): void {
   const { task, start, end } = scheduled;
+  if (task.hoursBasis === 'mapsCurrent' || task.hoursBasis === 'mapsRegular') {
+    checkMapHours(household, plan, scheduled, place, report);
+    return;
+  }
+  if (task.travelSource === 'maps' && task.hoursBasis === undefined && plan.mapInputs) {
+    report.undetermined('opening_hours_basis_missing', task.key, '営業時間の根拠が分からない。');
+    return;
+  }
   if (!place.hours) {
     report.undetermined('opening_hours_missing', task.key, '場所の営業時間が分からない。');
     return;
@@ -157,6 +168,126 @@ function checkOpeningHours(
   }
 }
 
+/** 照会した日の有効な営業時間と、ふだんの営業時間の目安を分けて照らす。 */
+function checkMapHours(
+  household: Household,
+  plan: PlanResult,
+  scheduled: ScheduledTask,
+  place: Place,
+  report: Collector,
+): void {
+  const { task, start, end } = scheduled;
+  const evidence = storeMapEvidence(household, plan, place);
+  const hours = task.hoursBasis === 'mapsCurrent' ? evidence?.current : evidence?.regular;
+  if (!hours || !plan.mapInputs) {
+    report.undetermined(
+      'opening_hours_evidence_missing',
+      task.key,
+      'この店の営業時間の根拠がない。',
+    );
+    return;
+  }
+  let localStart: ReturnType<typeof localMinute>;
+  let localEnd: ReturnType<typeof localMinute>;
+  let checked: ReturnType<typeof localMinute>;
+  try {
+    localStart = localMinute(start, hours.timeZone);
+    localEnd = localMinute(end, hours.timeZone);
+    checked = localMinute(instantMinute(plan.mapInputs.checkedAt), hours.timeZone);
+  } catch {
+    report.undetermined('opening_hours_timezone_invalid', task.key, '店の時区を確認できない。');
+    return;
+  }
+  if (localEnd.localIndex - localStart.localIndex !== end - start) {
+    report.undetermined(
+      'opening_hours_timezone_transition',
+      task.key,
+      '時差が変わる区間を確認できない。',
+    );
+    return;
+  }
+  const days = dayStarts(localStart.localIndex, localEnd.localIndex);
+  if (!days) {
+    report.undetermined('opening_hours_range', task.key, '長い作業の営業時間を確認できない。');
+    return;
+  }
+  if (task.hoursBasis === 'mapsRegular') {
+    // ふだんの週が合っていても、その日が休みや臨時営業でないとは言えない。
+    const regular = evidence?.regular;
+    if (!regular) return;
+    const intervals: Interval[] = [];
+    const first = days[0];
+    if (first === undefined) return;
+    for (const day of [first - 24 * 60, ...days]) {
+      for (const period of regular.periods.filter(
+        (entry) => entry.weekday === weekday(dateFromIndex(day)),
+      )) {
+        const open = timeOfDay(period.open);
+        let close = timeOfDay(period.close);
+        if (open === close) continue;
+        if (close < open) close += 24 * 60;
+        intervals.push({ start: day + open, end: day + close });
+      }
+    }
+    if (coveredBy(localStart.localIndex, localEnd.localIndex, intervals)) {
+      report.undetermined(
+        'opening_hours_estimate',
+        task.key,
+        '地図のふだんの営業時間は当日の目安。',
+      );
+    } else {
+      report.undetermined(
+        'opening_hours_estimate_mismatch',
+        task.key,
+        'ふだんの営業時間に収まらず、当日の営業も分からない。',
+      );
+    }
+    return;
+  }
+  const current = evidence?.current;
+  if (!current) return;
+  const from = dateIndex(current.validFrom);
+  const to = dateIndex(current.validTo);
+  const queryDay = dateIndex(checked.date);
+  if (
+    from < queryDay ||
+    to <= from ||
+    to > queryDay + 7 * 24 * 60 ||
+    start < instantMinute(plan.mapInputs.checkedAt) ||
+    days.some((day) => day < from || day >= to) ||
+    current.periods.some(
+      (period) => period.date < current.validFrom || period.date >= current.validTo,
+    )
+  ) {
+    report.undetermined('opening_hours_out_of_range', task.key, '照会の有効期間を確認できない。');
+    return;
+  }
+  const intervals: Interval[] = [];
+  let ambiguous = false;
+  for (const period of current.periods) {
+    const day = dateIndex(period.date);
+    const open = timeOfDay(period.open);
+    let close = timeOfDay(period.close);
+    if (open === close) {
+      if (days.includes(day) || days.includes(day + 24 * 60)) ambiguous = true;
+      continue;
+    }
+    if (close < open) close += 24 * 60;
+    intervals.push({ start: day + open, end: day + close });
+  }
+  if (!coveredBy(localStart.localIndex, localEnd.localIndex, intervals)) {
+    if (ambiguous) {
+      report.undetermined(
+        'opening_hours_ambiguous',
+        task.key,
+        '開店と閉店が同時刻で営業時間が分からない。',
+      );
+    } else {
+      report.violation('outside_opening_hours', task.key, '作業そのものが営業時間に収まらない。');
+    }
+  }
+}
+
 function checkPlace(
   household: Household,
   plan: PlanResult,
@@ -196,14 +327,25 @@ function checkPlace(
       (arrangement) => arrangement.key === task.basis.arrangementKey && arrangement.kind === 'need',
     );
   if (place.kind === 'store' || place.hours || genericPlace)
-    checkOpeningHours(household, scheduled, place, report);
+    checkOpeningHours(household, plan, scheduled, place, report);
 
   if (task.travelSource === 'maps') {
-    report.undetermined(
-      'route_evidence_missing',
-      task.key,
-      '地図の道のりの根拠を検証器に渡せない。',
-    );
+    const evidence = storeMapEvidence(household, plan, place);
+    const stationOnRoutine =
+      evidence &&
+      routines.some(
+        (segment) =>
+          segment.placeId === evidence.stationId ||
+          segment.viaStationIds.includes(evidence.stationId),
+      );
+    if (!evidence || !stationOnRoutine) {
+      report.undetermined('route_evidence_missing', task.key, '店と通る駅の道のりを照らせない。');
+    } else if (
+      task.travelBeforeMin !== evidence.walkFromStationMin ||
+      task.travelAfterMin !== evidence.walkToStationMin
+    ) {
+      report.violation('route_time_mismatch', task.key, '駅と店の往復が道のりの根拠と違う。');
+    }
   } else if (task.travelSource === 'estimate') {
     const station = place.nearStationId;
     const walk = place.walkFromStationMin;

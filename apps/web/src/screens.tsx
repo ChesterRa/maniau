@@ -17,6 +17,7 @@ import {
   isActiveTask,
   isNeedArrangementKey,
   isValidLocalDate,
+  localDateOf,
   type Member,
   needStep,
   type OptionPlan,
@@ -35,6 +36,7 @@ import {
   taskContent,
   toEpochMinutes,
   untimed,
+  weekdayOf,
   zonedToEpochMinutes,
 } from '@maniau/core';
 import type { TFunction } from 'i18next';
@@ -54,6 +56,7 @@ import {
   type ReadResult,
   type SendResult,
   type ShownProposal,
+  type WalkView,
   type WayIdeasRequest,
   type WayIdeasResult,
 } from './family';
@@ -68,6 +71,7 @@ import {
   minutesBetween,
 } from './format';
 import type { UiLanguage } from './i18n';
+import { GoogleMapsMark, TermsLink, WalkMap } from './maps';
 import { type NotUploadable, toUploadable, type Uploadable } from './photo';
 import {
   Button,
@@ -177,6 +181,8 @@ export interface Ctx {
    * 書けない変更は理由を返す。
    */
   previewChange?: (command: PreviewCommand) => Promise<HouseholdPreviewResult | undefined>;
+  /** 地図（地図のあるデモだけ）：画面の鍵と、店までの徒歩の道を読む口。 */
+  maps?: { key: string; walk: (storeId: string) => Promise<WalkView | undefined> };
   go: (route: Route) => void;
 }
 
@@ -1797,6 +1803,39 @@ function finishOf(ctx: Ctx, task: Task): { label: string; ask: boolean; run: () 
   };
 }
 
+/**
+ * 地図で置いた店の作業に添える：その日の営業時間（何で確かめたか）と、Google に調べた時刻と出典。
+ * ふだんの営業時間で置いた時は、その日の臨時の休みを確かめていないと書く（開いていると言い切らない）。
+ */
+function MapsFacts({ ctx, task }: { ctx: Ctx; task: Task }) {
+  const evidence = ctx.plan.mapInputs?.stores.find((s) => s.storeId === task.atPlaceId);
+  if (!evidence || !task.start) return null;
+  const at = toEpochMinutes(task.start);
+  const span = (p: { open: string; close: string }) => ctx.t('maps.span', p);
+  let hours: string | undefined;
+  if (task.hoursBasis === 'mapsCurrent' && evidence.current) {
+    const date = localDateOf(at, evidence.current.timeZone);
+    const periods = evidence.current.periods.filter((p) => p.date === date);
+    hours = ctx.t('maps.hoursCurrent', { hours: periods.map(span).join(ctx.t('maps.and')) });
+  } else if (task.hoursBasis === 'mapsRegular' && evidence.regular) {
+    const weekday = weekdayOf(localDateOf(at, evidence.regular.timeZone));
+    const periods = evidence.regular.periods.filter((p) => p.weekday === weekday);
+    hours = ctx.t('maps.hoursRegular', { hours: periods.map(span).join(ctx.t('maps.and')) });
+  }
+  const checked = ctx.plan.mapInputs?.checkedAt;
+  return (
+    <>
+      {hours && <span className="text-[15px] text-sub">{hours}</span>}
+      {checked && (
+        <span className="text-[13px] text-sub">
+          {ctx.t('maps.checked', { day: day(ctx, checked), time: time(ctx, checked) })}{' '}
+          <GoogleMapsMark /> · <TermsLink ctx={ctx} />
+        </span>
+      )}
+    </>
+  );
+}
+
 function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
   // 引き受けには、この札で見せている提案の控えを付ける。今の提案と違えば、サーバーが断って見せ直す。
   const shown = proposalSnapshot(task);
@@ -1878,24 +1917,38 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
             })}
           </span>
           {/* 歩く時間は、目安の出どころがある時だけ（0 は「移動を足していない」で、駅から 0 分ではない）。 */}
+          {/* 地図で調べた道のりは、行きと戻りを別に書く（目安とは書かず、出典と調べた時刻を下に添える）。 */}
           {store && (
             <span className="text-[15px] text-sub">
-              {task.travelSource !== 'none' && task.travelBeforeMin > 0
-                ? ctx.t('card.proposal.where', { place: store.name, walk: task.travelBeforeMin })
-                : ctx.t('card.proposal.at', { place: store.name })}
+              {task.travelSource === 'maps'
+                ? ctx.t('card.proposal.whereMaps', {
+                    place: store.name,
+                    walk: task.travelBeforeMin,
+                    back: task.travelAfterMin,
+                  })
+                : task.travelSource !== 'none' && task.travelBeforeMin > 0
+                  ? ctx.t('card.proposal.where', { place: store.name, walk: task.travelBeforeMin })
+                  : ctx.t('card.proposal.at', { place: store.name })}
             </span>
           )}
-          {!task.detour && task.travelSource !== 'none' && task.travelAfterMin > 0 && (
-            <span className="text-[15px] text-sub">
-              {ctx.t('card.proposal.back', { min: task.travelAfterMin })}
-            </span>
-          )}
+          {!task.detour &&
+            task.travelSource !== 'none' &&
+            task.travelSource !== 'maps' &&
+            task.travelAfterMin > 0 && (
+              <span className="text-[15px] text-sub">
+                {ctx.t('card.proposal.back', { min: task.travelAfterMin })}
+              </span>
+            )}
           {task.detour && (
             <span className="text-[15px]">
               {ctx.t('card.proposal.home', { time: time(ctx, task.detour.delayedArrival), late })}
             </span>
           )}
+          {task.travelSource === 'maps' && <MapsFacts ctx={ctx} task={task} />}
         </div>
+      )}
+      {task.travelSource === 'maps' && task.atPlaceId && (
+        <WalkMap ctx={ctx} storeId={task.atPlaceId} />
       )}
       {/* 外の相手に出す作業は、相手と、何を待つか（返事・承認・受け付け）を、引き受ける前に見せる。 */}
       {task.external && (

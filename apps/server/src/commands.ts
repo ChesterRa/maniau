@@ -11,6 +11,7 @@ import {
   type Interpretation,
   isActiveTask,
   isNeedArrangementKey,
+  type MapInputs,
   type NeedInterpretation,
   type PlaceKind,
   type PlanResult,
@@ -55,6 +56,8 @@ export interface CommandContext {
   demo: boolean;
   /** 身元で入った命令なら、その身元（押さえた中で、今も結ばれているかを確かめる）。 */
   identityId?: string;
+  /** この要求のために地図から引いた根拠（同じ要求の計算・確かめ・画面が同じ物を使う）。 */
+  maps?: MapInputs;
 }
 
 export type CommandResult =
@@ -118,7 +121,7 @@ function handle(
   const now =
     state.clock === undefined ? context.now : formatDateTime(state.clock, household.timeZone);
   const at = { ...context, now };
-  const plan = planFromState(state, now);
+  const plan = planFromState(state, now, context.maps);
   const decided = expand({ plan, state, events }, at, command);
   if ('reason' in decided) return { ...decided, throughSeq: throughSeq() };
   // 「選んだら」で見せた物と、同じ命令の今の「選んだら」（同じ関数で作る）が違えば、断って見せ直す。
@@ -131,7 +134,7 @@ function handle(
         ? []
         : asEvents(
             events,
-            withReopened({ plan, events }, form.bodies, context.memberId, now),
+            withReopened({ plan, events }, form.bodies, context.memberId, now, context.maps),
             context.memberId,
             now,
           );
@@ -142,7 +145,11 @@ function handle(
             household,
             events,
             new Set(violationsOf(household, events, plan)),
-            { before: plan, added, after: planFromState(foldEvents([...events, ...added]), now) },
+            {
+              before: plan,
+              added,
+              after: planFromState(foldEvents([...events, ...added]), now, context.maps),
+            },
             {
               arrangementKey: command.arrangementKey,
               optionKey: command.optionKey,
@@ -166,7 +173,7 @@ function handle(
     }
     const added = asEvents(
       events,
-      withReopened({ plan, events }, decided.bodies, context.memberId, now),
+      withReopened({ plan, events }, decided.bodies, context.memberId, now, context.maps),
       context.memberId,
       now,
     );
@@ -176,7 +183,7 @@ function handle(
       {
         household: set?.type === 'householdSet' ? set.household : household,
         added,
-        plan: planFromState(foldEvents([...events, ...added]), now),
+        plan: planFromState(foldEvents([...events, ...added]), now, context.maps),
       },
       previewed.input,
     );
@@ -185,7 +192,13 @@ function handle(
     }
   }
   // 「もう要りません」と出ていた引き受けが、この操作で戻ったら、本人にもう一度頼む（reopened）。
-  const bodies = withReopened({ plan, events }, decided.bodies, context.memberId, now);
+  const bodies = withReopened(
+    { plan, events },
+    decided.bodies,
+    context.memberId,
+    now,
+    context.maps,
+  );
   if (bodies.length > 0) log.append(bodies, context.memberId, now);
   // 何も起きなかった操作も残す（同じ操作の送り直しで、後の別の人の変更を戻さないため。§7.3 の 7）。
   log.recordOperation({
@@ -227,11 +240,13 @@ function withReopened(
   bodies: EventBody[],
   memberId: string,
   now: DateTime,
+  maps: MapInputs | undefined,
 ): EventBody[] {
   if (bodies.length === 0 || (plan.released?.length ?? 0) === 0) return bodies;
   const after = planFromState(
     foldEvents([...events, ...asEvents(events, bodies, memberId, now)]),
     now,
+    maps,
   );
   return [...bodies, ...reopened(plan, after)];
 }
@@ -243,7 +258,7 @@ function withReopened(
  */
 export function previewCommand(
   events: readonly DomainEvent[],
-  context: Pick<CommandContext, 'memberId' | 'now'>,
+  context: Pick<CommandContext, 'memberId' | 'now' | 'maps'>,
   command: Command,
   /** 同じ事象の列から作った状態と今の計画（いくつも見る時に、作り直さない）。 */
   base?: { state: EngineState; plan: PlanResult },
@@ -258,23 +273,29 @@ export function previewCommand(
   }
   const now =
     state.clock === undefined ? context.now : formatDateTime(state.clock, household.timeZone);
-  const before = base?.plan ?? planFromState(state, now);
+  const before = base?.plan ?? planFromState(state, now, context.maps);
   const decided = expand(
     { plan: before, state, events },
-    { memberId: context.memberId, operationId: 'preview', now, demo: false },
+    {
+      memberId: context.memberId,
+      operationId: 'preview',
+      now,
+      demo: false,
+      ...(context.maps ? { maps: context.maps } : {}),
+    },
     command,
   );
   if ('reason' in decided) return decided;
   const added = asEvents(
     events,
-    withReopened({ plan: before, events }, decided.bodies, context.memberId, now),
+    withReopened({ plan: before, events }, decided.bodies, context.memberId, now, context.maps),
     context.memberId,
     now,
   );
   return {
     status: 'ok',
     before,
-    after: planFromState(foldEvents([...events, ...added]), now),
+    after: planFromState(foldEvents([...events, ...added]), now, context.maps),
     added,
   };
 }

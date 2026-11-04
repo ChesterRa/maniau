@@ -4,8 +4,10 @@
 //   家に着くのが遅れる分は、続く家の区間（空いた時間）を短くする。次がお迎えなら寄らない。
 //   遅れる間、他の大人が家にいる時だけ寄る。遅く帰ってよいかは、担当の人が引き受けて確かめる。
 // 週末の外出：外出の区間の中で、その駅の近くの店へ行く。
-// 移動の時間は、家庭の情報の目安（walkFromStationMin）で、地図で確かめていない。
+// 移動の時間と営業時間は、地図の根拠（MapInputs）がその店・駅に結び付く時はそれを使い（travelSource maps）、
+// 無ければ家庭の情報の目安（walkFromStationMin・hours）を使う。駅 → 店と店 → 駅は別々の分。
 import type { Household, Place } from '../schema/household';
+import type { HoursBasis, MapInputs, StoreMapEvidence } from '../schema/maps';
 import type { EpochMinutes } from '../time';
 import { localDateOf, weekdayOf, zonedToEpochMinutes } from '../time';
 import { activeAdultIds, type Slot, slotsBetweenDates, slotsOn } from './availability';
@@ -20,19 +22,125 @@ export interface PurchaseOpportunity {
   slotKind: 'commute' | 'away';
   /** 帰り道の寄り道なら、元の到家と、遅れた到家。 */
   detour?: { plannedArrival: EpochMinutes; delayedArrival: EpochMinutes };
+  /** 移動の分の出どころ（maps：地図の根拠、estimate：家庭の目安）。 */
+  travelSource: 'estimate' | 'maps';
+  /** 営業時間を何で確かめて置いたか。 */
+  hoursBasis: HoursBasis;
 }
 
-function openDuring(store: Place, start: EpochMinutes, end: EpochMinutes, tz: string): boolean {
-  if (!store.hours) return false;
-  const date = localDateOf(start, tz);
-  if (store.hours.closedDates.includes(date)) return false;
-  const weekday = weekdayOf(date);
-  return store.hours.periods.some(
-    (p) =>
-      p.weekday === weekday &&
-      zonedToEpochMinutes(date, p.open, tz) <= start &&
-      end <= zonedToEpochMinutes(date, p.close, tz),
+/** 店の機会を探した結果。置けなかった理由に、確かめていない営業時間があったか。 */
+export interface PurchaseSearch {
+  opportunities: PurchaseOpportunity[];
+  /**
+   * 区間には置けたのに、確かめていない営業時間（地図のふだんの営業時間の目安・営業時間が分からない）で
+   * 落とした機会があった。機会が無くても「無い」とは言い切れない。
+   */
+  droppedUnconfirmed: boolean;
+}
+
+/** 店の計算に使う道のりと根拠。 */
+interface StoreRoute {
+  store: Place;
+  /** 駅 → 店、店 → 駅（分）。 */
+  walkFrom: number;
+  walkTo: number;
+  travelSource: 'estimate' | 'maps';
+  evidence?: StoreMapEvidence;
+}
+
+/**
+ * 地図の根拠が、この家庭のこの店とその駅に結び付くか（店の id・Google の place ID・駅の id・駅の Google の
+ * place ID が全部合う時だけ）。合わなければ使わない（別の店や駅の道のりを、この店に当てない）。
+ */
+export function evidenceFor(
+  household: Household,
+  store: Place,
+  maps: MapInputs | undefined,
+): StoreMapEvidence | undefined {
+  if (!maps || store.googlePlaceId === undefined || store.nearStationId === undefined)
+    return undefined;
+  const station = household.places.find((p) => p.id === store.nearStationId);
+  if (station?.googlePlaceId === undefined) return undefined;
+  return maps.stores.find(
+    (e) =>
+      e.storeId === store.id &&
+      e.googlePlaceId === store.googlePlaceId &&
+      e.stationId === store.nearStationId &&
+      e.stationGooglePlaceId === station.googlePlaceId,
   );
+}
+
+function routeOf(
+  household: Household,
+  store: Place,
+  maps: MapInputs | undefined,
+): StoreRoute | undefined {
+  if (store.nearStationId === undefined) return undefined;
+  const evidence = evidenceFor(household, store, maps);
+  if (evidence) {
+    return {
+      store,
+      walkFrom: evidence.walkFromStationMin,
+      walkTo: evidence.walkToStationMin,
+      travelSource: 'maps',
+      evidence,
+    };
+  }
+  const walk = store.walkFromStationMin;
+  if (walk === undefined) return undefined;
+  return { store, walkFrom: walk, walkTo: walk, travelSource: 'estimate' };
+}
+
+type Openness =
+  | { status: 'open' | 'closed'; basis: HoursBasis }
+  /** ふだんの営業時間の目安で閉まっている・営業時間が分からない（閉まっているとは言い切れない）。 */
+  | { status: 'unconfirmed' };
+
+const within = (
+  date: string,
+  open: string,
+  close: string,
+  tz: string,
+  start: EpochMinutes,
+  end: EpochMinutes,
+) => zonedToEpochMinutes(date, open, tz) <= start && end <= zonedToEpochMinutes(date, close, tz);
+
+/**
+ * その時刻に店が開いているか。地図の根拠があれば、照会の日から数日の営業時間（その日の分が確か）、
+ * 無ければふだんの営業時間（目安）。どちらも無ければ家庭の情報。何も無ければ分からない。
+ */
+function openness(route: StoreRoute, start: EpochMinutes, end: EpochMinutes, tz: string): Openness {
+  const current = route.evidence?.current;
+  if (current) {
+    const date = localDateOf(start, current.timeZone);
+    if (current.validFrom <= date && date < current.validTo) {
+      const open = current.periods.some(
+        (p) => p.date === date && within(date, p.open, p.close, current.timeZone, start, end),
+      );
+      return { status: open ? 'open' : 'closed', basis: 'mapsCurrent' };
+    }
+  }
+  const regular = route.evidence?.regular;
+  if (regular) {
+    const date = localDateOf(start, regular.timeZone);
+    const weekday = weekdayOf(date);
+    const open = regular.periods.some(
+      (p) => p.weekday === weekday && within(date, p.open, p.close, regular.timeZone, start, end),
+    );
+    return open ? { status: 'open', basis: 'mapsRegular' } : { status: 'unconfirmed' };
+  }
+  const hours = route.store.hours;
+  // 地図の根拠があるのに営業時間が返らなかった店は、家庭の情報が無ければ分からない（閉まっているとは
+  // 言わない）。地図の根拠の無い店で、家庭の情報に営業時間が無ければ、今までどおり置かない。
+  if (!hours)
+    return route.evidence ? { status: 'unconfirmed' } : { status: 'closed', basis: 'family' };
+  const date = localDateOf(start, tz);
+  if (hours.closedDates.includes(date)) return { status: 'closed', basis: 'family' };
+  const weekday = weekdayOf(date);
+  const open = hours.periods.some(
+    (p) => p.weekday === weekday && within(date, p.open, p.close, tz, start, end),
+  );
+  return { status: open ? 'open' : 'closed', basis: 'family' };
 }
 
 export function purchaseOpportunities(
@@ -41,10 +149,26 @@ export function purchaseOpportunities(
   durationMin: number,
   from: EpochMinutes,
   until: EpochMinutes,
+  maps?: MapInputs,
 ): PurchaseOpportunity[] {
+  return searchPurchase(household, goods, durationMin, from, until, maps).opportunities;
+}
+
+export function searchPurchase(
+  household: Household,
+  goods: string,
+  durationMin: number,
+  from: EpochMinutes,
+  until: EpochMinutes,
+  maps?: MapInputs,
+): PurchaseSearch {
   const tz = household.timeZone;
-  const stores = household.places.filter((p) => p.kind === 'store' && p.goods.includes(goods));
+  const routes = household.places
+    .filter((p) => p.kind === 'store' && p.goods.includes(goods))
+    .map((store) => routeOf(household, store, maps))
+    .filter((r): r is StoreRoute => r !== undefined);
   const result: PurchaseOpportunity[] = [];
+  let droppedUnconfirmed = false;
   for (const memberId of activeAdultIds(household)) {
     const slots = slotsBetweenDates(
       household,
@@ -53,36 +177,43 @@ export function purchaseOpportunities(
       localDateOf(until, tz),
     );
     slots.forEach((slot, index) => {
-      for (const store of stores) {
-        const walk = store.walkFromStationMin;
-        if (walk === undefined || store.nearStationId === undefined) continue;
-        const option = placeAt(household, slot, slots[index + 1], store, walk, durationMin);
+      for (const route of routes) {
+        const option = placeAt(household, slot, slots[index + 1], route, durationMin);
         if (!option) continue;
         const { start, end, detour } = option;
         if (start < from || end > until) continue;
-        if (!openDuring(store, start, end, tz)) continue;
+        const open = openness(route, start, end, tz);
+        if (open.status === 'unconfirmed') {
+          droppedUnconfirmed = true;
+          continue;
+        }
+        if (open.status === 'closed') continue;
         result.push({
           memberId,
-          storeId: store.id,
+          storeId: route.store.id,
           start,
           end,
-          travelBeforeMin: walk,
-          travelAfterMin: walk,
+          travelBeforeMin: route.walkFrom,
+          travelAfterMin: route.walkTo,
           slotKind: slot.kind === 'commute' ? 'commute' : 'away',
           ...(detour ? { detour } : {}),
+          travelSource: route.travelSource,
+          hoursBasis: open.basis,
         });
       }
     });
   }
-  return result.sort((a, b) => a.start - b.start || a.memberId.localeCompare(b.memberId));
+  return {
+    opportunities: result.sort((a, b) => a.start - b.start || a.memberId.localeCompare(b.memberId)),
+    droppedUnconfirmed,
+  };
 }
 
 function placeAt(
   household: Household,
   slot: Slot,
   next: Slot | undefined,
-  store: Place,
-  walk: number,
+  route: StoreRoute,
   duration: number,
 ):
   | {
@@ -91,6 +222,7 @@ function placeAt(
       detour?: { plannedArrival: EpochMinutes; delayedArrival: EpochMinutes };
     }
   | undefined {
+  const { store, walkFrom, walkTo } = route;
   if (slot.kind === 'commute') {
     const home = household.places.find((p) => p.id === slot.toId && p.kind === 'home');
     const homeWalk = home?.walkFromStationMin;
@@ -99,9 +231,9 @@ function placeAt(
     if (home.nearStationId !== lastStation || store.nearStationId !== lastStation) return undefined;
     if (next?.kind !== 'home') return undefined;
     const atStation = slot.end - homeWalk;
-    const start = atStation + walk;
+    const start = atStation + walkFrom;
     const end = start + duration;
-    const delayedArrival = slot.end + 2 * walk + duration;
+    const delayedArrival = slot.end + walkFrom + walkTo + duration;
     if (delayedArrival > next.end) return undefined;
     // 帰りが遅れる間、子を大人のいない家に残さない：他の大人が、その間ずっと家にいる時だけ寄る。
     if (!anotherAdultHome(household, slot, slot.end, delayedArrival)) return undefined;
@@ -109,9 +241,9 @@ function placeAt(
   }
   if (slot.kind === 'away') {
     if (slot.placeId !== store.nearStationId) return undefined;
-    const start = slot.start + walk;
+    const start = slot.start + walkFrom;
     const end = start + duration;
-    if (end + walk > slot.end) return undefined;
+    if (end + walkTo > slot.end) return undefined;
     return { start, end };
   }
   return undefined;

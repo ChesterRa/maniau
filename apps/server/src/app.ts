@@ -17,6 +17,7 @@ import {
   type WayIdeasReader,
 } from './demo-sessions';
 import { familyInput } from './family-input';
+import type { MapsClient } from './maps/google';
 import { type FamilyMember, type Invitations, memberFor } from './members';
 import type { Notifier } from './notifier';
 import { previewChange, previewChoices, previewHousehold } from './preview';
@@ -68,11 +69,18 @@ export function createApp(
      * 家族の家庭とは一緒に使わない（家族の口は、成員ごとに自分で確かめる）。
      */
     demoAccess?: AccessVerifier;
+    /**
+     * 地図の口（Google の Places・Routes。サーバーの鍵がある時だけ）。デモの計画の寄り道に、本物の道のりと
+     * 営業時間を使う。無ければ家庭の目安で計算する。
+     */
+    maps?: MapsClient;
+    /** 画面で地図を描く鍵（Maps JavaScript API だけを許し、置き場所の URL に限った物）。 */
+    mapsBrowserKey?: string;
   } = {},
 ): Hono {
   // 起きる時に、デモの家族とお知らせを読み、型と家族の決まりを確かめる（誤りなら起きない）。
   loadDemoData();
-  const sessions = demoSessions();
+  const sessions = demoSessions(Date.now, {}, options.maps ? { maps: options.maps } : {});
   const { family, demoAccess } = options;
   if (family && demoAccess) {
     throw new Error('デモの入口の確かめと家族の家庭は、同じサーバーで同時に使わない');
@@ -525,7 +533,21 @@ export function createApp(
       canRead: reader !== undefined,
       canHear: listener !== undefined,
       canPhoto: reader !== undefined && transcriber !== undefined,
+      // 画面で地図を描けるか（地図の口と、画面の鍵の両方がある時だけ。鍵は公開してよい制限付きの物）。
+      ...(sessions.mapsEnabled && options.mapsBrowserKey
+        ? { mapsKey: options.mapsBrowserKey }
+        : {}),
     });
+  });
+  // 店までの徒歩の道（画面の地図に描く）。返すだけで、取っておかない。
+  app.get('/api/demo/sessions/:sid/maps/walk', async (c) => {
+    const storeId = c.req.query('store');
+    if (!storeId) return c.json({ error: 'storeRequired' }, 400);
+    const walk = await sessions.walk(c.req.param('sid'), storeId);
+    if (walk === null) return c.json({ error: 'unknownSession' }, 404);
+    if (!walk) return c.json({ error: 'mapsUnavailable' }, 503);
+    c.header('Cache-Control', 'private, no-store');
+    return c.json(walk);
   });
   app.get('/api/demo/sessions/:sid/view', async (c) => {
     const member = c.req.query('member');

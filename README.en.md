@@ -12,6 +12,7 @@ Putting an event in a calendar does not settle by when each decision must be mad
 
 - **Read notices:** Claude reads text you paste or dictate, or a photo or PDF of a handout, and turns events, belongings, submissions and changes into items linked to the original text.
 - **Show decision deadlines:** From the notice's deadlines, rules the family has registered (after-school care forms, leave requests, how far ahead to ask a grandparent) and the usual week, Maniau shows by when each option must be chosen and the next task.
+- **Place errands on a real map:** Errands on the way home use Google Maps walking times from the station to the store (each way) and the store's opening hours, and “Show on map” shows the walking route. Usual hours are an estimate; special closures on the day are not checked (only on a server with map keys).
 - **Choose:** Maniau lists the options you can still choose with how long each one remains available, and shows a suggestion with its reason and what would happen if you chose each option, computed with the same calculation without recording anything.
 - **Take it on and follow up:** Maniau proposes each task to one adult and records whether they take it on. Requests to grandparents or after-school care keep "awaiting a reply" separate from "confirmed". “What if they say no?” shows ahead of time what would happen if the answer is no.
 - **Adapt to changes:** When a postponement arrives, Maniau removes preparations that are no longer needed and drafts cancellation messages for people who were already asked.
@@ -29,7 +30,7 @@ Built with Claude: Japan 2026 entry
 Use the scene selector at the top to move between points in time, and “Viewing as” to switch between the two adults (健太 and 彩). Each scene also shows a one-line guide at the top of the screen.
 
 1. **11/25 Notice arrives:** A school-event notice creates child care for 陽菜 on 12/7 and a shirt to prepare. Tap “Decide” to compare each option's decision deadline and what happens if you choose it.
-2. **11/26 Errand on the way home:** 彩 asked おばあちゃん and is waiting for the reply. 健太 has a task to buy the shirt at a shop on the way home.
+2. **11/26 Errand on the way home:** 彩 asked おばあちゃん and is waiting for the reply. 健太 has a task to buy the shirt at a shop on the way home. The walking time and store hours come from Google Maps, and “Show on map” shows the route.
 3. **11/29 No reply yet:** The after-school care deadline is close. On 彩's screen, Maniau asks whether to hold a backup, and “What if they say no?” shows the calculation if the answer is no.
 4. **11/30 Backup booked:** After-school care is held as a backup while waiting for おばあちゃん. On 彩's screen, “What if they say no?” shows the plan moving on to it.
 5. **12/4 Postponed:** Child care that is no longer needed, and the cancellations to send, split between the two adults.
@@ -61,6 +62,10 @@ The demo runs on a fictional household and notices; it needs no API key or datab
 ### Try your own text
 
 When the server has `ANTHROPIC_API_KEY` set (as an environment variable or in `.env` at the repository root), you can try reading text and photos, quick updates, and ideas for ways with Claude. What is sent to Anthropic and the usage limits are in [Details and limitations](docs/scope.en.md#try-your-own-text). Please try it with fictional text.
+
+### Use maps
+
+When the server has `GOOGLE_MAPS_API_KEY` set (a server-only key allowed only for Places API (New) and Routes API), demo errands are placed with Google Maps walking times and store hours. If `GOOGLE_MAPS_BROWSER_KEY` is also set (a key allowed only for the Maps JavaScript API and restricted to the site's URL), the app shows the map. What is sent to Google and what is not kept is in [Terms and privacy](https://maniauserver-production.up.railway.app/terms.html#en).
 
 ## Scope and limitations
 

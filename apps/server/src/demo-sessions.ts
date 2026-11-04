@@ -1,6 +1,7 @@
 // デモの家庭（ログインの無い、架空の家族）。見る人ごとに、段の事象から作った家庭をメモリに置く。
 // 一人の操作が、別の人の見るデモを変えないようにする。古い物から捨てる。
 import { createHash, randomUUID } from 'node:crypto';
+import type { MapInputs } from '@maniau/core';
 import {
   type CheckedIdeas,
   type ChoicePreview,
@@ -33,6 +34,8 @@ import {
 import { computePlan, currentItems, foldEvents } from '@maniau/core/engine';
 import { type CommandGuard, type CommandResult, reopened, runCommand } from './commands';
 import { DEMO_STAGES, type DemoStageId, demoEvents } from './demo';
+import type { LatLng, MapsClient, WalkRoute } from './maps/google';
+import { mapInputsFor } from './maps/inputs';
 import { previewChange, previewChoices } from './preview';
 import {
   buildExtractInput,
@@ -257,6 +260,15 @@ interface Session {
   proposals: Map<string, StoredProposal>;
 }
 
+/** 店までの徒歩の道（画面の地図）。Google の名前・位置・道は、この応答で見せるだけ。 */
+export interface WalkView {
+  /** Google に照会した実際の時刻。 */
+  checkedAt: DateTime;
+  station: { id: string; name?: string; location: LatLng };
+  store: { id: string; name?: string; location: LatLng; googleMapsUri?: string };
+  route: WalkRoute;
+}
+
 /**
  * 読み取りに渡す前提：家族の直しと確かめを重ねた、今の事項（取り下げ・置き換え・取り消しを受けた物を
  * 除く）と、取り下げていないお知らせの未定の値と、届いた時刻。読む間に変わったかを見るため、決まった
@@ -307,6 +319,8 @@ export function demoSessions(
   clock: () => number = Date.now,
   /** 試験で数の上限を小さくする。 */
   limits: { perDay?: number } = {},
+  /** 地図の口（無ければ地図を使わず、家庭の目安で計算する。試験は架空の口を渡す）。 */
+  deps: { maps?: MapsClient; mapsClock?: () => number } = {},
 ) {
   const perDay = limits.perDay ?? MAX_READINGS_PER_DAY;
   const store = memoryStore();
@@ -354,6 +368,19 @@ export function demoSessions(
   // 待つ間に、期限が切れた・数の上限で捨てたデモではないか（外に送る前と、結果を足す前に確かめる）。
   const alive = (id: string, session: Session) =>
     sessions.get(id) === session && clock() - session.touched <= TTL_MS;
+
+  /**
+   * この要求のための地図の根拠。家庭を押さえる前に引く（待つ間、ほかの画面を止めない）。同じ要求の計算・
+   * 確かめ・画面は、これ一つを使う。要求をまたいで使い回さない（Google の条件）。地図の口が無い・失敗・
+   * 上限の時は無し（家庭の目安で計算する）。押さえた中のエンジンは、店・駅の ID が合う時だけ使う。
+   */
+  const mapsOf = async (id: string): Promise<MapInputs | undefined> => {
+    const client = deps.maps;
+    if (!client) return undefined;
+    const household = await store.withHousehold(id, (log) => foldEvents(log.events()).household);
+    if (!household) return undefined;
+    return mapInputsFor(household, client, deps.mapsClock).catch(() => undefined);
+  };
 
   /** 読む前の前提を取り、Claude で読み、前提が変わっていない時だけ、出典と読み取りを一度に足す。 */
   async function readNotice(
@@ -408,6 +435,7 @@ export function demoSessions(
     // 読む間に期限が切れた・数の上限で捨てたデモには足さない（押さえた中でも、もう一度確かめる）。
     const gone = () => !alive(id, session);
     if (gone()) return undefined;
+    const maps = await mapsOf(id);
     // 足す途中で投げたら（形の合わない記録など）、置き場所が全部を戻す。読めなかったとして返す。
     return store
       .withHousehold(id, (log): NoticeResult | undefined => {
@@ -417,7 +445,7 @@ export function demoSessions(
         // 読む間に大人でなくなった時も、前提が変わったとする（呼んだ分は数えたまま）。
         const now = contextOf(log.events(), memberId, session.now);
         if (!now || JSON.stringify(now) !== JSON.stringify(prior)) return { status: 'stale' };
-        const before = computePlan(log.events(), session.now);
+        const before = computePlan(log.events(), session.now, maps);
         log.append([{ type: 'noticeReceived', source }], memberId, prior.at);
         log.append(
           [
@@ -436,9 +464,9 @@ export function demoSessions(
           prior.at,
         );
         // 新しいお知らせで、「もう要りません」と出ていた引き受けが戻ったら、本人にもう一度頼む。
-        const back = reopened(before, computePlan(log.events(), session.now));
+        const back = reopened(before, computePlan(log.events(), session.now, maps));
         if (back.length > 0) log.append(back, 'system', prior.at);
-        const view = viewFor(log.events(), memberId, session.now);
+        const view = viewFor(log.events(), memberId, session.now, maps);
         // 足し終えてから、操作を済みにする（途中で投げて戻した時に、済みと答えない）。
         session.operations.set(input.operationId, { digest, state: 'done', sourceId, check });
         return { status: 'ok', view, sourceId, check };
@@ -594,9 +622,11 @@ export function demoSessions(
     digest: string,
     read: UtteranceReader,
   ): Promise<UtteranceOutcome | undefined> {
+    // 一言の対象は、同じ要求で見せる計画（同じ地図の根拠）から選ぶ。
+    const maps = await mapsOf(id);
     const heardOn = await store.withHousehold(id, (log) => {
       const events = log.events();
-      const context = utteranceContext(events, memberId, session.now, input.text);
+      const context = utteranceContext(events, memberId, session.now, input.text, maps);
       return context && { context, throughSeq: events.at(-1)?.seq ?? 0 };
     });
     if (!alive(id, session)) return undefined;
@@ -621,9 +651,9 @@ export function demoSessions(
         const events = log.events();
         if (events.some((e) => e.type === 'answered' && e.seq > throughSeq))
           return { status: 'stale' };
-        const now = utteranceContext(events, memberId, session.now, input.text);
+        const now = utteranceContext(events, memberId, session.now, input.text, maps);
         if (!now || JSON.stringify(now) !== JSON.stringify(context)) return { status: 'stale' };
-        const view = viewFor(log.events(), memberId, session.now);
+        const view = viewFor(log.events(), memberId, session.now, maps);
         const shown = show(session, reply, memberId, context, view.plan, throughSeq);
         session.utteranceOperations.set(input.operationId, {
           digest,
@@ -637,6 +667,51 @@ export function demoSessions(
   }
 
   return {
+    /** 地図を使えるか（地図の口があるサーバーだけ）。 */
+    mapsEnabled: deps.maps !== undefined,
+    /**
+     * 店の駅からその店までの徒歩の道（画面の地図に描く）。家庭の店と駅の place ID で引き、返すだけで
+     * 取っておかない（Google の条件）。デモが無ければ null、地図の口が無い・店が地図に結び付かない・
+     * 引けなかった時は undefined。
+     */
+    async walk(id: string, storeId: string): Promise<WalkView | null | undefined> {
+      const session = touch(id);
+      if (!session) return null;
+      const client = deps.maps;
+      if (!client) return undefined;
+      const household = await store.withHousehold(id, (log) => foldEvents(log.events()).household);
+      const shop = household?.places.find((p) => p.id === storeId && p.kind === 'store');
+      const station = household?.places.find((p) => p.id === shop?.nearStationId);
+      if (!household || !shop?.googlePlaceId || !station?.googlePlaceId) return undefined;
+      try {
+        const [from, to, route] = await Promise.all([
+          client.place(station.googlePlaceId, { summary: true }),
+          client.place(shop.googlePlaceId, { summary: true }),
+          client.walkRoute(station.googlePlaceId, shop.googlePlaceId),
+        ]);
+        if (!route || !from.location || !to.location) return undefined;
+        return {
+          checkedAt: formatDateTime(
+            Math.floor((deps.mapsClock ?? Date.now)() / 60_000),
+            household.timeZone,
+          ),
+          station: {
+            id: station.id,
+            ...(from.name ? { name: from.name } : {}),
+            location: from.location,
+          },
+          store: {
+            id: shop.id,
+            ...(to.name ? { name: to.name } : {}),
+            location: to.location,
+            ...(to.googleMapsUri ? { googleMapsUri: to.googleMapsUri } : {}),
+          },
+          route,
+        };
+      } catch {
+        return undefined;
+      }
+    },
     /** 段から新しいデモの家庭を作る。 */
     create(stage: DemoStageId): string {
       sweep();
@@ -662,7 +737,8 @@ export function demoSessions(
     async view(id: string, memberId: string): Promise<View | undefined> {
       const session = touch(id);
       if (!session) return undefined;
-      return store.withHousehold(id, (log) => viewFor(log.events(), memberId, session.now));
+      const maps = await mapsOf(id);
+      return store.withHousehold(id, (log) => viewFor(log.events(), memberId, session.now, maps));
     },
     /** 決める画面の「選んだら」（何も書かない）。家庭が無ければ null、手配が無ければ undefined。 */
     async preview(
@@ -672,8 +748,13 @@ export function demoSessions(
     ): Promise<ChoicePreview[] | undefined | null> {
       const session = touch(id);
       if (!session) return null;
+      const maps = await mapsOf(id);
       return store.withHousehold(id, (log) =>
-        previewChoices(log.events(), { memberId, now: session.now }, arrangementKey),
+        previewChoices(
+          log.events(),
+          { memberId, now: session.now, ...(maps ? { maps } : {}) },
+          arrangementKey,
+        ),
       );
     },
     /** 家と暮らしの情報の直しを、書き込まずに見る（previewChange）。会話が無ければ null。 */
@@ -692,8 +773,13 @@ export function demoSessions(
     ): Promise<ReturnType<typeof previewChange> | null> {
       const session = touch(id);
       if (!session) return null;
+      const maps = await mapsOf(id);
       return store.withHousehold(id, (log) =>
-        previewChange(log.events(), { memberId, now: session.now }, command),
+        previewChange(
+          log.events(),
+          { memberId, now: session.now, ...(maps ? { maps } : {}) },
+          command,
+        ),
       );
     },
     async command(
@@ -704,15 +790,16 @@ export function demoSessions(
     ): Promise<{ result: CommandResult; view: View } | undefined> {
       const session = touch(id);
       if (!session) return undefined;
+      const maps = await mapsOf(id);
       // 時計を進めたデモの時刻は、命令の処理が家庭を押さえた中で事象から決める（ここで先に読まない）。
       const result = await runCommand(
         store,
         id,
-        { memberId, operationId, now: session.now, demo: true },
+        { memberId, operationId, now: session.now, demo: true, ...(maps ? { maps } : {}) },
         command,
       );
       const view = await store.withHousehold(id, (log) =>
-        viewFor(log.events(), memberId, session.now),
+        viewFor(log.events(), memberId, session.now, maps),
       );
       return { result, view };
     },
@@ -811,10 +898,11 @@ export function demoSessions(
           return { status: 'busy' };
         }
         const { sourceId, check } = previous;
+        const maps = await mapsOf(id);
         // 読み直さず、数えず、今の見せる物で答える。
         return store.withHousehold(id, (log) => ({
           status: 'ok' as const,
-          view: viewFor(log.events(), memberId, session.now),
+          view: viewFor(log.events(), memberId, session.now, maps),
           sourceId,
           check,
         }));
@@ -874,12 +962,13 @@ export function demoSessions(
           return { status: 'busy' };
         }
         const { reply, context } = previous;
+        const maps = await mapsOf(id);
         // 読み直さず、数えずに同じ答えを返す。ただし、読んだ後に前提が変わっていれば、古い答えを
         // 今の計画と並べて見せない（新しい操作で読み直してもらう）。
         return store.withHousehold(id, (log): UtteranceOutcome => {
-          const now = utteranceContext(log.events(), memberId, session.now, input.text);
+          const now = utteranceContext(log.events(), memberId, session.now, input.text, maps);
           if (!now || contextDigest(now) !== context) return { status: 'stale' };
-          return { status: 'ok', view: viewFor(log.events(), memberId, session.now), reply };
+          return { status: 'ok', view: viewFor(log.events(), memberId, session.now, maps), reply };
         });
       }
       const today = new Date(clock()).toISOString().slice(0, 10);
@@ -995,16 +1084,17 @@ export function demoSessions(
       const proposal = session.proposals.get(proposalId);
       if (!proposal) return { status: 'gone' };
       if (proposal.memberId !== memberId) return { status: 'forbidden' };
+      const maps = await mapsOf(id);
       // 見せた時に記録させないとした候補は、押されても記録しない（画面を通らない送りも同じ）。
       const guard: CommandGuard = (events) => {
         if (proposal.blocked) return 'proposalChanged';
-        const now = utteranceContext(events, memberId, session.now, '');
+        const now = utteranceContext(events, memberId, session.now, '', maps);
         const same =
           now !== undefined &&
           JSON.stringify(seenOf(proposal.command, now)) === JSON.stringify(proposal.seen);
         if (!same) return 'proposalChanged';
         // 見せた後に同じ種類の対象が増えた・時刻で替わった物は、家庭を押さえた中で、今の前提で判断し直す。
-        const blocked = recordBlock(proposal.command, now, computePlan(events, session.now), {
+        const blocked = recordBlock(proposal.command, now, computePlan(events, session.now, maps), {
           trial: false,
         });
         return blocked ? 'proposalChanged' : undefined;
@@ -1012,12 +1102,12 @@ export function demoSessions(
       const result = await runCommand(
         store,
         id,
-        { memberId, operationId, now: session.now, demo: true },
+        { memberId, operationId, now: session.now, demo: true, ...(maps ? { maps } : {}) },
         proposal.command,
         guard,
       );
       const view = await store.withHousehold(id, (log) =>
-        viewFor(log.events(), memberId, session.now),
+        viewFor(log.events(), memberId, session.now, maps),
       );
       if (result.status === 'ok' || result.status === 'noop') return { status: 'ok', view };
       if (result.status === 'conflict' && result.reason === 'proposalChanged') {

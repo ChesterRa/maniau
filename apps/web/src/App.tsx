@@ -107,6 +107,8 @@ function Body(props: {
   canHear?: boolean;
   /** お知らせの写真・PDF を書き起こせるか（同じく）。 */
   canPhoto?: boolean;
+  /** 画面で地図を描く鍵（地図のあるデモだけ）。 */
+  mapsKey?: string;
   /** 家族の試しの家庭か（読む欄に「架空の文だけ」と、上限の戻る時刻を出す）。 */
   trial?: boolean;
   lang: UiLanguage;
@@ -135,6 +137,7 @@ function Body(props: {
           ...(props.canRead ? { read: live.read, wayIdeas: live.wayIdeas } : {}),
           ...(props.canRead && props.canPhoto ? { transcribe: live.transcribe } : {}),
           ...(props.canHear ? { hear: live.hear, confirm: live.confirm } : {}),
+          ...(props.mapsKey ? { maps: { key: props.mapsKey, walk: live.walk } } : {}),
           ...(props.trial ? { trialInput: true as const } : {}),
           preview: live.preview,
           previewHousehold: live.previewHousehold,
@@ -254,6 +257,7 @@ function DemoApp() {
         canRead={session?.canRead === true}
         canHear={session?.canHear === true}
         canPhoto={session?.canPhoto === true}
+        {...(session?.mapsKey ? { mapsKey: session.mapsKey } : {})}
         lang={lang}
         route={route}
         onRoute={setRoute}

@@ -84,6 +84,24 @@ interface Session {
   canHear?: boolean;
   /** お知らせの写真・PDF を書き起こせるか（同じく）。 */
   canPhoto?: boolean;
+  /** 画面で地図を描く鍵（地図のあるデモのサーバーだけ。Maps JavaScript API だけを許した、公開してよい物）。 */
+  mapsKey?: string;
+}
+
+/**
+ * 店までの徒歩の道（デモの地図）。サーバーが Google から引いた名前・位置・道を、見せるだけで取っておかない。
+ */
+export interface WalkView {
+  /** Google に照会した実際の時刻。 */
+  checkedAt: string;
+  station: { id: string; name?: string; location: { latitude: number; longitude: number } };
+  store: {
+    id: string;
+    name?: string;
+    location: { latitude: number; longitude: number };
+    googleMapsUri?: string;
+  };
+  route: { durationSec: number; distanceM: number; polyline?: string; warnings: string[] };
 }
 
 /** 家族が入れたお知らせの文。操作 ID は、届いたか分からない時の送り直しに同じ物を使う。 */
@@ -792,6 +810,24 @@ export function useServerView(where: Where | undefined) {
     [kind, key, sessionId, memberId, isCurrent],
   );
 
+  /** 店までの徒歩の道（デモの地図）。読めなければ無し。 */
+  const walk = useCallback(
+    async (storeId: string): Promise<WalkView | undefined> => {
+      if (kind !== 'demo' || !sessionId) return undefined;
+      try {
+        const response = await fetch(
+          `/api/demo/sessions/${sessionId}/maps/walk?store=${encodeURIComponent(storeId)}`,
+          { signal: AbortSignal.timeout(READ_TIMEOUT_MS) },
+        );
+        if (!response.ok) return undefined;
+        return (await response.json()) as WalkView;
+      } catch {
+        return undefined;
+      }
+    },
+    [kind, sessionId],
+  );
+
   /**
    * 変えた後に計画の何が変わるかを読む（サーバーが書き込まずに、書く時と同じ命令を展開した結果。何も書かない）。
    * 書けない変更は、その理由を返す。読めなければ無し。家の情報の直し（household-preview）と、「すること」の言明・
@@ -862,6 +898,7 @@ export function useServerView(where: Where | undefined) {
     preview,
     previewHousehold,
     previewChange,
+    walk,
     /** 届いたか分からない操作を、同じ家庭・同じ大人・同じ ID・同じ代で送り直す。 */
     retry: async (): Promise<void> => {
       const operation = pending.current;

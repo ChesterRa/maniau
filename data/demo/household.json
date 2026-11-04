@@ -99,7 +99,9 @@
       "id": "st-toyosu",
       "kind": "station",
       "name": "豊洲駅",
-      "area": "豊洲"
+      "area": "豊洲",
+      "googlePlaceId": "ChIJMR82CaOJGGARi2sprG-ld6k",
+      "lookedUpAt": "2026-11-04T21:10+09:00"
     },
     {
       "id": "st-yurakucho",
@@ -124,6 +126,8 @@
       "kind": "store",
       "name": "豊洲駅の近くの衣料品店",
       "area": "豊洲",
+      "googlePlaceId": "ChIJhTeaQ5-JGGARwB5TNKm1APM",
+      "lookedUpAt": "2026-11-04T21:10+09:00",
       "nearStationId": "st-toyosu",
       "walkFromStationMin": 5,
       "goods": ["clothing", "kidsClothing"],
@@ -173,6 +177,8 @@
       "kind": "store",
       "name": "豊洲駅の近くのスーパー",
       "area": "豊洲",
+      "googlePlaceId": "ChIJcdw096OJGGARMZHdN0oNzY0",
+      "lookedUpAt": "2026-11-04T21:10+09:00",
       "nearStationId": "st-toyosu",
       "walkFromStationMin": 3,
       "goods": ["groceries"],

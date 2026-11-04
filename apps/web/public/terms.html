@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>まにあう 利用規約とプライバシー（デモ） / Terms and privacy (demo)</title>
+<style>
+  :root { color-scheme: light; --fg: #1f2a24; --sub: #56635b; --line: #d9e0db; --bg: #f6f8f6; --accent: #1f6b52; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.7 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  main { max-width: 40rem; margin: 0 auto; padding: 24px max(16px, env(safe-area-inset-left)) 48px max(16px, env(safe-area-inset-right)); }
+  h1 { font-size: 1.35rem; line-height: 1.4; margin: 0 0 4px; }
+  h2 { font-size: 1.1rem; margin: 28px 0 6px; }
+  p, li { margin: 6px 0; }
+  ul { padding-left: 1.2em; }
+  .sub { color: var(--sub); font-size: 0.92rem; }
+  a { color: var(--accent); }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 36px 0; }
+</style>
+</head>
+<body>
+<main>
+<section lang="ja">
+  <h1>まにあう 利用規約とプライバシー（デモ）</h1>
+  <p class="sub">2026年11月4日。<a href="#en">English below</a></p>
+
+  <h2>このサイトについて</h2>
+  <p>Built with Claude: Japan 2026 の応募作の公開デモです。登録はありません。家族・学校・お知らせは架空です。駅と店は実在の物を使います。</p>
+
+  <h2>Google マップの利用</h2>
+  <p>このデモは Google Maps Platform（Maps JavaScript API・Places API・Routes API）で、地図の表示、店の営業時間、駅から店までの歩く時間と道を調べます。Google マップの機能と情報の利用には、<a href="https://maps.google.com/help/terms_maps/">Google マップ／Google Earth 追加利用規約</a>と<a href="https://policies.google.com/privacy">Google プライバシーポリシー</a>が適用されます。</p>
+  <ul>
+    <li>Google に送る物：架空の家族の設定にある駅と店の Google の place ID（営業時間と道のりを調べるため）。地図を開くと、あなたのブラウザが Google のサーバーと直接通信します（その時に Google が受け取る物は、Google の方針によります）。</li>
+    <li>家族の名前、予定、お知らせの文は、Google に送りません。</li>
+    <li>Google から受け取った営業時間と道の線は、その時の計算と表示に使い、保存しません。計算した提案の時刻と歩く時間は、大人が引き受けた時の控えとして、店の place ID と一緒にデモのサーバーのメモリにだけ残り、デモの期限が切れると消えます。</li>
+    <li>Google から受け取った物は、Claude に送りません。</li>
+  </ul>
+
+  <h2>Claude（Anthropic）の利用</h2>
+  <p>「読む」「ひとこと」「やり方の案」を使うと、入れた文と、架空の家族の名前・予定・頼み事などが Anthropic の API に送られます。詳しくは<a href="https://github.com/ChesterRa/maniau/blob/main/docs/scope.md">詳しい動きと制限</a>の「自分の文で試す」をご覧ください。架空の文で試してください。</p>
+
+  <h2>保証しないこと</h2>
+  <ul>
+    <li>営業時間、在庫、道の通りやすさや安全は保証しません。ふだんの営業時間は目安で、その日の臨時の休みは確かめていません。</li>
+    <li>歩く道には、歩道や歩行者の道がはっきりしない所があるかもしれません。</li>
+    <li>まにあうは家族の代わりに決めたり、連絡したりしません。</li>
+  </ul>
+
+  <h2>問い合わせ</h2>
+  <p><a href="https://github.com/ChesterRa/maniau">GitHub のリポジトリ</a>の Issues へ。</p>
+</section>
+
+<hr>
+
+<section lang="en" id="en">
+  <h1>Maniau terms and privacy (demo)</h1>
+  <p class="sub">November 4, 2026.</p>
+
+  <h2>About this site</h2>
+  <p>This is the public demo of an entry to Built with Claude: Japan 2026. There is no sign-up. The family, school and notices are fictional. Stations and stores are real places.</p>
+
+  <h2>Google Maps</h2>
+  <p>The demo uses Google Maps Platform (Maps JavaScript API, Places API, Routes API) to show maps and to look up store hours and walking times and routes from the station to a store. Your use of Google Maps features and content is subject to the <a href="https://maps.google.com/help/terms_maps/">Google Maps/Google Earth Additional Terms of Service</a> and the <a href="https://policies.google.com/privacy">Google Privacy Policy</a>.</p>
+  <ul>
+    <li>What is sent to Google: the Google place IDs of the stations and stores in the fictional family's settings (to look up hours and walking times). When you open a map, your browser talks to Google's servers directly (what Google receives then is covered by Google's policies).</li>
+    <li>Family names, schedules and notice text are not sent to Google.</li>
+    <li>Store hours and route lines from Google are used for that calculation and display and are not saved. The proposal's times and walking minutes, together with the store's place ID, stay only in the demo server's memory as the record of what an adult took on, and are deleted when the demo expires.</li>
+    <li>Nothing received from Google is sent to Claude.</li>
+  </ul>
+
+  <h2>Claude (Anthropic)</h2>
+  <p>When you use reading, quick updates or ideas for ways, the text you enter and the fictional family's names, plans and requests are sent to the Anthropic API. See “Try your own text” in <a href="https://github.com/ChesterRa/maniau/blob/main/docs/scope.en.md">Details and limitations</a>. Please use fictional text.</p>
+
+  <h2>No guarantees</h2>
+  <ul>
+    <li>Store hours, stock, and the ease or safety of routes are not guaranteed. Usual hours are an estimate; special closures on the day are not checked.</li>
+    <li>Walking routes may be missing clear sidewalks or pedestrian paths.</li>
+    <li>Maniau never decides or sends messages for the family.</li>
+  </ul>
+
+  <h2>Contact</h2>
+  <p>Issues on the <a href="https://github.com/ChesterRa/maniau">GitHub repository</a>.</p>
+</section>
+</main>
+</body>
+</html>

@@ -25,6 +25,7 @@ import type {
   StepTemplate,
   Way,
 } from '../schema/household';
+import type { MapInputs } from '../schema/maps';
 import type {
   Arrangement,
   Basis,
@@ -58,7 +59,7 @@ import { hoursUnknownAt, stoppedWay } from '../view/ways';
 import { noAdultAtHome } from './availability';
 import { type Busy, optionDeadline, placeStep, ruleDeadline } from './deadline';
 import { bestOrder } from './joint';
-import { purchaseOpportunities } from './purchase';
+import { purchaseOpportunities, searchPurchase } from './purchase';
 import {
   awaitingConfirmation,
   currentItems,
@@ -137,6 +138,8 @@ interface Context {
   fmt: (m: EpochMinutes) => DateTime;
   /** 今の事項（ID ごと）。作業の根拠が今、確かでないか（doubted）を引く。 */
   items: ReadonlyMap<string, LiveItem>;
+  /** この計算のために地図から引いた根拠（無ければ家庭の目安だけで計算する）。 */
+  maps?: MapInputs;
 }
 
 export interface LiveItem {
@@ -328,12 +331,20 @@ export function liveItems(state: EngineState): LiveItem[] {
   });
 }
 
-export function computePlan(events: readonly DomainEvent[], now?: DateTime): PlanResult {
-  return planFromState(foldEvents(events), now);
+export function computePlan(
+  events: readonly DomainEvent[],
+  now?: DateTime,
+  maps?: MapInputs,
+): PlanResult {
+  return planFromState(foldEvents(events), now, maps);
 }
 
 /** たたんだ状態から計画を作る（computePlan の中身。同じ状態を他の計算にも使う時に）。 */
-export function planFromState(state: EngineState, now?: DateTime): PlanResult {
+/**
+ * maps は、この計算のために地図から引いた根拠（家庭の正本とは別の入力。02-foundation §2.3）。店とその駅に
+ * 結び付く時だけ、その店の道のりと営業時間に使う。計画にそのまま添えて返す（同じ要求の画面と検証が使う）。
+ */
+export function planFromState(state: EngineState, now?: DateTime, maps?: MapInputs): PlanResult {
   const household = state.household;
   if (!household) throw new Error('家族の情報（householdSet）が無い');
   const nowMin = state.clock ?? (now === undefined ? undefined : toEpochMinutes(now));
@@ -347,6 +358,7 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
     tz,
     fmt: (m) => formatDateTime(m, tz),
     items: new Map(items.map((l) => [l.item.id, l])),
+    ...(maps ? { maps } : {}),
   };
 
   const requirements: Requirement[] = [];
@@ -480,6 +492,7 @@ export function planFromState(state: EngineState, now?: DateTime): PlanResult {
     requests,
     questions,
     ...(released.length > 0 ? { released } : {}),
+    ...(maps ? { mapInputs: maps } : {}),
   };
 }
 
@@ -2284,7 +2297,8 @@ function purchase(
     // 済んだ買い物は、置き直さない。
     const assignee = ctx.state.assignees.get(key);
     const done = bought;
-    const all = purchaseOpportunities(ctx.household, goods, PURCHASE_MINUTES, ctx.now, by);
+    const search = searchPurchase(ctx.household, goods, PURCHASE_MINUTES, ctx.now, by, ctx.maps);
+    const all = search.opportunities;
     const chances = assignee === undefined ? all : all.filter((c) => c.memberId === assignee);
     const first = chances[0];
     const last = chances.at(-1);
@@ -2307,6 +2321,12 @@ function purchase(
           live,
         }),
       );
+    } else if ((!first || !last) && search.droppedUnconfirmed) {
+      // 区間はあるのに、確かめていない営業時間（地図のふだんの営業時間の目安・営業時間が分からない）で
+      // 置けなかった。閉まっているとも、買える時が過ぎたとも言わない（まだ判断できない。家族が確かめる）。
+      status = 'undetermined';
+      reasons.push({ code: 'inputMissing', refs: ['storeHours'] });
+      if (atHome === undefined) askFirst(by);
     } else if (!first || !last) {
       // 買える時は過ぎた。ふだんの週と店の時間は週ごとにくり返すので、一週間さかのぼって、過ぎた最後の
       // 機会の始まりを決め時として示す（お知らせが来る前に過ぎていても、その時刻）。一週間に一度も機会が
@@ -2318,6 +2338,7 @@ function purchase(
         PURCHASE_MINUTES,
         ctx.now - LOOKBACK_MIN,
         by,
+        ctx.maps,
       )
         .filter((c) => c.start < ctx.now && (assignee === undefined || c.memberId === assignee))
         .at(-1);
@@ -2359,7 +2380,8 @@ function purchase(
             atPlaceId: first.storeId,
             travelBeforeMin: first.travelBeforeMin,
             travelAfterMin: first.travelAfterMin,
-            travelSource: 'estimate',
+            travelSource: first.travelSource,
+            hoursBasis: first.hoursBasis,
             ...(first.detour
               ? {
                   detour: {

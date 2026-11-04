@@ -9,6 +9,7 @@ import {
   formatDateTime,
   type Household,
   type HouseholdPreview,
+  type MapInputs,
   type PreviewCommand,
   toEpochMinutes,
 } from '@maniau/core';
@@ -27,7 +28,7 @@ import { consequencesOf, householdConsequences, violationsOf } from './consequen
  */
 export function previewChoices(
   events: readonly DomainEvent[],
-  context: { memberId: string; now: DateTime },
+  context: { memberId: string; now: DateTime; maps?: MapInputs },
   arrangementKey: string,
 ): ChoicePreview[] | undefined {
   const state = foldEvents(events);
@@ -35,7 +36,7 @@ export function previewChoices(
   if (!household) return undefined;
   const now =
     state.clock === undefined ? context.now : formatDateTime(state.clock, household.timeZone);
-  const plan = planFromState(state, now);
+  const plan = planFromState(state, now, context.maps);
   // 子の居場所の手配と、通用の「すること」の手配（どちらも同じ選ぶ所を使う）。
   const arrangement = plan.arrangements.find(
     (a) => a.key === arrangementKey && a.live && (a.kind === 'childCare' || a.kind === 'need'),
@@ -62,7 +63,7 @@ export function previewChoices(
     const tried = people.flatMap((assigneeId) => {
       const result = previewCommand(
         events,
-        { memberId: context.memberId, now },
+        { memberId: context.memberId, now, ...(context.maps ? { maps: context.maps } : {}) },
         {
           type: 'chooseOption',
           arrangementKey,
@@ -116,7 +117,7 @@ export function previewChoices(
  */
 export function previewChange(
   events: readonly DomainEvent[],
-  context: { memberId: string; now: DateTime },
+  context: { memberId: string; now: DateTime; maps?: MapInputs },
   command: PreviewCommand,
 ): HouseholdPreview | { status: 'conflict' | 'forbidden' | 'invalid'; reason: string } {
   const state = foldEvents(events);
@@ -124,7 +125,7 @@ export function previewChange(
   if (!current) return { status: 'invalid', reason: 'householdMissing' };
   const now =
     state.clock === undefined ? context.now : formatDateTime(state.clock, current.timeZone);
-  const plan = planFromState(state, now);
+  const plan = planFromState(state, now, context.maps);
   // 返事の仮定は、今の計画で返事を待っている、生きている依頼だけ（返事のあった依頼や要らなくなった依頼を、仮に
   // 上書きして見せない。古い画面の ID で来ても）。本当の返事の記録と直しは、この口を通らない（命令の道）。
   if (command.type === 'recordReply') {
@@ -142,7 +143,8 @@ export function previewChange(
     if (item.kind !== 'need') return { status: 'invalid', reason: 'previewNeedOnly' };
     asCommand = { ...command, seen: { throughSeq: state.lastSeq } };
   }
-  const result = previewCommand(events, { memberId: context.memberId, now }, asCommand, {
+  const at = { memberId: context.memberId, now, ...(context.maps ? { maps: context.maps } : {}) };
+  const result = previewCommand(events, at, asCommand, {
     state,
     plan,
   });

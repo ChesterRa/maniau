@@ -10,6 +10,7 @@ import {
   formatDateTime,
   type Household,
   isActiveTask,
+  type MapInputs,
   type PlanResult,
   type Task,
   type UtteranceContext,
@@ -257,11 +258,16 @@ export function utteranceContext(
   memberId: string,
   fallbackNow: DateTime,
   utterance: string,
+  /**
+   * 同じ要求の画面と同じ地図の根拠（同じ計画から対象を選ぶ）。根拠そのもの（営業時間・道のり）は
+   * 前提に入れない（Claude に送らない。前提は日付と ID だけを写す）。
+   */
+  maps?: MapInputs,
 ): UtteranceContext | undefined {
   const state = foldEvents(events);
   const household = state.household;
   if (!household) return undefined;
   const now =
     state.clock === undefined ? fallbackNow : formatDateTime(state.clock, household.timeZone);
-  return contextFrom(state, planFromState(state, now), household, memberId, utterance);
+  return contextFrom(state, planFromState(state, now, maps), household, memberId, utterance);
 }

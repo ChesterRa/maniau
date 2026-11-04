@@ -5,6 +5,7 @@
 import { z } from 'zod';
 import { DateTime, LocalDate } from '../time';
 import { Cost, ExternalKind, Id, PlaceKind, SegmentKind } from './household';
+import { HoursBasis, MapInputs } from './maps';
 
 /** 性質（§3）。分からない締切は「好み」にせず、問いにする。 */
 export const Nature = z.enum(['required', 'optional', 'preference']);
@@ -335,6 +336,11 @@ export const Task = z.object({
   detour: z.object({ plannedArrival: DateTime, delayedArrival: DateTime }).optional(),
   /** 移動の時間の出どころ。estimate は駅からの徒歩の目安（家庭の情報）、maps は地図で確かめた物。 */
   travelSource: z.enum(['none', 'estimate', 'maps']).default('none'),
+  /**
+   * 店の営業時間を何で確かめて置いたか（family：家庭の情報、mapsCurrent：地図の照会の日から数日の営業時間、
+   * mapsRegular：地図のふだんの営業時間で、その日に開いているかは確かめていない目安）。店の作業だけ。
+   */
+  hoursBasis: HoursBasis.optional(),
   commitment: CommitmentState,
   /** 根拠が今の事実で成り立つか。 */
   live: z.boolean(),
@@ -489,5 +495,7 @@ export const PlanResult = z.object({
   /** 引き受けたのに、もう要らなくなった作業（本人が分かったと言うまで）。無ければ無し。 */
   released: z.array(Released).optional(),
   diff: Diff.optional(),
+  /** 計算に使った地図の根拠（同じ要求の画面・検証が同じ物を使う）。保存しない。 */
+  mapInputs: MapInputs.optional(),
 });
 export type PlanResult = z.infer<typeof PlanResult>;

@@ -10,6 +10,7 @@ import {
   formatDateTime,
   type Household,
   type ItemShown,
+  type MapInputs,
   type PlanResult,
   type Source,
   type TodayCard,
@@ -70,18 +71,24 @@ export interface ItemWhen {
 }
 
 /** 事象の列から、その大人に見せる物を作る。 */
-export function viewFor(events: readonly DomainEvent[], memberId: string, now: DateTime): View {
+export function viewFor(
+  events: readonly DomainEvent[],
+  memberId: string,
+  now: DateTime,
+  /** この要求のために地図から引いた根拠（無ければ家庭の目安で計算する）。 */
+  maps?: MapInputs,
+): View {
   const state = foldEvents(events);
   const household = state.household;
   if (!household) throw new Error('家族の情報が無い');
-  const plan = planFromState(state, now);
+  const plan = planFromState(state, now, maps);
   return {
     throughSeq: state.lastSeq,
     now: state.clock === undefined ? now : formatDateTime(state.clock, household.timeZone),
     household,
     plan,
     today: todayCards(plan, memberId),
-    ...withChange(events, plan),
+    ...withChange(events, plan, maps),
     sources: [...state.sources.values()],
     readings: readingsOf(events),
     items: withWhen(state),
@@ -145,13 +152,17 @@ const CHANGE_LOOKBACK = 3;
  * 最後に、前から用意していた物を変えたお知らせのまとめ。お知らせの前の事象で作った計画と、今の計画を
  * 同じ時刻で比べる（新しく要る物だけのお知らせは飛ばし、前のお知らせを見る）。
  */
-function withChange(events: readonly DomainEvent[], plan: PlanResult): { changes?: ChangeSummary } {
+function withChange(
+  events: readonly DomainEvent[],
+  plan: PlanResult,
+  maps: MapInputs | undefined,
+): { changes?: ChangeSummary } {
   const notices = events.filter((e) => e.type === 'noticeReceived').slice(-CHANGE_LOOKBACK);
   for (const notice of notices.reverse()) {
     if (notice.type !== 'noticeReceived') continue;
     const state = foldEvents(events.filter((e) => e.seq < notice.seq));
     if (!state.household) continue;
-    const summary = changeSummary(planFromState(state, plan.now), plan, {
+    const summary = changeSummary(planFromState(state, plan.now, maps), plan, {
       id: notice.source.id,
       receivedAt: notice.source.receivedAt,
     });

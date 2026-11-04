@@ -11,6 +11,7 @@ import { accessVerifier } from './auth/access';
 import { connect } from './db/connect';
 import { postgresStore } from './db/store';
 import { messageGate, sendGate } from './gate';
+import { googleMaps } from './maps/google';
 import { invitationsFrom } from './members';
 import { type Notifier, notifier } from './notifier';
 import { type Vapid, webPushSender } from './push';
@@ -172,6 +173,13 @@ const transcriber = anthropic
       }
     }
   : undefined;
+// 地図の鍵（サーバーの物。Places API (New) と Routes API）があれば、デモの寄り道に本物の道のりと営業時間を
+// 使う。画面の鍵（Maps JavaScript API だけ・置き場所の URL に限った物）もあれば、画面に地図を描く。鍵の値は
+// 書かない。地図の値は、要求ごとに引いてその計算と表示に使うだけで、取っておかない（Google の条件）。
+const maps = process.env.GOOGLE_MAPS_API_KEY
+  ? googleMaps(process.env.GOOGLE_MAPS_API_KEY)
+  : undefined;
+const mapsBrowserKey = process.env.GOOGLE_MAPS_BROWSER_KEY;
 // 家族の家庭を出すサーバーでは、デモの読み取りは開かない。家族の読み取りは身元を確かめた口で行う。
 const app = createApp({
   ...(family ? { family } : {}),
@@ -187,6 +195,8 @@ const app = createApp({
   ...(listener ? { listener } : {}),
   ...(ideaReader ? { ideaReader } : {}),
   ...(transcriber ? { transcriber } : {}),
+  ...(maps ? { maps } : {}),
+  ...(maps && mapsBrowserKey ? { mapsBrowserKey } : {}),
 });
 const webDist = fileURLToPath(new URL('../../web/dist', import.meta.url));
 app.use('/*', serveStatic({ root: webDist }));
@@ -194,7 +204,7 @@ app.get('/*', serveStatic({ root: webDist, path: 'index.html' }));
 
 const port = Number(process.env.PORT ?? 8787);
 serve({ fetch: app.fetch, port }, (info) => {
-  const mode = `${family ? `家族の家庭とデモ、知らせ${backend?.jobs ? 'あり' : 'なし'}` : `デモだけ${demoGate ? '（入口で身元を確かめる）' : ''}`}、読み取り${reader ? 'あり' : 'なし'}`;
+  const mode = `${family ? `家族の家庭とデモ、知らせ${backend?.jobs ? 'あり' : 'なし'}` : `デモだけ${demoGate ? '（入口で身元を確かめる）' : ''}`}、読み取り${reader ? 'あり' : 'なし'}、地図${maps ? (mapsBrowserKey ? 'あり' : 'あり（画面の地図なし）') : 'なし'}`;
   console.log(`まにあう：http://localhost:${info.port}（${mode}）`);
   backend?.jobs?.start();
 });

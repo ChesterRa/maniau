@@ -1,5 +1,6 @@
 import type { Household, PlanResult, RoutineSegment, Task } from '@maniau/core';
 import type { History } from './history';
+import { storeMapEvidence } from './map-evidence';
 import { proposalMatches } from './proposal';
 import type { Collector } from './report';
 import { executionScope, isRecommended } from './scope';
@@ -207,16 +208,24 @@ export function checkDetour(
     report.violation('detour_station_mismatch', task.key, '帰りの駅と家・店の最寄り駅が違う。');
   }
   const homeWalk = home.walkFromStationMin;
-  const storeWalk = store.walkFromStationMin;
-  if (homeWalk === undefined || storeWalk === undefined || task.travelSource !== 'estimate') {
+  const maps = task.travelSource === 'maps' ? storeMapEvidence(household, plan, store) : undefined;
+  const walkFrom =
+    task.travelSource === 'maps' ? maps?.walkFromStationMin : store.walkFromStationMin;
+  const walkTo = task.travelSource === 'maps' ? maps?.walkToStationMin : store.walkFromStationMin;
+  if (
+    homeWalk === undefined ||
+    walkFrom === undefined ||
+    walkTo === undefined ||
+    (task.travelSource !== 'estimate' && task.travelSource !== 'maps')
+  ) {
     report.undetermined(
       'detour_route_missing',
       task.key,
       '駅から家と店への歩く時間を独立に照らせない。',
     );
   } else {
-    if (task.travelBeforeMin !== storeWalk || task.travelAfterMin !== storeWalk) {
-      report.violation('detour_walk_mismatch', task.key, '店と駅の往復が家族の徒歩の目安と違う。');
+    if (task.travelBeforeMin !== walkFrom || task.travelAfterMin !== walkTo) {
+      report.violation('detour_walk_mismatch', task.key, '店と駅の往復が徒歩の根拠と違う。');
     }
     const atStation = planned - homeWalk;
     if (plannedLocal.minuteOfDay - homeWalk < timeOfDay(commute.start)) {
@@ -226,8 +235,8 @@ export function checkDetour(
         '到駅が通勤の始まりより前になる。',
       );
     }
-    const expectedStart = atStation + storeWalk;
-    const expectedDelayed = planned + storeWalk * 2 + task.durationMin;
+    const expectedStart = atStation + walkFrom;
+    const expectedDelayed = planned + walkFrom + walkTo + task.durationMin;
     if (
       start !== expectedStart ||
       end !== expectedStart + task.durationMin ||

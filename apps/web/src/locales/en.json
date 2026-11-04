@@ -121,7 +121,8 @@
       "sentAlready": "“{{label}}” opens the current request. If you already sent that same request, record it as sent there.",
       "fixedBusy": "Your usual schedule (work, etc.) or another task overlaps the written time. If you can't do it, please ask someone else.",
       "fixedPast": "The written time has passed. If it's done, tap Done.",
-      "cover": "You would cover this whole time (no other tasks are placed then)."
+      "cover": "You would cover this whole time (no other tasks are placed then).",
+      "whereMaps": "{{place}} · {{walk}} min walk from the station ({{back}} min back)"
     },
     "backup": {
       "label": "Just in case",
@@ -1140,5 +1141,23 @@
     "rechooseRecommended": "You'd need to choose again. Recommended: “{{option}}”",
     "changes": "What would change",
     "note": "When the reply comes, record it on the Today screen."
+  },
+  "maps": {
+    "show": "Show on map",
+    "hide": "Hide map",
+    "loading": "Loading the map…",
+    "failed": "Couldn't show the map. The walking times and hours above still apply.",
+    "alt": "Map of the walk from {{station}} to {{store}}",
+    "route": "Walking route from {{station}} to {{store}} ({{km}} km)",
+    "source": "Map, route and store name: ",
+    "open": "Open in Google Maps",
+    "span": "{{open}}–{{close}}",
+    "and": ", ",
+    "hoursRegular": "Usual hours {{hours}} (special closures that day not checked)",
+    "hoursCurrent": "Hours that day {{hours}}",
+    "checked": "Walking times and hours as of {{day}} {{time}}. Source:",
+    "noRoute": "Couldn't draw the walking route (only the station and the store are marked).",
+    "caution": "The route may be missing clear sidewalks or pedestrian paths.",
+    "terms": "Terms and privacy"
   }
 }
