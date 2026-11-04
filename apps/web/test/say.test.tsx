@@ -13,7 +13,11 @@ import { demoData } from './ctx';
 
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 
-async function ctxOf(stage: 'chase' | 'postponed', memberId: string, lang: 'ja' | 'en' = 'ja') {
+async function ctxOf(
+  stage: 'arrived' | 'chase' | 'postponed',
+  memberId: string,
+  lang: 'ja' | 'en' = 'ja',
+) {
   const sessions = demoSessions();
   const id = sessions.create(stage);
   const view = (await sessions.view(id, memberId)) as View;
@@ -25,6 +29,8 @@ async function ctxOf(stage: 'chase' | 'postponed', memberId: string, lang: 'ja' 
     today: view.today,
     items: view.items,
     sources: new Map(view.sources.map((s) => [s.id, s])),
+    // 画面と同じく、後から届いたお知らせで変わったことを持たせる（App.tsx）。
+    ...(view.changes ? { changes: view.changes } : {}),
     readings: demoData.readings,
     me,
     lang,
@@ -619,5 +625,33 @@ describe('ひとこと', () => {
       /<summary[^>]*>一言と、家族・頼める人の名前、今の予定・頼み事が Anthropic に送られます。/,
     );
     expect(markup).toMatch(/<\/summary><p[^>]*>一言と、このデモの家族/);
+  });
+
+  it('一言の欄は、いちばん急ぐ札の後、ほかの札の前に置く（変わったことの札は一番上のまま）', async () => {
+    const hearing = (ctx: Ctx) =>
+      text(
+        renderToStaticMarkup(
+          <TodayScreen
+            ctx={{
+              ...ctx,
+              hear: async () => ({ status: 'busy' }),
+              confirm: async () => ({ status: 'ok' }),
+            }}
+          />,
+        ),
+      );
+    const at = (page: string, label: string) => {
+      const index = page.indexOf(label);
+      expect(index, label).toBeGreaterThanOrEqual(0);
+      return index;
+    };
+    // 最初の場面（彩）：決めることの札、一言、教えてくださいの札の順。
+    const arrived = hearing(await ctxOf('arrived', 'b'));
+    expect(at(arrived, '決めること')).toBeLessThan(at(arrived, 'ひとこと'));
+    expect(at(arrived, 'ひとこと')).toBeLessThan(at(arrived, '教えてください'));
+    // 延期の場面：変わったことの札、いちばん急ぐ札（取り消し）、一言の順。
+    const postponed = hearing(await ctxOf('postponed', 'b'));
+    expect(at(postponed, '変わったこと')).toBeLessThan(at(postponed, 'もう要らないこと'));
+    expect(at(postponed, 'もう要らないこと')).toBeLessThan(at(postponed, 'ひとこと'));
   });
 });

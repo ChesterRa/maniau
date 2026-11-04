@@ -895,7 +895,6 @@ export function TodayScreen({ ctx }: { ctx: Ctx }) {
         title={ctx.t(evening ? 'today.titleEvening' : 'today.title')}
       />
       <Main>
-        {ctx.hear && ctx.confirm && <SayCard ctx={ctx} hear={ctx.hear} confirm={ctx.confirm} />}
         {ctx.changes && <ChangeCard ctx={ctx} change={ctx.changes} />}
         {shown.length === 0 && !ctx.changes && (
           <Card tone="accent">
@@ -903,7 +902,13 @@ export function TodayScreen({ ctx }: { ctx: Ctx }) {
             <Text quiet>{ctx.t('today.nothingBody')}</Text>
           </Card>
         )}
-        {shown.map((card) => (
+        {shown.slice(0, 1).map((card) => (
+          <CardView key={cardKey(card)} ctx={ctx} card={card} />
+        ))}
+        {/* ひとことは、いちばん急ぐ札の後に置く（その札の押し口を、最初の画面で下の帯に隠さない。ほかの札より
+            前に置き、探さずに見つかるように）。 */}
+        {ctx.hear && ctx.confirm && <SayCard ctx={ctx} hear={ctx.hear} confirm={ctx.confirm} />}
+        {shown.slice(1).map((card) => (
           <CardView key={cardKey(card)} ctx={ctx} card={card} />
         ))}
         {main.length > shown.length && (
@@ -4017,7 +4022,7 @@ export function SayCard({
   return (
     <Card>
       <Label tone="accent">{ctx.t('say.label')}</Label>
-      {/* きょうの札を下へ押しやらないよう、欄と送る押し口を横に並べる。 */}
+      {/* 後の札を下へ押しやらないよう、欄と送る押し口を横に並べる。 */}
       <div className="flex items-stretch gap-2">
         <textarea
           value={text}
@@ -4038,7 +4043,7 @@ export function SayCard({
           </Button>
         </div>
       </div>
-      {/* 送る物の注記は、最初の画面で「決めること」の札を押し下げないよう、要の一文にたたむ（開くと全文）。 */}
+      {/* 送る物の注記は、後の札を押し下げないよう、要の一文にたたむ（開くと全文）。 */}
       <details className="text-sm text-sub">
         <summary className="min-h-9 cursor-pointer leading-relaxed">
           {ctx.t(ctx.trialInput ? 'say.privacySummaryTrial' : 'say.privacySummary')}
