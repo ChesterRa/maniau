@@ -115,6 +115,17 @@ These are checks on a small number of fictional cases. We don't claim a general 
 - **Looking around:** The saved survey read 7 pages, produced 6 candidates and dropped none (about $0.54). The evaluation on held-out cases was too small to say Maniau is better than a general model, and is recorded that way.
 - **Screens:** The main flows have been walked through at phone width (390px) in Japanese and English. A real iPhone and whether notifications actually arrive have not been checked yet.
 
+## How we built it with Claude Code
+
+Development centered on Claude Code, and we chose each feature for a purpose. Why we chose it, and what worked and what didn't, are in the [record of how Claude is used](docs/dev/claude-usage.md) (Japanese).
+
+- **Subagents to research in parallel and review independently:** Before building, we researched six fields in parallel ([docs/research](docs/research)). The review before publishing, and the review of the verifier, went to subagents that weren't given the author's own conclusions; the verifier review found 7 misses and 3 false alarms, each reproduced by a test.
+- **Hooks to enforce the rules mechanically:** A Claude Code PreToolUse hook stops tool use on paths outside the repository when it can detect them (a few set locations are allowed, and some forms, such as paths built from variables, can't be detected, so we don't rely on it alone). Git hooks check author emails, key-like strings, file locations and copies of private material before each commit (tests in [tests/hooks](tests/hooks)).
+- **Hard-to-reverse choices: think separately, then compare:** Two agents answered the same question without seeing each other's conclusion, then compared. This moved storage from SQLite to Postgres and sign-in to Cloudflare Access, and caught that placing tasks on a 15-minute grid would drop a real 10-minute window (17:20–17:30), so placement now works to the minute.
+- **Evaluation kept apart from prompt tuning:** One role fixes the cases, expected results and scoring; another tunes the product prompts and never sees the held-out cases. For Claude API calls in development and evaluation, we record the counts we could log and the costs we could determine, and say so where a cost is unknown.
+- **API details from the documentation, not memory:** Using the claude-api Skill's documentation, we checked Opus 5.5's thinking, effort and structured-output limits, and found we had capped the comparison model's (a strong Claude's) output unfairly low. After a subagent read the Managed Agents documentation against the product's needs, we decided not to use it this week.
+- **Screens decided with the maker on an Artifact canvas:** We laid out phone-width screens and reworked them from the maker's feedback (it looked like a professional tool; useful advice needs a location) before writing the code.
+
 ## What is sent and what is kept
 
 - The demo's starting family and notices are fictional. Please use fictional text and photos when you try it too.
