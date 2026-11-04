@@ -1,6 +1,12 @@
 // 家族の一言：読むだけで何も書かず、言った本人が候補を押した時に、見せた時と今の対象が同じなら記録する。
 // 読み取りは偽物（決まった出力を返す）で、Claude の API は呼ばない。
-import type { ConditionNode, UtteranceContext, UtteranceOutput } from '@maniau/core';
+import {
+  type Command,
+  type ConditionNode,
+  proposalSnapshot,
+  type UtteranceContext,
+  type UtteranceOutput,
+} from '@maniau/core';
 import { describe, expect, it } from 'vitest';
 import { createApp, type FamilyBackend } from '../src/app';
 import { DEMO_STAGES, demoEvents } from '../src/demo';
@@ -11,7 +17,7 @@ import {
 } from '../src/demo-sessions';
 import { ReadingError } from '../src/reading/extract';
 import { CONDITION_TOO_COMPLEX, conditionText, utteranceContext } from '../src/utterance-context';
-import { viewFor } from '../src/views';
+import { type View, viewFor } from '../src/views';
 
 const output = (o: Partial<UtteranceOutput> & Pick<UtteranceOutput, 'kind'>): UtteranceOutput => ({
   actions: [],
@@ -254,6 +260,95 @@ describe('家族の一言', () => {
     );
     expect(again?.status).toBe('ok');
     expect(calls).toHaveLength(2);
+  });
+
+  it('同じ種類の対象がほかにもある候補には、記録させない訳を付け、押されても記録しない', async () => {
+    const sessions = demoSessions();
+    const id = sessions.create('chase');
+    const calls: UtteranceContext[] = [];
+    // 頼み事が一件だけなら、記録できる候補（訳なし）。
+    const reply = await sessions.utterance(
+      id,
+      'b',
+      say('おばあちゃん大丈夫だって'),
+      reader(replyYes, calls),
+    );
+    if (reply?.status !== 'ok' || reply.reply.kind !== 'change') throw new Error('候補が無い');
+    expect(calls[0]?.requests.map((r) => r.id)).toEqual(['r-grandma']);
+    expect(reply.reply.proposals[0]?.blocked).toBeUndefined();
+    // 作業は、計画の生きている作業（比べるための案の作業も）がほかにもあるので、記録させない。
+    const asked = sessions.create('asked');
+    const accept = output({
+      kind: 'change',
+      actions: [
+        {
+          type: 'done',
+          taskKey: 'task:opt:arr:purchase:n1:i5:buy:buy',
+          requestId: null,
+          reply: null,
+          unknownId: null,
+          value: null,
+        },
+      ],
+    });
+    const task = await sessions.utterance(asked, 'a', say('シャツ買った'), reader(accept));
+    if (task?.status !== 'ok' || task.reply.kind !== 'change') throw new Error('候補が無い');
+    const [proposal] = task.reply.proposals;
+    expect(proposal?.blocked).toBe('otherTasks');
+    // 画面を通らずに押されても、記録しない（今の計画を返して見せ直す）。
+    const before = (await sessions.view(asked, 'a'))?.plan.throughSeq;
+    const confirmed = await sessions.confirm(asked, 'a', proposal?.id ?? '', 'confirm-1');
+    expect(confirmed?.status).toBe('changed');
+    expect((await sessions.view(asked, 'a'))?.plan.throughSeq).toBe(before);
+  });
+
+  it('見せた後に同じ種類の対象が増えたら、記録しない（家庭を押さえた中で判断し直す）', async () => {
+    const sessions = demoSessions();
+    const id = sessions.create('chase');
+    const reply = await sessions.utterance(
+      id,
+      'b',
+      say('おばあちゃん大丈夫だって'),
+      reader(replyYes),
+    );
+    if (reply?.status !== 'ok' || reply.reply.kind !== 'change') throw new Error('候補が無い');
+    const [proposal] = reply.reply.proposals;
+    expect(proposal?.blocked).toBeUndefined();
+    // 見せた後に、学童を予備にして、健太が申込書を出した（頼み事が二件になった）。
+    let op = 0;
+    const run = async (memberId: string, command: Command) => {
+      const done = await sessions.command(id, memberId, `op-${++op}`, command);
+      if (done?.result.status !== 'ok')
+        throw new Error(`${command.type}：${JSON.stringify(done?.result)}`);
+      return done?.view as View;
+    };
+    const care = 'arr:childCare:n1:i6:c';
+    const gakudo = `opt:${care}:opt-gakudo`;
+    const view = await run('b', {
+      type: 'chooseOption',
+      arrangementKey: care,
+      optionKey: gakudo,
+      role: 'backup',
+      assigneeId: 'a',
+    });
+    const submit = view.plan.tasks.find((t) => t.key === `task:${gakudo}:submit`);
+    const shown = submit && proposalSnapshot(submit);
+    if (!submit || !shown) throw new Error('出す作業が無い');
+    await run('a', { type: 'accept', taskKey: submit.key, shown });
+    const arrangement = view.plan.arrangements.find((a) => a.key === care);
+    if (!arrangement) throw new Error('手配が無い');
+    await run('a', {
+      type: 'recordSent',
+      taskKey: submit.key,
+      requestId: 'r-gakudo-new',
+      window: { start: arrangement.start, end: arrangement.end },
+    });
+    const stale = await sessions.confirm(id, 'b', proposal?.id ?? '', 'confirm-2');
+    expect(stale?.status).toBe('changed');
+    if (stale?.status !== 'changed') return;
+    expect(stale.view.plan.requests.find((r) => r.requestId === 'r-grandma')?.state).toBe(
+      'awaitingReply',
+    );
   });
 
   it('比べるための候補の作業（まだ選んでいない案の物）は、前提に入れない', () => {

@@ -695,6 +695,7 @@ describe('家族の家庭の一言', () => {
 
   it('中身が直された need の依頼は、送った時の控えを一言の前提にする', async () => {
     const contexts: UtteranceContext[] = [];
+    let cancellation = false;
     const listener: UtteranceReader = async (context) => {
       contexts.push(context);
       const action = replyYes.actions[0];
@@ -702,7 +703,14 @@ describe('家族の家庭の一言', () => {
       return {
         output: {
           ...replyYes,
-          actions: [{ ...action, requestId: 'r-new-need' }],
+          actions: [
+            {
+              ...action,
+              type: cancellation ? 'recordCancellationSent' : 'recordReply',
+              requestId: 'r-new-need',
+              reply: cancellation ? null : 'yes',
+            },
+          ],
         },
         model: 'test-model',
         promptVersion: 'test',
@@ -781,15 +789,42 @@ describe('家族の家庭の一言', () => {
     expect(sent?.what).not.toContain('新しい用事');
     const candidate = heard.body.reply.proposals[0];
     if (!candidate) throw new Error('候補が無い');
+    const beforeConfirmation = await t.all();
     const confirmed = await t.call(`/api/proposals/${candidate.id}`, 'b', {
       as: 'b',
       operationId: 'confirm-old',
     });
-    expect(confirmed.status).toBe(200);
+    expect(confirmed.status).toBe(409);
+    expect(confirmed.body.error).toBe('proposalChanged');
+    expect(await t.all()).toHaveLength(beforeConfirmation.length);
+    // 頼み事の札の命令は、これまでどおり記録できる。
+    const fromCard = await send({ type: 'recordReply', requestId: 'r-new-need', reply: 'yes' });
+    expect(fromCard.plan.requests.find((entry) => entry.requestId === 'r-new-need')).toMatchObject({
+      state: 'confirmed',
+      needsCheck: true,
+      askedNeed: { what: '元の用事' },
+    });
+    await write({ type: 'dismissItem', itemId, reason: 'other' });
+    cancellation = true;
+    const heardCancel = await t.call('/api/utterances', 'b', say('cancel-request'));
+    expect(heardCancel.status).toBe(200);
+    const candidateCancel = heardCancel.body.reply.proposals[0];
+    if (!candidateCancel) throw new Error('取消の候補が無い');
+    const beforeCancel = await t.all();
+    const cancel = await t.call(`/api/proposals/${candidateCancel.id}`, 'b', {
+      as: 'b',
+      operationId: 'confirm-cancel',
+    });
+    expect(cancel.status).toBe(409);
+    expect(cancel.body.error).toBe('proposalChanged');
+    expect(await t.all()).toHaveLength(beforeCancel.length);
+    const cardCancel = await send({ type: 'recordCancellationSent', requestId: 'r-new-need' });
     expect(
-      confirmed.body.view.plan.requests.find((entry) => entry.requestId === 'r-new-need'),
-    ).toMatchObject({ state: 'confirmed', needsCheck: true, askedNeed: { what: '元の用事' } });
-  });
+      cardCancel.plan.requests.find((entry) => entry.requestId === 'r-new-need'),
+    ).toMatchObject({
+      state: 'cancelled',
+    });
+  }, 30_000);
 
   it('本人が候補を確かめた時だけ記録し、送り直しは再起動後も二重にならない', async () => {
     const calls: string[] = [];
@@ -831,6 +866,112 @@ describe('家族の家庭の一言', () => {
     ).toBe(404);
     expect(calls).toEqual(['b']);
   });
+
+  it('家庭の一言は、異なる種類を含め未定の値が複数ある時に記録しない', async () => {
+    let target = 'n1:u1';
+    let now = NOW;
+    const listener: UtteranceReader = async (context) => {
+      const unknown = context.unknowns.find((entry) => entry.id === target);
+      if (!unknown?.values[0]) throw new Error('架空の値が無い');
+      return {
+        output: {
+          kind: 'change',
+          actions: [
+            {
+              type: 'answer',
+              taskKey: null,
+              requestId: null,
+              reply: null,
+              unknownId: target,
+              value: unknown.values[0],
+            },
+          ],
+          refs: { taskKeys: [], requestIds: [], itemIds: [] },
+          unsupported: null,
+        },
+        model: 'test-model',
+        promptVersion: 'test',
+        inputHash: 'test',
+        usage: { input_tokens: 0, output_tokens: 0 },
+      };
+    };
+    const reader: NoticeReader = async (request) => ({
+      output: {
+        items: [],
+        unknowns: [
+          {
+            id: 'u2',
+            label: '別の予定の日',
+            values: ['2026-12-09', '2026-12-10'],
+            kind: 'schedule',
+          },
+        ],
+        conditions: [],
+        irrelevantSentenceIds: request.source.sentences.map((sentence) => sentence.id),
+        ambiguities: [],
+      },
+      model: 'test-model',
+      promptVersion: 'test',
+      inputHash: 'test',
+      usage: { input_tokens: 0, output_tokens: 0 },
+    });
+    const t = await setup({ listener, reader, clock: () => now });
+    const first = await t.call('/api/utterances', 'b', say('unknown-one'));
+    expect(first.status).toBe(200);
+    expect(first.body.reply.proposals[0]).toMatchObject({ blocked: 'otherUnknowns' });
+    target = 'u-atHome:n1:i5';
+    const second = await t.call('/api/utterances', 'b', say('unknown-home'));
+    expect(second.status).toBe(200);
+    expect(second.body.reply.proposals[0]).toMatchObject({ blocked: 'otherUnknowns' });
+    // 持ち物の期限が過ぎて一つになっても、最初に止めた候補は後から使わない。
+    now = Date.parse('2026-12-06T09:00+09:00');
+    const blocked = first.body.reply.proposals[0];
+    if (!blocked) throw new Error('先の候補が無い');
+    const denied = await t.call(`/api/proposals/${blocked.id}`, 'b', {
+      as: 'b',
+      operationId: 'confirm-blocked-unknown',
+    });
+    expect(denied.status).toBe(409);
+    target = 'n1:u1';
+    const only = await t.call('/api/utterances', 'b', say('unknown-only'));
+    expect(only.status).toBe(200);
+    expect(only.body.reply.proposals[0]).not.toHaveProperty('blocked');
+    const read = await t.call(
+      '/api/notices',
+      'b',
+      notice('another-unknown', '別の予定の日は未定です。'),
+    );
+    expect(read.status).toBe(200);
+    target = 'n1:u1';
+    const third = await t.call('/api/utterances', 'b', say('unknown-two'));
+    expect(third.status).toBe(200);
+    expect(third.body.reply.proposals[0]).toMatchObject({ blocked: 'otherUnknowns' });
+    const old = only.body.reply.proposals[0];
+    if (!old) throw new Error('先の候補が無い');
+    const eventsBefore = await t.all();
+    const outdated = await t.call(`/api/proposals/${old.id}`, 'b', {
+      as: 'b',
+      operationId: 'confirm-outdated-unknown',
+    });
+    expect(outdated.status).toBe(409);
+    expect(outdated.body.error).toBe('proposalChanged');
+    expect(await t.all()).toHaveLength(eventsBefore.length);
+  }, 30_000);
+
+  it('分をまたいでも、対象と見分けの条件が同じなら確認できる', async () => {
+    let now = Date.parse('2026-11-25T19:40:30+09:00');
+    const t = await setup({ listener: makeListener(), clock: () => now });
+    const heard = await t.call('/api/utterances', 'b', say('clock-answer'));
+    expect(heard.status).toBe(200);
+    const candidate = heard.body.reply.proposals[0];
+    if (!candidate) throw new Error('候補が無い');
+    now += 40_000;
+    const confirmed = await t.call(`/api/proposals/${candidate.id}`, 'b', {
+      as: 'b',
+      operationId: 'clock-confirm',
+    });
+    expect(confirmed.status).toBe(200);
+  }, 30_000);
 
   it('見せた後に別の大人が返事を変えたら、古い候補を記録しない', async () => {
     const t = await setup({ listener: makeListener() });

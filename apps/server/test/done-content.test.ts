@@ -96,7 +96,7 @@ it('買ったシャツが赤い帽子に直されたら、済みを当てずに�
   expect((await task()).commitment).toBe('done');
 });
 
-it('ひとことの「済んだ」の候補も、前提に載せた作業の用件を付けて記録する', async () => {
+it('ひとことの「済んだ」の候補も、前提に載せた作業の用件を付ける（ほかにも作業があるので、札で記録する）', async () => {
   const sessions = demoSessions();
   const id = sessions.create('asked');
   const heard = await sessions.utterance(
@@ -134,7 +134,11 @@ it('ひとことの「済んだ」の候補も、前提に載せた作業の用�
     action: 'done',
     seen: { titleKey: 'task.buy', titleParams: { what: '白い長袖シャツ' } },
   });
-  expect((await sessions.confirm(id, 'a', proposal.id, 'c-1'))?.status).toBe('ok');
+  // デモの家庭にはほかにも作業があるので、一言では記録しない（押しても記録しない）。
+  expect(proposal.blocked).toBe('otherTasks');
+  expect((await sessions.confirm(id, 'a', proposal.id, 'c-1'))?.status).toBe('changed');
+  // 札で、用件を付けた同じ命令を記録する。
+  expect((await sessions.command(id, 'a', 'card-1', proposal.command))?.result.status).toBe('ok');
   // 記録に用件が残ったので、直されて別の物になると、済みは当たらない。
   const corrected = await sessions.command(id, 'b', 'cmd-1', {
     type: 'correctItem',

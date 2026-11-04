@@ -125,7 +125,7 @@ describe('ひとこと', () => {
     ).toContain('（振替休業日・12/7（月） 8:10–18:15の分）');
   });
 
-  it('同じ人への同じ日の頼み事は、頼んだ時間で見分け、見分けられない候補は選ばせない', async () => {
+  it('同じ人への同じ日の頼み事は頼んだ時間で書き、同じ文の候補と、サーバーが記録させない候補は選ばせない', async () => {
     const ctx = await ctxOf('chase', 'b');
     const grandma = ctx.plan.requests.find((r) => r.requestId === 'r-grandma');
     if (!grandma?.window) throw new Error('頼み事が無い');
@@ -137,31 +137,42 @@ describe('ひとこと', () => {
         requests: [...ctx.plan.requests, { ...grandma, requestId: 'r-grandma-2', window }],
       },
     });
-    const reply: Heard = {
+    const reply = (blocked?: 'otherRequests'): Heard => ({
       kind: 'clarify',
       reason: 'ambiguous',
       proposals: [
         { id: 'p1', command: { type: 'recordReply', requestId: 'r-grandma', reply: 'no' } },
         { id: 'p2', command: { type: 'recordReply', requestId: 'r-grandma-2', reply: 'no' } },
-      ],
-    };
-    const distinct = render(two(later), reply);
+      ].map((p) => (blocked ? { ...p, blocked } : p)),
+    });
+    const distinct = render(two(later), reply());
     expect(distinct).toContain('（振替休業日・12/7（月） 8:10–18:15の分）');
     expect(distinct).toContain('（振替休業日・12/7（月） 14:00–15:00の分）');
     expect(distinct).not.toContain('見分けのつかない候補');
-    // 時間まで同じなら、どちらも押させない（どれが記録されるか分からない）。
+    // 同じ文の候補は、どちらも押させない（どれが記録されるか分からない）。
     const same = renderToStaticMarkup(
       <SayReply
         ctx={two(grandma.window)}
-        reply={reply}
+        reply={reply()}
         busy={false}
         onRecord={() => {}}
         onClear={() => {}}
       />,
     );
     expect(same).not.toContain('返事があったと記録する');
-    // 同じ文の頼み事がほかにあるので、どれにも記録させず、頼み事の札で記録してもらう。
-    expect(text(same)).toContain('どれに記録するか見分けられません');
+    expect(text(same)).toContain('見分けのつかない候補');
+    // サーバーが記録させないとした候補（ほかにも頼み事がある）は、文が違っても選ばせず、札へ案内する。
+    const blocked = renderToStaticMarkup(
+      <SayReply
+        ctx={two(later)}
+        reply={reply('otherRequests')}
+        busy={false}
+        onRecord={() => {}}
+        onClear={() => {}}
+      />,
+    );
+    expect(blocked).not.toContain('<button type="button" class');
+    expect(text(blocked).split('ほかにも頼み事があるので、一言では記録しません')).toHaveLength(2);
   });
 
   it('一部が別の大人の作業なら、その人が記録すると示し、話した人の分は選べる候補で出す', async () => {
@@ -317,7 +328,9 @@ describe('ひとこと', () => {
      * 締切の「すること」を二つ言い、どちらも祖母のやり方を本命にして頼み（送ったと記録し）、返事の記録の候補を見る。
      * deadlines は二つの「すること」の締切。
      */
-    async function twoAsked(needs: { deadline: string; place?: string; forMemberId?: string }[]) {
+    async function twoAsked(
+      needs: { deadline: string; place?: string; forMemberId?: string; what?: string }[],
+    ) {
       const sessions = demoSessions();
       const id = sessions.create('arrived');
       let op = 0;
@@ -332,11 +345,11 @@ describe('ひとこと', () => {
         return run({ ...command, seen: { throughSeq: shown.throughSeq, changes: shown.seen } });
       };
       const requestIds: string[] = [];
-      for (const [n, { deadline, ...extra }] of needs.entries()) {
+      for (const [n, { deadline, what = '手続き', ...extra }] of needs.entries()) {
         let view = await previewed({
           type: 'stateNeed',
           text: `${n + 1}つ目の手続き。`,
-          interpretation: { what: '手続き', shape: 'by', deadline, ...extra },
+          interpretation: { what, shape: 'by', deadline, ...extra },
         });
         const known = new Set(view.plan.arrangements.map((a) => a.key));
         const requirement = view.plan.requirements.find(
@@ -380,12 +393,15 @@ describe('ひとこと', () => {
         sources: new Map(view.sources.map((s) => [s.id, s])),
         now: view.now,
       };
-      const yes = (requestId: string) =>
-        render(ctx, {
-          kind: 'change',
-          proposals: [{ id: 'p1', command: { type: 'recordReply', requestId, reply: 'yes' } }],
-        });
-      return { yes };
+      const yes = (requestId: string, over: Partial<Ctx> = {}) =>
+        render(
+          { ...ctx, ...over },
+          {
+            kind: 'change',
+            proposals: [{ id: 'p1', command: { type: 'recordReply', requestId, reply: 'yes' } }],
+          },
+        );
+      return { ctx, yes };
     }
 
     it('締切の違う頼み事は、送った時の締切で見分け、記録できる', async () => {
@@ -423,15 +439,54 @@ describe('ひとこと', () => {
       expect(first).toContain('記録する');
     }, 30_000);
 
-    it('同じ相手・同じ中身・同じ締切の頼み事がほかにもあれば、候補が一つでも記録させない', async () => {
-      const { yes } = await twoAsked([
-        { deadline: '2026-12-03T17:00+09:00' },
-        { deadline: '2026-12-03T17:00+09:00' },
-      ]);
-      const shown = yes('r-1');
-      expect(shown).toContain('どれに記録するか見分けられません');
-      expect(shown).not.toContain('記録する ');
+    it('サーバーが記録させないとした候補は、送った時の控えは見せ、記録の手を出さずに訳を書く', async () => {
+      const { ctx } = await twoAsked([{ deadline: '2026-12-03T17:00+09:00' }]);
+      const shown = (blocked: 'needOnCard' | 'otherRequests') =>
+        render(ctx, {
+          kind: 'change',
+          proposals: [
+            { id: 'p1', command: { type: 'recordReply', requestId: 'r-1', reply: 'yes' }, blocked },
+          ],
+        });
+      const need = shown('needOnCard');
+      expect(need).toContain('試しの家庭では一言で記録しません');
+      expect(need).toContain('12/3（木） 17:00まで');
+      expect(need).not.toContain('記録する ');
+      expect(shown('otherRequests')).toContain('ほかにも頼み事があるので、一言では記録しません');
     }, 30_000);
+  });
+
+  it('作業・未定の値も、サーバーが記録させないとした候補には訳を書き、記録の手を出さない', async () => {
+    const ctx = await ctxOf('chase', 'b');
+    const task = ctx.plan.tasks.find((t) => t.live);
+    if (!task) throw new Error('作業が無い');
+    const done = render(ctx, {
+      kind: 'change',
+      proposals: [
+        {
+          id: 'p1',
+          command: { type: 'commitment', taskKey: task.key, action: 'done' },
+          blocked: 'otherTasks',
+        },
+      ],
+    });
+    expect(done).toContain('ほかにも作業があるので、一言では記録しません');
+    expect(done).not.toContain('記録する ');
+    const answer = (blocked?: 'otherUnknowns') =>
+      render(ctx, {
+        kind: 'change',
+        proposals: [
+          {
+            id: 'p1',
+            command: { type: 'answer', unknownId: 'n1:u1', value: '2026-12-05' },
+            label: '開催日',
+            ...(blocked ? { blocked } : {}),
+          },
+        ],
+      });
+    expect(answer()).toContain('記録する ');
+    expect(answer('otherUnknowns')).toContain('ほかにも答えられる問いがあるので');
+    expect(answer('otherUnknowns')).not.toContain('記録する ');
   });
 
   it('問いの答えには、今は当てはまらない事項を出さない（条件の決まった後の古い参照）', async () => {

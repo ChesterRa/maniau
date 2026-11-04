@@ -1,6 +1,7 @@
-// 家族が決める値（参加するか等）を、デモの「ひとこと」から答える：候補には見せた時の位置が付き、押すまでに
-// 記録が進んでいなければ記録する。間にもう一人の操作が入れば、記録せず見せ直す。お知らせの読み取りも
-// 一言の読み取りも偽物で、Claude の API は呼ばない。
+// 家族が決める値（参加するか等）への、デモの「ひとこと」の答え：候補には見せた時の位置が付く。デモの家庭には
+// ほかにも答えられる問いがあるので、一言では記録せず（取り違えないため）、同じ答えを札で記録する。札でも、見せた
+// 後にもう一人の操作が入れば、記録せず見せ直す。お知らせの読み取りも一言の読み取りも偽物で、Claude の API は
+// 呼ばない。
 import type { ExtractionOutput, UtteranceContext, UtteranceOutput } from '@maniau/core';
 import { describe, expect, it } from 'vitest';
 import { demoSessions, type NoticeReader, type UtteranceReader } from '../src/demo-sessions';
@@ -107,7 +108,7 @@ async function proposed() {
 }
 
 describe('家族が決める値に「ひとこと」で答える', () => {
-  it('候補に見せた時の位置が付き、押すと記録して問いが消える', async () => {
+  it('候補に見せた時の位置が付き、ほかにも問いがあれば一言では記録せず、札の答えで問いが消える', async () => {
     const { sessions, id, question, proposal, throughSeq } = await proposed();
     expect(proposal.command).toEqual({
       type: 'answer',
@@ -115,15 +116,14 @@ describe('家族が決める値に「ひとこと」で答える', () => {
       value: 'yes',
       seen: { throughSeq },
     });
-    const confirmed = await sessions.confirm(id, 'b', proposal.id, 'confirm-join');
-    expect(confirmed?.status).toBe('ok');
-    if (confirmed?.status !== 'ok') return;
-    expect(confirmed.view.plan.questions.some((q) => q.unknownId === question.unknownId)).toBe(
-      false,
-    );
+    expect(proposal.blocked).toBe('otherUnknowns');
+    expect((await sessions.confirm(id, 'b', proposal.id, 'confirm-join'))?.status).toBe('changed');
+    const card = await sessions.command(id, 'b', 'card-join', proposal.command);
+    expect(card?.result.status).toBe('ok');
+    expect(card?.view.plan.questions.some((q) => q.unknownId === question.unknownId)).toBe(false);
   });
 
-  it('押すまでにもう一人の操作が入れば、記録せず見せ直す', async () => {
+  it('押すまでにもう一人の操作が入れば、見せた位置の答えは札からも記録せず見せ直す', async () => {
     const { sessions, id, question, proposal } = await proposed();
     const other = await sessions.command(id, 'a', 'other-answer', {
       type: 'answer',
@@ -133,6 +133,8 @@ describe('家族が決める値に「ひとこと」で答える', () => {
     expect(other?.result.status).toBe('ok');
     const confirmed = await sessions.confirm(id, 'b', proposal.id, 'confirm-join');
     expect(confirmed?.status).toBe('changed');
+    const stale = await sessions.command(id, 'b', 'card-join', proposal.command);
+    expect(stale?.result).toMatchObject({ status: 'conflict', reason: 'proposalChanged' });
     const view = await sessions.view(id, 'b');
     expect(view?.plan.questions.some((q) => q.unknownId === question.unknownId)).toBe(true);
   });

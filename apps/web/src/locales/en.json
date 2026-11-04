@@ -604,8 +604,13 @@
     "none": "None of these",
     "whichUnknown": "We couldn't tell which one you mean. Please say it again with the date or the person.",
     "lookAlike": "Some matches look the same, so they aren't offered. Please say it again with the date, time, or person.",
-    "sameTarget": "Another notice asks for the same item on the same day, so we can't tell which one this answers. On Today, check which notice each card comes from and answer there.",
-    "sameTask": "Another task has the same name on the same day, so we can't tell which one to record. On Today, check which notice each card comes from and record it there.",
+    "blocked": {
+      "otherTasks": "There are other tasks, so a quick update doesn't record this (to avoid recording the wrong one). On Today, find the task's card and record it there.",
+      "otherRequests": "There are other requests, so a quick update doesn't record this (to avoid recording the wrong one). On Today, find the request's card and record it there.",
+      "otherUnknowns": "There are other questions this could answer, so a quick update doesn't record this answer (to avoid answering the wrong one). If there's a question card on Today, answer there.",
+      "needOnCard": "In a trial household, replies to requests for a to-do, and telling someone such a request is cancelled, aren't recorded by a quick update (to avoid recording the wrong one). On Today, check what you sent on the request card and record it there.",
+      "missing": "What this refers to isn't in the current plan. Please say it again."
+    },
     "requestFor": "{{what}}",
     "requestFor_dated": "{{what}}, {{date}}",
     "requestStep": "{{step}}: {{what}}",
@@ -682,8 +687,7 @@
     "testOnly": "Reading with Claude isn't available for this household (trial households only).",
     "answerWithUnconfirmed": "Here is what we have (items marked \"reading not checked yet\" are not in the plan).",
     "needUnconfirmed": "Reading not checked yet (not in the plan)",
-    "requestBy": "by {{by}}",
-    "sameRequest": "There is another request to the same person with the same details and time, so we can't tell which one to record. On Today, check the request cards and record it there."
+    "requestBy": "by {{by}}"
   },
   "clock": {
     "label": "Until each choice disappears",

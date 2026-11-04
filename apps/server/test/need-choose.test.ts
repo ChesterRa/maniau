@@ -1,6 +1,7 @@
 // 通用の「すること」で、画面と同じ道で本命を選ぶ：「選んだら」（previewChoices）を見てから、見せた要約を付けて
 // 選ぶ（子の居場所の決める画面と同じ選ぶ所）。一言で「頼んだ」「済ませた」と伝えた時は、画面の「送った」
-// 「済んだ」と同じ物を命令に付ける（窓の「すること」の時間、作業の今の用件）。架空のデモ・偽の読み取り（API は
+// 「済んだ」と同じ物を候補の命令に付ける（窓の「すること」の時間、作業の今の用件）。デモの家庭にはほかにも作業が
+// あるので、一言では記録せず（取り違えないため）、同じ命令を札で記録する。架空のデモ・偽の読み取り（API は
 // 呼ばない）。
 import type { PreviewCommand, Task } from '@maniau/core';
 import { expect, it } from 'vitest';
@@ -60,7 +61,10 @@ async function chosen(
   return { sessions, id, arrangement, task };
 }
 
-/** 作業の担当が一言で伝え、候補を確かめる（偽の読み取りが、その作業への一つの動きを返す）。 */
+/**
+ * 作業の担当が一言で伝え、候補を確かめる（偽の読み取りが、その作業への一つの動きを返す）。ほかにも作業があるので
+ * 一言では記録せず、候補の命令を札で記録する。
+ */
 async function said(
   { sessions, id }: { sessions: ReturnType<typeof demoSessions>; id: string },
   task: Task,
@@ -86,11 +90,14 @@ async function said(
   if (heard?.status !== 'ok' || heard.reply.kind !== 'change') throw new Error('候補が無い');
   const proposal = heard.reply.proposals[0];
   if (!proposal) throw new Error('候補が無い');
-  expect((await sessions.confirm(id, who, proposal.id, 'confirm'))?.status).toBe('ok');
+  expect(proposal.blocked).toBe('otherTasks');
+  expect((await sessions.confirm(id, who, proposal.id, 'confirm'))?.status).toBe('changed');
+  const card = await sessions.command(id, who, `card-${type}`, proposal.command);
+  expect(card?.result.status).toBe('ok');
   return sessions.view(id, who);
 }
 
-it('「すること」の本命を「選んだら」を見てから選び、一言の「頼んだ」に窓を付ける', async () => {
+it('「すること」の本命を「選んだら」を見てから選び、一言の「頼んだ」の候補に窓を付ける', async () => {
   const setup = await chosen(
     {
       what: '陽菜を家で見る',
@@ -112,7 +119,7 @@ it('「すること」の本命を「選んだら」を見てから選び、一�
   });
 });
 
-it('「すること」の作業を一言で「済ませた」と伝えると、済みになる（用件は中身とやり方の版まで、画面と同じ）', async () => {
+it('「すること」の作業の一言の「済ませた」の候補は、札で記録すると済みになる（用件は中身とやり方の版まで、画面と同じ）', async () => {
   const setup = await chosen(
     { what: '学童クラブの継続を申し込む', shape: 'by', deadline: '2026-12-04T17:00+09:00' },
     '12月4日の17時までに、学童クラブの継続を申し込む',

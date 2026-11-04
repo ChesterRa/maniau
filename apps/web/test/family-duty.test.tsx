@@ -283,17 +283,20 @@ describe('一言で当番を記録する', () => {
     expect(button('記録する')).toBeDefined();
   });
 
-  it('同じ題・同じ日・同じ時間の当番がほかにもあれば、記録させず、札から記録してもらう', async () => {
+  it('同じ題・同じ日・同じ時間の当番がほかにもあれば（サーバーが記録させないとすれば）、札から記録してもらう', async () => {
     const twin = duty({
       key: 'task:duty:n4:d1',
       basis: { itemIds: ['n4:d1'], requirementKey: 'req:duty:n4:d1' },
     });
-    await show(withTasks([duty({}), twin]), done('task:duty:n3:d1'));
-    expect(host.textContent).toContain('どれを記録するか見分けられません');
+    // 記録させるかはサーバーが決める（ほかにも作業がある）。画面は訳を書き、記録の手を出さない。
+    const heard = done('task:duty:n3:d1');
+    if (heard.kind !== 'change') throw new Error('候補が無い');
+    await show(withTasks([duty({}), twin]), {
+      ...heard,
+      proposals: heard.proposals.map((p) => ({ ...p, blocked: 'otherTasks' as const })),
+    });
+    expect(host.textContent).toContain('ほかにも作業があるので、一言では記録しません');
     expect(button('記録する')).toBeUndefined();
-    // 済んだ・取り下げた作業は数えない（今の作業だけと比べる）。
-    await show(withTasks([duty({}), { ...twin, live: false }]), done('task:duty:n3:d1'));
-    expect(button('記録する')).toBeDefined();
   });
 
   it('当番の札の元の文へのつなぎに、どのお知らせの物かを書く', async () => {

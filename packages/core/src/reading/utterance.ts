@@ -4,7 +4,12 @@
 // 確かめる前には何も書かない。候補には、見せた時の状態の控え（seen）を付け、確かめる時に比べる。
 import { z } from 'zod';
 import type { Command } from '../schema/commands';
-import type { CommitmentState, ExternalRequestState } from '../schema/plan';
+import {
+  type CommitmentState,
+  type ExternalRequestState,
+  isNeedArrangementKey,
+  type PlanResult,
+} from '../schema/plan';
 
 export const UTTERANCE_ACTION_TYPES = [
   'withdraw',
@@ -148,6 +153,66 @@ export function seenOf(command: Command, context: UtteranceContext): ProposalSee
       return { unknown: context.unknowns.find((u) => u.id === command.unknownId) ?? null };
     default:
       return { task: null };
+  }
+}
+
+/**
+ * 一言の候補を、一言からは記録させない訳（02-foundation §8）。otherTasks・otherRequests・otherUnknowns：同じ種類の
+ * 対象がほかにもある。needOnCard：試しの家庭の「すること」の頼み事の返事・取り消しを伝えたこと（札で記録する）。
+ * missing：候補の対象が、今の前提に無い。
+ */
+export type RecordBlock =
+  | 'otherTasks'
+  | 'otherRequests'
+  | 'otherUnknowns'
+  | 'needOnCard'
+  | 'missing';
+
+/**
+ * 一言の候補を記録してよいか。同じ種類の対象がほかに一つも無い時だけ記録できる。題・名前・品名・控えの文は
+ * 家族やお知らせの文で、同じに見えて違う物（空白・見えない文字・形の似た字）を見分けられず、日付や時刻の表示も
+ * 自由な文で真似できるので、どの文も比べない（数だけで決める）。作業は計画の生きている作業の全部（比べるための
+ * 案の作業も）、頼み事は記録の先になりうる頼み事の全部、未定の値は一言で答えられる値の全部（家にあるかとほかの
+ * 値を分けない）と比べる。候補を出す時と、家庭を押さえて記録する時の二度、同じ時の前提と計画で呼ぶ。
+ */
+export function recordBlock(
+  command: Command,
+  context: UtteranceContext,
+  plan: PlanResult,
+  options: { trial: boolean },
+): RecordBlock | undefined {
+  switch (command.type) {
+    case 'commitment':
+    case 'recordSent': {
+      if (!context.tasks.some((t) => t.key === command.taskKey)) return 'missing';
+      const others = plan.tasks.some((t) => t.live && t.key !== command.taskKey);
+      return others ? 'otherTasks' : undefined;
+    }
+    case 'recordReply':
+    case 'recordCancellationSent': {
+      const request = plan.requests.find((r) => r.requestId === command.requestId);
+      if (!request || !context.requests.some((r) => r.id === command.requestId)) return 'missing';
+      if (
+        options.trial &&
+        request.basis.arrangementKey !== undefined &&
+        isNeedArrangementKey(request.basis.arrangementKey)
+      ) {
+        return 'needOnCard';
+      }
+      const target = (state: ExternalRequestState, live: boolean) =>
+        state !== 'cancelled' && (command.type === 'recordReply' || !live);
+      const others = plan.requests.some(
+        (r) => r.requestId !== command.requestId && target(r.state, r.live),
+      );
+      return others ? 'otherRequests' : undefined;
+    }
+    case 'answer': {
+      if (!context.unknowns.some((u) => u.id === command.unknownId)) return 'missing';
+      const others = context.unknowns.some((u) => u.id !== command.unknownId);
+      return others ? 'otherUnknowns' : undefined;
+    }
+    default:
+      return 'missing';
   }
 }
 

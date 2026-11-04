@@ -1,5 +1,6 @@
-// 日が直された後、一言で「頼んだ」と伝えても記録できる（架空のデモ・偽の読み取り。API は呼ばない）。前の日の分を
-// 送った作業は、今の日の分を頼み直す作業に戻るので、一言の前提でも「まだ送っていない」とする。
+// 日が直された後の一言の「頼んだ」（架空のデモ・偽の読み取り。API は呼ばない）。前の日の分を送った作業は、今の日の
+// 分を頼み直す作業に戻るので、一言の前提でも「まだ送っていない」とし、候補は新しい日の分を頼む時間を持つ。デモの
+// 家庭にはほかにも作業があるので、一言では記録せず（取り違えないため）、同じ命令を札で記録する。
 import { keys } from '@maniau/core/engine';
 import { expect, it } from 'vitest';
 import { demoSessions, type UtteranceReader } from '../src/demo-sessions';
@@ -7,7 +8,7 @@ import { demoSessions, type UtteranceReader } from '../src/demo-sessions';
 const care = 'arr:childCare:n1:i6:c';
 const ask = keys.task(keys.option(care, 'opt-grandma'), 'ask');
 
-it('日を直した後、一言で新しい日の分を頼んだと記録できる', async () => {
+it('日を直した後の一言の「頼んだ」は、新しい日の分の候補になり、札で記録できる', async () => {
   const sessions = demoSessions();
   const id = sessions.create('chase');
   expect(
@@ -53,8 +54,15 @@ it('日を直した後、一言で新しい日の分を頼んだと記録でき�
   expect(shownSent).toBe(false);
   if (heard?.status !== 'ok' || heard.reply.kind !== 'change') throw new Error('候補がない');
   const proposal = heard.reply.proposals[0];
-  if (!proposal) throw new Error('候補がない');
-  expect((await sessions.confirm(id, 'b', proposal.id, 'confirm'))?.status).toBe('ok');
+  if (proposal?.command.type !== 'recordSent') throw new Error('候補がない');
+  expect(proposal.command).toMatchObject({ taskKey: ask });
+  expect(proposal.command.window?.start.startsWith('2026-12-14')).toBe(true);
+  // ほかにも作業があるので、一言では記録しない（押しても記録しない）。
+  expect(proposal.blocked).toBe('otherTasks');
+  expect((await sessions.confirm(id, 'b', proposal.id, 'confirm'))?.status).toBe('changed');
+  // 札で、同じ命令を記録する。
+  const card = await sessions.command(id, 'b', 'sent-card', proposal.command);
+  expect(card?.result.status).toBe('ok');
   const view = await sessions.view(id, 'b');
   const sent = view?.plan.requests.filter((r) => r.taskKey === ask && r.state === 'awaitingReply');
   expect(sent?.some((r) => r.window?.start.startsWith('2026-12-14'))).toBe(true);

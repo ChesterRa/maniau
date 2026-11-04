@@ -12,6 +12,8 @@ import {
   isNeedArrangementKey,
   type PlanResult,
   type ProposalSeen,
+  type RecordBlock,
+  recordBlock,
   type Source,
   type SourceSender,
   seenOf,
@@ -103,6 +105,7 @@ interface StoredProposal {
   identityId: string;
   command: Command;
   seen: ProposalSeen;
+  blocked?: RecordBlock;
   expires: number;
 }
 
@@ -679,9 +682,17 @@ export function familyInput(options: FamilyInputOptions) {
           )
             return { status: 'stale' };
           const view = viewFor(log.events(), member.memberId, now);
+          const shownContext = familyUtteranceContext(
+            log.events(),
+            member.memberId,
+            now,
+            input.text,
+          );
+          if (!shownContext) return { status: 'stale' };
           const show = (proposal: { command: Command; seen: ProposalSeen }): ShownProposal => {
             const id = randomUUID();
             const command = withSeen(proposal.command, view.plan, reserved.throughSeq);
+            const blocked = recordBlock(command, shownContext, view.plan, { trial: true });
             const expires = Date.now() + proposalTtlMs;
             proposals.set(id, {
               householdId: member.householdId,
@@ -689,6 +700,7 @@ export function familyInput(options: FamilyInputOptions) {
               identityId: member.identityId,
               command,
               seen: proposal.seen,
+              ...(blocked ? { blocked } : {}),
               expires,
             });
             expire(proposals, id, expires);
@@ -696,7 +708,12 @@ export function familyInput(options: FamilyInputOptions) {
               command.type === 'answer'
                 ? context.unknowns.find((entry) => entry.id === command.unknownId)?.label
                 : undefined;
-            return { id, command, ...(label ? { label } : {}) };
+            return {
+              id,
+              command,
+              ...(label ? { label } : {}),
+              ...(blocked ? { blocked } : {}),
+            };
           };
           let shown: ShownReply;
           if (reply.kind === 'change')
@@ -922,10 +939,18 @@ export function familyInput(options: FamilyInputOptions) {
     if (prepared.status === 'ready' && proposal) {
       const now = nowIn(member.timeZone, options.clock?.());
       const guard: CommandGuard = (events) => {
-        const current = familyUtteranceContext(events, member.memberId, now, '');
-        return current && sha256Of(seenOf(proposal.command, current)) === sha256Of(proposal.seen)
-          ? undefined
-          : 'proposalChanged';
+        // 実際に家庭を押さえた時の時刻で、見分けと候補の前提を確かめる。
+        const atCheck = nowIn(member.timeZone, options.clock?.());
+        const current = familyUtteranceContext(events, member.memberId, atCheck, '');
+        if (!current || proposal.blocked) return 'proposalChanged';
+        const plan = computePlan(events, atCheck);
+        if (
+          recordBlock(proposal.command, current, plan, { trial: true }) !== undefined ||
+          sha256Of(seenOf(proposal.command, current)) !== sha256Of(proposal.seen)
+        ) {
+          return 'proposalChanged';
+        }
+        return undefined;
       };
       const result = await runCommand(
         store,

@@ -3557,62 +3557,29 @@ export function SayReply({
     reply.kind === 'clarify'
       ? reply.proposals.map((proposal) => ({ proposal, label: proposalLabel(ctx, proposal) }))
       : [];
-  // 一つだけの候補でも、同じ文になる別の対象があれば、どれが記録されるか分からないので記録させない（札から
-  // 記録してもらう）。同じ品物を同じ日に求める「家にあるか」と、同じ題・同じ日（当番は同じ時間）の別の作業。
-  // 返すのは、記録させない訳を書く文言のキー。
-  const sameAsOther = (proposal: ShownProposal): string | undefined => {
-    const { command } = proposal;
-    const label = proposalLabel(ctx, proposal);
-    if (command.type === 'commitment' || command.type === 'recordSent') {
-      const twin = ctx.plan.tasks.some(
-        (t) =>
-          t.live &&
-          t.key !== command.taskKey &&
-          proposalLabel(ctx, { ...proposal, command: { ...command, taskKey: t.key } }) === label,
-      );
-      return twin ? 'say.sameTask' : undefined;
-    }
-    // 返事・取り消しの記録は、今その記録の先になりうるほかの頼み事と、見せる文を比べる（モデルが一つしか返さなく
-    // ても、同じ文の頼み事がほかにあれば、どれに記録されるか家族に分からない）。
-    if (command.type === 'recordReply' || command.type === 'recordCancellationSent') {
-      const target = (r: ExternalRequest) =>
-        r.state !== 'cancelled' && (command.type === 'recordReply' || !r.live);
-      // 見せる物の全部（候補の文と、控えの行）で比べる。
-      const shown = (r: ExternalRequest | undefined, requestId: string) =>
-        JSON.stringify([
-          proposalLabel(ctx, { ...proposal, command: { ...command, requestId } }),
-          recordDetail(ctx, r),
-        ]);
-      const mine = shown(recordTarget(ctx, proposal), command.requestId);
-      const twin = ctx.plan.requests.some(
-        (r) => r.requestId !== command.requestId && target(r) && shown(r, r.requestId) === mine,
-      );
-      return twin ? 'say.sameRequest' : undefined;
-    }
-    if (command.type !== 'answer') return undefined;
-    const twin = ctx.plan.requirements.some(
-      (r) =>
-        r.live &&
-        r.atHomeUnknownId !== undefined &&
-        r.atHomeUnknownId !== command.unknownId &&
-        proposalLabel(ctx, {
-          ...proposal,
-          command: { ...command, unknownId: r.atHomeUnknownId },
-        }) === label,
-    );
-    return twin ? 'say.sameTarget' : undefined;
-  };
+  // 記録させない訳はサーバーが決める（core の recordBlock：同じ種類の対象がほかにもある、試しの家庭の「すること」
+  // の頼み事など）。画面では計算し直さない（画面とサーバーで、別の判断をしない）。返すのは文言のキー。
+  const blocked = (proposal: ShownProposal): string | undefined =>
+    proposal.blocked ? `say.blocked.${proposal.blocked}` : undefined;
   const choices = labeled.filter(
-    (c) => labeled.filter((o) => o.label === c.label).length === 1 && !sameAsOther(c.proposal),
+    (c) => labeled.filter((o) => o.label === c.label).length === 1 && !blocked(c.proposal),
   );
+  // 選ばせない候補の訳（同じ訳は一度だけ）。同じ文の候補が並んだだけなら、言い直してもらう。
+  const reasons = [
+    ...new Set(
+      labeled
+        .filter((c) => !choices.includes(c))
+        .map((c) => blocked(c.proposal) ?? 'say.lookAlike'),
+    ),
+  ];
   return (
     <>
       {reply.kind === 'change' &&
         reply.proposals.map((proposal) => {
-          const blocked = sameAsOther(proposal);
+          const reason = blocked(proposal);
           return (
             <div key={proposal.id} className="flex flex-col gap-2">
-              <Text quiet>{ctx.t(blocked ?? 'say.confirm')}</Text>
+              <Text quiet>{ctx.t(reason ?? 'say.confirm')}</Text>
               <Title>{proposalLabel(ctx, proposal)}</Title>
               {recordDetail(ctx, recordTarget(ctx, proposal)).map((line) => (
                 <Text key={line} quiet>
@@ -3620,7 +3587,7 @@ export function SayReply({
                 </Text>
               ))}
               <Row>
-                {!blocked && (
+                {!reason && (
                   <Button onClick={() => onRecord(proposal)} disabled={busy}>
                     {ctx.t('say.record')}
                   </Button>
@@ -3656,14 +3623,9 @@ export function SayReply({
               </Button>
             </>
           )}
-          {labeled.length > choices.length && (
-            <Text>
-              {ctx.t(
-                labeled.map((c) => sameAsOther(c.proposal)).find((key) => key !== undefined) ??
-                  'say.lookAlike',
-              )}
-            </Text>
-          )}
+          {reasons.map((key) => (
+            <Text key={key}>{ctx.t(key)}</Text>
+          ))}
           {labeled.length === 0 && reply.reason === 'ambiguous' && (
             <Text>{ctx.t('say.whichUnknown')}</Text>
           )}

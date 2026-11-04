@@ -124,16 +124,21 @@ it('同じ品物が別の日にも要る時は、どちらに答えるかを日�
   expect(labels.find((l) => l.includes('（12/14（月）までに要る）'))).toBeDefined();
 });
 
-it('同じ品物を同じ日に求めるお知らせが二つあれば、一つだけの候補でも記録させず、札から答えてもらう', async () => {
+it('ほかにも答えられる問いがあるとサーバーが示した候補は、記録させず、札から答えてもらう', async () => {
   const ctx = await ctxOf('ja', '2026-12-05');
   const shirts = ctx.plan.requirements.filter((r) => r.live && r.what === '白い長袖シャツ');
   expect(shirts).toHaveLength(2);
   for (const shirt of shirts) {
-    const shown = render(ctx, replyTo(shirt.atHomeUnknownId ?? ''));
-    expect(shown).toContain('どれに答えるか見分けられません');
+    const heard = replyTo(shirt.atHomeUnknownId ?? '');
+    if (heard.kind !== 'change') throw new Error('候補が無い');
+    const shown = render(ctx, {
+      ...heard,
+      proposals: heard.proposals.map((p) => ({ ...p, blocked: 'otherUnknowns' as const })),
+    });
+    expect(shown).toContain('ほかにも答えられる問いがあるので、一言では答えを記録しません');
     expect(shown).not.toContain('記録する');
   }
-  // 別の日なら、日で見分けられるので記録できる。
+  // 記録させない訳が無ければ、記録できる（決めるのはサーバー）。
   expect(render(await ctxOf('ja', '2026-12-14'), reply)).toContain('記録する');
 });
 

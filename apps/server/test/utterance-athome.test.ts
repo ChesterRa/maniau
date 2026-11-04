@@ -56,7 +56,7 @@ async function heard() {
   return { sessions, id, calls, proposal };
 }
 
-it('「シャツは家にない」と言えば、家にあるかの値に答える候補を出し、押すと記録する', async () => {
+it('「シャツは家にない」と言えば、家にあるかの値に答える候補を出す（ほかにも答えられる値があれば、押しても記録しない）', async () => {
   const { sessions, id, calls, proposal } = await heard();
   expect(calls[0]?.unknowns).toContainEqual({
     id: UNKNOWN,
@@ -71,13 +71,15 @@ it('「シャツは家にない」と言えば、家にあるかの値に答え�
     value: 'no',
     seen: { what: '白い長袖シャツ', throughSeq: await shownAt(sessions, id) },
   });
+  // このデモには、発表会の日（読み取りの未定の値）も答えられる値としてあるので、一言からは記録しない（札で
+  // 答える）。家にあるかとほかの値の名前は文なので、見分けの証拠にしない。
+  expect(calls[0]?.unknowns.length).toBeGreaterThan(1);
+  expect(proposal.blocked).toBe('otherUnknowns');
   const confirmed = await sessions.confirm(id, 'b', proposal.id, 'c-1');
-  expect(confirmed?.status).toBe('ok');
-  if (confirmed?.status !== 'ok') return;
-  expect(confirmed.view.plan.questions.some((q) => q.unknownId === UNKNOWN)).toBe(false);
-  expect(confirmed.view.plan.arrangements.find((a) => a.key === SHIRT)?.status).not.toBe(
-    'askFirst',
-  );
+  expect(confirmed?.status).toBe('changed');
+  if (confirmed?.status !== 'changed') return;
+  expect(confirmed.view.plan.questions.some((q) => q.unknownId === UNKNOWN)).toBe(true);
+  expect(confirmed.view.plan.arrangements.find((a) => a.key === SHIRT)?.status).toBe('askFirst');
 });
 
 it('押すまでに品物が直されていたら、古い候補では答えない', async () => {
@@ -94,7 +96,7 @@ it('押すまでに品物が直されていたら、古い候補では答えな�
   expect(stale.view.plan.questions.some((q) => q.unknownId === UNKNOWN)).toBe(true);
 });
 
-it('あると答えて問いが消えた後も、要る時までは「やっぱり無かった」と答え直せる', async () => {
+it('あると答えて問いが消えた後も、要る時までは「やっぱり無かった」を候補にできる（札からは答え直せる）', async () => {
   const sessions = demoSessions();
   const id = sessions.create('arrived');
   const yes = await sessions.command(id, 'b', 'cmd-yes', {
@@ -122,11 +124,18 @@ it('あると答えて問いが消えた後も、要る時までは「やっぱ�
   if (heard?.status !== 'ok' || heard.reply.kind !== 'change') throw new Error('候補が無い');
   const [proposal] = heard.reply.proposals;
   if (!proposal) throw new Error('候補が無い');
-  const confirmed = await sessions.confirm(id, 'b', proposal.id, 'c-3');
-  expect(confirmed?.status).toBe('ok');
-  if (confirmed?.status !== 'ok') return;
+  // ほかにも答えられる値があるので、一言の候補は記録しない。札（同じ命令）からなら答え直せる。
+  expect(proposal.blocked).toBe('otherUnknowns');
+  expect((await sessions.confirm(id, 'b', proposal.id, 'c-3'))?.status).toBe('changed');
+  const again = await sessions.command(id, 'b', 'cmd-no', {
+    type: 'answer',
+    unknownId: UNKNOWN,
+    value: 'no',
+    seen: { what: '白い長袖シャツ', throughSeq: await shownAt(sessions, id) },
+  });
+  expect(again?.result.status).toBe('ok');
   // 買い物の手配が戻る（買える時があれば、買う作業を出す）。
-  expect(confirmed.view.plan.arrangements.find((a) => a.key === SHIRT)?.status).toBe('decidable');
+  expect(again?.view.plan.arrangements.find((a) => a.key === SHIRT)?.status).toBe('decidable');
   // 要る時を過ぎたら、もう答えを受けない。
   const late = await sessions.command(id, 'b', 'clock', {
     type: 'advanceClock',

@@ -1,6 +1,8 @@
 // 家族の一言：モデルの候補を、対象・話した人・今の状態で確かめてから見せる。
 import { describe, expect, it } from 'vitest';
 import {
+  type PlanResult,
+  recordBlock,
   seenOf,
   toUtteranceReply,
   type UtteranceAction,
@@ -342,5 +344,109 @@ describe('家族の一言を、確かめた候補にする', () => {
         }),
       ),
     ).not.toBe(JSON.stringify(seenOf(reply, context)));
+  });
+});
+
+describe('一言の候補を記録してよいか（同じ種類の対象がほかに無い時だけ）', () => {
+  const task = (key: string, live = true) => ({ key, live }) as PlanResult['tasks'][number];
+  const request = (requestId: string, over: Partial<PlanResult['requests'][number]> = {}) =>
+    ({
+      requestId,
+      state: 'awaitingReply',
+      live: true,
+      basis: { itemIds: [], arrangementKey: 'arr:childCare:n1:i4:c' },
+      ...over,
+    }) as PlanResult['requests'][number];
+  const planOf = (over: Partial<PlanResult>) =>
+    ({ tasks: [], requests: [], ...over }) as unknown as PlanResult;
+  const ctxOf = (over: Partial<UtteranceContext>): UtteranceContext => ({
+    ...context,
+    tasks: [],
+    requests: [],
+    unknowns: [],
+    ...over,
+  });
+  const demo = { trial: false };
+
+  it('作業：生きている作業がほかにあれば、題や日が違っても記録させない', () => {
+    const done = { type: 'commitment', taskKey: 't1', action: 'done' } as const;
+    const ctx = ctxOf({
+      tasks: [{ ...(context.tasks[0] as UtteranceContext['tasks'][number]), key: 't1' }],
+    });
+    expect(recordBlock(done, ctx, planOf({ tasks: [task('t1')] }), demo)).toBeUndefined();
+    expect(recordBlock(done, ctx, planOf({ tasks: [task('t1'), task('t2')] }), demo)).toBe(
+      'otherTasks',
+    );
+    // 生きていない作業は数えない。
+    expect(
+      recordBlock(done, ctx, planOf({ tasks: [task('t1'), task('t2', false)] }), demo),
+    ).toBeUndefined();
+    // 候補の対象が前提に無い。
+    expect(recordBlock(done, ctxOf({}), planOf({ tasks: [task('t1')] }), demo)).toBe('missing');
+  });
+
+  it('頼み事：記録の先になりうる頼み事がほかにあれば記録させない。試しの家庭の「すること」の頼み事は札で', () => {
+    const yes = { type: 'recordReply', requestId: 'r1', reply: 'yes' } as const;
+    const cancelled = { type: 'recordCancellationSent', requestId: 'r1' } as const;
+    const ctx = ctxOf({
+      requests: [
+        {
+          id: 'r1',
+          to: 'おばあちゃん',
+          what: '',
+          forDate: null,
+          state: 'awaitingReply',
+          sentBy: 'b',
+          needed: true,
+        },
+      ],
+    });
+    expect(recordBlock(yes, ctx, planOf({ requests: [request('r1')] }), demo)).toBeUndefined();
+    expect(recordBlock(yes, ctx, planOf({ requests: [request('r1'), request('r2')] }), demo)).toBe(
+      'otherRequests',
+    );
+    // 取り消しを伝えた頼み事は数えない。取り消しの記録の先は、要らなくなった頼み事だけ。
+    expect(
+      recordBlock(
+        yes,
+        ctx,
+        planOf({ requests: [request('r1'), request('r2', { state: 'cancelled' })] }),
+        demo,
+      ),
+    ).toBeUndefined();
+    expect(
+      recordBlock(cancelled, ctx, planOf({ requests: [request('r1'), request('r2')] }), demo),
+    ).toBeUndefined();
+    expect(
+      recordBlock(
+        cancelled,
+        ctx,
+        planOf({ requests: [request('r1'), request('r2', { live: false })] }),
+        demo,
+      ),
+    ).toBe('otherRequests');
+    const need = request('r1', { basis: { itemIds: [], arrangementKey: 'arr:need:f-1:i1' } });
+    expect(recordBlock(yes, ctx, planOf({ requests: [need] }), { trial: true })).toBe('needOnCard');
+    expect(recordBlock(cancelled, ctx, planOf({ requests: [need] }), { trial: true })).toBe(
+      'needOnCard',
+    );
+    expect(recordBlock(yes, ctx, planOf({ requests: [need] }), demo)).toBeUndefined();
+    expect(recordBlock(yes, ctx, planOf({ requests: [] }), demo)).toBe('missing');
+  });
+
+  it('未定の値：家にあるかとほかの値を分けず、答えられる値がほかにあれば記録させない', () => {
+    const answer = { type: 'answer', unknownId: 'u1', value: 'yes' } as const;
+    const unknown = (id: string) => ({ id, label: '開催日', values: ['yes', 'no'], answer: null });
+    const plan = planOf({});
+    expect(recordBlock(answer, ctxOf({ unknowns: [unknown('u1')] }), plan, demo)).toBeUndefined();
+    expect(
+      recordBlock(
+        answer,
+        ctxOf({ unknowns: [unknown('u1'), unknown('u-atHome:n1:i5')] }),
+        plan,
+        demo,
+      ),
+    ).toBe('otherUnknowns');
+    expect(recordBlock(answer, ctxOf({ unknowns: [unknown('u2')] }), plan, demo)).toBe('missing');
   });
 });

@@ -1,6 +1,7 @@
 // 買った後に、一言で家にあるかを言い直す（架空のデモ・偽の読み取り。API は呼ばない）。買ったことは家にある
 // ことを示さない（買って帰る前かもしれない）ので、一言の前提の今の答えは空にする。「見つからない」も「家に
-// あった」も候補になり、押すと記録して、二人の札に出る。
+// あった」も候補になる。デモの家庭にはほかにも答えられる問いがあるので、一言では記録せず（取り違えないため）、
+// 同じ答えを札で記録すると、二人の札に出る。
 import { expect, it } from 'vitest';
 import { demoSessions, type UtteranceReader } from '../src/demo-sessions';
 
@@ -69,18 +70,23 @@ async function boughtThenSay(value: 'yes' | 'no', text: string) {
   if (heard?.status !== 'ok' || heard.reply.kind !== 'change') throw new Error('候補がない');
   const proposal = heard.reply.proposals[0];
   if (!proposal) throw new Error('候補がない');
-  expect((await sessions.confirm(id, 'b', proposal.id, `confirm-${value}`))?.status).toBe('ok');
+  expect(proposal.command).toMatchObject({ type: 'answer', unknownId, value });
+  expect(proposal.blocked).toBe('otherUnknowns');
+  expect((await sessions.confirm(id, 'b', proposal.id, `confirm-${value}`))?.status).toBe(
+    'changed',
+  );
+  await ok('b', `card-${value}`, proposal.command);
   return cards();
 }
 
-it('無いと答えて買った物を後で見失ったら、一言でもう一度無いと記録できる', async () => {
+it('無いと答えて買った物を後で見失ったら、一言の候補はもう一度「無い」になり、札で記録できる', async () => {
   expect(await boughtThenSay('no', 'シャツが見つからない')).toEqual([
     [false, true, 'no'],
     [false, true, 'no'],
   ]);
 });
 
-it('買った物が家にあったと言えば、家にあると記録できる（買っただけでは家にあるとしない）', async () => {
+it('買った物が家にあったと言えば、候補は「家にある」になる（買っただけでは家にあるとしない）', async () => {
   expect(await boughtThenSay('yes', '白い長袖シャツは家にありました')).toEqual([
     [false, true, 'yes'],
     [false, true, 'yes'],

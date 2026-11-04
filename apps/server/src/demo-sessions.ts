@@ -14,6 +14,8 @@ import {
   type PlanResult,
   type PreviewCommand,
   type ProposalSeen,
+  type RecordBlock,
+  recordBlock,
   type Source,
   type SourceSender,
   seenOf,
@@ -100,6 +102,11 @@ export interface ShownProposal {
   id: string;
   command: Command;
   label?: string;
+  /**
+   * 一言からは記録させない訳（core の recordBlock。同じ種類の対象がほかにもある等）。画面は記録の手を出さず、
+   * 札へ案内する。押されても、家庭を押さえた中で同じ判断をし直して断る。
+   */
+  blocked?: RecordBlock;
 }
 
 export type ShownReply =
@@ -218,6 +225,8 @@ interface StoredProposal {
   memberId: string;
   command: Command;
   seen: ProposalSeen;
+  /** 見せた時に、一言からは記録させないとした訳。 */
+  blocked?: RecordBlock;
 }
 
 interface Session {
@@ -478,12 +487,19 @@ export function demoSessions(
     const proposals = reply.proposals.map((p): ShownProposal => {
       const id = randomUUID();
       const command = withSeen(p.command, plan, throughSeq);
-      session.proposals.set(id, { memberId, command, seen: p.seen });
+      // デモの家庭は試しの家庭ではない（「すること」の頼み事も、ほかに頼み事が無ければ一言で記録できる）。
+      const blocked = recordBlock(p.command, context, plan, { trial: false });
+      session.proposals.set(id, {
+        memberId,
+        command,
+        seen: p.seen,
+        ...(blocked ? { blocked } : {}),
+      });
       const label =
         command.type === 'answer'
           ? context.unknowns.find((u) => u.id === command.unknownId)?.label
           : undefined;
-      return { id, command, ...(label ? { label } : {}) };
+      return { id, command, ...(label ? { label } : {}), ...(blocked ? { blocked } : {}) };
     });
     return reply.kind === 'change'
       ? { kind: 'change', proposals }
@@ -975,12 +991,19 @@ export function demoSessions(
       const proposal = session.proposals.get(proposalId);
       if (!proposal) return { status: 'gone' };
       if (proposal.memberId !== memberId) return { status: 'forbidden' };
+      // 見せた時に記録させないとした候補は、押されても記録しない（画面を通らない送りも同じ）。
       const guard: CommandGuard = (events) => {
+        if (proposal.blocked) return 'proposalChanged';
         const now = utteranceContext(events, memberId, session.now, '');
         const same =
           now !== undefined &&
           JSON.stringify(seenOf(proposal.command, now)) === JSON.stringify(proposal.seen);
-        return same ? undefined : 'proposalChanged';
+        if (!same) return 'proposalChanged';
+        // 見せた後に同じ種類の対象が増えた・時刻で替わった物は、家庭を押さえた中で、今の前提で判断し直す。
+        const blocked = recordBlock(proposal.command, now, computePlan(events, session.now), {
+          trial: false,
+        });
+        return blocked ? 'proposalChanged' : undefined;
       };
       const result = await runCommand(
         store,

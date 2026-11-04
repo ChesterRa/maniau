@@ -12,6 +12,7 @@ import type {
   HouseholdPreview,
   PlanResult,
   PreviewCommand,
+  RecordBlock,
   Source,
   TodayCard,
   WayIdeasContext,
@@ -138,6 +139,11 @@ export interface ShownProposal {
   command: Command;
   /** 値の答えの候補なら、その問いの名前。 */
   label?: string;
+  /**
+   * 一言からは記録させない訳（サーバーが core の recordBlock で決める。押されても、サーバーが同じ判断をし直して
+   * 断る）。画面は記録の手を出さず、札へ案内する。
+   */
+  blocked?: RecordBlock;
 }
 
 /** 一言の答え（apps/server/src/demo-sessions.ts の ShownReply と同じ形）。 */
