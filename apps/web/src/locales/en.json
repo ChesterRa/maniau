@@ -308,6 +308,9 @@
   },
   "quiet": {
     "waiting": "Waiting for {{to}} (sent {{sent}})",
+    "backupReady": "If they say no, you can move to the backup “{{option}}” (its steps are done).",
+    "backupReadyAccepted": "If they say no, you can move to the backup “{{option}}” (its steps are done and it was accepted).",
+    "backupExtra": "Same-day preparations appear when the backup is used.",
     "replyYes": "They said OK",
     "replyNo": "They said no",
     "notSent": "I didn't actually send it",

@@ -258,6 +258,44 @@ export function choosable(
   );
 }
 
+/**
+ * 予備に押さえた案のうち、もう確保できている物（本命に断られた時に移れる物）。当日の準備（extra）を除く手順が
+ * 一つ以上あって全部済み、外の相手の受け付けが要る手順は、その依頼が今も生きていて、今の日の分として受け付け
+ * られている（確かめ待ちでない）時だけ。引き受けただけ・返事待ち・断られた・取り消した物は、確保とは言わない。決め時（申し込みの締切）が
+ * 過ぎていても、その前に済ませて受け付けられた物は確保できている。次の予備を勧めるか（きょうの札）と、返事待ちの
+ * 行で同じ物を使う（二つの画面で食い違わない）。子の居場所の手配だけ（通用の「すること」は判定しない）。
+ */
+export function securedBackup(plan: PlanResult, arrangement: Arrangement): OptionPlan | undefined {
+  // 子の居場所の手配だけを判定する（その案は、どれも一日を受け持つ手として登録されている）。通用の「すること」の
+  // 窓は、受け持ちを別に数える（承認が済んでも、だれかが受け持つとは限らない。将来の受け持ちは引き受けで約束に
+  // なる）ので、ここでは確保と言わない（次の予備の勧めも、返事の期限も、今までどおり出す）。
+  if (arrangement.kind !== 'childCare') return undefined;
+  for (const key of arrangement.backupOptionKeys) {
+    const option = arrangement.options.find((o) => o.key === key);
+    if (!option) continue;
+    const steps = option.taskKeys
+      .map((taskKey) => plan.tasks.find((t) => t.key === taskKey))
+      .filter((t): t is Task => t !== undefined && !t.extra);
+    if (steps.length === 0) continue;
+    const secured = steps.every(
+      (t) =>
+        t.live &&
+        t.commitment === 'done' &&
+        (t.external === undefined ||
+          plan.requests.some(
+            (r) =>
+              r.taskKey === t.key &&
+              r.live &&
+              r.needsCheck !== true &&
+              r.state === 'confirmed' &&
+              forDay(r, arrangement),
+          )),
+    );
+    if (secured) return option;
+  }
+  return undefined;
+}
+
 export function todayCards(
   plan: PlanResult,
   memberId: string,
@@ -309,7 +347,8 @@ export function todayCards(
           (o) => !taken.has(o.key) && choosable(arrangement, o) && o.decisionDeadline !== undefined,
         )
         .sort((a, b) => (a.decisionDeadline ?? '').localeCompare(b.decisionDeadline ?? ''))[0];
-      if (waitingFor && next?.decisionDeadline) {
+      // 確保できた予備があれば、次の予備は勧めない（断られたら、その予備に移る）。
+      if (waitingFor && next?.decisionDeadline && !securedBackup(plan, arrangement)) {
         const left = toEpochMinutes(next.decisionDeadline) - now;
         if (left > 0 && left <= BACKUP_LEAD_MIN) {
           backup.push({ kind: 'backup', arrangement, option: next, waitingFor });

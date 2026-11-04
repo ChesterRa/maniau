@@ -30,6 +30,7 @@ import {
   type ShownFrom,
   type ShownTarget,
   type Source,
+  securedBackup,
   stoppedWay,
   type Task,
   type TodayCard,
@@ -2404,6 +2405,26 @@ export function askedLines(ctx: Ctx, request: ExternalRequest): string[] {
   return lines;
 }
 
+/**
+ * 確保できた予備（断られたら、そこに移れる）。受け付けたと書くのは、外の相手の受け付けが要る手順がある時だけ
+ * （確保の判定で、その受け付けを確かめている）。当日の準備（extra）は確保に含めないので、別にあると書く。
+ */
+function BackupReady({ ctx, option }: { ctx: Ctx; option: OptionPlan }) {
+  const tasks = option.taskKeys.flatMap((key) => ctx.plan.tasks.filter((t) => t.key === key));
+  const accepted = tasks.some((t) => !t.extra && t.external !== undefined);
+  const extra = tasks.some((t) => t.extra);
+  return (
+    <>
+      <span className="text-sm text-sub">
+        {ctx.t(accepted ? 'quiet.backupReadyAccepted' : 'quiet.backupReady', {
+          option: optionTitle(ctx, option),
+        })}
+      </span>
+      {extra && <span className="text-sm text-sub">{ctx.t('quiet.backupExtra')}</span>}
+    </>
+  );
+}
+
 function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolean }) {
   const border = last ? '' : 'border-b border-line';
   if (card.kind === 'waiting') {
@@ -2415,6 +2436,17 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
       request.sentBy === ctx.me.id && request.state === 'awaitingReply'
         ? () => void ctx.send({ type: 'correctSentRecord', requestId: request.requestId })
         : undefined;
+    // 断られた時に移れる手：確保できた予備があればそれを（きょうの札と同じ判定）、無ければ、断られても間に合う
+    // 返事の期限（決める画面・頼む文と同じ。時計が進めば、次の手に替わる）。子の居場所の手配だけ：通用の「すること」
+    // の手は、家族が使わないとした資源・済んでいない前提・受け持ちの時間を別に確かめるので、間に合うとは書かない。
+    const found =
+      request.state === 'awaitingReply'
+        ? arrangementOf(ctx, request.basis.arrangementKey)
+        : undefined;
+    const arrangement = found?.kind === 'childCare' ? found : undefined;
+    const secured = arrangement ? securedBackup(ctx.plan, arrangement) : undefined;
+    const replyIn =
+      arrangement && !secured ? replyBy(ctx, arrangement, request.basis.optionKey) : undefined;
     return (
       <div className={`flex flex-col gap-2 py-2.5 ${border}`}>
         <span className="flex items-center gap-2">
@@ -2426,6 +2458,20 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
             sent: day(ctx, request.sentAt),
           })}
         </span>
+        {secured && <BackupReady ctx={ctx} option={secured} />}
+        {replyIn && (
+          <span className="text-sm text-sub">
+            {replyIn.evening
+              ? ctx.t('decide.replyBy', {
+                  night: day(ctx, replyIn.evening),
+                  fallback: optionTitle(ctx, replyIn.fallback),
+                })
+              : ctx.t('decide.replySoon', {
+                  deadline: dayTime(ctx, replyIn.deadline),
+                  fallback: optionTitle(ctx, replyIn.fallback),
+                })}
+          </span>
+        )}
         {/* 通用の「すること」の「はい」は、控えの時間を覆う証拠になる。何に「はい」を記録するかを、記録した時の
             控えで見せる（相手が読んだ文は、家族が直せるので確かめていない）。 */}
         {isNeedArrangementKey(request.basis.arrangementKey) &&

@@ -307,6 +307,9 @@
   },
   "quiet": {
     "waiting": "{{to}}の返事待ち（{{sent}}に送った）",
+    "backupReady": "断られても、予備の「{{option}}」に進めます（手順は済んでいます）。",
+    "backupReadyAccepted": "断られても、予備の「{{option}}」に進めます（手順は済み、受け付けられています）。",
+    "backupExtra": "当日の準備は、予備に進む時に出します。",
     "replyYes": "OK だった",
     "replyNo": "断られた",
     "notSent": "まだ送っていなかった（押し間違い）",
