@@ -29,6 +29,8 @@ export interface RequestRecord {
   taskKey: string;
   sentAt: DateTime;
   sentBy: string;
+  /** 送った事象の通し番号（送った後の家族の決めごとと、順で比べる）。 */
+  sentSeq: number;
   state: ExternalRequestState;
   /** 送った時の控え。古い事象には無い（02-foundation §5.6）。 */
   snapshot?: RequestSnapshot;
@@ -615,6 +617,7 @@ function apply(state: EngineState, event: DomainEvent): void {
         taskKey: event.taskKey,
         sentAt: event.occurredAt,
         sentBy: event.actorId,
+        sentSeq: event.seq,
         state: 'awaitingReply',
         ...(event.snapshot ? { snapshot: event.snapshot } : {}),
       });

@@ -39,6 +39,7 @@ import type {
   Requirement,
   Task,
 } from '../schema/plan';
+import { isNeedArrangementKey } from '../schema/plan';
 import type { ConditionNode, Item, Unknown } from '../schema/source';
 import {
   addDays,
@@ -59,6 +60,7 @@ import { type Busy, optionDeadline, placeStep, ruleDeadline } from './deadline';
 import { bestOrder } from './joint';
 import { purchaseOpportunities } from './purchase';
 import {
+  awaitingConfirmation,
   currentItems,
   currentReadings,
   type EngineState,
@@ -2402,33 +2404,58 @@ function purchase(
  * その案の依頼が、まだ要るか。取り下げた案、選び替えて外れた案、本命が確定した後の予備は要らない
  * （頼んだ後なら、取り消しの連絡を作る。§4・§7）。何も選んでいなければ、家族が出した依頼は残す。
  */
+/**
+ * 送った依頼の案を、家族が決めごとで外したか（家族が選び直すまで、外したまま）。どれかなら外した：
+ * - 外した（dropOption。後で同じ案を選び直せば外れない）。
+ * - 通用の「すること」で、送った時の控えの事項（ID が同じ物だけ）に家族が送った後に選んだやり方の、いちばん新しい
+ *   選びに、この案のやり方が無い。選んだ時の中身が今と違っても、事項が読み直しで見つからなくても、外した決めごとは
+ *   残る（確かめていない読み取りや、日の直しで、前に外した依頼を生き返らせない）。後の選びでやり方を足し直せば外れない
+ *   （手配の本命・予備も、足し直すと戻る。同じ決まり）。
+ * - 今の事項の、今の中身に合う選び（置き換えの後の事項での選びも）に、この案のやり方が無い。
+ * - 本命か予備を選んであって、この案がそのどれでもない。
+ * まだ選んでいない・中身が替わって選び直す前・控えの事項が分からない時は、外したと決めない（根拠が替わった疑いと
+ * して、頼んだ本人に確かめる）。決め時を過ぎた・置けない案でも、選んでいれば残す。
+ */
+function decidedAgainst(ctx: Context, basis: Basis, sentSeq: number): boolean {
+  const { arrangementKey, optionKey } = basis;
+  if (arrangementKey === undefined || optionKey === undefined) return false;
+  if (ctx.state.dropped.get(arrangementKey)?.has(optionKey)) return true;
+  if (isNeedArrangementKey(arrangementKey)) {
+    const prefix = `opt:${arrangementKey}:`;
+    const wayId = optionKey.startsWith(prefix) ? optionKey.slice(prefix.length) : undefined;
+    const removedAfter = basis.itemIds.some((itemId) => {
+      const chosen = ctx.state.needWays.get(itemId);
+      return (
+        chosen !== undefined &&
+        chosen.seq > sentSeq &&
+        !(wayId !== undefined && chosen.wayIds.includes(wayId))
+      );
+    });
+    if (removedAfter) return true;
+    const selected = waysSelectedNow(ctx, arrangementKey);
+    if (selected !== undefined && !(wayId !== undefined && selected.has(wayId))) return true;
+  }
+  const primary = ctx.state.primary.get(arrangementKey);
+  const backups = ctx.state.backups.get(arrangementKey) ?? new Set<string>();
+  if (primary === undefined && backups.size === 0) return false;
+  return optionKey !== primary && !backups.has(optionKey);
+}
+
 function optionStillNeeded(
   ctx: Context,
   tasks: readonly Task[],
   items: ReadonlyMap<string, LiveItem>,
   basis: Basis,
+  sentSeq: number,
   arrangement: Pick<Arrangement, 'kind' | 'start' | 'end'>,
 ): boolean {
   const { arrangementKey, optionKey } = basis;
   if (arrangementKey === undefined || optionKey === undefined) return true;
-  if (ctx.state.dropped.get(arrangementKey)?.has(optionKey)) return false;
-  // 通用の「すること」で、家族が今の中身に選んだやり方（全部外したのも含む）に、この案のやり方が無いなら、
-  // 外した（dropOption）のと同じく要らない。まだ選んでいない・中身が替わって選び直す前は、ここで決めない
-  // （根拠が替わった疑いとして、頼んだ本人に確かめる）。決め時を過ぎた・置けない案でも、選んでいれば残す。
-  if (arrangement.kind === 'need') {
-    const selected = waysSelectedNow(ctx, arrangementKey);
-    const prefix = `opt:${arrangementKey}:`;
-    if (
-      selected !== undefined &&
-      !(optionKey.startsWith(prefix) && selected.has(optionKey.slice(prefix.length)))
-    )
-      return false;
-  }
+  if (decidedAgainst(ctx, basis, sentSeq)) return false;
   const primary = ctx.state.primary.get(arrangementKey);
   const backups = ctx.state.backups.get(arrangementKey) ?? new Set<string>();
   if (primary === undefined && backups.size === 0) return true;
   if (optionKey === primary) return true;
-  if (!backups.has(optionKey)) return false;
   if (primary === undefined) return true;
   const primaryTasks = new Set(
     tasks.filter((t) => t.basis.optionKey === primary).map((t) => t.key),
@@ -2571,6 +2598,7 @@ function requestStanding(
   arrangements: ReadonlyMap<string, Arrangement>,
   items: ReadonlyMap<string, LiveItem>,
   snapshot: RequestSnapshot,
+  sentSeq: number,
   superseded: boolean,
 ): { live: boolean; needsCheck: boolean; conditional: boolean } {
   const { basis } = snapshot;
@@ -2579,10 +2607,14 @@ function requestStanding(
   const { unclear, changed, conditional } = requestDoubt(ctx, items, snapshot, arrangement);
   if (arrangement) {
     const live =
-      arrangement.live && !superseded && optionStillNeeded(ctx, tasks, items, basis, arrangement);
+      arrangement.live &&
+      !superseded &&
+      optionStillNeeded(ctx, tasks, items, basis, sentSeq, arrangement);
     return { live, needsCheck: live && (unclear || changed), conditional };
   }
-  return unclear
+  // 手配が無い：根拠が分からないだけなら、家族が外していない限り、要るかを頼んだ本人に確かめる（取り消しとも
+  // 続けてよいとも決めない）。家族が前に外した・選び替えた依頼は、要らないまま（取り消しの連絡を消さない）。
+  return unclear && !decidedAgainst(ctx, basis, sentSeq)
     ? { live: true, needsCheck: true, conditional }
     : { live: false, needsCheck: false, conditional };
 }
@@ -2604,13 +2636,15 @@ function requestDoubt(
     fate.status === 'current' ? [items.get(fate.item.id)].filter((i) => i !== undefined) : [],
   );
   const conditional = current.some((i) => i.conditional);
-  // 根拠のどれか一つでも分からなければ、他の根拠が残っていても疑いにする。
+  // 根拠のどれか一つでも分からなければ、他の根拠が残っていても疑いにする。読み直しで、家族の確かめを待つ
+  // 「すること」（awaitingConfirmation）も分からない物：手配が無いのは確かめを待つからで、要らなくなったから
+  // ではない（確かめていない新しい読み取りで、前に頼んで「はい」をもらった依頼を取り消させない）。
   const unclear = fates.some(
     (fate) =>
       fate.status === 'vanished' ||
       (fate.status === 'current' &&
-        fate.item.evidence !== 'stated' &&
-        fate.item.evidence !== 'confirmed'),
+        ((fate.item.evidence !== 'stated' && fate.item.evidence !== 'confirmed') ||
+          awaitingConfirmation(ctx.state, fate.item))),
   );
   const changed =
     arrangement !== undefined &&
@@ -2698,6 +2732,7 @@ function externalRequests(
       arrangementByKey,
       itemById,
       snapshot,
+      request.sentSeq,
       superseded,
     );
     // だれの分か：控えの子。控えに無い古い依頼は、同じキーの手配が今あれば、その手配の子（キーが子を決める）。

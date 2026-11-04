@@ -1032,6 +1032,153 @@ export function checkHistory(
   };
 }
 
+/** 依頼時の控えと確かめた読み取り、再読後の未確認または読み落としを事象から照らす。 */
+function pendingNeedProof(
+  plan: PlanResult,
+  history: History,
+  facts: FactState,
+  sent: SentRequest | undefined,
+  basis: NonNullable<RequestBasis>['basis'],
+):
+  | {
+      id: string;
+      sourceId: string;
+      arrangementKey: string;
+      optionKey: string;
+      wayId: string;
+      after: DomainEvent[];
+    }
+  | undefined {
+  if (!history.complete || !sent?.snapshot || !sameBasis(sent.snapshot.basis, basis))
+    return undefined;
+  if (sent.state !== 'awaitingReply' && sent.state !== 'confirmed') return undefined;
+  const { arrangementKey, optionKey, itemIds } = sent.snapshot.basis;
+  const id = itemIds.length === 1 ? itemIds[0] : undefined;
+  if (!id || !arrangementKey || !optionKey) return undefined;
+  if (plan.arrangements.some((entry) => entry.key === arrangementKey && entry.live))
+    return undefined;
+  const beforeEvents = history.events.filter((event) => event.seq < sent.seq);
+  const priorReport = new Collector();
+  const prior = collectFacts(beforeEvents, priorReport);
+  if (priorReport.issues.some((issue) => issue.kind === 'violation')) return undefined;
+  const previous = prior.items.get(id);
+  const household = beforeEvents.findLast((event) => event.type === 'householdSet');
+  if (
+    previous?.kind !== 'need' ||
+    previous.conditionNodeId !== undefined ||
+    prior.needConfirmation.get(id) !== 'confirmed' ||
+    prior.active.get(id) !== true ||
+    prior.staleItems.has(id) ||
+    household?.type !== 'householdSet'
+  )
+    return undefined;
+  const current = facts.items.get(id);
+  const absentAfterReread =
+    current === undefined && (facts.sourceReadingSeq.get(previous.sourceId) ?? -1) > sent.seq;
+  if (
+    !absentAfterReread &&
+    (current?.kind !== 'need' ||
+      current.sourceId !== previous.sourceId ||
+      current.conditionNodeId !== undefined ||
+      facts.needConfirmation.get(id) !== 'pending' ||
+      facts.active.get(id) !== 'unknown' ||
+      facts.staleItems.has(id))
+  )
+    return undefined;
+  if ((facts.changes.get(id)?.length ?? 0) > 0) return undefined;
+  const after = history.events.filter((event) => event.seq > sent.seq);
+  if (
+    after.some((event) => {
+      if (event.type === 'itemDismissed' || event.type === 'itemCorrected')
+        return event.itemId === id;
+      if (event.type === 'sourceWithdrawn' || event.type === 'sourceContentPurged')
+        return event.sourceId === previous.sourceId;
+      if (event.type === 'externalRequestSent') return event.taskKey === sent.taskKey;
+      if (event.type === 'modelOutputRecorded' && event.call === 'extract') {
+        const parsed = Extraction.safeParse(event.output);
+        return (
+          !parsed.success ||
+          parsed.data.items.some((entry) =>
+            entry.effects.some(
+              (effect) => effect.type !== 'resolveUnknown' && effect.itemId === id,
+            ),
+          )
+        );
+      }
+      return false;
+    })
+  )
+    return undefined;
+  const ways = household.household.ways.filter(
+    (way) => optionKey === `opt:${arrangementKey}:${way.id}`,
+  );
+  const way = ways.length === 1 ? ways[0] : undefined;
+  if (!way || aboutMatches(sent.snapshot.about, previous, [way]) !== true) return undefined;
+  return { id, sourceId: previous.sourceId, arrangementKey, optionKey, wayId: way.id, after };
+}
+
+/** 再読前に引き続き選ばれていた依頼は、続けるかを本人に確かめる。 */
+function pendingReadStanding(
+  history: History,
+  proof: ReturnType<typeof pendingNeedProof>,
+): boolean {
+  if (!proof || history.selections.get(proof.arrangementKey)?.primary !== proof.optionKey)
+    return false;
+  return !proof.after.some((event) => {
+    if (event.type === 'needWaysSet') return event.itemId === proof.id;
+    if (event.type === 'optionChosen' || event.type === 'optionDropped')
+      return event.arrangementKey === proof.arrangementKey;
+    return false;
+  });
+}
+
+/** 再読前に家族が明示して外した選びを、未確認の読み取りで復活させない。 */
+function pendingReadRemoved(
+  history: History,
+  facts: FactState,
+  proof: ReturnType<typeof pendingNeedProof>,
+): boolean {
+  if (!proof) return false;
+  const choice = proof.after.findLast(
+    (event) => event.type === 'needWaysSet' && event.itemId === proof.id,
+  );
+  if (choice?.type !== 'needWaysSet' || choice.wayIds.includes(proof.wayId)) return false;
+  if ((facts.sourceReadingSeq.get(proof.sourceId) ?? -1) <= choice.seq) return false;
+  if (
+    proof.after.some(
+      (event) =>
+        event.seq > choice.seq &&
+        (event.type === 'optionChosen' || event.type === 'optionDropped') &&
+        event.arrangementKey === proof.arrangementKey,
+    )
+  )
+    return false;
+  const beforeEvents = history.events.filter((event) => event.seq < choice.seq);
+  const report = new Collector();
+  const prior = collectFacts(beforeEvents, report);
+  const item = prior.items.get(proof.id);
+  const household = beforeEvents.findLast((event) => event.type === 'householdSet');
+  if (
+    report.issues.some((issue) => issue.kind === 'violation') ||
+    item?.kind !== 'need' ||
+    item.sourceId !== proof.sourceId ||
+    prior.needConfirmation.get(proof.id) !== 'confirmed' ||
+    prior.active.get(proof.id) !== true ||
+    prior.staleItems.has(proof.id) ||
+    household?.type !== 'householdSet'
+  )
+    return false;
+  const ways = choice.wayIds.map((id) => household.household.ways.find((way) => way.id === id));
+  return (
+    ways.every((way) => way !== undefined) &&
+    aboutMatches(
+      choice.about,
+      item,
+      ways.filter((way) => way !== undefined),
+    ) === true
+  );
+}
+
 /** 依頼の必要性を、事象による選択と元の事項から計画の live とは別に確かめる。 */
 export function checkRequestNeed(
   plan: PlanResult,
@@ -1165,8 +1312,10 @@ export function checkRequestNeed(
             history.needShapes.get(arrangement.key),
           ) === true,
       );
+    const pendingProof = pendingNeedProof(plan, history, facts, sent, request.basis);
+    const removedBeforeReread = pendingReadRemoved(history, facts, pendingProof);
     const needed: Truth =
-      superseded || optionNeeded === false || factsNeeded === false
+      superseded || optionNeeded === false || factsNeeded === false || removedBeforeReread
         ? false
         : optionNeeded === true && factsNeeded === true
           ? true
@@ -1184,6 +1333,25 @@ export function checkRequestNeed(
         task.cancels === request.requestId &&
         !['declined', 'withdrawn', 'cancelled'].includes(task.commitment),
     );
+    const pending = pendingReadStanding(history, pendingProof);
+    if (pending && !request.live)
+      report.violation(
+        'request_liveness_mismatch',
+        request.requestId,
+        '再読を確かめる前に依頼を不要と扱っている。',
+      );
+    if (pending && request.live && !request.needsCheck)
+      report.violation(
+        'request_uncertainty_unmarked',
+        request.requestId,
+        '再読後の依頼が要確認になっていない。',
+      );
+    if (pending && cancellations.length > 0)
+      report.violation(
+        'unexpected_cancellation',
+        request.requestId,
+        '再読を確かめる前に依頼の取消しを出している。',
+      );
     const state = sent?.state ?? request.state;
     const partiallyCancelled =
       sent?.snapshot !== undefined &&
