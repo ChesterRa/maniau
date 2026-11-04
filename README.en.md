@@ -4,6 +4,8 @@
 
 **Turns nursery and school notices into clear next steps for the family: what to decide, by when, and who does it.**
 
+**Live demo: https://maniauserver-production.up.railway.app** (no sign-up; it runs on a fictional family. See “Tour of the demo” below.)
+
 Putting an event in a calendar does not settle by when each decision must be made, who acts, or whose reply is still pending. In a family where both parents work, one person usually handles this: working out by when each decision has to be made, asking family members or grandparents, waiting for replies and following up, and cleaning up what was arranged when plans change. Maniau puts this hidden work on the family's screens so it can be shared.
 
 ## What it does
