@@ -251,6 +251,11 @@ describe('画面：読めるかどうかで欄を出し、試しの家庭の注�
     await open({ canRead: true, canHear: true });
     expect(say()).not.toBeNull();
     expect(host.textContent).toContain('試しの家庭です。架空の文だけを伝えてください。');
+    // たたんだ時の一文にも「架空の文だけ」を残す（送る物の全文は開くと読める）。
+    const summaries = [...host.querySelectorAll('summary')].map((s) => s.textContent);
+    expect(summaries).toContain(
+      '試しの家庭です。架空の文だけを伝えてください。一言と、家族・頼める人の名前、今の予定・頼み事が Anthropic に送られます。',
+    );
     expect(host.textContent).not.toContain('このデモの予定');
   });
 });

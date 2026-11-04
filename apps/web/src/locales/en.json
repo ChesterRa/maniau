@@ -606,6 +606,8 @@
     "submit": "Send",
     "hearing": "Reading",
     "privacy": "Your update, this demo's (fictional) family and helper names, and the current items, tasks and requests (including the people and places involved) are sent to Anthropic. Don't include anything that identifies a person or place (names, school names, addresses).",
+    "privacySummary": "Your update, the names of family and helpers, and current plans and requests are sent to Anthropic. Leave out words that identify people or places.",
+    "privacySummaryTrial": "This is a trial household. Use made-up text only. Your update, the names of family and helpers, and current plans and requests are sent to Anthropic.",
     "confirm": "Record this?",
     "record": "Record",
     "cancel": "Cancel",

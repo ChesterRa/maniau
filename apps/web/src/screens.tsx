@@ -824,12 +824,6 @@ export function TodayScreen({ ctx }: { ctx: Ctx }) {
       />
       <Main>
         {ctx.hear && ctx.confirm && <SayCard ctx={ctx} hear={ctx.hear} confirm={ctx.confirm} />}
-        {/* 家族が言ったことを、欄で足す（保存の前に、変わることを見る口が要る）。 */}
-        {ctx.previewChange && (
-          <MoreLink onClick={() => ctx.go({ name: 'stateNeed' })}>
-            {ctx.t('today.addNeed')}
-          </MoreLink>
-        )}
         {ctx.changes && <ChangeCard ctx={ctx} change={ctx.changes} />}
         {shown.length === 0 && !ctx.changes && (
           <Card tone="accent">
@@ -843,6 +837,13 @@ export function TodayScreen({ ctx }: { ctx: Ctx }) {
         {main.length > shown.length && (
           <MoreLink onClick={() => setAll(true)}>
             {ctx.t('today.more', { count: main.length - shown.length })}
+          </MoreLink>
+        )}
+        {/* 家族が言ったことを、欄で足す（保存の前に、変わることを見る口が要る）。きょうの札を押し下げない
+            よう、札の下、「すること」の一覧の前に置く。 */}
+        {ctx.previewChange && (
+          <MoreLink onClick={() => ctx.go({ name: 'stateNeed' })}>
+            {ctx.t('today.addNeed')}
           </MoreLink>
         )}
         <NeedList ctx={ctx} />
@@ -3781,7 +3782,15 @@ export function SayCard({
           </Button>
         </div>
       </div>
-      <Text quiet>{ctx.t(ctx.trialInput ? 'say.privacyTrial' : 'say.privacy')}</Text>
+      {/* 送る物の注記は、最初の画面で「決めること」の札を押し下げないよう、要の一文にたたむ（開くと全文）。 */}
+      <details className="text-sm text-sub">
+        <summary className="min-h-9 cursor-pointer leading-relaxed">
+          {ctx.t(ctx.trialInput ? 'say.privacySummaryTrial' : 'say.privacySummary')}
+        </summary>
+        <p className="mt-1 leading-relaxed">
+          {ctx.t(ctx.trialInput ? 'say.privacyTrial' : 'say.privacy')}
+        </p>
+      </details>
       {state !== 'idle' && state !== 'hearing' && state !== 'recording' && (
         <Text>
           {ctx.t(state === 'limit' && ctx.trialInput ? 'say.limitTrial' : `say.${state}`)}

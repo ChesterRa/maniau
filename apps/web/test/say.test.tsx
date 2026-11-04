@@ -559,5 +559,11 @@ describe('ひとこと', () => {
     expect(withHear).toContain('伝える');
     expect(withHear).toContain('Anthropic に送られます');
     expect(withHear).toContain('人や場所の分かる言葉は入れないでください');
+    // 最初の画面では要の一文だけを見せ、送る物の全文は開くと読める（札を押し下げない）。
+    // たたんでも、一言のほかに名前・今の予定・頼み事も送ると見える（押す前に分かる）。
+    expect(markup).toMatch(
+      /<summary[^>]*>一言と、家族・頼める人の名前、今の予定・頼み事が Anthropic に送られます。/,
+    );
+    expect(markup).toMatch(/<\/summary><p[^>]*>一言と、このデモの家族/);
   });
 });
