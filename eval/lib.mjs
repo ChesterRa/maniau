@@ -117,7 +117,9 @@ export function buildRequest({ scenario, input, prompt, model, effort, maxTokens
 export function estimateCost(usage, pricing) {
   if (!usage || !pricing || !Number.isFinite(usage.input_tokens) || !Number.isFinite(usage.output_tokens)) return null;
   if ((usage.cache_creation_input_tokens ?? 0) !== 0 || (usage.cache_read_input_tokens ?? 0) !== 0) return null;
-  // 単価は通常の global / standard のもの。地域割増や高速料金が混じる場合は断定しない。
-  if (usage.inference_geo !== 'global' || (usage.speed && usage.speed !== 'standard')) return null;
+  // 速度別に単価を指定できる。地域割増や、指定と違う速度の料金は推測しない。
+  const speed = pricing.speed ?? 'standard';
+  if (!['standard', 'fast'].includes(speed) || usage.inference_geo !== 'global') return null;
+  if ((usage.speed && usage.speed !== speed) || (speed === 'fast' && usage.speed !== 'fast')) return null;
   return (usage.input_tokens * pricing.input + usage.output_tokens * pricing.output) / 1_000_000;
 }

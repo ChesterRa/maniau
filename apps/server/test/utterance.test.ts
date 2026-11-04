@@ -108,6 +108,31 @@ describe('家族の一言', () => {
     expect(again.view.throughSeq).toBe(confirmed.view.throughSeq);
   });
 
+  it('仮の話（断られたら？）は、返事待ちの頼み事だけを候補として返し、何も書かない', async () => {
+    const whatIf = output({
+      kind: 'whatIf',
+      refs: { taskKeys: [], requestIds: ['r-grandma', 'r-none'], itemIds: [] },
+    });
+    const { sessions, id, before, done } = await heard('chase', whatIf);
+    expect(done.reply).toEqual({ kind: 'whatIf', requestIds: ['r-grandma'] });
+    const after = await sessions.view(id, 'b');
+    expect(after?.plan.throughSeq).toBe(before?.plan.throughSeq);
+    expect(after && grandma(after)).toBe('awaitingReply');
+  });
+
+  it('本当か仮か決められないと印の付いた出力は、記録の候補を一緒に出していても候補にしない', async () => {
+    const contradictory = output({
+      kind: 'change',
+      unsupported: 'replyOrWhatIf',
+      actions: replyYes.actions,
+    });
+    const { sessions, id, before, done } = await heard('chase', contradictory);
+    expect(done.reply).toEqual({ kind: 'unsupported', reason: 'replyOrWhatIf' });
+    const after = await sessions.view(id, 'b');
+    expect(after?.plan.throughSeq).toBe(before?.plan.throughSeq);
+    expect(after && grandma(after)).toBe('awaitingReply');
+  });
+
   it('見せた後に、もう一人が別の返事を記録していたら、古い候補で上書きしない', async () => {
     const { sessions, id, done } = await heard();
     if (done.reply.kind !== 'change') throw new Error('変更でない');

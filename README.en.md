@@ -14,7 +14,7 @@ Putting an event in a calendar does not settle by when each decision must be mad
 - **Take it on and follow up:** Maniau proposes each task to one adult and records whether they take it on. Requests to grandparents or after-school care keep "awaiting a reply" separate from "confirmed". “What if they say no?” shows ahead of time what would happen if the answer is no.
 - **Adapt to changes:** When a postponement arrives, Maniau removes preparations that are no longer needed and drafts cancellation messages for people who were already asked.
 - **Handle other things to do:** What the family says and the attendance or applications a notice asks for go through the same flow. Claude can suggest ways to handle them (these are inferred, and nothing changes until the family corrects and saves them).
-- **Update in a few words:** From a short update such as "Grandma says 12/7 is fine", Maniau finds the matching request or task and suggests what to record.
+- **Update in a few words:** From a short update such as "Grandma says 12/7 is fine", Maniau finds the matching request or task and suggests what to record. For a what-if such as "What if Grandma says no?", it records nothing and offers the “What if they say no?” calculation instead.
 
 For details, see [Details and limitations](docs/scope.en.md).
 

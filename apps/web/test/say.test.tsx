@@ -1,13 +1,14 @@
 // ひとこと：一言の答えは、計画から作った文で見せる（候補の説明・聞き返し・問いの答え）。押すまで記録しない。
 
 import { type Command, type PreviewCommand, proposalSnapshot } from '@maniau/core';
+import type { ReactElement, ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { demoSessions } from '../../server/src/demo-sessions';
 import type { View } from '../../server/src/views';
 import type { Heard } from '../src/family';
 import i18n from '../src/i18n';
-import { type Ctx, SayReply, TodayScreen } from '../src/screens';
+import { type Ctx, SayReply, SayWhatIf, TodayScreen } from '../src/screens';
 import { demoData } from './ctx';
 
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
@@ -43,6 +44,18 @@ const render = (ctx: Ctx, reply: Heard) =>
       <SayReply ctx={ctx} reply={reply} busy={false} onRecord={() => {}} onClear={() => {}} />,
     ),
   );
+
+/** 要素の木から、その文字の押し口を探して押す（フックの無い部品を、DOM なしで押す）。 */
+function clickText(node: ReactNode, label: string): boolean {
+  if (Array.isArray(node)) return node.some((n) => clickText(n, label));
+  if (!node || typeof node !== 'object' || !('props' in node)) return false;
+  const el = node as ReactElement<{ children?: ReactNode; onClick?: () => void }>;
+  if (el.props.children === label && el.props.onClick) {
+    el.props.onClick();
+    return true;
+  }
+  return clickText(el.props.children, label);
+}
 
 describe('ひとこと', () => {
   it('候補は、相手と頼んだ日を計画から書き、押すまで記録しない', async () => {
@@ -538,6 +551,47 @@ describe('ひとこと', () => {
       'おばあちゃんへの頼み事（振替休業日・12/7（月） 8:10–18:15）：返事待ち',
     );
     expect(shown).toContain('もう要りません（取り消しを伝える）');
+  });
+
+  it('仮の話は、頼み事を控えで見せ、押すと「断られたら？」の画面へ行く（記録の手を出さない）', async () => {
+    const ctx = await ctxOf('chase', 'b');
+    const shown = render(ctx, { kind: 'whatIf', requestIds: ['r-grandma'] });
+    expect(shown).toContain('仮の話として読みました。ここでは何も記録しません。');
+    expect(shown).toContain('おばあちゃんへの頼み事（振替休業日・12/7（月） 8:10–18:15の分）');
+    expect(shown).toContain('断られたら、と仮に計算する');
+    expect(shown).not.toContain('記録する');
+    const went: unknown[] = [];
+    const sent: unknown[] = [];
+    const tree = SayWhatIf({
+      ctx: {
+        ...ctx,
+        go: (route) => went.push(route),
+        send: async (command) => {
+          sent.push(command);
+          return { status: 'ok' };
+        },
+      },
+      requestIds: ['r-grandma'],
+      onClear: () => {},
+    });
+    expect(clickText(tree, '断られたら、と仮に計算する')).toBe(true);
+    expect(went).toEqual([{ name: 'whatIf', requestId: 'r-grandma' }]);
+    expect(sent).toEqual([]);
+    const en = render(await ctxOf('chase', 'b', 'en'), {
+      kind: 'whatIf',
+      requestIds: ['r-grandma'],
+    });
+    expect(en).toContain('Calculate as if they said no');
+  });
+
+  it('仮の話で、返事を待っていない・要らなくなった頼み事は出さず、無ければそう示す', async () => {
+    // 延期の後：祖母と学童の頼み事は、要らなくなって取り消しを伝える物。
+    const ctx = await ctxOf('postponed', 'b');
+    const none = render(ctx, { kind: 'whatIf', requestIds: ['r-grandma', 'r-gakudo', 'r-none'] });
+    expect(none).toContain('今、返事を待っている頼み事が見つかりませんでした。');
+    expect(none).not.toContain('仮に計算する');
+    const unclear = render(ctx, { kind: 'unsupported', reason: 'replyOrWhatIf' });
+    expect(unclear).toContain('本当の返事か、仮の話か分かりませんでした。');
   });
 
   it('一言の欄は、読めるサーバーのデモだけに出す', async () => {

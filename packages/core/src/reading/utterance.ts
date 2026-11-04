@@ -36,13 +36,15 @@ export const UNSUPPORTED_REASONS = [
   'routineChange',
   'otherAdultsTask',
   'notInPlan',
+  /** 本当の返事か、仮の話（「断られたら？」）か決められない、または一つの一言に両方が混ざっている。 */
+  'replyOrWhatIf',
   'other',
 ] as const;
 export type UnsupportedReason = (typeof UNSUPPORTED_REASONS)[number];
 
 /** モデルの出力（構造化出力の形）。 */
 export const UtteranceOutput = z.object({
-  kind: z.enum(['change', 'clarify', 'question', 'unsupported']),
+  kind: z.enum(['change', 'clarify', 'whatIf', 'question', 'unsupported']),
   actions: z.array(UtteranceAction),
   refs: z.object({
     taskKeys: z.array(z.string()),
@@ -133,6 +135,12 @@ export type UtteranceReply =
       reason: 'ambiguous' | 'otherAdultsTask' | 'unowned';
       unowned?: true;
     }
+  /**
+   * 仮の話（「おばあちゃんがダメだったら？」）：断られたと仮に置く頼み事の候補。今返事を待っている、要る頼み事
+   * だけ（入力に無い ID と、返事のあった・要らなくなった頼み事は捨てる）。空なら、仮に置ける頼み事が無い。何も
+   * 記録しない（家族が選んでから、書かない計算を見せる）。
+   */
+  | { kind: 'whatIf'; requestIds: string[] }
   | { kind: 'question'; refs: UtteranceRefs }
   | { kind: 'unsupported'; reason: UnsupportedReason };
 
@@ -316,6 +324,10 @@ export function toUtteranceReply(
   context: UtteranceContext,
   newRequestId: () => string,
 ): UtteranceReply {
+  // 本当の返事か仮の話か決められない（両方が混ざる）とモデルが印を付けたら、ほかの欄が何を言っていても、記録の
+  // 候補も仮の計算の口も出さない（矛盾した出力から、押せる候補を作らない）。
+  if (output.unsupported === 'replyOrWhatIf')
+    return { kind: 'unsupported', reason: 'replyOrWhatIf' };
   if (output.kind === 'question') {
     const tasks = new Set(context.tasks.map((t) => t.key));
     const requests = new Set(context.requests.map((r) => r.id));
@@ -329,6 +341,15 @@ export function toUtteranceReply(
         requestIds: unique(output.refs.requestIds, requests),
         itemIds: unique(output.refs.itemIds, items),
       },
+    };
+  }
+  if (output.kind === 'whatIf') {
+    const waiting = new Set(
+      context.requests.filter((r) => r.state === 'awaitingReply' && r.needed).map((r) => r.id),
+    );
+    return {
+      kind: 'whatIf',
+      requestIds: [...new Set(output.refs.requestIds)].filter((id) => waiting.has(id)),
     };
   }
   if (output.kind === 'unsupported') {

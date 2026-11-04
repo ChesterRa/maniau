@@ -12,10 +12,11 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const CASE_DIR = path.join(ROOT, 'eval', 'cases', 'spoken-updates');
 const HOLDOUT_DIR = path.join(ROOT, '.local', 'eval-holdout');
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
-const VALUE_FLAGS = new Set(['case', 'pricing-model', 'input-usd-per-million', 'output-usd-per-million', 'pricing-url', 'pricing-checked']);
+const VALUE_FLAGS = new Set(['case', 'pricing-model', 'pricing-speed', 'input-usd-per-million', 'output-usd-per-million', 'pricing-url', 'pricing-checked']);
 const SOURCE_PATHS = [
   'apps/server/src/reading/utterance.ts',
-  'apps/server/src/reading/prompts/utterance.v1.md',
+  'apps/server/src/reading/prompts/utterance.v2.md',
+  'apps/server/src/reading/model.ts',
   'apps/server/src/reading/extract.ts',
   'packages/core/src/reading/utterance.ts',
   'packages/core/src/index.ts',
@@ -50,18 +51,18 @@ function argumentsOf(args) {
 }
 
 function pricingOf(options) {
-  const keys = ['pricing-model', 'input-usd-per-million', 'output-usd-per-million', 'pricing-url', 'pricing-checked'];
+  const keys = ['pricing-model', 'input-usd-per-million', 'output-usd-per-million', 'pricing-url', 'pricing-checked', 'pricing-speed'];
   const count = keys.filter((key) => options[key] !== undefined).length;
   if (!count) return null;
-  if (count !== keys.length) throw new InputError('単価・モデル・出典・確認日をすべて指定してください。');
+  if (count !== keys.length) throw new InputError('単価・モデル・速度・出典・確認日をすべて指定してください。');
   const input = Number(options[keys[1]]);
   const output = Number(options[keys[2]]);
   let url;
   try { url = new URL(options[keys[3]]); } catch { throw new InputError('料金の出典を確認してください。'); }
-  if (!Number.isFinite(input) || !Number.isFinite(output) || input < 0 || output < 0 || url.protocol !== 'https:' || !/^\d{4}-\d{2}-\d{2}$/.test(options[keys[4]])) {
-    throw new InputError('単価・出典・確認日を確認してください。');
+  if (!Number.isFinite(input) || !Number.isFinite(output) || input < 0 || output < 0 || url.protocol !== 'https:' || !/^\d{4}-\d{2}-\d{2}$/.test(options[keys[4]]) || !['standard', 'fast'].includes(options[keys[5]])) {
+    throw new InputError('単価・速度・出典・確認日を確認してください。');
   }
-  return { model: options[keys[0]], input, output, url: url.href, checked: options[keys[4]], currency: 'USD', per: 1_000_000 };
+  return { model: options[keys[0]], speed: options[keys[5]], input, output, url: url.href, checked: options[keys[4]], currency: 'USD', per: 1_000_000 };
 }
 
 async function readCase(name) {

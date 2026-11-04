@@ -8,13 +8,13 @@ import { type UtteranceContext, UtteranceOutput } from '@maniau/core';
 import { ReadingError } from './extract';
 import { FAST_SPEED, PRODUCT_EFFORT, PRODUCT_MODEL } from './model';
 
-export const UTTERANCE_PROMPT_VERSION = 'utterance.v1';
+export const UTTERANCE_PROMPT_VERSION = 'utterance.v2';
 /**
  * 一言の解釈も、製品の呼び出しと同じ Opus 5.5・medium・速いモード（model.ts。作り手の指示 2026-11-04：読みの
  * 確かさと速さを先にする）。
  */
 export const DEFAULT_UTTERANCE_MODEL = PRODUCT_MODEL;
-const PROMPT = readFileSync(new URL('./prompts/utterance.v1.md', import.meta.url), 'utf8');
+const PROMPT = readFileSync(new URL('./prompts/utterance.v2.md', import.meta.url), 'utf8');
 
 export interface UtteranceResult {
   output: UtteranceOutput;

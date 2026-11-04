@@ -156,10 +156,12 @@ export type Heard =
       /** 別の大人の作業に加えて、まだだれも持っていない作業も含む。 */
       unowned?: true;
     }
+  /** 仮の話：断られたと仮に置く頼み事の候補（返事待ちの物だけ。空なら無い）。何も記録しない。 */
+  | { kind: 'whatIf'; requestIds: string[] }
   | { kind: 'question'; refs: { taskKeys: string[]; requestIds: string[]; itemIds: string[] } }
   | {
       kind: 'unsupported';
-      reason: 'routineChange' | 'otherAdultsTask' | 'notInPlan' | 'other';
+      reason: 'routineChange' | 'otherAdultsTask' | 'notInPlan' | 'replyOrWhatIf' | 'other';
     };
 
 export type HearResult =

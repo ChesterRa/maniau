@@ -3658,9 +3658,60 @@ export function SayReply({
           )}
         </div>
       )}
+      {reply.kind === 'whatIf' && (
+        <SayWhatIf ctx={ctx} requestIds={reply.requestIds} onClear={onClear} />
+      )}
       {reply.kind === 'question' && <SayAnswer ctx={ctx} refs={reply.refs} />}
       {reply.kind === 'unsupported' && <Text>{ctx.t(`say.unsupported.${reply.reason}`)}</Text>}
     </>
+  );
+}
+
+/**
+ * 仮の話（「おばあちゃんがダメだったら？」）：断られたと仮に置く頼み事を、頼んだ時の控え（相手・頼んだ日時）で
+ * 見せ、家族が押してから「断られたら？」の画面で、書かない計算を見せる。ここでは何も記録しない（記録の手を出さ
+ * ない）。今の計画で返事を待っていない頼み事は出さず、見分けのつかない候補は選ばせない。
+ */
+export function SayWhatIf({
+  ctx,
+  requestIds,
+  onClear,
+}: {
+  ctx: Ctx;
+  requestIds: string[];
+  onClear: () => void;
+}) {
+  const labeled = requestIds.flatMap((id) => {
+    const request = ctx.plan.requests.find((r) => r.requestId === id);
+    if (request?.state !== 'awaitingReply' || !request.live) return [];
+    const name = nameOf(ctx.household, request.to);
+    return [
+      { request, label: dated(ctx, 'say.whatIf.target', { name }, requestFor(ctx, request)) },
+    ];
+  });
+  const choices = labeled.filter((c) => labeled.filter((o) => o.label === c.label).length === 1);
+  return (
+    <div className="flex flex-col gap-2">
+      {choices.length > 0 && <Text quiet>{ctx.t('say.whatIf.lead')}</Text>}
+      {choices.map(({ request, label }) => (
+        <div key={request.requestId} className="flex flex-col gap-1">
+          <Title>{label}</Title>
+          {recordDetail(ctx, request).map((line) => (
+            <Text key={line} quiet>
+              {line}
+            </Text>
+          ))}
+          <Button onClick={() => ctx.go({ name: 'whatIf', requestId: request.requestId })}>
+            {ctx.t('say.whatIf.compute')}
+          </Button>
+        </div>
+      ))}
+      {labeled.length === 0 && <Text>{ctx.t('say.whatIf.none')}</Text>}
+      {choices.length < labeled.length && <Text>{ctx.t('say.lookAlike')}</Text>}
+      <Button kind="secondary" onClick={onClear}>
+        {ctx.t('say.cancel')}
+      </Button>
+    </div>
   );
 }
 

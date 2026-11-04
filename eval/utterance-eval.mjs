@@ -123,7 +123,7 @@ export function scoreUtteranceCase(scenario, reply, omissions = []) {
   if (expected.classification === 'one_day_exception') {
     return { ...base, checks: checks.map((check) => ({ ...check, result: 'not_run' })), status: 'not_run', reason: 'routine_change_not_supported' };
   }
-  if (!reply || !['change', 'clarify', 'question', 'unsupported'].includes(reply.kind)) {
+  if (!reply || !['change', 'clarify', 'whatIf', 'question', 'unsupported'].includes(reply.kind)) {
     return { ...base, status: 'incomplete', reason: 'invalid_reply' };
   }
   const classification = reply.kind === expected.classification ? 'match' : 'mismatch';

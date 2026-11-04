@@ -25,6 +25,7 @@ export function instrumentUtteranceClient(client, { ledger, pricing = null }) {
           ...common,
           event: 'request_started',
           requested_model: params.model,
+          requested_speed: params.speed ?? 'standard',
           max_tokens: params.max_tokens,
           effort: params.output_config?.effort ?? 'model_default',
           prompt_sha256: hash(params.system),
@@ -46,7 +47,8 @@ export function instrumentUtteranceClient(client, { ledger, pricing = null }) {
           throw error;
         }
         const usage = usageOf(response.usage);
-        const applicablePricing = pricing?.model === params.model && pricing?.model === response.model && usage?.inference_geo === 'global' && usage?.speed === 'standard'
+        const speed = pricing?.speed ?? 'standard';
+        const applicablePricing = pricing?.model === params.model && pricing?.model === response.model && usage?.inference_geo === 'global' && usage?.speed === speed && (params.speed ?? 'standard') === speed
           ? pricing : null;
         await ledger({
           ...common,

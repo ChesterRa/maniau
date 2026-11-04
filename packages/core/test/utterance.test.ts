@@ -319,6 +319,46 @@ describe('家族の一言を、確かめた候補にする', () => {
     });
   });
 
+  it('仮の話（断られたら？）は、今返事を待っている要る頼み事だけを候補にし、何も記録しない', () => {
+    // r1 は返事待ち、r2 は「はい」の後で要らなくなった物、x は前提に無い。
+    expect(
+      reply(
+        output({
+          kind: 'whatIf',
+          refs: { taskKeys: [], requestIds: ['r1', 'r2', 'x', 'r1'], itemIds: [] },
+        }),
+      ),
+    ).toEqual({ kind: 'whatIf', requestIds: ['r1'] });
+    // モデルが記録の候補を一緒に出しても、仮の話からは記録の候補を作らない。
+    expect(
+      reply(
+        output({
+          kind: 'whatIf',
+          actions: [action({ type: 'recordReply', requestId: 'r1', reply: 'no' })],
+          refs: { taskKeys: [], requestIds: [], itemIds: [] },
+        }),
+      ),
+    ).toEqual({ kind: 'whatIf', requestIds: [] });
+    // 本当の返事か仮の話か決められない時は、どちらの候補も出さない。
+    expect(reply(output({ kind: 'unsupported', unsupported: 'replyOrWhatIf' }))).toEqual({
+      kind: 'unsupported',
+      reason: 'replyOrWhatIf',
+    });
+    // 印と食い違う種類の出力（記録の候補や仮の話を一緒に出した）でも、印を付けたら候補を出さない。
+    for (const kind of ['change', 'clarify', 'whatIf', 'question'] as const) {
+      expect(
+        reply(
+          output({
+            kind,
+            unsupported: 'replyOrWhatIf',
+            actions: [action({ type: 'recordReply', requestId: 'r1', reply: 'yes' })],
+            refs: { taskKeys: [], requestIds: ['r1'], itemIds: [] },
+          }),
+        ),
+      ).toEqual({ kind: 'unsupported', reason: 'replyOrWhatIf' });
+    }
+  });
+
   it('控えは、対象の状態だけでなく、見せた日・用件・相手が替わっても見せた時と違う形になる', () => {
     const command = { type: 'commitment', taskKey: 'mine-accepted', action: 'withdraw' } as const;
     const before = JSON.stringify(seenOf(command, context));

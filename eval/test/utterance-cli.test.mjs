@@ -22,3 +22,15 @@ test('指定した評価ディレクトリ以外のファイルは受け付け�
     (error) => error.code === 1 && error.stderr.includes('評価場面だけ'),
   );
 });
+
+test('単価を指定する時は速度も指定する（準備確認で通信しない）', async () => {
+  const pricing = [
+    '--pricing-model', 'claude-opus-5-5', '--input-usd-per-million', '8',
+    '--output-usd-per-million', '40', '--pricing-url', 'https://example.test/pricing',
+    '--pricing-checked', '2026-11-04',
+  ];
+  await assert.rejects(exec(process.execPath, [runner.pathname, '--case', validCase.pathname, ...pricing]),
+    (error) => error.code === 1 && error.stderr.includes('速度'));
+  const { stdout } = await exec(process.execPath, [runner.pathname, '--case', validCase.pathname, ...pricing, '--pricing-speed', 'fast']);
+  assert.match(stdout, /通信と鍵の読み込みはしていません/);
+});

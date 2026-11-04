@@ -95,6 +95,10 @@ test('分類の一致は、画面や確認後の挙動を満たした証拠に�
   assert.equal(report.classification, 'match');
   assert.ok(report.checks.every((check) => check.result === 'undetermined'));
   assert.equal(scoreUtteranceCase(scenario('01'), { kind: 'unsupported' }).classification, 'mismatch');
+  const hypothetical = scoreUtteranceCase(scenario('02'), { kind: 'whatIf', requestIds: ['r-grandma-1207'] });
+  assert.equal(hypothetical.status, 'observed');
+  assert.equal(hypothetical.classification, 'mismatch');
+  assert.equal(hypothetical.commands, 'mismatch');
   assert.equal(scoreUtteranceCase(scenario('01'), null).status, 'incomplete');
   assert.equal(scoreUtteranceCase(scenario('01'), { kind: 'change', proposals: [] }).afterPreview, 'not_run');
 });

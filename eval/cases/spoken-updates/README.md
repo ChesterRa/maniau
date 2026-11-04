@@ -42,7 +42,7 @@ node eval/run-utterance.mjs --case eval/cases/spoken-updates/01-own-task.json
 pnpm --filter @maniau/server exec tsx ../../eval/run-utterance.mjs --case eval/cases/spoken-updates/01-own-task.json --execute
 ```
 
-単価を記録する場合は、実行時に公式料金を確認し、`--pricing-model`、`--input-usd-per-million`、`--output-usd-per-million`、`--pricing-url`、`--pricing-checked` をすべて付ける。モデルが一致せず、推論地域が global・速度が standard と確認できず、またはキャッシュ料金がある場合、費用は不明とする。読み取り開始と応答・使用量を一件ずつ台帳に残す。応答を得られない時の費用は 0 とせず不明にする。自動再試行はしない。
+単価を記録する場合は、実行時に公式料金を確認し、`--pricing-model`、`--pricing-speed`（`standard` または `fast`）、`--input-usd-per-million`、`--output-usd-per-million`、`--pricing-url`、`--pricing-checked` をすべて付ける。モデルと速度が指定と一致せず、推論地域が global と確認できず、またはキャッシュ料金がある場合、費用は不明とする。読み取り開始と応答・使用量を一件ずつ台帳に残す。応答を得られない時の費用は 0 とせず不明にする。自動再試行はしない。
 
 読み取り、検査、プロンプト、依存の固定のハッシュを試行前後に記録する。試行中に変わった場合は、その結果を比較不能とする。記録したハッシュはファイル全体の再現可能性を高めるものであり、実行環境のすべてを固定した証拠ではない。
 

@@ -117,6 +117,8 @@ export type ShownReply =
       reason: 'ambiguous' | 'otherAdultsTask' | 'unowned';
       unowned?: true;
     }
+  /** 仮の話：断られたと仮に置く頼み事の候補（返事待ちの物だけ。空なら無い）。何も記録しない。 */
+  | { kind: 'whatIf'; requestIds: string[] }
   | { kind: 'question'; refs: UtteranceRefs }
   | { kind: 'unsupported'; reason: UnsupportedReason };
 
@@ -483,7 +485,9 @@ export function demoSessions(
     plan: PlanResult,
     throughSeq: number,
   ): ShownReply => {
-    if (reply.kind === 'question' || reply.kind === 'unsupported') return reply;
+    if (reply.kind === 'question' || reply.kind === 'unsupported' || reply.kind === 'whatIf') {
+      return reply;
+    }
     const proposals = reply.proposals.map((p): ShownProposal => {
       const id = randomUUID();
       const command = withSeen(p.command, plan, throughSeq);

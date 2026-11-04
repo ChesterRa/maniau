@@ -47,5 +47,8 @@ test('料金の根拠がない使用量、地域割増、キャッシュ料金�
   assert.equal(estimateCost({ ...usage, inference_geo: 'us' }, { input: 4, output: 20 }), null);
   assert.equal(estimateCost({ ...usage, inference_geo: undefined }, { input: 4, output: 20 }), null);
   assert.equal(estimateCost({ ...usage, speed: 'fast' }, { input: 4, output: 20 }), null);
+  assert.equal(estimateCost({ ...usage, speed: 'fast' }, { input: 8, output: 40, speed: 'fast' }), 0.028);
+  assert.equal(estimateCost(usage, { input: 8, output: 40, speed: 'fast' }), null);
+  assert.equal(estimateCost({ ...usage, speed: undefined }, { input: 8, output: 40, speed: 'fast' }), null);
   assert.equal(estimateCost(null, { input: 4, output: 20 }), null);
 });

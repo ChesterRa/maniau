@@ -632,6 +632,7 @@
       "routineChange": "Changes to the usual week (pickups, work) can't be recorded yet.",
       "otherAdultsTask": "This looks like another adult's task. That person records it.",
       "notInPlan": "Nothing in the plan matches this.",
+      "replyOrWhatIf": "We couldn’t tell whether this is a real reply or a what-if. Say them separately, such as “Grandma says it’s fine” for a reply or “What if Grandma says no?” for a what-if.",
       "other": "This update can't be recorded yet."
     },
     "answer": "Here is what the plan shows.",
@@ -676,6 +677,13 @@
       "cancelSent_dated": "Record that you told {{name}} it is cancelled (for {{date}})",
       "answer": "Answer \"{{value}}\" to: {{label}}",
       "answer_dated": "Answer \"{{value}}\" to: {{label}} (needed by {{date}})"
+    },
+    "whatIf": {
+      "lead": "Read as a what-if. Nothing is recorded here.",
+      "target": "The request to {{name}}",
+      "target_dated": "The request to {{name}} (for {{date}})",
+      "compute": "Calculate as if they said no",
+      "none": "No request is waiting for a reply right now. Only requests waiting for a reply can be calculated this way."
     },
     "recorded": "Recorded.",
     "changed": "This changed after it was shown, so nothing was recorded. Check the current screen and send your update again.",

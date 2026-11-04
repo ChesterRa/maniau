@@ -61,3 +61,15 @@ test('標準速度を応答で確認できない時は費用を推測しない',
   await client.messages.parse({ model: 'm' });
   assert.equal(entries[1].cost_usd, null);
 });
+
+test('fast の単価を指定し、要求と応答が fast の時だけその単価で見積もる', async () => {
+  const entries = [];
+  const client = instrumentUtteranceClient({ messages: { parse: async () => ({
+    model: 'm', usage: { input_tokens: 1000, output_tokens: 500, inference_geo: 'global', speed: 'fast' },
+  }) } }, { ledger: async (entry) => entries.push(entry), pricing: { model: 'm', speed: 'fast', input: 8, output: 40 } });
+  await client.messages.parse({ model: 'm', speed: 'fast' });
+  assert.equal(entries[0].requested_speed, 'fast');
+  assert.equal(entries[1].cost_usd, 0.028);
+  await client.messages.parse({ model: 'm', speed: 'standard' });
+  assert.equal(entries[3].cost_usd, null);
+});
