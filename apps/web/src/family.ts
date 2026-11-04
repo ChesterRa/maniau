@@ -16,6 +16,7 @@ import type {
   PreviewCommand,
   RecordBlock,
   Source,
+  SurveyShown,
   TodayCard,
   WayIdeasContext,
 } from '@maniau/core';
@@ -91,7 +92,15 @@ interface Session {
   /** 駅の近くの店を地図で探せるか（地図のあるデモのサーバーだけ）。探す言葉の案を Claude に聞けるか。 */
   canSearchStores?: boolean;
   canSuggestStores?: boolean;
+  /** 周りの調べ：記録した調べがあるか。Claude にいま調べてもらえるか（Claude の鍵のあるデモのサーバーだけ）。 */
+  hasRecordedSurvey?: boolean;
+  canSurvey?: boolean;
 }
+
+/** 周りの調べの結果（何も書かない。家族が候補を確かめて家の情報に入れる）。 */
+export type SurveyRunResult =
+  | { status: 'ok'; survey: SurveyShown }
+  | { status: 'limit' | 'busy' | 'noRecord' | 'noArea' | 'failed' };
 
 /** 駅の近くで見つけた店（Google の名前・住所・位置は見せるだけ。家庭に残すのは place ID だけ）。 */
 export interface FoundStore {
@@ -328,6 +337,8 @@ const json = { 'content-type': 'application/json' };
 const COMMAND_TIMEOUT_MS = 20_000;
 /** 読み取りの返事を待つ長さ（Claude が読むので、命令より長い）。 */
 const READ_TIMEOUT_MS = 120_000;
+/** Claude がいま周りを調べる時の待ち（検索と頁の読み取りを何度かするので、読み取りより長い）。 */
+const SURVEY_TIMEOUT_MS = 300_000;
 
 /** 操作 ID（同じ操作の送り直しを見分ける。§7.3 の 4）。 */
 export function operationId(): string {
@@ -881,6 +892,35 @@ export function useServerView(where: Where | undefined) {
     [kind, sessionId],
   );
 
+  /** 家の周りを調べる（記録した調べ、または Claude がいま調べる。何も書かない）。デモだけ。 */
+  const survey = useCallback(
+    async (live: boolean, operationId: string): Promise<SurveyRunResult> => {
+      if (kind !== 'demo' || !sessionId || !memberId) return { status: 'failed' };
+      try {
+        const response = await fetch(`/api/demo/sessions/${sessionId}/survey`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ memberId, operationId, live }),
+          signal: AbortSignal.timeout(live ? SURVEY_TIMEOUT_MS : READ_TIMEOUT_MS),
+        });
+        const body = (await response.json()) as { survey: SurveyShown } | { error: string };
+        if ('survey' in body) return { status: 'ok', survey: body.survey };
+        if (body.error === 'unknownSession') {
+          setNotice('expired');
+          return { status: 'failed' };
+        }
+        if (body.error === 'readingLimit') return { status: 'limit' };
+        if (body.error === 'readingBusy') return { status: 'busy' };
+        if (body.error === 'noRecord') return { status: 'noRecord' };
+        if (body.error === 'noArea') return { status: 'noArea' };
+        return { status: 'failed' };
+      } catch {
+        return { status: 'failed' };
+      }
+    },
+    [kind, sessionId, memberId],
+  );
+
   /** 家庭の駅の近くで、家族が押した言葉の店を探す（言葉はそのまま Google に送る）。 */
   const searchStores = useCallback(
     async (query: string, stationId: string): Promise<StoreSearchResult> => {
@@ -978,6 +1018,7 @@ export function useServerView(where: Where | undefined) {
     walk,
     storeKinds,
     searchStores,
+    survey,
     /** 届いたか分からない操作を、同じ家庭・同じ大人・同じ ID・同じ代で送り直す。 */
     retry: async (): Promise<void> => {
       const operation = pending.current;

@@ -11,6 +11,7 @@ import {
   proposalSnapshot,
   type ReadingIssue,
   type Source,
+  SurveyRecord,
   splitSentences,
   toExtraction,
   validateHousehold,
@@ -33,6 +34,8 @@ interface DemoData {
   extractions: Extraction[];
   readings: DemoReading[];
   outputs: { model: string; promptVersion: string; inputHash: string }[];
+  /** 前に Claude で調べて記録した、デモの家の周りの資源（あれば。02-foundation §3.5）。 */
+  survey?: SurveyRecord;
 }
 
 const NOTICES = [
@@ -100,7 +103,11 @@ export function loadDemoData(): DemoData {
       inputHash: recorded ? String(raw.inputHash) : `expected-${notice.id}`,
     });
   }
-  cached = { household, sources, extractions, readings, outputs };
+  const surveyPath = 'data/demo/recorded/survey.json';
+  const survey = existsSync(new URL(surveyPath, ROOT))
+    ? SurveyRecord.parse(JSON.parse(read(surveyPath)))
+    : undefined;
+  cached = { household, sources, extractions, readings, outputs, ...(survey ? { survey } : {}) };
   return cached;
 }
 

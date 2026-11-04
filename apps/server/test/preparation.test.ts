@@ -172,10 +172,11 @@ describe('一度だけ済ませておく前提（事前の登録）', () => {
     ]);
   });
 
-  it('家の情報の直しで替えられるのは、資源の扱いと前提の状態・有効な最後の日だけ（時刻はサーバーが付ける）', async () => {
+  it('家の情報の直しで替えられるのは、資源の扱いと前提のだれの分・状態・有効な最後の日と、やり方との結び付きだけ（時刻はサーバーが付ける）', async () => {
     const f = formal();
     const household = await f.household();
-    // 名前・だれの前提か・出典は替えない。消さない。やり方の前提（requires）は、今は直せない。
+    // 名前・出典は替えない。消さない。調べて見せていない資源は足せない。やり方は、家にある前提・資源だけを指せる。
+    // だれの分の人は、家の成員だけ。
     const refused: [Household, string][] = [
       [
         { ...household, preparations: household.preparations.map((p) => ({ ...p, name: '別' })) },
@@ -186,10 +187,10 @@ describe('一度だけ済ませておく前提（事前の登録）', () => {
           ...household,
           preparations: household.preparations.map((p) => ({
             ...p,
-            appliesTo: { kind: 'household' as const },
+            appliesTo: { kind: 'members' as const, memberIds: ['nobody'] },
           })),
         },
-        'resourcesLocked',
+        'householdInvalid',
       ],
       [
         { ...household, resources: household.resources.map((r) => ({ ...r, notes: [] })) },
@@ -200,9 +201,27 @@ describe('一度だけ済ませておく前提（事前の登録）', () => {
       [
         {
           ...household,
-          ways: household.ways.map((w) => (w.id === 'way-sick-care' ? { ...w, requires: [] } : w)),
+          resources: [
+            ...household.resources,
+            {
+              id: 'res-made-up',
+              kind: 'sickChildCare',
+              name: '作った資源',
+              notes: [],
+              use: 'candidate',
+            },
+          ],
         },
-        'wayInvalid',
+        'resourcesLocked',
+      ],
+      [
+        {
+          ...household,
+          ways: household.ways.map((w) =>
+            w.id === 'way-sick-care' ? { ...w, requires: ['prep-missing'] } : w,
+          ),
+        },
+        'householdInvalid',
       ],
     ];
     for (const [next, reason] of refused) {
@@ -232,6 +251,32 @@ describe('一度だけ済ませておく前提（事前の登録）', () => {
       }),
     ).toMatchObject({ status: 'ok' });
     expect((await f.household()).resources[0]).toMatchObject({ use: 'usual', decidedAt: NOW });
+    // やり方から前提と資源を外せる（空の欄は書かない）。
+    expect(
+      await f.edit({
+        ...(await f.household()),
+        ways: (await f.household()).ways.map((w) =>
+          w.id === 'way-sick-care' ? { ...w, requires: [], resourceIds: [] } : w,
+        ),
+      }),
+    ).toMatchObject({ status: 'ok' });
+    const unlinked = (await f.household()).ways.find((w) => w.id === 'way-sick-care');
+    expect(unlinked).not.toHaveProperty('requires');
+    expect(unlinked).not.toHaveProperty('resourceIds');
+    // だれの分は家族が直せる。だれの分だけの直しでは、状態を確かめた時刻を付けない。
+    const now = await f.household();
+    expect(
+      await f.edit({
+        ...now,
+        preparations: now.preparations.map((p) => ({
+          ...p,
+          appliesTo: { kind: 'household' as const },
+        })),
+      }),
+    ).toMatchObject({ status: 'ok' });
+    const whole = (await f.household()).preparations[0];
+    expect(whole?.appliesTo).toEqual({ kind: 'household' });
+    expect(whole).not.toHaveProperty('stateCheckedAt');
   });
 
   it('「この変更で変わること」：前提を済んだにすると、印が消えて勧める手が出る。戻すと逆になる', async () => {

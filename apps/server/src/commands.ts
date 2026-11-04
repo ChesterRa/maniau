@@ -17,11 +17,13 @@ import {
   type PlanResult,
   proposalSnapshot,
   repeatedNames,
+  type SurveyCandidate,
   sameContent,
   sameNamePairs,
   sameProposal,
   shownName,
   stoppedWay,
+  surveyPreparation,
   taskContent,
   toEpochMinutes,
   validateHousehold,
@@ -58,6 +60,11 @@ export interface CommandContext {
   identityId?: string;
   /** この要求のために地図から引いた根拠（同じ要求の計算・確かめ・画面が同じ物を使う）。 */
   maps?: MapInputs;
+  /**
+   * このデモで調べて見せた周りの資源の候補（02-foundation §3.5）。家の情報に新しく入れられる資源と前提は、ここに
+   * ある物と同じ中身の物だけ（家族が選ぶ扱い・状態を除く）。
+   */
+  surveyed?: readonly SurveyCandidate[];
 }
 
 export type CommandResult =
@@ -258,7 +265,7 @@ function withReopened(
  */
 export function previewCommand(
   events: readonly DomainEvent[],
-  context: Pick<CommandContext, 'memberId' | 'now' | 'maps'>,
+  context: Pick<CommandContext, 'memberId' | 'now' | 'maps' | 'surveyed'>,
   command: Command,
   /** 同じ事象の列から作った状態と今の計画（いくつも見る時に、作り直さない）。 */
   base?: { state: EngineState; plan: PlanResult },
@@ -282,6 +289,7 @@ export function previewCommand(
       now,
       demo: false,
       ...(context.maps ? { maps: context.maps } : {}),
+      ...(context.surveyed ? { surveyed: context.surveyed } : {}),
     },
     command,
   );
@@ -891,7 +899,12 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       if (state.withdrawnSources.has(command.sourceId)) return { bodies: [] };
       return { bodies: [{ type: 'sourceWithdrawn', sourceId: command.sourceId }] };
     case 'updateHousehold': {
-      const checked = checkHouseholdEdit(state.household, command.household, context.now);
+      const checked = checkHouseholdEdit(
+        state.household,
+        command.household,
+        context.now,
+        context.surveyed ?? [],
+      );
       if ('reason' in checked) return checked;
       return { bodies: [{ type: 'householdSet', household: checked.household }] };
     }
@@ -1077,6 +1090,7 @@ function checkHouseholdEdit(
   current: Household | undefined,
   next: Household,
   now: DateTime,
+  surveyed: readonly SurveyCandidate[],
 ): { household: Household } | { status: 'invalid'; reason: string } {
   const invalid = (reason: string) => ({ status: 'invalid' as const, reason });
   if (!current) return invalid('householdMissing');
@@ -1150,7 +1164,7 @@ function checkHouseholdEdit(
   }
   const ways = checkWays(current, next);
   if ('reason' in ways) return ways;
-  const around = checkResources(current, next, now);
+  const around = checkResources(current, next, now, surveyed);
   if ('reason' in around) return around;
   // 大人のふだんの一日：前からある曜日は消さず（区間の無い日にしない）、直した日は区間を切れ目なく続ける
   // （書かれていない時間を作らない）。分からない時間で、子の居場所の手配が要る時間を決めないため。
@@ -1220,51 +1234,129 @@ function checkHouseholdEdit(
 }
 
 /**
- * 周りの資源と、一度だけ済ませておく前提の直し（02-foundation §3.5）。今は、家族の扱い（いつも・候補・使わない）と、
- * 前提の状態・有効な最後の日だけを直せる。消さない・足さない（調べた候補から入れる道は別）、ほかの欄（名前・種類・
- * 出典・だれの前提か・家族が確かめた日数）は替えない。直した時刻はサーバーが付ける（送られた時刻は採らない）。
+ * 周りの資源と、一度だけ済ませておく前提の直し（02-foundation §3.5）。消さない。前からある物で直せるのは、家族の扱い
+ * （いつも・候補・使わない）と、前提のだれの分（家全体・その人たち・分からない）・状態・有効な最後の日だけで、ほかの
+ * 欄（名前・種類・出典・家族が確かめた日数）は替えない。新しく入れられるのは、このデモで調べて見せた候補と同じ中身の
+ * 資源と、その資源の前提の案だけ（扱い・だれの分・状態・有効な最後の日は家族が選ぶ。前提は、家族が「要る」と確かめた
+ * 時に画面が足す）。直した・入れた時刻はサーバーが付ける（送られた時刻は採らない）。だれの分の人は、家の成員だけ
+ * （validateHousehold が確かめる）。
  */
 function checkResources(
   current: Household,
   next: Household,
   now: DateTime,
+  surveyed: readonly SurveyCandidate[],
 ):
   | { resources: Household['resources']; preparations: Household['preparations'] }
   | { status: 'invalid'; reason: string } {
   const invalid = (reason: string) => ({ status: 'invalid' as const, reason });
   if (
-    next.resources.length !== current.resources.length ||
-    next.preparations.length !== current.preparations.length
+    current.resources.some((r) => !next.resources.some((n) => n.id === r.id)) ||
+    current.preparations.some((p) => !next.preparations.some((n) => n.id === p.id))
   ) {
     return invalid('resourcesLocked');
   }
   const resources: Household['resources'] = [];
-  for (const before of current.resources) {
-    const sent = next.resources.find((r) => r.id === before.id);
-    if (!sent) return invalid('resourcesLocked');
+  for (const sent of next.resources) {
     const { use, decidedAt: _decidedAt, ...rest } = sent;
-    const { use: beforeUse, decidedAt, ...beforeRest } = before;
-    if (!sameJson(rest, beforeRest)) return invalid('resourcesLocked');
-    resources.push(use === beforeUse ? before : { ...beforeRest, use, decidedAt: now });
+    const before = current.resources.find((r) => r.id === sent.id);
+    if (before) {
+      const { use: beforeUse, decidedAt, ...beforeRest } = before;
+      // 場所に結んでいない資源だけ、家族が後から、名前が同じで家ではない場所に結べる（結んだ場所は替えない）。
+      const { placeId, ...sentRest } = rest;
+      const linked =
+        before.placeId === undefined && placeId !== undefined
+          ? next.places.find((p) => p.id === placeId)
+          : undefined;
+      if (linked) {
+        if (
+          linked.kind === 'home' ||
+          linked.name !== before.name ||
+          !sameJson(sentRest, beforeRest)
+        ) {
+          return invalid('resourcesLocked');
+        }
+        const kept = use === beforeUse ? { decidedAt } : { decidedAt: now };
+        resources.push({ ...beforeRest, placeId, use, ...(kept.decidedAt ? kept : {}) });
+        continue;
+      }
+      if (!sameJson(rest, beforeRest)) return invalid('resourcesLocked');
+      resources.push(use === beforeUse ? before : { ...beforeRest, use, decidedAt: now });
+      continue;
+    }
+    const shown = surveyed.find((c) => c.resource.id === sent.id);
+    if (!shown) return invalid('resourcesLocked');
+    const { use: _shownUse, decidedAt: _shownAt, ...shownRest } = shown.resource;
+    // 地図の場所（placeId）は家族が結ぶ：同じ直しで足す場所か家にある場所で、家ではなく、名前が資源と同じ物だけ
+    // （やり方の手順は場所に頼む・行くので、資源を手順に結ぶ時の手がかり）。ほかの欄は、見せた候補のまま。
+    const { placeId, ...sentRest } = rest;
+    if (!sameJson(sentRest, shownRest)) return invalid('resourceNotAsSurveyed');
+    if (placeId !== undefined) {
+      const place = next.places.find((p) => p.id === placeId);
+      if (!place || place.kind === 'home' || place.name !== sent.name) {
+        return invalid('resourceNotAsSurveyed');
+      }
+    }
+    resources.push({
+      ...shownRest,
+      ...(placeId === undefined ? {} : { placeId }),
+      use,
+      decidedAt: now,
+    });
   }
   const preparations: Household['preparations'] = [];
-  for (const before of current.preparations) {
-    const sent = next.preparations.find((p) => p.id === before.id);
-    if (!sent) return invalid('resourcesLocked');
-    const { state, validUntil, stateCheckedAt: _checked, ...rest } = sent;
-    const { state: beforeState, validUntil: beforeValid, stateCheckedAt, ...beforeRest } = before;
-    if (!sameJson(rest, beforeRest)) return invalid('resourcesLocked');
-    const same = state === beforeState && validUntil === beforeValid;
-    preparations.push(
-      same
-        ? before
-        : {
-            ...beforeRest,
-            state,
-            ...(validUntil === undefined ? {} : { validUntil }),
-            stateCheckedAt: now,
-          },
-    );
+  for (const sent of next.preparations) {
+    const { state, validUntil, stateCheckedAt: _checked, appliesTo, ...rest } = sent;
+    const before = current.preparations.find((p) => p.id === sent.id);
+    if (before) {
+      const {
+        state: beforeState,
+        validUntil: beforeValid,
+        stateCheckedAt,
+        appliesTo: beforeApplies,
+        ...beforeRest
+      } = before;
+      if (!sameJson(rest, beforeRest)) return invalid('resourcesLocked');
+      // 確かめた時刻は、状態か有効な最後の日を直した時だけ付け直す（だれの分だけの直しでは、状態を確かめていない）。
+      const sameState = state === beforeState && validUntil === beforeValid;
+      if (sameState && sameJson(appliesTo, beforeApplies)) {
+        preparations.push(before);
+        continue;
+      }
+      preparations.push({
+        ...beforeRest,
+        appliesTo,
+        state,
+        ...(validUntil === undefined ? {} : { validUntil }),
+        ...(sameState
+          ? stateCheckedAt === undefined
+            ? {}
+            : { stateCheckedAt }
+          : { stateCheckedAt: now }),
+      });
+      continue;
+    }
+    // 新しい前提は、調べた候補の前提の案（出典の無い案を含む）で、その資源が家にある（同じ直しで入れる物も含む）時だけ。
+    const shown = surveyed.map(surveyPreparation).find((p) => p.id === sent.id);
+    if (!shown || !resources.some((r) => r.id === shown.resourceId)) {
+      return invalid('resourcesLocked');
+    }
+    const {
+      state: shownState,
+      validUntil: _v,
+      stateCheckedAt: _s,
+      appliesTo: _a,
+      ...shownRest
+    } = shown;
+    if (!sameJson(rest, shownRest)) return invalid('resourceNotAsSurveyed');
+    preparations.push({
+      ...shownRest,
+      appliesTo,
+      state,
+      ...(validUntil === undefined ? {} : { validUntil }),
+      // 家族が状態を選んだ時だけ、確かめた時刻を付ける（案のまま「分からない」なら付けない）。
+      ...(state === shownState && validUntil === undefined ? {} : { stateCheckedAt: now }),
+    });
   }
   return { resources, preparations };
 }
@@ -1324,9 +1416,7 @@ function checkWays(
     }
     if (!before && !NEW_ID.test(way.id)) return invalid('wayInvalid');
     if (way.name.trim() === '') return invalid('wayInvalid');
-    // やり方の前提（requires）と使う資源（resourceIds）は、今は直せない（前と同じだけ。足したやり方には付けない）。
-    if (!sameJson(before?.requires, way.requires)) return invalid('wayInvalid');
-    if (!sameJson(before?.resourceIds, way.resourceIds)) return invalid('wayInvalid');
+    // やり方の前提（requires）と使う資源（resourceIds）は、家にある前提・資源を指す時だけ（validateHousehold が確かめる）。
     for (const step of way.steps) {
       if (!NEW_ID.test(step.id) || step.name.trim() === '') return invalid('wayInvalid');
       if (new Set(step.segments).size !== step.segments.length) return invalid('wayInvalid');
@@ -1364,8 +1454,12 @@ function checkWays(
 /** 空の「分からない」を落とす（欄が無いのと同じ意味。版を揃える）。 */
 function tidyWay(way: Way): Way {
   const { unknown, ...cost } = way.cost;
+  const { requires, resourceIds, ...rest } = way;
+  // 空の前提・使う資源は、欄が無いのと同じなので書かない（版を揃える）。
   return {
-    ...way,
+    ...rest,
+    ...(requires === undefined || requires.length === 0 ? {} : { requires }),
+    ...(resourceIds === undefined || resourceIds.length === 0 ? {} : { resourceIds }),
     cost: unknown === undefined || unknown.length === 0 ? cost : { ...cost, unknown },
   };
 }

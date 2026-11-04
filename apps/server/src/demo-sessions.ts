@@ -6,6 +6,7 @@ import {
   type CheckedIdeas,
   type ChoicePreview,
   type Command,
+  checkSurvey,
   checkWayIdeas,
   type DateTime,
   type DomainEvent,
@@ -21,6 +22,8 @@ import {
   recordBlock,
   type Source,
   type SourceSender,
+  type SurveyCandidate,
+  type SurveyShown,
   seenOf,
   splitSentences,
   taskContent,
@@ -35,7 +38,7 @@ import {
 } from '@maniau/core';
 import { computePlan, currentItems, foldEvents } from '@maniau/core/engine';
 import { type CommandGuard, type CommandResult, reopened, runCommand } from './commands';
-import { DEMO_STAGES, type DemoStageId, demoEvents } from './demo';
+import { DEMO_STAGES, type DemoStageId, demoEvents, loadDemoData } from './demo';
 import type { LatLng, MapsClient, WalkRoute } from './maps/google';
 import { mapInputsFor, withProposed } from './maps/inputs';
 import { type FoundStore, searchStores } from './maps/search';
@@ -47,6 +50,13 @@ import {
   ReadingError,
 } from './reading/extract';
 import type { StoreKindsResult } from './reading/store-kinds';
+import {
+  SURVEY_KINDS,
+  type SurveyInput,
+  type SurveyResult,
+  surveyCandidateId,
+  surveyInputFor,
+} from './reading/survey';
 import { type PhotoInput, PhotoTooLarge, type TranscribeResult } from './reading/transcribe';
 import { buildUtteranceInput, type UtteranceResult } from './reading/utterance';
 import type { WayIdeasResult } from './reading/way-ideas';
@@ -182,6 +192,32 @@ interface WayIdeasOperation {
   sent?: WayIdeasContext;
 }
 
+/**
+ * 一つのデモで、Claude にいま周りを調べてもらえる数（記録した調べは数えない）。作り手の決めた範囲（2026-11-05：
+ * 足りるだけ開けるが、使いすぎない）。
+ */
+export const MAX_SURVEYS_PER_SESSION = 3;
+/** サーバー全体で、一日に Claude にいま周りを調べてもらえる数（検索と頁の読み取りで、一回が重い）。 */
+export const MAX_SURVEYS_PER_DAY = 30;
+
+/** 家の周りを Claude で調べる（試験では偽物に替える）。 */
+export type SurveyReader = (input: SurveyInput) => Promise<SurveyResult>;
+
+export type SurveyOutcome =
+  | { status: 'ok'; survey: SurveyShown }
+  | { status: 'limit' | 'busy' | 'invalid' | 'conflict' }
+  /** 家の場所に地域が無い（どこを調べるか分からない）。 */
+  | { status: 'noArea' }
+  /** 記録した調べが無いか、この家の地域の物ではない（いま調べてもらう）。 */
+  | { status: 'noRecord' }
+  | { status: 'failed'; reason: string };
+
+interface SurveyOperation {
+  digest: string;
+  state: 'reading' | 'done';
+  survey?: SurveyShown;
+}
+
 export type ConfirmOutcome =
   | { status: 'ok'; view: View }
   /** 見せた後に、対象の状態が変わった（もう一人が記録した等）。記録せず、今の物を見せ直す。 */
@@ -275,6 +311,14 @@ interface Session {
   /** このデモで、Claude に店の検索語を聞いた数と、地図で店を探した数。 */
   storeKinds: number;
   storeSearches: number;
+  /** このデモで Claude にいま周りを調べてもらった（もらおうとした）数と、操作ごとの控え。 */
+  surveys: number;
+  surveyOperations: Map<string, SurveyOperation>;
+  /**
+   * このデモで見せた周りの資源の候補（ID ごとに最後に見せた物）。家族が家に入れる時、送られた資源と前提を、ここに
+   * ある物と比べる（見せていない物・中身を替えた物は入れない）。
+   */
+  surveyed: Map<string, SurveyCandidate>;
 }
 
 /** 店までの徒歩の道（画面の地図）。Google の名前・位置・道は、この応答で見せるだけ。 */
@@ -342,11 +386,19 @@ const contextDigest = (context: UtteranceContext) =>
 export function demoSessions(
   clock: () => number = Date.now,
   /** 試験で数の上限を小さくする。 */
-  limits: { perDay?: number } = {},
-  /** 地図の口（無ければ地図を使わず、家庭の目安で計算する。試験は架空の口を渡す）。 */
-  deps: { maps?: MapsClient; mapsClock?: () => number } = {},
+  limits: { perDay?: number; surveysPerDay?: number } = {},
+  /**
+   * 地図の口（無ければ地図を使わず、家庭の目安で計算する。試験は架空の口を渡す）。recordedSurvey は、記録した
+   * 周りの調べ（無ければデモの材料の物。null なら無し）。
+   */
+  deps: { maps?: MapsClient; mapsClock?: () => number; recordedSurvey?: SurveyShown | null } = {},
 ) {
   const perDay = limits.perDay ?? MAX_READINGS_PER_DAY;
+  const surveysPerDay = limits.surveysPerDay ?? MAX_SURVEYS_PER_DAY;
+  const recordedSurvey =
+    deps.recordedSurvey === undefined ? loadDemoData().survey : (deps.recordedSurvey ?? undefined);
+  /** 今日（サーバーの時計の日付）Claude にいま周りを調べてもらった数。 */
+  const dailySurveys = { day: '', count: 0 };
   const store = memoryStore();
   const sessions = new Map<string, Session>();
   /** 今日（サーバーの時計の日付）読んだ数。 */
@@ -604,6 +656,18 @@ export function demoSessions(
     return context ?? 'needGone';
   }
 
+  /** 周りを調べる時にモデルに渡す物（家族の大人でなければ invalid）。 */
+  function surveyInputOf(
+    events: readonly DomainEvent[],
+    memberId: string,
+  ): SurveyInput | 'invalid' | 'noArea' {
+    const household = foldEvents(events).household;
+    if (!household?.members.some((m) => m.id === memberId && m.kind === 'adult' && m.active)) {
+      return 'invalid';
+    }
+    return surveyInputFor(household, clock());
+  }
+
   /** 前提を取り、Claude で案を作り、前提が変わっていない時だけ、確かめた案を返す（何も書かない）。 */
   async function ideas(
     id: string,
@@ -825,6 +889,9 @@ export function demoSessions(
         proposals: new Map(),
         storeKinds: 0,
         storeSearches: 0,
+        surveys: 0,
+        surveyOperations: new Map(),
+        surveyed: new Map(),
       });
       return id;
     },
@@ -871,7 +938,12 @@ export function demoSessions(
       return store.withHousehold(id, (log) =>
         previewChange(
           log.events(),
-          { memberId, now: session.now, ...(maps ? { maps } : {}) },
+          {
+            memberId,
+            now: session.now,
+            ...(maps ? { maps } : {}),
+            surveyed: [...session.surveyed.values()],
+          },
           command,
         ),
       );
@@ -889,7 +961,14 @@ export function demoSessions(
       const result = await runCommand(
         store,
         id,
-        { memberId, operationId, now: session.now, demo: true, ...(maps ? { maps } : {}) },
+        {
+          memberId,
+          operationId,
+          now: session.now,
+          demo: true,
+          ...(maps ? { maps } : {}),
+          surveyed: [...session.surveyed.values()],
+        },
         command,
       );
       const view = await store.withHousehold(id, (log) =>
@@ -1160,6 +1239,83 @@ export function demoSessions(
         inFlight -= 1;
         if (session.wayIdeasOperations.get(input.operationId)?.state === 'reading') {
           session.wayIdeasOperations.delete(input.operationId);
+        }
+      }
+    },
+    /**
+     * 家の周りの資源を調べる（何も書かない。家族が候補を確かめて、家の情報に入れる）。live でなければ、前に調べて
+     * 記録した結果を見せる（この家の地域の物の時だけ。数えない）。live なら Claude にいま調べてもらう（数と、同時に
+     * 読む数を抑える。同じ操作 ID の送り直しは、調べ直さずに同じ結果を返す）。どちらも、見せた候補をこのデモに
+     * 控える（家族が入れる時に、送られた物と比べる）。
+     */
+    async survey(
+      id: string,
+      memberId: string,
+      input: { operationId: string; live: boolean },
+      read?: SurveyReader,
+    ): Promise<SurveyOutcome | undefined> {
+      const session = touch(id);
+      if (!session) return undefined;
+      const asked = await store.withHousehold(id, (log) => surveyInputOf(log.events(), memberId));
+      if (asked === 'invalid' || asked === 'noArea') return { status: asked };
+      const remember = (shown: SurveyShown) => {
+        for (const c of shown.candidates) session.surveyed.set(c.id, c);
+        return { status: 'ok' as const, survey: shown };
+      };
+      if (!input.live) {
+        if (!recordedSurvey || recordedSurvey.area !== asked.area) return { status: 'noRecord' };
+        return remember(recordedSurvey);
+      }
+      if (!read) return { status: 'failed', reason: 'unavailable' };
+      const digest = createHash('sha256')
+        .update(JSON.stringify(['survey', memberId, asked.area]))
+        .digest('hex');
+      const previous = session.surveyOperations.get(input.operationId);
+      if (previous) {
+        if (previous.digest !== digest) return { status: 'conflict' };
+        return previous.survey ? remember(previous.survey) : { status: 'busy' };
+      }
+      const today = new Date(clock()).toISOString().slice(0, 10);
+      if (dailySurveys.day !== today) Object.assign(dailySurveys, { day: today, count: 0 });
+      if (session.surveys >= MAX_SURVEYS_PER_SESSION || dailySurveys.count >= surveysPerDay) {
+        return { status: 'limit' };
+      }
+      if (session.reading !== undefined || inFlight >= MAX_READINGS_IN_FLIGHT) {
+        return { status: 'busy' };
+      }
+      // 外に送る前に数える（失敗しても、呼んだ分は数える）。
+      session.surveys += 1;
+      dailySurveys.count += 1;
+      session.reading = input.operationId;
+      inFlight += 1;
+      session.surveyOperations.set(input.operationId, { digest, state: 'reading' });
+      try {
+        let result: SurveyResult;
+        try {
+          result = await read(asked);
+        } catch (error) {
+          return {
+            status: 'failed',
+            reason: error instanceof ReadingError ? error.reason : 'error',
+          };
+        }
+        if (!alive(id, session)) return undefined;
+        const at = formatDateTime(Math.floor(clock() / 60_000), asked.timeZone);
+        const checked = checkSurvey(
+          result.output,
+          result.pages,
+          SURVEY_KINDS.map((k) => k.kind),
+          surveyCandidateId,
+          at,
+        );
+        const shown: SurveyShown = { area: asked.area, at, recorded: false, ...checked };
+        session.surveyOperations.set(input.operationId, { digest, state: 'done', survey: shown });
+        return remember(shown);
+      } finally {
+        session.reading = undefined;
+        inFlight -= 1;
+        if (session.surveyOperations.get(input.operationId)?.state === 'reading') {
+          session.surveyOperations.delete(input.operationId);
         }
       }
     },

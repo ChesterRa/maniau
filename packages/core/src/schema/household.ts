@@ -258,12 +258,12 @@ export const Way = z.object({
 export type Way = z.infer<typeof Way>;
 
 /**
- * 調べた事の出典。公式の頁なら、URL・頁の題・短い引用と、頁を読んだ時刻、引用が読んだ頁の本文に文字のとおりに
- * あったか（コードが確かめた。PDF や読めなかった頁は確かめていない）。
+ * 調べた事の出典。ウェブの頁なら、URL・頁の題・短い引用と、頁を読んだ時刻、引用が読んだ頁の本文に文字のとおりに
+ * あったか（コードが確かめた）。頁が公式かは、コードでは確かめない（家族がリンク先で確かめる）。
  */
 export const ResourceSource = z.object({
-  /** officialPage：公式の頁。family：家族が言った。demo：デモのために作った架空の決まり（本当の頁ではない）。 */
-  kind: z.enum(['officialPage', 'family', 'demo']),
+  /** webPage：調べて読んだウェブの頁。family：家族が言った。demo：デモのために作った架空の決まり（本当の頁ではない）。 */
+  kind: z.enum(['webPage', 'family', 'demo']),
   url: z.string().url().optional(),
   title: z.string().optional(),
   quote: z.string().optional(),

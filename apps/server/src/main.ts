@@ -18,6 +18,7 @@ import { type Vapid, webPushSender } from './push';
 import { extractNotice, ReadingError } from './reading/extract';
 import { productSpeed } from './reading/model';
 import { readStoreKinds } from './reading/store-kinds';
+import { readSurvey } from './reading/survey';
 import { PhotoTooLarge, transcribePhoto } from './reading/transcribe';
 import { readUtterance } from './reading/utterance';
 import { readWayIdeas } from './reading/way-ideas';
@@ -171,6 +172,22 @@ const storeKindsReader = anthropic
       }
     }
   : undefined;
+// 周りの調べも、モデル名と使った量（検索と頁の読み取りの数を含む）だけを記録する（地域や候補は出さない）。
+const surveyReader = anthropic
+  ? async (input: Parameters<typeof readSurvey>[1]) => {
+      try {
+        const result = await readSurvey(anthropic, input);
+        console.log(
+          `周りの調べ：${result.model} 入力 ${result.usage.input_tokens}・出力 ${result.usage.output_tokens} tokens、検索 ${result.usage.web_search_requests} 回・頁 ${result.usage.web_fetch_requests} 回`,
+        );
+        return result;
+      } catch (error) {
+        const kind = error instanceof ReadingError ? error.reason : 'error';
+        console.log(`周りの調べ：失敗（${kind}）。使った量は分からない`);
+        throw error;
+      }
+    }
+  : undefined;
 // 写真・PDF の書き起こしも、同じ鍵と同じ記録の仕方で（写真は残さない）。
 const transcriber = anthropic
   ? async (photo: Parameters<typeof transcribePhoto>[1]) => {
@@ -214,6 +231,7 @@ const app = createApp({
   ...(ideaReader ? { ideaReader } : {}),
   ...(transcriber ? { transcriber } : {}),
   ...(storeKindsReader ? { storeKindsReader } : {}),
+  ...(surveyReader ? { surveyReader } : {}),
   ...(maps ? { maps } : {}),
   ...(maps && mapsBrowserKey ? { mapsBrowserKey } : {}),
 });

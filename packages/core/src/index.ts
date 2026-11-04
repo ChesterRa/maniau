@@ -1,4 +1,5 @@
 export * from './reading/output';
+export * from './reading/survey';
 export * from './reading/utterance';
 export * from './reading/way-ideas';
 export * from './schema/commands';

@@ -1,0 +1,238 @@
+{
+  "area": "豊洲（豊洲駅）",
+  "at": "2026-11-05T01:10+09:00",
+  "recorded": true,
+  "candidates": [
+    {
+      "id": "res-075e6ca146c4",
+      "resource": {
+        "id": "res-075e6ca146c4",
+        "kind": "sickChildCare",
+        "name": "病児・病後児保育室　ニチイキッズとよす",
+        "area": "江東区豊洲5丁目（豊洲駅より徒歩1分）",
+        "notes": [
+          {
+            "text": "江東区が委託する病児・病後児保育の施設の一つ（運営：株式会社ニチイ学館）です。病気や、病気の治りかけで、いつもの保育施設での集団保育が難しい時に、子どもを一時的に預かります。",
+            "source": {
+              "kind": "webPage",
+              "url": "https://www.city.koto.lg.jp/280307/kodomo/kosodate/service/20788.html",
+              "title": "病児・病後児保育｜江東区",
+              "quote": "「病気」又は「病気の回復期」等により、普段通っている保育施設での集団保育が難しい時期に、区が委託する実施施設（病児・病後児対応型施設、病後児対応型施設）で一時的にお子様をお預かりする事業です。",
+              "fetchedAt": "2026-11-05T01:10+09:00",
+              "quoteFound": true
+            }
+          }
+        ],
+        "use": "candidate"
+      },
+      "registration": {
+        "required": true,
+        "quote": "病児・病後児保育室をご利用いただくには、区役所へ事前の登録が必要です。"
+      },
+      "preparation": {
+        "id": "prep-res-075e6ca146c4",
+        "name": "病児・病後児保育室　ニチイキッズとよすの事前の登録",
+        "resourceId": "res-075e6ca146c4",
+        "source": {
+          "kind": "webPage",
+          "url": "https://www.city.koto.lg.jp/280307/kodomo/kosodate/service/20788.html",
+          "title": "病児・病後児保育｜江東区",
+          "quote": "病児・病後児保育室をご利用いただくには、区役所へ事前の登録が必要です。",
+          "fetchedAt": "2026-11-05T01:10+09:00",
+          "quoteFound": true
+        },
+        "appliesTo": {
+          "kind": "unknown"
+        },
+        "state": "unknown"
+      }
+    },
+    {
+      "id": "res-9804d7cdc589",
+      "resource": {
+        "id": "res-9804d7cdc589",
+        "kind": "sickChildCare",
+        "name": "昭和医科大学江東豊洲病院　病児・病後児保育室",
+        "area": "江東区豊洲5丁目（豊洲駅より徒歩約6分）",
+        "notes": [
+          {
+            "text": "江東区が委託する病児・病後児保育の施設の一つで、医療機関に併設されています（運営：学校法人 昭和医科大学）。病気や、病気の治りかけで、いつもの保育施設での集団保育が難しい時に、子どもを一時的に預かります。",
+            "source": {
+              "kind": "webPage",
+              "url": "https://www.city.koto.lg.jp/280307/kodomo/kosodate/service/20788.html",
+              "title": "病児・病後児保育｜江東区",
+              "quote": "「病気」又は「病気の回復期」等により、普段通っている保育施設での集団保育が難しい時期に、区が委託する実施施設（病児・病後児対応型施設、病後児対応型施設）で一時的にお子様をお預かりする事業です。",
+              "fetchedAt": "2026-11-05T01:10+09:00",
+              "quoteFound": true
+            }
+          }
+        ],
+        "use": "candidate"
+      },
+      "registration": {
+        "required": true,
+        "quote": "病児・病後児保育室をご利用いただくには、区役所へ事前の登録が必要です。"
+      },
+      "preparation": {
+        "id": "prep-res-9804d7cdc589",
+        "name": "昭和医科大学江東豊洲病院　病児・病後児保育室の事前の登録",
+        "resourceId": "res-9804d7cdc589",
+        "source": {
+          "kind": "webPage",
+          "url": "https://www.city.koto.lg.jp/280307/kodomo/kosodate/service/20788.html",
+          "title": "病児・病後児保育｜江東区",
+          "quote": "病児・病後児保育室をご利用いただくには、区役所へ事前の登録が必要です。",
+          "fetchedAt": "2026-11-05T01:10+09:00",
+          "quoteFound": true
+        },
+        "appliesTo": {
+          "kind": "unknown"
+        },
+        "state": "unknown"
+      }
+    },
+    {
+      "id": "res-46962d22b2d0",
+      "resource": {
+        "id": "res-46962d22b2d0",
+        "kind": "temporaryCare",
+        "name": "豊洲めぐみこども園　一時保育",
+        "area": "江東区豊洲6丁目",
+        "notes": [
+          {
+            "text": "保護者の通院やリフレッシュなどで、家で一時的に子どもをみられない時に、健康で集団保育ができる未就学児を預かります。",
+            "source": {
+              "kind": "webPage",
+              "url": "https://www.megumi.ed.jp/toyosu/rearing/temporary/",
+              "title": "一時保育 – 豊洲めぐみこども園 – 江東区豊洲にある幼稚園保育園連携型認定こども園",
+              "quote": "保護者の通院・リフレッシュ等で、一時的にご家庭でお子さんをみることができない場合、健康で集団保育が可能な未就学児を保育することです。",
+              "fetchedAt": "2026-11-05T01:10+09:00",
+              "quoteFound": true
+            }
+          }
+        ],
+        "use": "candidate"
+      }
+    },
+    {
+      "id": "res-8fbd1860e8fb",
+      "resource": {
+        "id": "res-8fbd1860e8fb",
+        "kind": "temporaryCare",
+        "name": "ひまわりキッズガーデン豊洲（非定型一時保育（子育てサポート一時保育））",
+        "area": "江東区豊洲4丁目",
+        "notes": [
+          {
+            "text": "在宅で育児をしている保護者が、通院・通学・短期の仕事などで子どもをみられない時に、認可保育所の一時保育室で一時的に預かる区の制度の実施園です。",
+            "source": {
+              "kind": "webPage",
+              "url": "https://www.city.koto.lg.jp/280307/kodomo/kosodate/service/ichijihoiku/5924.html",
+              "title": "非定型一時保育（子育てサポート一時保育）｜江東区",
+              "quote": "在宅で育児をしている保護者が、通院、通学、短期就労、自宅での看護等の理由でお子さんの保育ができない場合に、認可保育所の一時保育室で、一時的にお預かりする制度です。",
+              "fetchedAt": "2026-11-05T01:10+09:00",
+              "quoteFound": true
+            }
+          }
+        ],
+        "use": "candidate"
+      }
+    },
+    {
+      "id": "res-053c4f0c14cd",
+      "resource": {
+        "id": "res-053c4f0c14cd",
+        "kind": "temporaryCare",
+        "name": "リフレッシュひととき保育（豊洲子ども家庭支援センター）",
+        "area": "江東区豊洲5丁目",
+        "notes": [
+          {
+            "text": "子ども家庭支援センターで行う保育です。対象は、幼稚園・保育園などに入っていない、生後6ヶ月から就学前までの江東区に住む乳幼児です。",
+            "source": {
+              "kind": "webPage",
+              "url": "https://www.city.koto.lg.jp/282011/kodomo/kosodate/service/ichijihoiku/25665.html",
+              "title": "リフレッシュひととき保育｜江東区",
+              "quote": "生後6ヶ月～就学前までの幼稚園・保育園等に入所していない江東区内在住の乳幼児",
+              "fetchedAt": "2026-10-30T22:05+09:00",
+              "quoteFound": true
+            }
+          }
+        ],
+        "use": "candidate"
+      },
+      "registration": {
+        "required": true,
+        "quote": "利用には事前に登録が必要です。個別に説明と面接を行いますので、時間に余裕を持ってお越しください。"
+      },
+      "preparation": {
+        "id": "prep-res-053c4f0c14cd",
+        "name": "リフレッシュひととき保育（豊洲子ども家庭支援センター）の事前の登録",
+        "resourceId": "res-053c4f0c14cd",
+        "source": {
+          "kind": "webPage",
+          "url": "https://www.city.koto.lg.jp/282011/kodomo/kosodate/service/ichijihoiku/25665.html",
+          "title": "リフレッシュひととき保育｜江東区",
+          "quote": "利用には事前に登録が必要です。個別に説明と面接を行いますので、時間に余裕を持ってお越しください。",
+          "fetchedAt": "2026-10-30T22:05+09:00",
+          "quoteFound": true
+        },
+        "appliesTo": {
+          "kind": "unknown"
+        },
+        "state": "unknown"
+      }
+    },
+    {
+      "id": "res-e27e6d48d8ca",
+      "resource": {
+        "id": "res-e27e6d48d8ca",
+        "kind": "familySupport",
+        "name": "ファミリー・サポート・センター（江東区社会福祉協議会）",
+        "area": "江東区東陽6丁目",
+        "notes": [
+          {
+            "text": "区内で育児の手助けが要る人（利用会員）と、手助けができる人（協力会員：有償ボランティア）を結びつけ、会員どうしの援助活動で子育て家庭を支えます。",
+            "source": {
+              "kind": "webPage",
+              "url": "https://koto-shakyo.or.jp/familyc/",
+              "title": "ファミリー・サポート・センター ｜ 江東区社会福祉協議会",
+              "quote": "区内で育児の手助けを必要とする方（利用会員）と育児の手助けができる方（協力会員：有償ボランティア）を結びつけ、会員同士の信頼関係に基づく援助活動を通じて、子育て家庭を支援します。",
+              "fetchedAt": "2026-11-05T01:10+09:00",
+              "quoteFound": true
+            }
+          }
+        ],
+        "use": "candidate"
+      },
+      "registration": {
+        "required": true,
+        "quote": "利用や活動を行うには、事前登録が必要です。"
+      },
+      "preparation": {
+        "id": "prep-res-e27e6d48d8ca",
+        "name": "ファミリー・サポート・センター（江東区社会福祉協議会）の事前の登録",
+        "resourceId": "res-e27e6d48d8ca",
+        "source": {
+          "kind": "webPage",
+          "url": "https://koto-shakyo.or.jp/familyc/",
+          "title": "ファミリー・サポート・センター ｜ 江東区社会福祉協議会",
+          "quote": "利用や活動を行うには、事前登録が必要です。",
+          "fetchedAt": "2026-11-05T01:10+09:00",
+          "quoteFound": true
+        },
+        "appliesTo": {
+          "kind": "unknown"
+        },
+        "state": "unknown"
+      }
+    }
+  ],
+  "dropped": [],
+  "model": "claude-opus-5-5",
+  "promptVersion": "survey.v1",
+  "usage": {
+    "input_tokens": 99731,
+    "output_tokens": 5559,
+    "web_search_requests": 3,
+    "web_fetch_requests": 7
+  }
+}

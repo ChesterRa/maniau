@@ -15,6 +15,7 @@ import {
   type NoticeReader,
   type PhotoReader,
   type StoreKindsReader,
+  type SurveyReader,
   type UtteranceReader,
   type WayIdeasReader,
 } from './demo-sessions';
@@ -80,6 +81,8 @@ export function createApp(
     mapsBrowserKey?: string;
     /** 品物から、地図で店を探す検索語の案を Claude で出す口（Claude の鍵と地図の口がある時だけ使う）。 */
     storeKindsReader?: StoreKindsReader;
+    /** 家の周りの資源を、Claude にウェブで調べてもらう口（Claude の鍵がある時だけ）。 */
+    surveyReader?: SurveyReader;
   } = {},
 ): Hono {
   // 起きる時に、デモの家族とお知らせを読み、型と家族の決まりを確かめる（誤りなら起きない）。
@@ -99,6 +102,8 @@ export function createApp(
   const transcriber = family ? undefined : options.transcriber;
   // 店の検索語の案は、店を探せる時（地図の口がある時）だけ。家族の家庭では、まだ開けない。
   const storeKindsReader = family || !sessions.mapsEnabled ? undefined : options.storeKindsReader;
+  // 周りの調べも、デモだけ（家族の家庭では、まだ開けない。今週は実在の家の住所をサーバーに入れない）。
+  const surveyReader = family ? undefined : options.surveyReader;
   const familyInputs = family
     ? familyInput({ store: family.store, ...(family.clock ? { clock: family.clock } : {}) })
     : undefined;
@@ -546,7 +551,43 @@ export function createApp(
       // 駅の近くの店を地図で探せるか。探す言葉の案を Claude に聞けるか。
       ...(sessions.mapsEnabled ? { canSearchStores: true } : {}),
       ...(storeKindsReader ? { canSuggestStores: true } : {}),
+      // 周りの調べ：記録した調べがあるか。Claude にいま調べてもらえるか。
+      ...(data.survey ? { hasRecordedSurvey: true } : {}),
+      ...(surveyReader ? { canSurvey: true } : {}),
     });
+  });
+  // デモの家の周りの資源を調べる（記録した調べ、または Claude がいま調べる）。何も書かない（家族が候補を入れる）。
+  app.post('/api/demo/sessions/:sid/survey', async (c) => {
+    const body = z
+      .object({
+        memberId: z.string().min(1),
+        operationId: z.string().min(1).max(100),
+        live: z.boolean().default(false),
+      })
+      .safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badSurvey' }, 400);
+    const { memberId, ...input } = body.data;
+    if (input.live && !surveyReader) return c.json({ error: 'readingUnavailable' }, 503);
+    const done = await sessions.survey(c.req.param('sid'), memberId, input, surveyReader);
+    if (!done) return c.json({ error: 'unknownSession' }, 404);
+    switch (done.status) {
+      case 'ok':
+        return c.json({ survey: done.survey });
+      case 'limit':
+        return c.json({ error: 'readingLimit' }, 429);
+      case 'busy':
+        return c.json({ error: 'readingBusy' }, 429);
+      case 'invalid':
+        return c.json({ error: 'notAMember' }, 400);
+      case 'conflict':
+        return c.json({ error: 'operationReused' }, 409);
+      case 'noArea':
+        return c.json({ error: 'noArea' }, 409);
+      case 'noRecord':
+        return c.json({ error: 'noRecord' }, 404);
+      case 'failed':
+        return c.json({ error: 'readingFailed', reason: done.reason }, 502);
+    }
   });
   // 品物から、店を探す言葉の案（推定）。送るのは品物の名前だけ。何も書かない。
   app.post('/api/demo/sessions/:sid/maps/store-kinds', async (c) => {

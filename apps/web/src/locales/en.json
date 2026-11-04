@@ -1089,7 +1089,29 @@
     "coversPart": "Only part of the time (enter it below)",
     "coversAskNote": "Claude couldn’t tell, so please choose. Choosing the whole time doesn’t mean anyone has agreed.",
     "sameName": " (another has the same name, so it can’t be newly chosen)",
-    "helpersDerived": "The number of times you ask someone is counted from the steps’ contacts (it’s recounted when you change a contact; once you edit the number, it stops counting)."
+    "helpersDerived": "The number of times you ask someone is counted from the steps’ contacts (it’s recounted when you change a contact; once you edit the number, it stops counting).",
+    "requires": {
+      "label": "Things to finish before using it (such as advance registration)",
+      "item": "{{name}} ({{state}})",
+      "note": "A way with a prerequisite that isn’t done is marked and not suggested (you can still choose it). Choosing prerequisites doesn’t change who you ask or where you go."
+    },
+    "copy": {
+      "name": "{{way}} ({{place}})",
+      "label": "A new way using a place near you",
+      "intro": "A new way copied from “{{way}}”, set to ask or go to {{place}}. The original way stays as it is.",
+      "steps": "Steps that ask or go to {{place}}: {{steps}}",
+      "noSteps": "No step asks {{place}} yet (choose it in a step’s “who to ask” or “fixed place”).",
+      "facts": "Hours, cost, deadlines and how long a reply takes aren’t copied from the old place — they’re left blank. Check {{place}}’s page and enter them (a cost you don’t know can stay “Not known”).",
+      "coversAskNote": "The old place’s hours aren’t used, so please choose. Choosing all of it doesn’t mean they have agreed.",
+      "registration": "Advance registration at {{place}}",
+      "registrationNotNeeded": "Not needed",
+      "registrationUnsure": "Not sure yet",
+      "registrationUnsureNote": "This won’t be saved while you’re unsure whether registration is needed (it would look like a way with no prerequisite).",
+      "noOwnRegistration": "Registration at {{place}} isn’t in your household information yet. If this place needs its own registration, add it from “Look around us” under nearby resources first (if it’s the same registration as another, choose that above).",
+      "missing": "Some fields are still empty or not chosen: the name, steps, by when, how long a reply takes, the hours it covers, and advance registration at this place.",
+      "registrationOwn": "Needed: {{name}} ({{state}})",
+      "registrationSame": "Needed: same registration as {{name}} ({{state}})"
+    }
   },
   "wayIdeas": {
     "entry": "Ask Claude for ideas",
@@ -1324,16 +1346,22 @@
     "source": {
       "demo": "Source: a made-up rule for the demo (not a real page)",
       "family": "Source: entered by your family",
-      "officialQuoted": "Source: {{title}} (page read on {{when}}; quote checked against the page text)",
-      "officialUnchecked": "Source: {{title}} (page read on {{when}}; quote not checked against the page text)",
       "noDate": "no date",
-      "quote": "“{{quote}}”"
+      "quote": "“{{quote}}”",
+      "webQuoted": "Source page: {{title}} (read on {{when}}; the quote was in the page text)",
+      "webUnchecked": "Source page: {{title}} (read on {{when}}; the quote was not checked against the page text)",
+      "open": "Open the page"
     },
     "applies": {
       "household": "For the whole family",
       "unknown": "Not known who it covers (even if done, it isn’t used for any to-do)",
       "members": "For {{names}}",
-      "joiner": ", "
+      "joiner": ", ",
+      "choose": "Who the registration covers",
+      "choice": {
+        "household": "Everyone",
+        "unknown": "Don’t know"
+      }
     },
     "preparation": {
       "title": "Beforehand: {{name}}",
@@ -1364,6 +1392,61 @@
         "usual": "Usual",
         "candidate": "Candidate",
         "notUsed": "Don’t use"
+      }
+    },
+    "kind": {
+      "sickChildCare": "Sick-child care",
+      "temporaryCare": "Temporary childcare",
+      "familySupport": "Family support (local helpers)"
+    },
+    "survey": {
+      "button": "Look around us",
+      "again": "Ask Claude to look again now (about a minute)",
+      "intro": "Claude searches the web for places near home that can look after your children or lend a hand (sick-child care, temporary childcare, family support) and reads their pages. Only what your family decides to add goes into your household information.",
+      "working": "Looking… (when Claude looks now, it takes about a minute)",
+      "recordedAt": "What Claude found around {{area}} on {{when}}, saved for this demo (the quotes were checked then).",
+      "liveAt": "What Claude found around {{area}} on {{when}}.",
+      "checkedNote": "Shown here are only places whose quote appears word for word in the text of a page Claude read. That checks the words are on the page — not that the page is official or still correct. Please check the link.",
+      "dropped": "{{count}} more are not shown because they couldn’t be checked ({{reasons}}).",
+      "reason": {
+        "notRead": "{{count}} whose page text couldn’t be read",
+        "quoteNotFound": "{{count}} whose quote wasn’t in the page text",
+        "kind": "{{count}} of a kind we didn’t ask for"
+      },
+      "none": "No candidates could be checked.",
+      "summary": "Claude’s summary: {{text}}",
+      "registration": {
+        "required": "Claude’s reading: you must register in advance before using it (page says: “{{quote}}”). Only the words on the page were checked, not their meaning.",
+        "notRequired": "Claude’s reading: no advance registration needed (page says: “{{quote}}”). Only the words on the page were checked, not their meaning.",
+        "choose": "Advance registration",
+        "choice": {
+          "yes": "Needed (I checked)",
+          "no": "Not needed",
+          "unsure": "Not sure yet"
+        },
+        "same": "Same registration as {{name}} ({{state}})",
+        "notRead": "In Claude’s reading, the page says nothing about advance registration (that doesn’t mean none is needed)."
+      },
+      "lead": "The page says “{{quote}}” (what the number of days refers to hasn’t been checked, so it isn’t used as a deadline).",
+      "use": "How your family treats it",
+      "ways": "Ways that need this registration first (this only adds the prerequisite — who you ask and where you go stay the same)",
+      "add": "Add as a candidate for us",
+      "limit": "This demo has used up its looks by Claude.",
+      "busy": "Please try again after the other reading finishes.",
+      "noRecord": "There is no saved result for this household’s area.",
+      "noArea": "The home has no area entered, so we can’t look.",
+      "failed": "Couldn’t look around. Please try again a little later.",
+      "linkFirst": "To add it as a prerequisite, first choose that registration is needed or is the same as one you have.",
+      "added": "Already in your household information (change how you treat it with “Edit” above).",
+      "update": "Confirm registration and prerequisites",
+      "samePlace": "It’s the same place as “{{name}}” in our household information",
+      "samePlaceNot": "Unless you confirm it’s the same place, it’s added without a place (it can’t be who you ask or where you go in a way).",
+      "copy": {
+        "label": "Use this place in a way",
+        "note": "This opens a new way that asks or goes to this place (the original way stays as it is). Hours, cost and deadlines aren’t copied from the old place — check this place’s page and enter them.",
+        "button": "Copy “{{way}}” to use this place instead of {{old}}",
+        "other": "To use it in another way, choose this place as who to ask or where to go on that way’s screen.",
+        "noPlace": "It isn’t linked to a place, so it can’t be who you ask or where you go in a way."
       }
     }
   }

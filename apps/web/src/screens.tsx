@@ -57,6 +57,7 @@ import {
   type SendResult,
   type ShownProposal,
   type StoreSearchResult,
+  type SurveyRunResult,
   type WalkView,
   type WayIdeasRequest,
   type WayIdeasResult,
@@ -104,9 +105,16 @@ export type Route =
   | { name: 'needFix'; itemId: string }
   /**
    * やり方を足す・直す（wayId があれば直す）。from は来た「すること」の手配の key（保存したら戻る）。idea は、
-   * その「すること」で Claude が出した案の番号（表に写して、家族が直してから保存する）。
+   * その「すること」で Claude が出した案の番号（表に写して、家族が直してから保存する）。copy は、周りの資源の所を
+   * 使う新しいやり方を、今のやり方（wayId）から写す時：使う資源と、その代わりにする資源（家族が選んだ）。
    */
-  | { name: 'way'; wayId?: string; from?: string; idea?: number }
+  | {
+      name: 'way';
+      wayId?: string;
+      from?: string;
+      idea?: number;
+      copy?: { wayId: string; resourceId: string; insteadOf: string };
+    }
   /** 「すること」（手配の key）に、Claude がやり方の案を出す。 */
   | { name: 'wayIdeas'; key: string }
   | { name: 'ask'; taskKey: string }
@@ -210,6 +218,15 @@ export interface Ctx {
     walk: (storeId: string) => Promise<WalkView | undefined>;
     search?: (query: string, stationId: string) => Promise<StoreSearchResult>;
     kinds?: (what: string) => Promise<string[] | undefined>;
+  };
+  /**
+   * 家の周りの調べ（デモだけ）。recorded：記録した調べを見られる。live：Claude にいま調べてもらえる。何も書かない
+   * （家族が候補を確かめて、家の情報に入れる）。
+   */
+  survey?: {
+    run: (live: boolean, operationId: string) => Promise<SurveyRunResult>;
+    recorded: boolean;
+    live: boolean;
   };
   go: (route: Route) => void;
 }

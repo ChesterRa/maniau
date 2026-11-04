@@ -20,6 +20,7 @@ import {
 } from '@maniau/core';
 import { useState } from 'react';
 import { deadlineText, householdPreviewLines } from './household';
+import { SourceLink } from './resources';
 import { type Ctx, leaveText, nameOf, succeeded } from './screens';
 import { Button, Card, Header, Label, Main, MoreLink, Row, Text, Title } from './ui';
 import { noteText } from './way-ideas';
@@ -378,6 +379,22 @@ interface WayForm {
   wayDeadline: DeadlineKind;
   wayDays: string;
   wayAt: string;
+  /** 使う前に済ませておく前提（Preparation の id。家族が選ぶ。前提を選んでも、頼む先・行く所は替わらない）。 */
+  requires: string[];
+  /**
+   * 周りの資源の所を使う、写した新しいやり方（02-foundation §3.5）：写した元の名前、使う資源とその場所、代わりに
+   * する資源とその場所（あれば）。この所の事前の登録は、表で選び直す：その登録の前提の ID（この所の登録か、同じ
+   * 登録とした前提）、none（要らない）、unsure（まだ分からない）、空（選んでいない）。選ぶまで、まだ分からないのも、
+   * 保存しない。この所の登録は、この欄だけで決める（前提の一覧には出さない）。
+   */
+  copy?: {
+    from: string;
+    resourceId: string;
+    placeId: string;
+    insteadOf: string;
+    insteadPlaceId?: string;
+    registration: string;
+  };
   original?: Way;
 }
 
@@ -462,6 +479,7 @@ function formOf(way: Way | undefined): WayForm {
     wayDeadline: way?.deadline ? whole.kind : 'none',
     wayDays: whole.days,
     wayAt: whole.at,
+    requires: [...(way?.requires ?? [])],
     ...(way ? { original: way } : {}),
   };
 }
@@ -564,6 +582,68 @@ export function formOfDraft(household: Household, draft: CheckedDraft): WayForm 
       extraTasks: known(draft.cost.extraTasks),
     },
     derivedHelpers: true,
+  };
+}
+
+/**
+ * 周りの資源の所を使う新しいやり方の表：今のやり方を写し、代わりにする資源の場所に頼む・行く手順だけを、この所に
+ * する（家族が表で直せる。ほかの手順・資源・前提はそのまま）。前の所の時間・費用・期限・返事までの時間は、この所の
+ * 事実にしない：受け持つ時間と、替えた手順の期限・返事までの時間は、選ぶまで保存せず、費用の円は分からないにする。
+ * 前提は、代わりにする資源の前提を外した案で、家族が選ぶ。この所の事前の登録は、登録の欄で選び直す（この所の登録・
+ * 同じ登録・要らない。まだ分からないのは保存しない）。元のやり方・資源・場所が無ければ無い。
+ */
+export function formOfCopy(
+  ctx: Ctx,
+  copy: { wayId: string; resourceId: string; insteadOf: string },
+): WayForm | undefined {
+  const household = ctx.household;
+  const way = household.ways.find((w) => w.id === copy.wayId);
+  const resource = household.resources.find((r) => r.id === copy.resourceId);
+  const instead = household.resources.find((r) => r.id === copy.insteadOf);
+  const placeId = resource?.placeId;
+  if (!way || !resource || !instead || placeId === undefined) return undefined;
+  const from = instead.placeId;
+  const base = formOf(way);
+  const steps = base.steps.map((s): StepForm => {
+    const asks = from !== undefined && s.original?.external?.to === from;
+    const goes = from !== undefined && s.original?.placeId === from;
+    if (!asks && !goes) return s;
+    return {
+      ...s,
+      ...(asks ? { to: placeId, wait: '' } : {}),
+      ...(goes ? { place: placeId } : {}),
+      deadline: '',
+    };
+  });
+  const insteadPreps = new Set(
+    household.preparations.filter((p) => p.resourceId === instead.id).map((p) => p.id),
+  );
+  // 前提の案：代わりにする資源の前提を外す（この所の登録は、登録の欄で選ぶ）。
+  const own = new Set(
+    household.preparations.filter((p) => p.resourceId === resource.id).map((p) => p.id),
+  );
+  const kept = (way.requires ?? []).filter((id) => !insteadPreps.has(id) && !own.has(id));
+  const id = newId('way');
+  return {
+    ...base,
+    id,
+    name: ctx.t('way.copy.name', { way: way.name, place: resource.name }),
+    steps,
+    coversStart: '',
+    coversEnd: '',
+    ...(steps.some((s) => s.cover) ? { coversAsk: '' as const } : {}),
+    cost: { ...base.cost, yen: { value: '', unknown: true } },
+    wayDeadline: way.deadline ? '' : base.wayDeadline,
+    requires: kept,
+    copy: {
+      from: way.name,
+      resourceId: resource.id,
+      placeId,
+      insteadOf: instead.id,
+      ...(from === undefined ? {} : { insteadPlaceId: from }),
+      registration: '',
+    },
+    original: { ...way, id },
   };
 }
 
@@ -708,7 +788,38 @@ function draftOf(household: Household, form: WayForm): Household | undefined {
     ? ruleOf(form.wayDeadline, form.wayDays, form.wayAt, form.original.deadline)
     : undefined;
   if (wayDeadline === 'missing') return undefined;
-  const { deadline: _d, covers: _c, ...kept } = form.original ?? {};
+  // 写したやり方：この所の登録を家族が選ぶまで（まだ分からないも）保存しない。この所の登録は登録の欄だけで決め
+  // （選んだ前提は必ず入れ、この所のほかの登録は入れない）、ほかの前提は一覧で選ぶ。使う資源は、手順が今頼む・行く
+  // 所で決める（この所に頼む手順を元に戻したら、この所を使うとは書かない）。
+  const copy = form.copy;
+  if (copy && (copy.registration === '' || copy.registration === 'unsure')) return undefined;
+  const registration = copy && copy.registration !== 'none' ? copy.registration : undefined;
+  if (registration !== undefined && !household.preparations.some((p) => p.id === registration)) {
+    return undefined;
+  }
+  const own = new Set(
+    copy
+      ? household.preparations.filter((p) => p.resourceId === copy.resourceId).map((p) => p.id)
+      : [],
+  );
+  const requires = [
+    ...form.requires.filter(
+      (id) =>
+        household.preparations.some((p) => p.id === id) && !own.has(id) && id !== registration,
+    ),
+    ...(registration === undefined ? [] : [registration]),
+  ];
+  const uses = (placeId: string | undefined) =>
+    placeId !== undefined && steps.some((s) => s.external?.to === placeId || s.placeId === placeId);
+  const resourceIds = copy
+    ? [
+        ...(form.original?.resourceIds ?? []).filter(
+          (id) => id !== copy.resourceId && (id !== copy.insteadOf || uses(copy.insteadPlaceId)),
+        ),
+        ...(uses(copy.placeId) ? [copy.resourceId] : []),
+      ]
+    : (form.original?.resourceIds ?? []);
+  const { deadline: _d, covers: _c, requires: _r, resourceIds: _ri, ...kept } = form.original ?? {};
   const way: Way = {
     ...kept,
     id: form.id,
@@ -717,6 +828,8 @@ function draftOf(household: Household, form: WayForm): Household | undefined {
     cost,
     ...(wayDeadline === undefined ? {} : { deadline: wayDeadline }),
     ...(coversStart === '' ? {} : { covers: { start: coversStart, end: coversEnd } }),
+    ...(requires.length === 0 ? {} : { requires }),
+    ...(resourceIds.length === 0 ? {} : { resourceIds }),
   };
   const next = structuredClone(household);
   next.members.push(...members);
@@ -736,16 +849,20 @@ export function WayScreen({
   wayId,
   from,
   idea,
+  copy,
 }: {
   ctx: Ctx;
   wayId?: string;
   from?: string;
   idea?: CheckedDraft;
+  copy?: { wayId: string; resourceId: string; insteadOf: string };
 }) {
   const original = wayId ? ctx.household.ways.find((w) => w.id === wayId) : undefined;
   const fromIdea = idea !== undefined && wayId === undefined ? idea : undefined;
-  const [form, setForm] = useState<WayForm>(() =>
-    fromIdea ? formOfDraft(ctx.household, fromIdea) : formOf(original),
+  // 写す元（やり方・資源・場所）が無くなっていれば、写さない（下で「無くなった」と出す）。
+  const [copied] = useState(() => (copy && !wayId ? formOfCopy(ctx, copy) : undefined));
+  const [form, setForm] = useState<WayForm>(
+    () => copied ?? (fromIdea ? formOfDraft(ctx.household, fromIdea) : formOf(original)),
   );
   const flow = useHouseholdSave(ctx);
   const back = () => ctx.go(from ? { name: 'need', key: from } : { name: 'household' });
@@ -784,7 +901,7 @@ export function WayScreen({
   // Claude の案で受け持つ時間が分からず、受け持つ手順がある時だけ、全部か一部かを選んでもらう。
   const asksCovers =
     form.coversAsk !== undefined && form.steps.some((s) => s.cover || s.coverAsk === true);
-  if (wayId && !original) {
+  if ((wayId && !original) || (copy && !wayId && !copied)) {
     return (
       <>
         <Header
@@ -809,6 +926,7 @@ export function WayScreen({
       <Main>
         <Text quiet>{ctx.t('way.intro')}</Text>
         {fromIdea && <IdeaBanner ctx={ctx} draft={fromIdea} />}
+        {form.copy && <CopyBanner ctx={ctx} form={form} />}
         <Card>
           <label className="flex flex-col gap-1">
             <span className="font-bold">{ctx.t('way.name')}</span>
@@ -1144,7 +1262,15 @@ export function WayScreen({
               />
             </div>
           )}
-          <Text quiet>{ctx.t(asksCovers ? 'way.coversAskNote' : 'way.coversNote')}</Text>
+          <Text quiet>
+            {ctx.t(
+              asksCovers
+                ? form.copy
+                  ? 'way.copy.coversAskNote'
+                  : 'way.coversAskNote'
+                : 'way.coversNote',
+            )}
+          </Text>
         </Card>
         <Card>
           <span className="font-bold">{ctx.t('way.cost')}</span>
@@ -1186,8 +1312,47 @@ export function WayScreen({
           {form.derivedHelpers && <Text quiet>{ctx.t('way.helpersDerived')}</Text>}
           <Text quiet>{ctx.t('way.costNote')}</Text>
         </Card>
+        {(form.copy || ctx.household.preparations.length > 0) && (
+          <Card>
+            <span className="font-bold">{ctx.t('way.requires.label')}</span>
+            {form.copy && <CopyRegistration ctx={ctx} form={form} update={update} />}
+            {ctx.household.preparations
+              // 写した表では、この所の登録と、登録の欄で選んだ前提は、登録の欄だけで決める（一覧に重ねて出さない）。
+              .filter(
+                (p) =>
+                  !form.copy ||
+                  (p.resourceId !== form.copy.resourceId && p.id !== form.copy.registration),
+              )
+              .map((p) => {
+                const on = form.requires.includes(p.id);
+                return (
+                  <label key={p.id} className="flex min-h-11 items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="size-5 accent-accent"
+                      checked={on}
+                      onChange={() =>
+                        update((f) => {
+                          f.requires = on
+                            ? f.requires.filter((id) => id !== p.id)
+                            : [...f.requires, p.id];
+                        })
+                      }
+                    />
+                    <span>
+                      {ctx.t('way.requires.item', {
+                        name: p.name,
+                        state: ctx.t(`resources.preparation.state.${p.state}`),
+                      })}
+                    </span>
+                  </label>
+                );
+              })}
+            <Text quiet>{ctx.t('way.requires.note')}</Text>
+          </Card>
+        )}
         <Card tone="accent">
-          {!draft && <Text>{ctx.t('way.missing')}</Text>}
+          {!draft && <Text>{ctx.t(form.copy ? 'way.copy.missing' : 'way.missing')}</Text>}
           {draft && (
             <Shown
               ctx={ctx}
@@ -1222,6 +1387,87 @@ export function WayScreen({
         </Card>
       </Main>
     </>
+  );
+}
+
+/**
+ * 写したやり方の、この所の事前の登録：この所の登録（家にある物）か、ほかの登録と同じか、要らないか、まだ分からないか
+ * を一つ選ぶ（選んだ前提が、そのまま前提になる）。この所の登録が家に無ければ、そう書く。
+ */
+function CopyRegistration({
+  ctx,
+  form,
+  update,
+}: {
+  ctx: Ctx;
+  form: WayForm;
+  update: (change: (f: WayForm) => void) => void;
+}) {
+  const copy = form.copy;
+  if (!copy) return null;
+  const place = nameOf(ctx.household, copy.placeId);
+  const own = ctx.household.preparations.filter((p) => p.resourceId === copy.resourceId);
+  const others = ctx.household.preparations.filter((p) => p.resourceId !== copy.resourceId);
+  const state = (p: { state: string }) => ctx.t(`resources.preparation.state.${p.state}`);
+  return (
+    <>
+      <label className="flex flex-col gap-1">
+        <span>{ctx.t('way.copy.registration', { place })}</span>
+        <select
+          className={input}
+          value={copy.registration}
+          onChange={(e) => {
+            const v = e.target.value;
+            update((f) => {
+              if (f.copy) f.copy.registration = v;
+            });
+          }}
+        >
+          <option value="">{ctx.t('way.choose')}</option>
+          {own.map((p) => (
+            <option key={p.id} value={p.id}>
+              {ctx.t('way.copy.registrationOwn', { name: p.name, state: state(p) })}
+            </option>
+          ))}
+          {others.map((p) => (
+            <option key={p.id} value={p.id}>
+              {ctx.t('way.copy.registrationSame', { name: p.name, state: state(p) })}
+            </option>
+          ))}
+          <option value="none">{ctx.t('way.copy.registrationNotNeeded')}</option>
+          <option value="unsure">{ctx.t('way.copy.registrationUnsure')}</option>
+        </select>
+      </label>
+      {copy.registration === 'unsure' && <Text>{ctx.t('way.copy.registrationUnsureNote')}</Text>}
+      {own.length === 0 && <Text quiet>{ctx.t('way.copy.noOwnRegistration', { place })}</Text>}
+    </>
+  );
+}
+
+/**
+ * 周りの資源の所を使う、写したやり方の表の上に：写した元と前のやり方を替えないこと、今この所に頼む・行く手順（表の
+ * 今の中身から。元に戻したら、そう出す）、前の所の時間・費用・期限を使わないこと、この所の出典の頁。
+ */
+function CopyBanner({ ctx, form }: { ctx: Ctx; form: WayForm }) {
+  const copy = form.copy;
+  if (!copy) return null;
+  const place = nameOf(ctx.household, copy.placeId);
+  const here = form.steps
+    .filter((s) => s.to === copy.placeId || s.place === copy.placeId)
+    .map((s) => s.name.trim() || ctx.t('way.step', { n: form.steps.indexOf(s) + 1 }));
+  const source = ctx.household.resources.find((r) => r.id === copy.resourceId)?.notes[0]?.source;
+  return (
+    <Card tone="accent">
+      <Label tone="accent">{ctx.t('way.copy.label')}</Label>
+      <Text>{ctx.t('way.copy.intro', { way: copy.from, place })}</Text>
+      <Text>
+        {here.length > 0
+          ? ctx.t('way.copy.steps', { place, steps: here.join(ctx.t('list.separator')) })
+          : ctx.t('way.copy.noSteps', { place })}
+      </Text>
+      <Text quiet>{ctx.t('way.copy.facts', { place })}</Text>
+      {source && <SourceLink ctx={ctx} source={source} />}
+    </Card>
   );
 }
 

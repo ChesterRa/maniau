@@ -113,6 +113,8 @@ function Body(props: {
   /** 駅の近くの店を探せるか（地図のあるデモだけ）。探す言葉の案を Claude に聞けるか。 */
   canSearchStores?: boolean;
   canSuggestStores?: boolean;
+  hasRecordedSurvey?: boolean;
+  canSurvey?: boolean;
   /** 家族の試しの家庭か（読む欄に「架空の文だけ」と、上限の戻る時刻を出す）。 */
   trial?: boolean;
   lang: UiLanguage;
@@ -148,6 +150,15 @@ function Body(props: {
                   walk: live.walk,
                   ...(props.canSearchStores ? { search: live.searchStores } : {}),
                   ...(props.canSuggestStores ? { kinds: live.storeKinds } : {}),
+                },
+              }
+            : {}),
+          ...(props.hasRecordedSurvey || props.canSurvey
+            ? {
+                survey: {
+                  run: live.survey,
+                  recorded: props.hasRecordedSurvey === true,
+                  live: props.canSurvey === true,
                 },
               }
             : {}),
@@ -273,6 +284,8 @@ function DemoApp() {
         {...(session?.mapsKey ? { mapsKey: session.mapsKey } : {})}
         canSearchStores={session?.canSearchStores === true}
         canSuggestStores={session?.canSuggestStores === true}
+        hasRecordedSurvey={session?.hasRecordedSurvey === true}
+        canSurvey={session?.canSurvey === true}
         lang={lang}
         route={route}
         onRoute={setRoute}
@@ -405,13 +418,15 @@ function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {
         route.idea !== undefined && route.from && !route.wayId
           ? ideaDraft(ctx, route.from, route.idea)
           : undefined;
+      const copy = route.copy;
       return (
         <WayScreen
-          key={`${route.wayId ?? ''}|${route.from ?? ''}|${route.idea ?? ''}`}
+          key={`${route.wayId ?? ''}|${route.from ?? ''}|${route.idea ?? ''}|${copy ? `${copy.wayId}|${copy.resourceId}|${copy.insteadOf}` : ''}`}
           ctx={ctx}
           {...(route.wayId ? { wayId: route.wayId } : {})}
           {...(route.from ? { from: route.from } : {})}
           {...(idea ? { idea } : {})}
+          {...(copy && !route.wayId ? { copy } : {})}
         />
       );
     }

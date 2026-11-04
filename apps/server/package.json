@@ -9,6 +9,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p .",
     "record:demo": "tsx scripts/record-demo-readings.ts",
+    "record:survey": "tsx scripts/record-survey.ts",
     "db:generate": "drizzle-kit generate",
     "setup:household": "tsx scripts/setup-household.ts"
   },

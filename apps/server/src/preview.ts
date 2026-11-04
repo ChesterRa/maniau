@@ -11,6 +11,7 @@ import {
   type HouseholdPreview,
   type MapInputs,
   type PreviewCommand,
+  type SurveyCandidate,
   toEpochMinutes,
 } from '@maniau/core';
 import { foldEvents, itemsOf, planFromState } from '@maniau/core/engine';
@@ -117,7 +118,13 @@ export function previewChoices(
  */
 export function previewChange(
   events: readonly DomainEvent[],
-  context: { memberId: string; now: DateTime; maps?: MapInputs },
+  context: {
+    memberId: string;
+    now: DateTime;
+    maps?: MapInputs;
+    /** このデモで見せた周りの資源の候補（家に入れる直しを、書く時と同じに確かめる）。 */
+    surveyed?: readonly SurveyCandidate[];
+  },
   command: PreviewCommand,
 ): HouseholdPreview | { status: 'conflict' | 'forbidden' | 'invalid'; reason: string } {
   const state = foldEvents(events);
@@ -143,7 +150,12 @@ export function previewChange(
     if (item.kind !== 'need') return { status: 'invalid', reason: 'previewNeedOnly' };
     asCommand = { ...command, seen: { throughSeq: state.lastSeq } };
   }
-  const at = { memberId: context.memberId, now, ...(context.maps ? { maps: context.maps } : {}) };
+  const at = {
+    memberId: context.memberId,
+    now,
+    ...(context.maps ? { maps: context.maps } : {}),
+    ...(context.surveyed ? { surveyed: context.surveyed } : {}),
+  };
   const result = previewCommand(events, at, asCommand, {
     state,
     plan,
