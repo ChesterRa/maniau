@@ -7,12 +7,12 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { ReadingError } from './extract';
-import { FAST_SPEED, PRODUCT_EFFORT, PRODUCT_MODEL } from './model';
+import { PRODUCT_EFFORT, PRODUCT_MODEL, productSpeed } from './model';
 
 export const TRANSCRIBE_PROMPT_VERSION = 'transcribe.v1';
 /**
- * 書き起こしも、製品の呼び出しと同じ Opus 5.5・medium・速いモード（model.ts。手書き・小さい字・表を落とさない
- * ため。作り手の指示 2026-11-04）。
+ * 書き起こしも、製品の呼び出しと同じ Opus 5.5・medium で、速さは製品の切り替え（model.ts の productSpeed。手書き・
+ * 小さい字・表を落とさないため。作り手の指示 2026-11-04・2026-11-05）。
  */
 export const DEFAULT_TRANSCRIBE_MODEL = PRODUCT_MODEL;
 const PROMPT = readFileSync(new URL('./prompts/transcribe.v1.md', import.meta.url), 'utf8');
@@ -119,7 +119,7 @@ export async function transcribePhoto(
   const response = await client.messages.parse({
     model,
     max_tokens: 16000,
-    speed: FAST_SPEED,
+    ...productSpeed(),
     system: PROMPT,
     messages,
     output_config,

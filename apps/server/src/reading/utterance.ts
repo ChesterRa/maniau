@@ -6,12 +6,12 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { type UtteranceContext, UtteranceModelOutput, type UtteranceOutput } from '@maniau/core';
 import { ReadingError } from './extract';
-import { FAST_SPEED, PRODUCT_EFFORT, PRODUCT_MODEL } from './model';
+import { PRODUCT_EFFORT, PRODUCT_MODEL, productSpeed } from './model';
 
 export const UTTERANCE_PROMPT_VERSION = 'utterance.v3';
 /**
- * 一言の解釈も、製品の呼び出しと同じ Opus 5.5・medium・速いモード（model.ts。作り手の指示 2026-11-04：読みの
- * 確かさと速さを先にする）。
+ * 一言の解釈も、製品の呼び出しと同じ Opus 5.5・medium で、速さは製品の切り替え（model.ts の productSpeed。作り手の
+ * 指示 2026-11-04：読みの確かさを先にする。2026-11-05：速いモードは提出の前に入れる）。
  */
 export const DEFAULT_UTTERANCE_MODEL = PRODUCT_MODEL;
 const PROMPT = readFileSync(new URL('./prompts/utterance.v3.md', import.meta.url), 'utf8');
@@ -38,7 +38,7 @@ export async function readUtterance(
   const response = await client.messages.parse({
     model: options.model ?? DEFAULT_UTTERANCE_MODEL,
     max_tokens: 8000,
-    speed: FAST_SPEED,
+    ...productSpeed(),
     system: PROMPT,
     messages: [{ role: 'user', content: input }],
     output_config: {

@@ -7,11 +7,12 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { type WayIdeasContext, WayIdeasOutput } from '@maniau/core';
 import { ReadingError } from './extract';
-import { FAST_SPEED, PRODUCT_EFFORT, PRODUCT_MODEL } from './model';
+import { PRODUCT_EFFORT, PRODUCT_MODEL, productSpeed } from './model';
 
 export const WAY_IDEAS_PROMPT_VERSION = 'way-ideas.v1';
 /**
- * 案も、製品の呼び出しと同じ Opus 5.5・medium・速いモード（model.ts。作り手の指示 2026-11-04）。
+ * 案も、製品の呼び出しと同じ Opus 5.5・medium で、速さは製品の切り替え（model.ts の productSpeed。作り手の指示
+ * 2026-11-04・2026-11-05）。
  */
 export const DEFAULT_WAY_IDEAS_MODEL = PRODUCT_MODEL;
 const PROMPT = readFileSync(new URL('./prompts/way-ideas.v1.md', import.meta.url), 'utf8');
@@ -38,7 +39,7 @@ export async function readWayIdeas(
   const response = await client.messages.parse({
     model: options.model ?? DEFAULT_WAY_IDEAS_MODEL,
     max_tokens: 8000,
-    speed: FAST_SPEED,
+    ...productSpeed(),
     system: PROMPT,
     messages: [{ role: 'user', content: input }],
     output_config: {

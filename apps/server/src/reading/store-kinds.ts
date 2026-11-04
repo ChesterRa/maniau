@@ -7,7 +7,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { ReadingError } from './extract';
-import { FAST_SPEED, PRODUCT_EFFORT, PRODUCT_MODEL } from './model';
+import { PRODUCT_EFFORT, PRODUCT_MODEL, productSpeed } from './model';
 
 export const STORE_KINDS_PROMPT_VERSION = 'store-kinds.v1';
 const PROMPT = readFileSync(new URL('./prompts/store-kinds.v1.md', import.meta.url), 'utf8');
@@ -50,7 +50,7 @@ export async function readStoreKinds(
   const response = await client.messages.parse({
     model: options.model ?? PRODUCT_MODEL,
     max_tokens: 2000,
-    speed: FAST_SPEED,
+    ...productSpeed(),
     system: PROMPT,
     messages: [{ role: 'user', content: input }],
     output_config: { format: zodOutputFormat(StoreKindsOutput), effort: PRODUCT_EFFORT },

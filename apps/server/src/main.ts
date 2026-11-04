@@ -16,6 +16,7 @@ import { invitationsFrom } from './members';
 import { type Notifier, notifier } from './notifier';
 import { type Vapid, webPushSender } from './push';
 import { extractNotice, ReadingError } from './reading/extract';
+import { productSpeed } from './reading/model';
 import { readStoreKinds } from './reading/store-kinds';
 import { PhotoTooLarge, transcribePhoto } from './reading/transcribe';
 import { readUtterance } from './reading/utterance';
@@ -222,7 +223,7 @@ app.get('/*', serveStatic({ root: webDist, path: 'index.html' }));
 
 const port = Number(process.env.PORT ?? 8787);
 serve({ fetch: app.fetch, port }, (info) => {
-  const mode = `${family ? `家族の家庭とデモ、知らせ${backend?.jobs ? 'あり' : 'なし'}` : `デモだけ${demoGate ? '（入口で身元を確かめる）' : ''}`}、読み取り${reader ? 'あり' : 'なし'}、地図${maps ? (mapsBrowserKey ? 'あり' : 'あり（画面の地図なし）') : 'なし'}`;
+  const mode = `${family ? `家族の家庭とデモ、知らせ${backend?.jobs ? 'あり' : 'なし'}` : `デモだけ${demoGate ? '（入口で身元を確かめる）' : ''}`}、読み取り${reader ? (productSpeed().speed ? 'あり（速いモード）' : 'あり（標準の速さ）') : 'なし'}、地図${maps ? (mapsBrowserKey ? 'あり' : 'あり（画面の地図なし）') : 'なし'}`;
   console.log(`まにあう：http://localhost:${info.port}（${mode}）`);
   backend?.jobs?.start();
 });

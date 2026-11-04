@@ -1,7 +1,7 @@
 // 読み取りの呼び出しの組み立てと、使えない出力の扱いの試験。API は呼ばない。
 // 応答は、この試験のために作った形で、モデルの出力ではない（モデルの読み取りの確かめは、録った応答で別に行う）。
 import type Anthropic from '@anthropic-ai/sdk';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildExtractInput,
   EXTRACT_PROMPT_VERSION,
@@ -19,6 +19,13 @@ const source = {
   sentences: [{ id: 'n1#1', text: '12月5日(土)に学習発表会を行います。' }],
 };
 const request = { source, schoolYear: '2026', priorItems: [], priorUnknowns: [] };
+// 速いモードの切り替えは、手元の設定に依らず切った状態で確かめる（入れた時は reading-model の試験）。
+beforeEach(() => {
+  vi.stubEnv('CLAUDE_FAST_MODE', '');
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 const empty = {
   items: [],
   unknowns: [],
@@ -57,7 +64,8 @@ describe('読み取りの呼び出し', () => {
     };
     expect(params.model).toBe('claude-opus-5-5');
     expect(params.output_config.effort).toBe('medium');
-    expect((params as { speed?: string }).speed).toBe('fast');
+    // 速いモードは切り替え（CLAUDE_FAST_MODE=1）の時だけ。試験では切ってある。
+    expect(params).not.toHaveProperty('speed');
     expect(params.output_config.format).toBeDefined();
     expect(params.messages[0]?.content).toBe(buildExtractInput(request));
     expect(result.promptVersion).toBe(EXTRACT_PROMPT_VERSION);

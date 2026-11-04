@@ -1,6 +1,6 @@
 // 写真・PDF の書き起こし：送る形（画像か文書か、モデル、effort）と、返す文（空の行を除いてつなぐ）。
 // 拒否・打ち切り・形の崩れた出力は使わない。偽物の呼び先で、Claude の API は呼ばない。
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReadingError } from '../src/reading/extract';
 import {
   checkPhoto,
@@ -38,6 +38,13 @@ function fake(reply: Reply, counted = 1200) {
 }
 
 const jpeg: PhotoInput = { mediaType: 'image/jpeg', data: 'AAAA' };
+// 速いモードの切り替えは、手元の設定に依らず切った状態で確かめる（入れた時は reading-model の試験）。
+beforeEach(() => {
+  vi.stubEnv('CLAUDE_FAST_MODE', '');
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('写真の書き起こし', () => {
   it('写真は画像として送り、行を空の行を除いてつなぐ', async () => {
@@ -55,7 +62,7 @@ describe('写真の書き起こし', () => {
     const [request] = requests;
     expect(request?.model).toBe(DEFAULT_TRANSCRIBE_MODEL);
     expect(request?.output_config).toMatchObject({ effort: 'medium' });
-    expect(request?.speed).toBe('fast');
+    expect(request).not.toHaveProperty('speed');
     expect(JSON.stringify(request?.messages)).toContain(
       '"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"AAAA"}',
     );
