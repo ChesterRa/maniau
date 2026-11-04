@@ -6,13 +6,14 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { type UtteranceContext, UtteranceOutput } from '@maniau/core';
 import { ReadingError } from './extract';
+import { FAST_SPEED, PRODUCT_EFFORT, PRODUCT_MODEL } from './model';
 
 export const UTTERANCE_PROMPT_VERSION = 'utterance.v1';
 /**
- * 一言の解釈は Sonnet 5.5（01-model §10 の表）。同じ七つの一言で Opus 5.5 と同じ答えを返し、
- * 待つ時間が短かった（話した後すぐ答えたい）。
+ * 一言の解釈も、製品の呼び出しと同じ Opus 5.5・medium・速いモード（model.ts。作り手の指示 2026-11-04：読みの
+ * 確かさと速さを先にする）。
  */
-export const DEFAULT_UTTERANCE_MODEL = 'claude-sonnet-5-5';
+export const DEFAULT_UTTERANCE_MODEL = PRODUCT_MODEL;
 const PROMPT = readFileSync(new URL('./prompts/utterance.v1.md', import.meta.url), 'utf8');
 
 export interface UtteranceResult {
@@ -37,12 +38,13 @@ export async function readUtterance(
   const response = await client.messages.parse({
     model: options.model ?? DEFAULT_UTTERANCE_MODEL,
     max_tokens: 8000,
+    speed: FAST_SPEED,
     system: PROMPT,
     messages: [{ role: 'user', content: input }],
     output_config: {
       format: zodOutputFormat(UtteranceOutput),
-      // 話した後すぐ答えたいので low（Sonnet 5.5 の初期値は high。呼び出しごとに明示する）。
-      effort: options.effort ?? 'low',
+      // 呼び出しごとに明示する（model.ts）。
+      effort: options.effort ?? PRODUCT_EFFORT,
     },
   });
   if (response.stop_reason === 'refusal') throw new ReadingError('refusal', response.stop_reason);

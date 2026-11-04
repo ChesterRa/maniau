@@ -7,13 +7,14 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { ReadingError } from './extract';
+import { FAST_SPEED, PRODUCT_EFFORT, PRODUCT_MODEL } from './model';
 
 export const TRANSCRIBE_PROMPT_VERSION = 'transcribe.v1';
 /**
- * 書き起こしは Opus 5.5（手書き・小さい字・表を落とさないため）。考えることは少ないので effort は low
- * （Opus 5.5 は思考を切れない）。
+ * 書き起こしも、製品の呼び出しと同じ Opus 5.5・medium・速いモード（model.ts。手書き・小さい字・表を落とさない
+ * ため。作り手の指示 2026-11-04）。
  */
-export const DEFAULT_TRANSCRIBE_MODEL = 'claude-opus-5-5';
+export const DEFAULT_TRANSCRIBE_MODEL = PRODUCT_MODEL;
 const PROMPT = readFileSync(new URL('./prompts/transcribe.v1.md', import.meta.url), 'utf8');
 
 export const PhotoMediaType = z.enum(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
@@ -102,7 +103,7 @@ export async function transcribePhoto(
   // 構造化出力の形も入力に数えられるので、書き起こしと同じ形で数える。
   const output_config = {
     format: zodOutputFormat(TranscriptOutput),
-    effort: options.effort ?? 'low',
+    effort: options.effort ?? PRODUCT_EFFORT,
   };
   // 書き起こしを呼ぶ前に入力の量を見積もり、多すぎれば呼ばない（多いページの PDF などで、費用が膨らまない
   // ように）。
@@ -118,6 +119,7 @@ export async function transcribePhoto(
   const response = await client.messages.parse({
     model,
     max_tokens: 16000,
+    speed: FAST_SPEED,
     system: PROMPT,
     messages,
     output_config,

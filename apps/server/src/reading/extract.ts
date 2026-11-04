@@ -6,11 +6,12 @@ import { readFileSync } from 'node:fs';
 import type Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { ExtractionOutput, type Item, type Source, type Unknown } from '@maniau/core';
+import { FAST_SPEED, PRODUCT_EFFORT, PRODUCT_MODEL } from './model';
 
 export const EXTRACT_PROMPT_VERSION = 'extract.v4';
 const PROMPT = readFileSync(new URL('./prompts/extract.v4.md', import.meta.url), 'utf8');
 
-export const DEFAULT_EXTRACT_MODEL = 'claude-opus-5-5';
+export const DEFAULT_EXTRACT_MODEL = PRODUCT_MODEL;
 
 export interface ExtractRequest {
   source: Source;
@@ -70,12 +71,13 @@ export async function extractNotice(
   const response = await client.messages.parse({
     model: options.model ?? DEFAULT_EXTRACT_MODEL,
     max_tokens: 16000,
+    speed: FAST_SPEED,
     system: PROMPT,
     messages: [{ role: 'user', content: input }],
     output_config: {
       format: zodOutputFormat(ExtractionOutput),
-      // Opus 5.5 は思考を切れず、effort の初期値は medium。呼び出しごとに明示する（§10）。
-      effort: options.effort ?? 'medium',
+      // Opus 5.5 は思考を切れず、effort の初期値は medium。呼び出しごとに明示する（§10・model.ts）。
+      effort: options.effort ?? PRODUCT_EFFORT,
     },
   });
   if (response.stop_reason === 'refusal') throw new ReadingError('refusal', response.stop_reason);

@@ -54,7 +54,8 @@ describe('写真の書き起こし', () => {
     expect(result.inputHash).toMatch(/^[0-9a-f]{64}$/);
     const [request] = requests;
     expect(request?.model).toBe(DEFAULT_TRANSCRIBE_MODEL);
-    expect(request?.output_config).toMatchObject({ effort: 'low' });
+    expect(request?.output_config).toMatchObject({ effort: 'medium' });
+    expect(request?.speed).toBe('fast');
     expect(JSON.stringify(request?.messages)).toContain(
       '"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"AAAA"}',
     );

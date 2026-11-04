@@ -57,6 +57,7 @@ describe('読み取りの呼び出し', () => {
     };
     expect(params.model).toBe('claude-opus-5-5');
     expect(params.output_config.effort).toBe('medium');
+    expect((params as { speed?: string }).speed).toBe('fast');
     expect(params.output_config.format).toBeDefined();
     expect(params.messages[0]?.content).toBe(buildExtractInput(request));
     expect(result.promptVersion).toBe(EXTRACT_PROMPT_VERSION);
