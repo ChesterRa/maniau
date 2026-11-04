@@ -61,14 +61,18 @@ export function App() {
   );
 }
 
-/** 使う人が選んだ言葉にする（人ごとに覚える）。 */
-function useMemberLanguage(me: Member | undefined) {
+/**
+ * 使う人が選んだ言葉にする（人ごとに覚える）。デモ（keep）では、まだ言葉を選んでいない大人に替えても、今の言葉の
+ * ままにし、その人の分としては覚えない。英語で見ている人が、案内どおりに大人や場面を替えても、日本語に戻さない。
+ */
+function useMemberLanguage(me: Member | undefined, keep = false) {
   const { i18n } = useTranslation();
   useEffect(() => {
     if (!me) return;
-    const fallback = isUiLanguage(me.uiLanguage) ? me.uiLanguage : 'ja';
-    void i18n.changeLanguage(rememberedLanguage(me.id, fallback));
-  }, [me, i18n]);
+    const own = isUiLanguage(me.uiLanguage) ? me.uiLanguage : 'ja';
+    const current = isUiLanguage(i18n.language) ? i18n.language : 'ja';
+    void i18n.changeLanguage(rememberedLanguage(me.id, keep ? current : own));
+  }, [me, i18n, keep]);
   const lang: UiLanguage = isUiLanguage(i18n.language) ? i18n.language : 'ja';
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -239,7 +243,7 @@ function DemoApp() {
     [household],
   );
   const me = adults.find((m) => m.id === memberId);
-  const { lang, chooseLanguage } = useMemberLanguage(me);
+  const { lang, chooseLanguage } = useMemberLanguage(me, true);
   const restart = () => {
     demo.restart();
     setRoute({ name: 'today' });
