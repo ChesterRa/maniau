@@ -980,6 +980,7 @@
     "wait": "Time to allow for a reply",
     "choose": "Choose",
     "waitNone": "Don’t allow extra time",
+    "waitOnly": "Put time spent only waiting for a reply here. A separate step that is only waiting also counts as someone’s working time, so entering it in both places makes the times overlap.",
     "waitHours_one": "{{count}} hour",
     "waitHours_other": "{{count}} hours",
     "waitDays_one": "{{count}} day",

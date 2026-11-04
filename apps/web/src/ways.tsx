@@ -928,6 +928,8 @@ export function WayScreen({
                 </select>
               </label>
             )}
+            {/* 返事を待つだけの時間を、別の手順（人の作業の時間）にもすると、二つが重なる（Claude の案でも起きた）。 */}
+            {s.to !== '' && <p className="text-sm text-sub">{ctx.t('way.waitOnly')}</p>}
             {s.to === '' && s.original !== undefined && s.original.waitAfterMin > 0 && (
               <p className="text-sm text-sub">
                 {s.original.external

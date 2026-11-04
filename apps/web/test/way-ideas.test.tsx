@@ -583,6 +583,8 @@ describe('Claude の案を表に写す', () => {
     expect(field<HTMLSelectElement>('だれがする')?.value).toBe('?');
     expect(field<HTMLSelectElement>('外の相手に頼むか')?.value).toBe('g');
     expect(field<HTMLSelectElement>('返事までに見込む時間')?.value).toBe('');
+    // 待つだけの時間は返事までの欄に入れ、別の手順（人の作業）にもすると重なる、と相手のある手順に出す。
+    expect(text).toContain('返事を待つだけの時間は、ここに入れます。');
     expect(field<HTMLSelectElement>('いつまでに')?.value).toBe('');
     expect(field<HTMLInputElement>('かかる時間（分）')?.value).toBe('5');
     expect(field<HTMLSelectElement>(ctx.t('way.cover'))?.value).toBe('');
