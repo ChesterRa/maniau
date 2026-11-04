@@ -13,8 +13,8 @@ import {
   notificationHistory,
   notificationIntents,
   type PlanResult,
-  type PreviewCommand,
   proposalSnapshot,
+  type SaveablePreview,
   type Source,
   splitSentences,
   type Task,
@@ -321,7 +321,7 @@ describe('例 2：お知らせから読んだ締切の「すること」を、�
         command,
       );
     /** 画面と同じく、見てから書く。 */
-    const write = async (command: PreviewCommand) => {
+    const write = async (command: SaveablePreview) => {
       const shown = previewChange(await events(), { memberId: 'b', now: NOW }, command);
       if ('reason' in shown) throw new Error(shown.reason);
       expect(
@@ -403,7 +403,7 @@ function formal(now: string) {
   let n = 0;
   const run = (command: Command, memberId = 'b') =>
     runCommand(store, 'demo', { memberId, now, operationId: `f-${++n}`, demo: true }, command);
-  const write = async (command: PreviewCommand) => {
+  const write = async (command: SaveablePreview) => {
     const shown = previewChange(await events(), { memberId: 'b', now }, command);
     if ('reason' in shown) throw new Error(shown.reason);
     expect(
@@ -412,7 +412,7 @@ function formal(now: string) {
   };
   /** 言って、やり方を選ぶ。 */
   const need = async (text: string, interpretation: Record<string, unknown>, wayIds: string[]) => {
-    await write({ type: 'stateNeed', text, interpretation } as PreviewCommand);
+    await write({ type: 'stateNeed', text, interpretation } as SaveablePreview);
     const itemId = computePlan(await events(), now).requirements.find(
       (r) => r.kind === 'need' && r.live,
     )?.basis.itemIds[0];
@@ -698,7 +698,7 @@ describe('返事のある依頼の後に、やり方を選び直す・全部外�
     '%s：祖母への依頼は要らない。保存の前に取り消しを見せ、取り消しの札を出す。知らせを止めない',
     async (_, wayIds) => {
       const { f, itemId, key } = await asked();
-      const command = { type: 'setNeedWays', itemId, wayIds } as PreviewCommand;
+      const command = { type: 'setNeedWays', itemId, wayIds } as SaveablePreview;
       const shown = previewChange(await f.events(), { memberId: 'b', now: NOW }, command);
       if ('reason' in shown) throw new Error(shown.reason);
       expect(shown.changes.cancels.map((r) => r.requestId)).toEqual(['r-need']);
@@ -749,7 +749,7 @@ describe('返事のある依頼の後に、やり方を選び直す・全部外�
         status: 'ok',
       },
     );
-    const command = { type: 'setNeedWays', itemId, wayIds: ['way-sick-care'] } as PreviewCommand;
+    const command = { type: 'setNeedWays', itemId, wayIds: ['way-sick-care'] } as SaveablePreview;
     const shown = previewChange(await f.events(), { memberId: 'b', now: NOW }, command);
     if ('reason' in shown) throw new Error(shown.reason);
     expect(shown.changes.released.map((r) => [r.taskKey, r.assigneeId])).toEqual([[task.key, 'a']]);

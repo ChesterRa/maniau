@@ -3,7 +3,7 @@
 // 「済んだ」と同じ物を候補の命令に付ける（窓の「すること」の時間、作業の今の用件）。デモの家庭にはほかにも作業が
 // あるので、一言では記録せず（取り違えないため）、同じ命令を札で記録する。架空のデモ・偽の読み取り（API は
 // 呼ばない）。
-import type { PreviewCommand, Task } from '@maniau/core';
+import type { SaveablePreview, Task } from '@maniau/core';
 import { expect, it } from 'vitest';
 import { demoSessions, type UtteranceReader } from '../src/demo-sessions';
 
@@ -17,7 +17,7 @@ async function chosen(
   const sessions = demoSessions();
   const id = sessions.create('arrived');
   let n = 0;
-  const write = async (command: PreviewCommand) => {
+  const write = async (command: SaveablePreview) => {
     const shown = await sessions.changePreview(id, 'b', command);
     if (!shown || 'reason' in shown) throw new Error('変わることを見られない');
     const done = await sessions.command(id, 'b', `w-${++n}`, {
@@ -26,7 +26,7 @@ async function chosen(
     });
     expect(done?.result.status).toBe('ok');
   };
-  await write({ type: 'stateNeed', text, interpretation } as PreviewCommand);
+  await write({ type: 'stateNeed', text, interpretation } as SaveablePreview);
   let view = await sessions.view(id, 'b');
   const itemId = view?.plan.requirements.find((r) => r.kind === 'need' && r.live)?.basis.itemIds[0];
   if (!itemId) throw new Error('「すること」が無い');

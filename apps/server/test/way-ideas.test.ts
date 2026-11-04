@@ -1,7 +1,7 @@
 // デモの家庭で、新しい「すること」に Claude がやり方の案を出す（W4）。案を作るだけで何も書かない。数と同時に読む数を
 // 抑え、同じ操作 ID は作り直さない。作る間に前提が変わったら、古い案を見せない。架空のデモの家。Claude の API は
 // 呼ばない（偽物の読み手）。
-import type { Command, PreviewCommand, WayIdeasContext, WayIdeasOutput } from '@maniau/core';
+import type { Command, SaveablePreview, WayIdeasContext, WayIdeasOutput } from '@maniau/core';
 import { describe, expect, it } from 'vitest';
 import { demoSessions, type WayIdeasReader } from '../src/demo-sessions';
 import { ReadingError } from '../src/reading/extract';
@@ -59,7 +59,7 @@ async function setup(limits: { perDay?: number } = {}) {
     expect(done?.result).toMatchObject({ status: 'ok' });
     return done;
   };
-  const previewed = async (command: PreviewCommand) => {
+  const previewed = async (command: SaveablePreview) => {
     const shown = await sessions.changePreview(id, 'b', command);
     if (!shown || 'reason' in shown) throw new Error('見られない');
     return run({ ...command, seen: { throughSeq: shown.throughSeq, changes: shown.seen } });

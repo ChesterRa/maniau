@@ -5,8 +5,8 @@
 import {
   type Item,
   type NeedInterpretation,
-  type PreviewCommand,
   proposalSnapshot,
+  type SaveablePreview,
 } from '@maniau/core';
 import { computePlan, foldEvents, itemsOf } from '@maniau/core/engine';
 import { verifyPlan } from '@maniau/verify';
@@ -38,9 +38,9 @@ async function setup() {
       command,
     );
   const plan = async () => computePlan(await events(), NOW);
-  const preview = async (command: PreviewCommand) =>
+  const preview = async (command: SaveablePreview) =>
     previewChange(await events(), { memberId: 'b', now: NOW }, command);
-  const previewed = async (command: PreviewCommand) => {
+  const previewed = async (command: SaveablePreview) => {
     const shown = await preview(command);
     if ('reason' in shown) return shown;
     return run({ ...command, seen: { throughSeq: shown.throughSeq, changes: shown.seen } });
@@ -113,7 +113,7 @@ const violations = async (app: Awaited<ReturnType<typeof setup>>) => {
 describe('計画に入っている「すること」を直す', () => {
   it('日を直すと、選び直しと依頼の確かめを見せてから書き、前の日の「はい」で新しい日を覆ったとは言わない', async () => {
     const app = await askedAndYes();
-    const command: PreviewCommand = {
+    const command: SaveablePreview = {
       type: 'correctItem',
       itemId: app.itemId,
       interpretation: { date: '2026-11-27' },
@@ -141,7 +141,7 @@ describe('計画に入っている「すること」を直す', () => {
 
   it('見ていない・見た後に計画が進んだ・見た物と違う直しは書かない', async () => {
     const app = await askedAndYes();
-    const command: PreviewCommand = {
+    const command: SaveablePreview = {
       type: 'correctItem',
       itemId: app.itemId,
       interpretation: { endTime: '17:00' },
@@ -175,7 +175,7 @@ describe('計画に入っている「すること」を直す', () => {
 describe('「だれのため」を外す', () => {
   it('null で外すと、前の「だれのため」が残らず、送った依頼は相手への確かめになる', async () => {
     const app = await askedAndYes();
-    const command: PreviewCommand = {
+    const command: SaveablePreview = {
       type: 'correctItem',
       itemId: app.itemId,
       interpretation: { forMemberId: null },
@@ -198,7 +198,7 @@ describe('「だれのため」を外す', () => {
   it('外した後に選び直せば、その人になる（後の直しが前の null に代わる）', async () => {
     const app = await askedAndYes();
     for (const forMemberId of [null, 'a']) {
-      const command: PreviewCommand = {
+      const command: SaveablePreview = {
         type: 'correctItem',
         itemId: app.itemId,
         interpretation: { forMemberId },
@@ -217,7 +217,7 @@ describe('「だれのため」を外す', () => {
 describe('計画に入っている「すること」を要らないにする', () => {
   it('送った依頼への取り消しの連絡を見せてから書き、書くと依頼は要らなくなり、取り消しの作業ができる', async () => {
     const app = await askedAndYes();
-    const command: PreviewCommand = { type: 'dismissItem', itemId: app.itemId, reason: 'other' };
+    const command: SaveablePreview = { type: 'dismissItem', itemId: app.itemId, reason: 'other' };
     expect(await app.run(command)).toMatchObject({ status: 'invalid', reason: 'seenRequired' });
     const shown = await app.preview(command);
     if ('reason' in shown) throw new Error(shown.reason);

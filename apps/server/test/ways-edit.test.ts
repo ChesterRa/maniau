@@ -8,8 +8,8 @@ import {
   needStep,
   notificationHistory,
   notificationIntents,
-  type PreviewCommand,
   proposalSnapshot,
+  type SaveablePreview,
   type Task,
   todayCards,
   type Way,
@@ -85,10 +85,10 @@ async function setup(initial: (h: Household) => void = () => {}) {
     if (!last) throw new Error('家族の情報が無い');
     return structuredClone(last);
   };
-  const preview = async (command: PreviewCommand) =>
+  const preview = async (command: SaveablePreview) =>
     previewChange(await events(), { memberId: 'b', now: NOW }, command);
   /** 見てから書く（見た計画の番号と、見た物の要約を付ける）。 */
-  const previewed = async (command: PreviewCommand) => {
+  const previewed = async (command: SaveablePreview) => {
     const shown = await preview(command);
     if ('reason' in shown) return shown;
     return run({ ...command, seen: { throughSeq: shown.throughSeq, changes: shown.seen } });

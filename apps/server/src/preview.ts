@@ -109,7 +109,7 @@ export function previewChoices(
 
 /**
  * 保存の前に見せる「この変更で変わること」（家と暮らしの情報の直し・「すること」の言明・やり方の選び・「すること」の
- * 直しと外し）。書く時と
+ * 直しと外し）と、返事の仮定（「断られたら？」。保存しない）。書く時と
  * 同じ命令を書き込まずに展開し、同じ計算で比べる（頼み直し reopened も含む）。何も書かない（事象・操作・知らせ・
  * 家の情報）。書けない変更は、書く時と同じ理由で断る。見た物の要約（seen）は、書く時に押さえた中で作り直す物と
  * 同じ作り方（previewedInput）。
@@ -140,7 +140,7 @@ export function previewChange(
   });
   if (result.status !== 'ok') return result;
   const set = result.added.find((e) => e.type === 'householdSet');
-  return householdConsequences(
+  const shown = householdConsequences(
     { household: current, events, plan },
     {
       household: set?.type === 'householdSet' ? set.household : current,
@@ -149,6 +149,12 @@ export function previewChange(
     },
     previewedInput(command)?.input,
   );
+  if (command.type !== 'recordReply') return shown;
+  // 返事の仮定（「断られたら？」）：その依頼の手配の、仮定の後の姿も返す（予備に進むか・選び直しか、残る手と
+  // 決め時）。何も書かない。
+  const key = plan.requests.find((r) => r.requestId === command.requestId)?.basis.arrangementKey;
+  const arrangement = result.after.arrangements.find((a) => a.key === key && a.live);
+  return arrangement ? { ...shown, arrangement } : shown;
 }
 
 /** 家と暮らしの情報を直したら、計画の何が変わるか（previewChange の updateHousehold）。 */

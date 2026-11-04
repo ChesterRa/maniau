@@ -424,4 +424,9 @@ export interface HouseholdPreview {
   seen: string;
   /** 見た時の計画の事象の通し番号（書く時に seen と一緒に送り返す）。 */
   throughSeq: number;
+  /**
+   * 返事の仮定（recordReply）の時だけ：その依頼の手配の、仮定の後の姿（予備に進むか・選び直しか、残る手と決め時）。
+   * 仮の計算の結果で、計画ではない（何も書いていない）。
+   */
+  arrangement?: Arrangement;
 }

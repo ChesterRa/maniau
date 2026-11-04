@@ -5,8 +5,8 @@ import {
   type Household,
   type NeedInterpretation,
   notificationIntents,
-  type PreviewCommand,
   proposalSnapshot,
+  type SaveablePreview,
   type Task,
   todayCards,
   toEpochMinutes,
@@ -51,10 +51,10 @@ async function setup(extraWays: Way[] = [], edit: (h: Household) => void = () =>
       command,
     );
   const plan = async () => computePlan(await events(), NOW);
-  const preview = async (command: PreviewCommand) =>
+  const preview = async (command: SaveablePreview) =>
     previewChange(await events(), { memberId: 'b', now: NOW }, command);
   /** 見てから書く（見た計画の番号と、見た物の要約を付ける）。 */
-  const previewed = async (command: PreviewCommand) => {
+  const previewed = async (command: SaveablePreview) => {
     const shown = await preview(command);
     if ('reason' in shown) throw new Error(shown.reason);
     const { throughSeq } = await plan();

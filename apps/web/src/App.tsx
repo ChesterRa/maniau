@@ -29,6 +29,7 @@ import {
 import { TabBar } from './ui';
 import { ideaDraft, WayIdeasScreen } from './way-ideas';
 import { WayScreen } from './ways';
+import { WhatIfScreen } from './what-if';
 
 const FIRST_STAGE = 'arrived';
 const FRAME = 'mx-auto flex min-h-dvh max-w-md flex-col';
@@ -397,6 +398,8 @@ function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {
     }
     case 'wayIdeas':
       return <WayIdeasScreen ctx={ctx} arrangementKey={route.key} />;
+    case 'whatIf':
+      return <WhatIfScreen ctx={ctx} requestId={route.requestId} />;
     case 'sources':
       return (
         <SourcesScreen

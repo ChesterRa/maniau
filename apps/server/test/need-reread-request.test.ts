@@ -10,8 +10,8 @@ import {
   type DomainEvent,
   type Item,
   type PlanResult,
-  type PreviewCommand,
   proposalSnapshot,
+  type SaveablePreview,
 } from '@maniau/core';
 import { computePlan } from '@maniau/core/engine';
 import { describe, expect, it } from 'vitest';
@@ -97,7 +97,7 @@ async function askedAndYes() {
       command,
     );
   /** 見てから書く（見た計画の番号と要約を付ける）。 */
-  const previewed = async (command: PreviewCommand) => {
+  const previewed = async (command: SaveablePreview) => {
     const shown = previewChange(await events(), { memberId: 'b', now: NOW }, command);
     if ('reason' in shown) throw new Error(shown.reason);
     return run({ ...command, seen: { throughSeq: shown.throughSeq, changes: shown.seen } });

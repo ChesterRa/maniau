@@ -1101,5 +1101,25 @@
     "formOutside": "Claude hasn’t filled in the deadline, the time to allow for a reply, the cost, or the hours it can cover. Please enter them.",
     "formEstimates": "Minutes, when it can be done, time off and extra tasks are Claude’s estimates.",
     "reuseChanged": "Ways you edited after Claude made these ideas aren’t shown here (the earlier reason doesn’t apply to their current content; get ideas again)."
+  },
+  "whatIf": {
+    "link": "What if they say no?",
+    "eyebrow": "What if",
+    "title": "If {{to}} says no",
+    "label": "Hypothetical",
+    "hypothetical": "{{to}} hasn't said no. This is the same calculation, run as if they had. Nothing is recorded here, and nothing is sent to anyone.",
+    "loading": "Calculating…",
+    "failed": "Couldn't calculate this.",
+    "retry": "Calculate again",
+    "refused": "This can't be calculated for this request (a reply was recorded, or the request is gone).",
+    "notWaiting": "The request to {{to}} is no longer waiting for a reply.",
+    "backup": "You'd move on to the backup, “{{option}}”",
+    "stays": "You'd keep going with “{{option}}”",
+    "moves": "You'd move on to “{{option}}”",
+    "backupLost": "The backup, “{{option}}”, would no longer be available.",
+    "rechoose": "You'd need to choose again",
+    "rechooseRecommended": "You'd need to choose again. Recommended: “{{option}}”",
+    "changes": "What would change",
+    "note": "When the reply comes, record it on the Today screen."
   }
 }

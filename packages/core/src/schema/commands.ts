@@ -96,15 +96,29 @@ const DismissItem = z.object({
  */
 const Seen = z.object({ throughSeq: z.number().int().nonnegative(), changes: z.string().min(1) });
 
-/** 保存の前に「この変更で変わること」を見る命令（seen の無い中身。見るだけで、何も書かない）。 */
+/** 頼んだ相手の返事を記録する（家族の誰でも。依頼の一件ごと。返事が変わった時も同じ命令）。 */
+const RecordReply = z.object({
+  type: z.literal('recordReply'),
+  requestId: Id,
+  reply: z.enum(['yes', 'no']),
+});
+
+/**
+ * 保存の前に「この変更で変わること」を見る命令（seen の無い中身。見るだけで、何も書かない）。recordReply は
+ * 「断られたら？」（返事の仮定）：まだ来ていない返事を仮に置いて計算するだけで、画面はこれを保存しない（本当の
+ * 返事は、今までどおり命令で記録する）。
+ */
 export const PreviewCommand = z.discriminatedUnion('type', [
   UpdateHousehold,
   StateNeed,
   SetNeedWays,
   CorrectItem,
   DismissItem,
+  RecordReply,
 ]);
 export type PreviewCommand = z.infer<typeof PreviewCommand>;
+/** 見てから保存する命令（返事の仮定を除く。保存の時に、見た物 seen を付けて送る）。 */
+export type SaveablePreview = Exclude<PreviewCommand, { type: 'recordReply' }>;
 
 export const Command = z.discriminatedUnion('type', [
   z.object({
@@ -190,7 +204,7 @@ export const Command = z.discriminatedUnion('type', [
     window: z.object({ start: DateTime, end: DateTime }).optional(),
   }),
   z.object({ type: z.literal('correctSentRecord'), requestId: Id }),
-  z.object({ type: z.literal('recordReply'), requestId: Id, reply: z.enum(['yes', 'no']) }),
+  RecordReply,
   z.object({ type: z.literal('recordCancellationSent'), requestId: Id }),
   /**
    * 読み取りの事項を確かめる・直す・外す。モデルが読んだ「すること」は、見せた時の番号（seen）が要る：見せた後に

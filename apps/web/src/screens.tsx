@@ -103,6 +103,8 @@ export type Route =
   /** 「すること」（手配の key）に、Claude がやり方の案を出す。 */
   | { name: 'wayIdeas'; key: string }
   | { name: 'ask'; taskKey: string }
+  /** 「断られたら？」：返事を待っている頼み事（依頼の ID）を、断られたと仮に置いて計算する（何も書かない）。 */
+  | { name: 'whatIf'; requestId: string }
   | { name: 'week' }
   | { name: 'sources'; sourceId?: string; highlight?: string[] };
 
@@ -287,7 +289,7 @@ function optionParams(ctx: Ctx, option: OptionPlan): Record<string, string> {
   return {};
 }
 
-const optionTitle = (ctx: Ctx, option: OptionPlan) =>
+export const optionTitle = (ctx: Ctx, option: OptionPlan) =>
   ctx.t(`${option.titleKey}.title`, optionParams(ctx, option));
 
 /**
@@ -620,7 +622,7 @@ const outboundLanguage = (helper: Member): UiLanguage =>
  * 前の晩が過ぎていれば evening は無い（できるだけ早く。決め時ちょうどは、読んで動く間が無い）。
  * ほかに取れる案が無ければ、期限を作らない。頼む文と、決める画面の勧めで同じ物を使う。
  */
-function replyBy(
+export function replyBy(
   ctx: Ctx,
   arrangement: Arrangement,
   optionKey: string | undefined,
@@ -990,7 +992,14 @@ function CardView({ ctx, card }: { ctx: Ctx; card: TodayCard }) {
     case 'cancel':
       return <CancelCard ctx={ctx} task={card.task} request={card.request} />;
     case 'backup':
-      return <BackupCard ctx={ctx} arrangement={card.arrangement} option={card.option} />;
+      return (
+        <BackupCard
+          ctx={ctx}
+          arrangement={card.arrangement}
+          option={card.option}
+          waitingFor={card.waitingFor}
+        />
+      );
     case 'decide':
       return <DecideCard ctx={ctx} card={card} />;
     case 'proposal':
@@ -2050,8 +2059,14 @@ function UnownedCard({
   );
 }
 
-function BackupCard(props: { ctx: Ctx; arrangement: Arrangement; option: OptionPlan }) {
-  const { ctx, arrangement, option } = props;
+export function BackupCard(props: {
+  ctx: Ctx;
+  arrangement: Arrangement;
+  option: OptionPlan;
+  /** 返事を待っている頼み事（あれば「断られたら？」を出す。「断られたら？」の画面の中では出さない）。 */
+  waitingFor?: ExternalRequest;
+}) {
+  const { ctx, arrangement, option, waitingFor } = props;
   const other = otherAdult(ctx.household, ctx.me.id);
   // 予備として押さえ、作業を担当に提案する。この札は作業ごとの時刻・場所を見せていないので、
   // 引き受けは、担当の人が中身を見せる提案の札で、作業ごとに行う（自分でやる時も同じ）。
@@ -2085,6 +2100,11 @@ function BackupCard(props: { ctx: Ctx; arrangement: Arrangement; option: OptionP
       <MoreLink onClick={() => ctx.go(decideRoute(arrangement))}>
         {ctx.t('card.backup.all')}
       </MoreLink>
+      {waitingFor && (
+        <MoreLink onClick={() => ctx.go({ name: 'whatIf', requestId: waitingFor.requestId })}>
+          {ctx.t('whatIf.link')}
+        </MoreLink>
+      )}
     </Card>
   );
 }
@@ -2194,6 +2214,12 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
             {ctx.t('quiet.replyNo')}
           </Button>
         </Row>
+        {/* 「断られたら？」：断られたと仮に置いて、同じ計算で何が変わるかを見る（何も記録しない）。 */}
+        {request.state === 'awaitingReply' && (
+          <MoreLink onClick={() => ctx.go({ name: 'whatIf', requestId: request.requestId })}>
+            {ctx.t('whatIf.link')}
+          </MoreLink>
+        )}
         {mistaken && <MoreLink onClick={mistaken}>{ctx.t('quiet.notSent')}</MoreLink>}
       </div>
     );

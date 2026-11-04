@@ -1,5 +1,5 @@
 // 変更と排除を正式な命令で記録し、検証器が事象から不正な計画を独立に検出する。架空のデモの家。API は呼ばない。
-import { type NeedInterpretation, type PreviewCommand, proposalSnapshot } from '@maniau/core';
+import { type NeedInterpretation, proposalSnapshot, type SaveablePreview } from '@maniau/core';
 import { computePlan, foldEvents } from '@maniau/core/engine';
 import { verifyPlan } from '@maniau/verify';
 import { describe, expect, it } from 'vitest';
@@ -30,9 +30,9 @@ async function setup() {
       command,
     );
   const plan = async () => computePlan(await events(), NOW);
-  const preview = async (command: PreviewCommand) =>
+  const preview = async (command: SaveablePreview) =>
     previewChange(await events(), { memberId: 'b', now: NOW }, command);
-  const previewed = async (command: PreviewCommand) => {
+  const previewed = async (command: SaveablePreview) => {
     const shown = await preview(command);
     if ('reason' in shown) return shown;
     return run({ ...command, seen: { throughSeq: shown.throughSeq, changes: shown.seen } });

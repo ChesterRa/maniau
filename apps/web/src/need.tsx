@@ -8,7 +8,7 @@ import {
   type Item,
   type NeedInterpretation,
   needStep,
-  type PreviewCommand,
+  type SaveablePreview,
   zonedToEpochMinutes,
 } from '@maniau/core';
 import { useState } from 'react';
@@ -58,8 +58,8 @@ function usePreviewSave(ctx: Ctx) {
   const [shown, setShown] = useState<{ key: string; preview: HouseholdPreview }>();
   const [refused, setRefused] = useState<{ key: string; reason: string }>();
   const [busy, setBusy] = useState(false);
-  const keyOf = (command: PreviewCommand) => JSON.stringify(command);
-  const look = async (command: PreviewCommand) => {
+  const keyOf = (command: SaveablePreview) => JSON.stringify(command);
+  const look = async (command: SaveablePreview) => {
     if (!ctx.previewChange) return;
     const key = keyOf(command);
     setBusy(true);
@@ -72,7 +72,7 @@ function usePreviewSave(ctx: Ctx) {
       setRefused(undefined);
     }
   };
-  const save = async (command: PreviewCommand): Promise<boolean> => {
+  const save = async (command: SaveablePreview): Promise<boolean> => {
     const seen = shown?.key === keyOf(command) ? shown.preview : undefined;
     if (!seen) return false;
     setBusy(true);
@@ -87,9 +87,9 @@ function usePreviewSave(ctx: Ctx) {
   };
   return {
     busy,
-    shownFor: (command: PreviewCommand) =>
+    shownFor: (command: SaveablePreview) =>
       shown?.key === keyOf(command) ? shown.preview : undefined,
-    refusedFor: (command: PreviewCommand) =>
+    refusedFor: (command: SaveablePreview) =>
       refused?.key === keyOf(command) ? refused.reason : undefined,
     look,
     save,
@@ -147,7 +147,7 @@ export function StateNeedScreen({ ctx }: { ctx: Ctx }) {
       ...(byTime ? {} : { deadlineDayOnly: true as const }),
     };
   };
-  const command: PreviewCommand | undefined = filled
+  const command: SaveablePreview | undefined = filled
     ? { type: 'stateNeed', text: text.trim(), interpretation: interpretation() }
     : undefined;
   const shown = command && flow.shownFor(command);
@@ -401,7 +401,7 @@ function NeedActions({ ctx, item }: { ctx: Ctx; item: Item }) {
       </div>
     );
   }
-  const command: PreviewCommand = { type: 'dismissItem', itemId: item.id, reason };
+  const command: SaveablePreview = { type: 'dismissItem', itemId: item.id, reason };
   const shown = flow.shownFor(command);
   const refused = flow.refusedFor(command);
   const save = async () => {
@@ -474,7 +474,7 @@ function WaysPicker(props: {
   const flow = usePreviewSave(ctx);
   // 家庭の並びで送る（同じ選びを、押した順で別の物にしない）。
   const wayIds = ways.filter((w) => picked.includes(w.id)).map((w) => w.id);
-  const command: PreviewCommand = { type: 'setNeedWays', itemId, wayIds };
+  const command: SaveablePreview = { type: 'setNeedWays', itemId, wayIds };
   const same =
     !changed && wayIds.length === chosen.length && wayIds.every((id) => chosen.includes(id));
   const shown = flow.shownFor(command);
@@ -620,7 +620,7 @@ export function NeedFixScreen({ ctx, itemId }: { ctx: Ctx; itemId: string }) {
           deadline: formatDateTime(zonedToEpochMinutes(date, byTime || '00:00', ctx.tz), ctx.tz),
           deadlineDayOnly: byTime === '',
         };
-  const command: PreviewCommand | undefined = interpretation && {
+  const command: SaveablePreview | undefined = interpretation && {
     type: 'correctItem',
     itemId,
     interpretation,
