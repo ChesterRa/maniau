@@ -2,49 +2,136 @@
 
 [日本語](README.md)
 
-**Turns nursery and school notices into clear next steps for the family: what to decide, by when, and who does it.**
+**A planning app for working parents that does the scheduling math from what's around your home**
 
-**Live demo: https://maniauserver-production.up.railway.app** (no sign-up; it runs on a fictional family. See “Tour of the demo” below.)
+Your family and Claude keep a shared list of what's around your home. From nursery and school notices and your everyday week, Maniau works out in code what to decide, by when, and who does it, and follows each task until someone in the family takes it on.
 
-Putting an event in a calendar does not settle by when each decision must be made, who acts, or whose reply is still pending. In a family where both parents work, one person usually handles this: working out by when each decision has to be made, asking family members or grandparents, waiting for replies and following up, and cleaning up what was arranged when plans change. Maniau puts this hidden work on the family's screens so it can be shared.
-
-## What it does
-
-- **Read notices:** Claude reads text you paste or dictate, or a photo or PDF of a handout, and turns events, belongings, submissions and changes into items linked to the original text.
-- **Show decision deadlines:** From the notice's deadlines, rules the family has registered (after-school care forms, leave requests, how far ahead to ask a grandparent) and the usual week, Maniau shows by when each option must be chosen and the next task.
-- **Place errands on a real map:** Errands on the way home use Google Maps walking times from the station to the store (each way) and the store's opening hours, and “Show on map” shows the walking route. For items with no known store, you can search for stores near your home station and pick one (Claude suggests search words as a guess; they are sent to Google only when you tap Search after checking them (and editing them if needed), and you see what changes before saving the store). Usual hours are an estimate; special closures on the day are not checked (only on a server with map keys).
-- **Choose:** Maniau lists the options you can still choose with how long each one remains available, and shows a suggestion with its reason and what would happen if you chose each option, computed with the same calculation without recording anything.
-- **Take it on and follow up:** Maniau proposes each task to one adult and records whether they take it on. Requests to grandparents or after-school care keep "awaiting a reply" separate from "confirmed". “What if they say no?” shows ahead of time what would happen if the answer is no.
-- **Adapt to changes:** When a postponement arrives, Maniau removes preparations that are no longer needed and drafts cancellation messages for people who were already asked.
-- **Handle other things to do:** What the family says and the attendance or applications a notice asks for go through the same flow. Claude can suggest ways to handle them (these are inferred, and nothing changes until the family corrects and saves them).
-- **Update in a few words:** From a short update such as "Grandma says 12/7 is fine", Maniau finds the matching request or task and suggests what to record. For a what-if such as "What if Grandma says no?", it records nothing and offers the “What if they say no?” calculation instead. For a change to one adult's day, such as “What if I take 12/7 off?” or “Wednesday I'm in a meeting until 7 pm”, it shows who, which day and what changes as editable fields, records nothing, and shows what the same calculation would change (assumptions the message didn't state are listed separately, and the day is recorded only when you tap “Record this day”; you can also add one from Family).
-
-For details, see [Details and limitations](docs/scope.en.md).
-
-The family makes the choices and contacts grandparents, after-school care, and others. Maniau never chooses for the family or sends those messages on its behalf.
+**Live demo: https://maniauserver-production.up.railway.app** (no sign-up; it runs on a fictional family. See the [tour of the demo](#tour-of-the-demo) below.)
 
 Built with Claude: Japan 2026 entry
+
+---
+
+Putting an event in a calendar leaves the real work undone: by when each decision has to be made, whom to ask, whose reply is still pending, and how to clean up what was arranged when plans change. In a family where both parents work, one person usually carries all of this in their head.
+
+And the math only works if you know what's around your home. Does the sick-child care room need advance registration? Which shop on the way home sells the shirt, and until what time? Which store does the family usually use? Maniau keeps these places, “around us”, together with your family and Claude, and computes decision deadlines and next steps on top of them. The family makes the choices and contacts grandparents, after-school care and others. Maniau never chooses for the family or sends those messages on its behalf.
+
+| Compare decision deadlines | Around us | See what changes before saving |
+|---|---|---|
+| <img src="docs/images/decide.en.png" width="250" alt="Deciding child care for 陽菜: each option's decision deadline and what happens if you choose it"> | <img src="docs/images/around-us.en.png" width="250" alt="Around us: advance registration for a sick-child care room, and the usual store"> | <img src="docs/images/what-changes.en.png" width="250" alt="Setting the usual store to candidate shows, before saving, that the shirt errand moves to another store"> |
+
+All screens show the fictional demo family.
+
+## Three core ideas
+
+### 1. Around us: kept by your family and Claude together
+
+- **Claude looks around:** With “Look around us”, Claude uses web search to find sick-child care, temporary childcare and family support in the home's area (ward and station level), reads the pages, and suggests candidates. Only candidates whose quote appears in the text of a page Claude read in that response, after normalizing character width and whitespace, are shown (code checks this; matching words don't prove the reading is right).
+- **Your family decides:** For each candidate, your family decides whether to add it, how to treat it (usual, candidate, don't use), whether advance registration is needed, and for whom. Claude's reading is shown as a reading, next to the original sentence. Maniau never says that registration is done, that a place can be used, or that it has room.
+- **Remembered, never silently replaced:** Shopping goes to the store your family picked for that item if there is one, and otherwise to a store your family marked usual, even if another store could be reached sooner. If there's no time to stop at that store, Maniau doesn't quietly move the errand elsewhere; it says why and lets your family choose. Looking around again never changes how your family treats a place.
+- **It changes the math:** Options with an advance step not confirmed as done, and options that use a place marked “Don't use”, are not recommended. A newly added place can be used by copying an existing way (the old place's hours, cost and deadlines are not copied).
+
+### 2. Decision deadlines and next steps: computed in code
+
+- Claude reads notices (pasted text, photos, PDFs) into typed items and records which sentence each item came from.
+- From the items and the household's information (people, the usual week, options and their deadlines, what's around us), code works out by when each option must be chosen. In the demo, errands on the way home use Google Maps walking times from the station to the store and the store's opening hours when map keys are set and the lookup succeeds; otherwise they use the household's estimates or are shown as not yet decidable (family households don't use map values yet).
+- “If you choose this”, “What if they say no?” and “What if” (a day off, a longer meeting) are computed with the same calculation, without recording anything. When you edit household information, “What this change would do” is shown before you save.
+
+### 3. Taken on and cleaned up: watched by a verifier
+
+- Each task is proposed to one adult and shown as waiting to be taken on until that person accepts. Requests keep “awaiting a reply” separate from “confirmed”.
+- When a postponement or cancellation arrives, preparations no longer needed are removed, and cancellation messages for people already asked are drafted (the family sends them).
+- Notifications go out only when something can't wait. A verifier written separately from the planning engine checks the plan and stops notifications when it finds a violation.
+
+## What Claude does and what code does
+
+The model reads, looks around, infers unstated preparations, and explains. Date and time calculations, decision deadlines, where tasks go, and whether to notify are decided in code.
+
+| | Claude (inferred) | Code (guaranteed parts) |
+|---|---|---|
+| Notices | Reads text, photos and PDFs into events, belongings, deadlines, conditions and changes | Checks that quotes appear in the original text and that dates match the month and day written. Inferences stay out of the plan until the family confirms them |
+| Around us | Searches the web, reads pages, and suggests candidates with a reading on advance registration | Checks that quotes appear in the text of pages read. Nothing enters household information until the family adds it, and the family's treatment of a place is never changed |
+| Quick updates | Turns a short message into something to record, a what-if, or a one-off day | Fills in a date only when it matches the date code works out from the wording. Records only when the family taps |
+| Deadlines and placement | — | Working back from deadlines, fitting tasks into the usual week, stores, hours and walking times, overlaps, usual stores |
+| Notifications | — | Whether something can't wait, and the independent verifier's gate |
+| Suggestions | Search words for stores, ideas for ways | Nothing changes until the family checks and edits them |
+
+## How it works
+
+```mermaid
+flowchart TB
+  subgraph sgClaude["Claude (inferred)"]
+    notice["Notice text, photos, PDFs"] --> facts["Typed items (with source text and quotes)"]
+    around["Web pages about the area"] --> cands["Candidates (with quotes from pages read)"]
+    said["Quick updates from the family"] --> drafts["Things to record, what-ifs"]
+  end
+  subgraph sgFamily["Family"]
+    confirm["Check, correct, choose"]
+    res["Around us (treatment, advance steps, usual stores)"]
+  end
+  subgraph sgCode["Code (guaranteed parts)"]
+    log["Event log"] --> engine["Planning engine (deadlines, placement, errands)"]
+    engine --> plan["Plan"]
+    plan --> verify["Independent verifier"]
+  end
+  facts -->|readings are recorded| log
+  facts -->|inferences, readings to check| confirm
+  cands --> confirm
+  drafts --> confirm
+  confirm -->|candidates the family adds| res
+  confirm -->|changes the family records| log
+  res --> log
+  maps["Google Maps (walking times, hours)"] --> engine
+  plan --> today["Today and Schedule screens"]
+  verify -->|only with no violations| push["Notifications"]
+```
+
+- Changes the family records and readings of notices are kept as events, and the plan is always recomputed from the events. What-if calculations, and quick updates or looks around that haven't been confirmed, are not recorded as events. Plans stay linked to the original notice text or to what the family said.
+- The verifier is written without importing the planning engine (a lint rule enforces this) and checks the plan independently against household information and events. What it can't check is reported as undetermined, never as “no problems”.
+- Tests run without an API key (they use Claude responses recorded from fictional material). There are more than 1,800 tests across core, the verifier, the web app and the server.
 
 ## Tour of the demo
 
 Use the scene selector at the top to move between points in time, and “Viewing as” to switch between the two adults (健太 and 彩). Each scene also shows a one-line guide at the top of the screen.
 
 1. **11/25 Notice arrives:** A school-event notice creates child care for 陽菜 on 12/7 and a shirt to prepare. Tap “Decide” to compare each option's decision deadline and what happens if you choose it.
-2. **11/26 Errand on the way home:** 彩 asked おばあちゃん and is waiting for the reply. 健太 has a task to buy the shirt at a shop on the way home. The walking time and store hours come from Google Maps, and “Show on map” shows the route.
+2. **11/26 Errand on the way home:** 彩 asked おばあちゃん and is waiting for the reply. 健太 has a task to buy the shirt at a shop on the way home. It's the store the family marked usual. On a server with map keys, when the lookup succeeds, the walking time and store hours come from Google Maps (otherwise the household's estimates are used and labeled as such).
 3. **11/29 No reply yet:** The after-school care deadline is close. On 彩's screen, Maniau asks whether to hold a backup, and “What if they say no?” shows the calculation if the answer is no.
-4. **11/30 Backup booked:** After-school care is held as a backup while waiting for おばあちゃん. On 彩's screen, “What if they say no?” shows the plan moving on to it.
+4. **11/30 Backup booked:** After-school care is held as a backup while waiting for おばあちゃん.
 5. **12/4 Postponed:** Child care that is no longer needed, and the cancellations to send, split between the two adults.
 
-To have Claude read a notice, tap “Snap” at the bottom, then “Insert a sample notice (fictional)”, then “Read it” (only on a server with a reading key). The sample postpones the school event. After reading, the Notices screen shows what each sentence was read as, and what went into the plan appears on the Today screen.
+**See what's around us:** tap “Family” at the bottom, then go to “Around us”.
 
-## How it works
+- “Look around us” shows what Claude found when it searched the real web once, on 2026-11-05, around the demo home (Toyosu, Koto ward), saved for the demo: for each candidate, the page it read, the quote, and its reading on advance registration. Adding a candidate with “Add as a candidate for us” shows what would change before saving, and you can then copy an existing way to use that place. “Ask Claude to look again now” works up to 3 times per demo and 30 times a day per server (on a server with a reading key).
+- With “Edit”, you can mark each store as usual, candidate or don't use. In scene 2, setting the usual store (the clothing store near Toyosu Station) to candidate shows, before you save, that the shirt errand moves to the other (made-up) store.
 
-1. **Read (Claude):** Claude reads the notice into typed items such as events, belongings, and deadlines, and records which sentence each item came from. Conditions such as "if the event is postponed" are kept as conditions.
-2. **Check (code):** Code checks whether each quote appears in the original text and looks for clear mismatches between the month and day written in the text and the dates read. Items with a problem have no effect on the plan and are shown to the family as needing a check. These checks cover quotes and month-day dates only; they do not guarantee that a reading is correct.
-3. **Plan (planning engine):** From the items and the household's information, the engine computes decision deadlines, next tasks, whom to propose each task to, and what a change makes unnecessary.
-4. **Verify (verifier):** A verifier written separately from the engine checks plan and notification conditions and stops notifications when it finds a violation.
+To have Claude read a notice, tap “Snap” at the bottom, then “Insert a sample notice (fictional)”, then “Read it” (on a server with a reading key).
 
-Date and time calculations, decision deadlines for each option, and decisions about whether to notify are made in code, not replaced by model output.
+## What we've checked
+
+These are checks on a small number of fictional cases. We don't claim a general accuracy rate, or that Maniau is better or worse than a model. Counts, costs and conditions are in the [record of how Claude is used](docs/dev/claude-usage.md) (Japanese), and comparison summaries are in [eval/results](eval/results).
+
+- **Comparison with a strong Claude** (the evaluator fixed the cases, expected results and scoring in advance, and the person tuning prompts never saw the held-out cases): the strong Claude solved many of the cases. The checks it missed clustered around “saying so when it can't decide” and “not treating something unconfirmed as confirmed”; in one further case, all 6 of its answers somewhere stated something unchecked as a definite negative (an observation outside the scored checks). Maniau replayed the facts the family had confirmed from its records; on the 3 comparable held-out cases it met 11 of 12 checks (1 was undetermined because it wasn't checked on screen), and the verifier found no violations (the inputs differ, so this is not a like-for-like comparison). We place the difference not in “the model can't solve it” but in state that can be checked and in how later changes are handled.
+- **Looking around:** The saved survey read 7 pages, produced 6 candidates and dropped none (about $0.54). The evaluation on held-out cases was too small to say Maniau is better than a general model, and is recorded that way.
+- **Screens:** The main flows have been walked through at phone width (390px) in Japanese and English. A real iPhone and whether notifications actually arrive have not been checked yet.
+
+## What is sent and what is kept
+
+- The demo's starting family and notices are fictional. Please use fictional text and photos when you try it too.
+- Anthropic receives text and photos entered for reading, quick updates, and the area (ward and station level) and kinds of places to look for. What is sent and the usage limits are in [Details and limitations](docs/scope.en.md#try-your-own-text).
+- Store names, opening hours and routes from Google are not kept and are not sent to Claude. Of Google's information, household information keeps only the place IDs of the linked station and the chosen store, and when they were looked up (the name your family gives the store and the item go in as your family's own entries; the proposal an adult saw when taking on a task — its times, walking minutes and the store's place ID — stays only in the demo server's memory; see [Terms and privacy](https://maniauserver-production.up.railway.app/terms.html#en)).
+
+## What's built and what's next
+
+Built: the three core ideas above; reading notices, photos and quick updates; things to do (what the family says, and attendance or applications a notice asks for) with a table of ways to handle them; map-based errands; and family mode (identity checks with Cloudflare Access, Postgres storage, Web Push notifications; not yet checked on a real iPhone).
+
+Next:
+
+- Regular re-checks of what's around us (for now, Maniau looks again only when the family taps).
+- Using the family's usual places for recommending ways too (such as a usual sick-child care room).
+- More kinds of places to look for (now sick-child care, temporary childcare and family support), and looking around for family households.
+
+What Maniau can't do yet, and what hasn't been checked, is listed in [Details and limitations](docs/scope.en.md#current-scope-and-limitations).
 
 ## Run it locally
 
@@ -55,21 +142,11 @@ pnpm install
 pnpm dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173). The server uses port 8787. If the web app starts on another port, open the URL shown in the terminal. Without the family mode settings (database and Cloudflare Access), the app starts as a demo.
+Open [http://localhost:5173](http://localhost:5173). The server uses port 8787. Without the family mode settings (database and Cloudflare Access), the app starts as a demo. The demo needs no API key or database. The prepared notices and the saved survey use Claude responses recorded in advance, from fictional text and from one real look around.
 
-The demo runs on a fictional household and notices; it needs no API key or database. Use the scene selector at the top to move between five points in time, from the day the notice arrives (11/25) to the postponement notice (12/4), and the viewer selector to switch between the two adults. Each scene starts from a prepared state, and actions are kept only in server memory. The prepared notices use Claude responses recorded in advance from fictional text (if a recording is unavailable, a hand-written reading is used and the screen says so).
-
-### Try your own text
-
-When the server has `ANTHROPIC_API_KEY` set (as an environment variable or in `.env` at the repository root), you can try reading text and photos, quick updates, and ideas for ways with Claude. What is sent to Anthropic and the usage limits are in [Details and limitations](docs/scope.en.md#try-your-own-text). Please try it with fictional text.
-
-### Use maps
-
-When the server has `GOOGLE_MAPS_API_KEY` set (a server-only key allowed only for Places API (New) and Routes API), demo errands are placed with Google Maps walking times and store hours. If `GOOGLE_MAPS_BROWSER_KEY` is also set (a key allowed only for the Maps JavaScript API and restricted to the site's URL), the app shows the map. With `ANTHROPIC_API_KEY` as well, you can ask Claude for search words for a store (only the item name is sent). What is sent to Google and what is not kept is in [Terms and privacy](https://maniauserver-production.up.railway.app/terms.html#en).
-
-## Scope and limitations
-
-What Maniau can't do yet, and what hasn't been checked, is listed in [Details and limitations](docs/scope.en.md#current-scope-and-limitations).
+- With `ANTHROPIC_API_KEY` set (as an environment variable or in `.env` at the repository root), you can try reading text and photos, quick updates, ideas for ways, and looking around again with Claude. Please try it with fictional text.
+- With `GOOGLE_MAPS_API_KEY` set (a server-only key allowed only for Places API (New) and Routes API), demo errands are placed with Google Maps walking times and store hours. If `GOOGLE_MAPS_BROWSER_KEY` is also set (a key allowed only for the Maps JavaScript API and restricted to the site's URL), the app shows the map.
+- Fast mode: Claude is called in fast mode only when `CLAUDE_FAST_MODE=1` is set.
 
 ## Development
 
@@ -78,24 +155,18 @@ pnpm check
 node --test eval/test/*.test.mjs
 ```
 
-`pnpm check` runs formatting checks, type checks, and package tests. Tests and the demo run without an API key.
-
-If you plan to commit changes, enable the repository checks once after cloning. You can test the hooks themselves with `python3 -m unittest discover -s tests/hooks`.
-
-```sh
-git config core.hooksPath scripts/git-hooks
-```
+`pnpm check` runs formatting checks, type checks, and package tests. If you plan to commit changes, enable the repository checks once after cloning with `git config core.hooksPath scripts/git-hooks` (test the hooks themselves with `python3 -m unittest discover -s tests/hooks`).
 
 | Path | Contents |
 |---|---|
-| [apps/web](apps/web) | Mobile-first interface |
-| [apps/server](apps/server) | API, storage, notifications, and Claude extraction |
+| [apps/web](apps/web) | Mobile-first interface (Japanese and English) |
+| [apps/server](apps/server) | API, storage, notifications, Claude reading and looking around, maps |
 | [packages/core](packages/core) | Fact types, time, and planning engine |
-| [packages/verify](packages/verify) | Independent verifier |
-| [data/demo](data/demo) | Fictional household and notices |
+| [packages/verify](packages/verify) | Independent verifier (does not import the planning engine) |
+| [data/demo](data/demo) | Fictional household and notices, recorded responses |
 | [eval](eval) | Boundary cases and comparison tooling |
 
-For details, see the [model design](docs/design/01-model.md), [foundation design](docs/design/02-foundation.md), and [product plan](docs/plan/02-product.md).
+For the design, see the [model design](docs/design/01-model.md) and [foundation design](docs/design/02-foundation.md); for this week's scope, the [product plan](docs/plan/02-product.md); and for how Claude and Claude Code are used (parallel research with subagents, guard hooks, independent evaluation and more), the [record of how Claude is used](docs/dev/claude-usage.md). These documents are in Japanese.
 
 ## License
 
