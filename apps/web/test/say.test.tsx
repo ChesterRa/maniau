@@ -1,4 +1,6 @@
 // ひとこと：一言の答えは、計画から作った文で見せる（候補の説明・聞き返し・問いの答え）。押すまで記録しない。
+
+import { type Command, type PreviewCommand, proposalSnapshot } from '@maniau/core';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { demoSessions } from '../../server/src/demo-sessions';
@@ -158,7 +160,8 @@ describe('ひとこと', () => {
       />,
     );
     expect(same).not.toContain('返事があったと記録する');
-    expect(text(same)).toContain('見分けのつかない候補があったので、選べるようにしていません。');
+    // 同じ文の頼み事がほかにあるので、どれにも記録させず、頼み事の札で記録してもらう。
+    expect(text(same)).toContain('どれに記録するか見分けられません');
   });
 
   it('一部が別の大人の作業なら、その人が記録すると示し、話した人の分は選べる候補で出す', async () => {
@@ -205,6 +208,230 @@ describe('ひとこと', () => {
     expect(render(ctx, { kind: 'unsupported', reason: 'routineChange' })).toContain(
       'ふだんの週（お迎え・勤務）の変更は、まだ受け付けられません。',
     );
+  });
+
+  it('「すること」の頼み事は、送った時の控えの中身と手順で書き、控えに無ければ分からないと示す（今の中身で補わない）', async () => {
+    const base = await ctxOf('chase', 'b');
+    const original = base.plan.requests.find((r) => r.requestId === 'r-grandma');
+    const first = base.items[0];
+    if (!original || !first) throw new Error('頼み事か事項が無い');
+    const basis = { ...original.basis, arrangementKey: 'arr:need:f-1:i1', itemIds: ['f-1:i1'] };
+    // 今の事項は、送った後に直されて「変更後の用件」になっている。
+    const items = [
+      ...base.items,
+      {
+        ...first,
+        item: {
+          ...first.item,
+          id: 'f-1:i1',
+          kind: 'need' as const,
+          interpretation: { what: '変更後の用件' },
+        },
+      },
+    ];
+    const ask = (
+      requestId: string,
+      askedNeed?: { what: string; step?: { name: string; cover: boolean } },
+    ) => ({
+      ...original,
+      requestId,
+      basis,
+      ...(askedNeed ? { askedNeed } : {}),
+    });
+    const shownFor = (requests: ReturnType<typeof ask>[]) =>
+      render(
+        { ...base, items, plan: { ...base.plan, requests: [...base.plan.requests, ...requests] } },
+        {
+          kind: 'question',
+          refs: { taskKeys: [], requestIds: requests.map((r) => r.requestId), itemIds: [] },
+        },
+      );
+    const unknown = shownFor([ask('r-need-1')]);
+    expect(unknown).toContain('中身の分からない頼み事');
+    expect(unknown).not.toContain('変更後の用件');
+    const asked = shownFor([ask('r-need-2', { what: '前の用件' })]);
+    expect(asked).toContain('前の用件');
+    expect(asked).not.toContain('変更後の用件');
+    // 同じ相手・同じ中身・同じ日時の頼み事は、送った時の手順の名前で見分ける（無ければ分からない）。
+    const twins = shownFor([
+      ask('r-need-3', {
+        what: '前の用件',
+        step: { name: '祖母に来てもらえるか聞く', cover: true },
+      }),
+      ask('r-need-4', { what: '前の用件' }),
+    ]);
+    expect(twins).toContain('祖母に来てもらえるか聞く：前の用件');
+    expect(twins).toContain('中身の分からない頼み事：前の用件');
+  });
+
+  it('まだ確かめていない読み取りの「すること」は、計画に入っていないと示す（確かめた後は計画として書く）', async () => {
+    const base = await ctxOf('chase', 'b');
+    const first = base.items[0];
+    if (!first) throw new Error('事項が無い');
+    const items = [
+      ...base.items,
+      {
+        ...first,
+        trusted: true,
+        item: {
+          ...first.item,
+          id: 'f-9:i1',
+          kind: 'need' as const,
+          evidence: 'stated' as const,
+          interpretation: { what: '説明会への参加', date: '2026-12-12' },
+        },
+      },
+    ];
+    const requirement = (unconfirmed: boolean) => ({
+      key: 'req:need:f-9:i1',
+      kind: 'need' as const,
+      what: '説明会への参加',
+      nature: 'required' as const,
+      basis: { itemIds: ['f-9:i1'] },
+      live: true,
+      ...(unconfirmed ? { unconfirmed: true as const } : {}),
+    });
+    const shownWith = (unconfirmed: boolean) =>
+      render(
+        {
+          ...base,
+          items,
+          plan: {
+            ...base.plan,
+            requirements: [...base.plan.requirements, requirement(unconfirmed)],
+          },
+        } as Ctx,
+        { kind: 'question', refs: { taskKeys: [], requestIds: [], itemIds: ['f-9:i1'] } },
+      );
+    const before = shownWith(true);
+    expect(before).toContain('説明会への参加・12/12（土）');
+    expect(before).toContain('まだ確かめていない読み取り（計画に入っていません）');
+    expect(before).not.toContain('計画では、次のとおりです。');
+    const after = shownWith(false);
+    expect(after).toContain('計画では、次のとおりです。');
+    expect(after).not.toContain('まだ確かめていない読み取り');
+  });
+
+  describe('送った頼み事の見分け（正式の命令で作った頼み事）', () => {
+    /**
+     * 締切の「すること」を二つ言い、どちらも祖母のやり方を本命にして頼み（送ったと記録し）、返事の記録の候補を見る。
+     * deadlines は二つの「すること」の締切。
+     */
+    async function twoAsked(needs: { deadline: string; place?: string; forMemberId?: string }[]) {
+      const sessions = demoSessions();
+      const id = sessions.create('arrived');
+      let op = 0;
+      const run = async (command: Command) => {
+        const done = await sessions.command(id, 'b', `op-${++op}`, command);
+        expect(done?.result).toMatchObject({ status: 'ok' });
+        return done?.view as View;
+      };
+      const previewed = async (command: PreviewCommand) => {
+        const shown = await sessions.changePreview(id, 'b', command);
+        if (!shown || 'reason' in shown) throw new Error('見られない');
+        return run({ ...command, seen: { throughSeq: shown.throughSeq, changes: shown.seen } });
+      };
+      const requestIds: string[] = [];
+      for (const [n, { deadline, ...extra }] of needs.entries()) {
+        let view = await previewed({
+          type: 'stateNeed',
+          text: `${n + 1}つ目の手続き。`,
+          interpretation: { what: '手続き', shape: 'by', deadline, ...extra },
+        });
+        const known = new Set(view.plan.arrangements.map((a) => a.key));
+        const requirement = view.plan.requirements.find(
+          (r) => r.kind === 'need' && r.live && !requestIds.includes(r.key),
+        );
+        const itemId = view.plan.requirements
+          .filter((r) => r.kind === 'need' && r.live)
+          .map((r) => r.basis.itemIds[0])
+          .at(-1);
+        if (!requirement || !itemId) throw new Error('「すること」が無い');
+        view = await previewed({ type: 'setNeedWays', itemId, wayIds: ['way-grandma'] });
+        const arrangement = view.plan.arrangements.find(
+          (a) => a.kind === 'need' && a.live && a.requirementKey.endsWith(itemId),
+        );
+        const option = arrangement?.options[0];
+        if (!arrangement || !option) throw new Error('案が無い');
+        void known;
+        view = await run({
+          type: 'chooseOption',
+          arrangementKey: arrangement.key,
+          optionKey: option.key,
+          role: 'primary',
+          assigneeId: 'b',
+        });
+        const ask = view.plan.tasks.find((t) => t.basis.optionKey === option.key && t.external);
+        const shown = ask && proposalSnapshot(ask);
+        if (!ask || !shown) throw new Error('頼む作業が無い');
+        await run({ type: 'accept', taskKey: ask.key, shown });
+        const requestId = `r-${n + 1}`;
+        await run({ type: 'recordSent', taskKey: ask.key, requestId });
+        requestIds.push(requestId);
+      }
+      const view = (await sessions.view(id, 'b')) as View;
+      const base = await ctxOf('chase', 'b');
+      const ctx: Ctx = {
+        ...base,
+        plan: view.plan,
+        household: view.household,
+        today: view.today,
+        items: view.items,
+        sources: new Map(view.sources.map((s) => [s.id, s])),
+        now: view.now,
+      };
+      const yes = (requestId: string) =>
+        render(ctx, {
+          kind: 'change',
+          proposals: [{ id: 'p1', command: { type: 'recordReply', requestId, reply: 'yes' } }],
+        });
+      return { yes };
+    }
+
+    it('締切の違う頼み事は、送った時の締切で見分け、記録できる', async () => {
+      const { yes } = await twoAsked([
+        { deadline: '2026-12-03T17:00+09:00' },
+        { deadline: '2026-12-04T17:00+09:00' },
+      ]);
+      const first = yes('r-1');
+      expect(first).toContain('12/3（木） 17:00まで');
+      expect(first).not.toContain('12/4');
+      expect(first).toContain('記録する');
+      expect(yes('r-2')).toContain('12/4（金） 17:00まで');
+    }, 30_000);
+
+    it('記録の候補には、送った時の控えの全部（手順・締切・場所・だれの分）を添える', async () => {
+      const { yes } = await twoAsked([
+        { deadline: '2026-12-04T17:00+09:00', place: '地区センター', forMemberId: 'c' },
+      ]);
+      const shown = yes('r-1');
+      expect(shown).toContain('12/4（金） 17:00');
+      expect(shown).toContain('祖母に来てもらえるか聞く');
+      expect(shown).toContain('場所：地区センター');
+      expect(shown).toContain('だれの分：陽菜');
+      expect(shown).toContain('記録する');
+    }, 30_000);
+
+    it('場所だけが違う頼み事は、添えた控えで見分けて記録できる', async () => {
+      const { yes } = await twoAsked([
+        { deadline: '2026-12-04T17:00+09:00', place: '地区センター' },
+        { deadline: '2026-12-04T17:00+09:00', place: '学童' },
+      ]);
+      const first = yes('r-1');
+      expect(first).toContain('場所：地区センター');
+      expect(first).not.toContain('どれに記録するか見分けられません');
+      expect(first).toContain('記録する');
+    }, 30_000);
+
+    it('同じ相手・同じ中身・同じ締切の頼み事がほかにもあれば、候補が一つでも記録させない', async () => {
+      const { yes } = await twoAsked([
+        { deadline: '2026-12-03T17:00+09:00' },
+        { deadline: '2026-12-03T17:00+09:00' },
+      ]);
+      const shown = yes('r-1');
+      expect(shown).toContain('どれに記録するか見分けられません');
+      expect(shown).not.toContain('記録する ');
+    }, 30_000);
   });
 
   it('問いの答えには、今は当てはまらない事項を出さない（条件の決まった後の古い参照）', async () => {

@@ -106,8 +106,12 @@ export type PhotoResult =
 
 export type ReadResult =
   | { status: 'ok'; sourceId: string; check: ReadCheck }
-  /** limit：数・量を使い切った。busy：読んでいる途中。uncertain：返事が届かない。stale：読む間に前提が変わった。 */
-  | { status: 'limit' | 'busy' | 'uncertain' | 'stale' }
+  /**
+   * limit：数・量を使い切った。busy：読んでいる途中。uncertain：返事が届かない。stale：読む間に前提が変わった。
+   * lost：前に送った同じ操作の結果が、サーバーにも分からない（家族の家庭。同じ操作では送り直さない）。testOnly：
+   * 試しの家庭でないので読めない（家族の家庭）。
+   */
+  | { status: 'limit' | 'busy' | 'uncertain' | 'stale' | 'lost' | 'testOnly' }
   | { status: 'failed'; reason?: string };
 
 /** 一言の候補（サーバーが控えを持つ。画面は命令から説明を作る）。 */
@@ -139,9 +143,9 @@ export type HearResult =
   | { status: 'ok'; reply: Heard; throughSeq: number }
   /**
    * limit：数を使い切った。busy：読んでいる途中。uncertain：返事が届かない（何も書いていない）。
-   * stale：読む間に計画が変わった（もう一度読む）。
+   * stale：読む間に計画が変わった（もう一度読む）。lost・testOnly は ReadResult と同じ（家族の家庭）。
    */
-  | { status: 'limit' | 'busy' | 'uncertain' | 'stale' }
+  | { status: 'limit' | 'busy' | 'uncertain' | 'stale' | 'lost' | 'testOnly' }
   | { status: 'failed'; reason?: string };
 
 /**
@@ -176,12 +180,11 @@ interface CommandOperation {
   command: Command;
 }
 
-/** 一言の候補の記録（デモだけ）。命令と同じく、届いたか分からない間は、ほかの書き込みを止める。 */
+/** 一言の候補の記録。命令と同じく、届いたか分からない間は、ほかの書き込みを止める。 */
 interface ProposalOperation {
   kind: 'proposal';
   epoch: number;
-  sessionId: string;
-  memberId: string;
+  where: Where;
   proposalId: string;
   operationId: string;
 }
@@ -208,6 +211,40 @@ const commandBody = (w: Where, operationId: string, command: Command) =>
     : { as: w.memberId, operationId, command };
 /** 身元を確かめられない・家族の大人でない（家族の家庭だけ）。 */
 const DENIED = new Set(['unauthenticated', 'notAMember']);
+// 読み取り（お知らせ・一言）と一言の候補の記録の送り先と本文。家族の家庭は as を添える（比べるためだけ）。
+const inputUrl = (w: Where, path: 'notices' | 'utterances') =>
+  w.kind === 'demo' ? `/api/demo/sessions/${w.sessionId}/${path}` : `/api/${path}`;
+const proposalUrl = (w: Where, proposalId: string) =>
+  w.kind === 'demo'
+    ? `/api/demo/sessions/${w.sessionId}/proposals/${encodeURIComponent(proposalId)}`
+    : `/api/proposals/${encodeURIComponent(proposalId)}`;
+const inputBody = (w: Where, payload: Record<string, unknown>) =>
+  w.kind === 'demo' ? { memberId: w.memberId, ...payload } : { as: w.memberId, ...payload };
+/**
+ * 読み取りの断りの種類から、画面の結果へ（デモと家族の家庭で共通。家族の家庭だけの物も含む）。記録の途中の失敗
+ * （store）は、足したか分からないので uncertain（同じ操作のまま確かめる）。モデルの失敗などは、何も足していないので
+ * failed（家族が押し直せば新しい操作）。
+ */
+function readRefusal(
+  error: string,
+  reason?: string,
+): { status: 'limit' | 'busy' | 'stale' | 'lost' | 'testOnly' | 'uncertain' } | undefined {
+  if (error === 'readingFailed' && reason === 'store') return { status: 'uncertain' };
+  switch (error) {
+    case 'readingLimit':
+      return { status: 'limit' };
+    case 'readingBusy':
+      return { status: 'busy' };
+    case 'readingStale':
+      return { status: 'stale' };
+    case 'readingUncertain':
+      return { status: 'lost' };
+    case 'testHouseholdOnly':
+      return { status: 'testOnly' };
+    default:
+      return undefined;
+  }
+}
 
 const json = { 'content-type': 'application/json' };
 /** 命令の返事を待つ長さ。過ぎたら「届いたか分からない」にする（同じ ID で送り直せる）。 */
@@ -411,36 +448,45 @@ export function useServerView(where: Where | undefined) {
   );
 
   /**
-   * デモの家庭に、お知らせの文を入れて読む（家族の家庭では、まだ使えない）。読めたら、返った新しい
-   * 見せる物で見せ直す。待つ間に段・使う人が替わっていたら、その返事は使わない。
+   * お知らせの文を入れて読む（デモの家庭と、家族の試しの家庭）。読めたら、返った新しい見せる物で見せ直す。
+   * 待つ間に段・使う人が替わっていたら、その返事は使わない。家族の家庭は、写真の書き起こしの印を送らない
+   * （まだ開けない）。
    */
   const read = useCallback(
     async (input: NoticeInput): Promise<ReadResult> => {
       const now = current.current;
-      if (kind !== 'demo' || !sessionId || !memberId || now.key !== key) {
+      if (!kind || !memberId || now.key !== key || (kind === 'demo' && !sessionId)) {
         return { status: 'failed', reason: 'stale' };
       }
       if (now.memberId !== memberId) return { status: 'failed', reason: 'stale' };
+      if (kind === 'family' && input.medium === 'photo') {
+        return { status: 'failed', reason: 'photoUnavailable' };
+      }
+      const target: Where =
+        kind === 'demo' ? { kind, sessionId: sessionId ?? '', memberId } : { kind, memberId };
       if (busy.current === now.epoch) return { status: 'busy' };
       busy.current = now.epoch;
       try {
-        const response = await fetch(`/api/demo/sessions/${sessionId}/notices`, {
+        const { medium, ...rest } = input;
+        const response = await fetch(inputUrl(target, 'notices'), {
           method: 'POST',
           headers: json,
-          body: JSON.stringify({ memberId, ...input }),
+          body: JSON.stringify(
+            inputBody(target, kind === 'demo' && medium ? { ...rest, medium } : rest),
+          ),
           signal: AbortSignal.timeout(READ_TIMEOUT_MS),
         });
         if (!isCurrent(now.epoch)) {
           setReload((n) => n + 1);
           return { status: 'failed', reason: 'stale' };
         }
-        if (response.status === 404) {
+        if (response.status === 404 && target.kind === 'demo') {
           setNotice('expired');
           return { status: 'failed', reason: 'unknownSession' };
         }
         const body = (await response.json()) as
           | { view: SessionView; sourceId: string; check: ReadCheck }
-          | { error: string };
+          | { error: string; reason?: string };
         if (!isCurrent(now.epoch)) {
           setReload((n) => n + 1);
           return { status: 'failed', reason: 'stale' };
@@ -449,10 +495,12 @@ export function useServerView(where: Where | undefined) {
           show(now.epoch, body.view);
           return { status: 'ok', sourceId: body.sourceId, check: body.check };
         }
-        if (body.error === 'readingLimit') return { status: 'limit' };
-        if (body.error === 'readingBusy') return { status: 'busy' };
-        if (body.error === 'readingStale') return { status: 'stale' };
-        return { status: 'failed', reason: body.error };
+        if (DENIED.has(body.error)) setDenied(true);
+        else if (body.error === 'identityChanged') setSwitched(true);
+        const refusal = readRefusal(body.error, body.reason);
+        // 前の操作の結果が分からない：足したかもしれないので、見せる物を読み直す。
+        if (refusal?.status === 'lost' || refusal?.status === 'uncertain') setReload((n) => n + 1);
+        return refusal ?? { status: 'failed', reason: body.reason ?? body.error };
       } catch {
         // 返事が届かなかった。読んで足したかもしれないので、読み直して確かめる。
         if (isCurrent(now.epoch)) setReload((n) => n + 1);
@@ -507,28 +555,30 @@ export function useServerView(where: Where | undefined) {
   );
 
   /**
-   * デモの家庭で、家族の一言を読む。読むだけで何も書かないので、返事が届かなくても同じ操作 ID で
-   * 送り直せる。待つ間に段・使う人が替わっていたら、その返事は使わない。
+   * 家族の一言を読む（デモの家庭と、家族の試しの家庭）。読むだけで何も書かないので、返事が届かなくても
+   * 同じ操作 ID で送り直せる。待つ間に段・使う人が替わっていたら、その返事は使わない。
    */
   const hear = useCallback(
     async (text: string, op: string): Promise<HearResult> => {
       const now = current.current;
-      if (kind !== 'demo' || !sessionId || !memberId || now.key !== key) {
+      if (!kind || !memberId || now.key !== key || (kind === 'demo' && !sessionId)) {
         return { status: 'failed', reason: 'stale' };
       }
       if (now.memberId !== memberId) return { status: 'failed', reason: 'stale' };
+      const target: Where =
+        kind === 'demo' ? { kind, sessionId: sessionId ?? '', memberId } : { kind, memberId };
       if (busy.current === now.epoch) return { status: 'busy' };
       busy.current = now.epoch;
       try {
-        const response = await fetch(`/api/demo/sessions/${sessionId}/utterances`, {
+        const response = await fetch(inputUrl(target, 'utterances'), {
           method: 'POST',
           headers: json,
-          body: JSON.stringify({ memberId, operationId: op, text }),
+          body: JSON.stringify(inputBody(target, { operationId: op, text })),
           signal: AbortSignal.timeout(READ_TIMEOUT_MS),
         });
         const body = (await response.json()) as
           | { view: SessionView; reply: Heard }
-          | { error: string };
+          | { error: string; reason?: string };
         if (!isCurrent(now.epoch)) {
           setReload((n) => n + 1);
           return { status: 'failed', reason: 'stale' };
@@ -541,10 +591,14 @@ export function useServerView(where: Where | undefined) {
           setNotice('expired');
           return { status: 'failed', reason: 'unknownSession' };
         }
-        if (body.error === 'readingLimit') return { status: 'limit' };
-        if (body.error === 'readingBusy') return { status: 'busy' };
-        if (body.error === 'readingStale') return { status: 'stale' };
-        return { status: 'failed', reason: body.error };
+        if (DENIED.has(body.error)) setDenied(true);
+        else if (body.error === 'identityChanged') setSwitched(true);
+        return (
+          readRefusal(body.error, body.reason) ?? {
+            status: 'failed',
+            reason: body.reason ?? body.error,
+          }
+        );
       } catch {
         return { status: 'uncertain' };
       } finally {
@@ -565,15 +619,12 @@ export function useServerView(where: Where | undefined) {
       if (busy.current === at) return { status: 'failed' };
       busy.current = at;
       try {
-        const response = await fetch(
-          `/api/demo/sessions/${operation.sessionId}/proposals/${encodeURIComponent(operation.proposalId)}`,
-          {
-            method: 'POST',
-            headers: json,
-            body: JSON.stringify({ memberId: operation.memberId, operationId: op }),
-            signal: AbortSignal.timeout(COMMAND_TIMEOUT_MS),
-          },
-        );
+        const response = await fetch(proposalUrl(operation.where, operation.proposalId), {
+          method: 'POST',
+          headers: json,
+          body: JSON.stringify(inputBody(operation.where, { operationId: op })),
+          signal: AbortSignal.timeout(COMMAND_TIMEOUT_MS),
+        });
         const body = (await response.json()) as { view?: SessionView; error?: string };
         // 返事が届いたので、この操作の結果は分かった。
         if (pending.current?.operationId === op) pending.current = undefined;
@@ -585,6 +636,14 @@ export function useServerView(where: Where | undefined) {
         if (response.ok) return { status: 'ok' };
         if (body.error === 'unknownSession') {
           setNotice('expired');
+          return { status: 'failed' };
+        }
+        if (body.error !== undefined && DENIED.has(body.error)) {
+          setDenied(true);
+          return { status: 'failed' };
+        }
+        if (body.error === 'identityChanged') {
+          setSwitched(true);
           return { status: 'failed' };
         }
         if (body.error === 'proposalChanged') return { status: 'changed' };
@@ -610,7 +669,7 @@ export function useServerView(where: Where | undefined) {
   const confirm = useCallback(
     async (proposalId: string, op: string): Promise<ConfirmResult> => {
       const now = current.current;
-      if (kind !== 'demo' || !sessionId || !memberId || now.key !== key) {
+      if (!kind || !memberId || now.key !== key || (kind === 'demo' && !sessionId)) {
         return { status: 'failed' };
       }
       if (now.memberId !== memberId) return { status: 'failed' };
@@ -623,8 +682,8 @@ export function useServerView(where: Where | undefined) {
       return deliverProposal({
         kind: 'proposal',
         epoch: now.epoch,
-        sessionId,
-        memberId,
+        where:
+          kind === 'demo' ? { kind, sessionId: sessionId ?? '', memberId } : { kind, memberId },
         proposalId,
         operationId: op,
       });
@@ -802,8 +861,11 @@ export function useFamilySession(memberId: string) {
 export type Mode =
   | { kind: 'loading' }
   | { kind: 'demo' }
-  /** pushKey：知らせの登録に使う公開鍵（サーバーに知らせが無ければ無い）。 */
-  | { kind: 'family'; memberId: string; pushKey?: string }
+  /**
+   * pushKey：知らせの登録に使う公開鍵（サーバーに知らせが無ければ無い）。canRead・canHear：お知らせ・一言を
+   * Claude で読めるか（試しの家庭で、読み取りの鍵があるサーバーだけ）。
+   */
+  | { kind: 'family'; memberId: string; pushKey?: string; canRead?: true; canHear?: true }
   | { kind: 'denied' }
   | { kind: 'failed' };
 
@@ -821,12 +883,20 @@ export function useMode(): { mode: Mode; recheck: () => void } {
         if (!response.ok) throw new Error(String(response.status));
         const me = (await response.json()) as
           | { mode: 'demo' }
-          | { mode: 'family'; memberId: string; pushKey?: string };
+          | {
+              mode: 'family';
+              memberId: string;
+              pushKey?: string;
+              canRead?: boolean;
+              canHear?: boolean;
+            };
         if (me.mode !== 'family') return { kind: 'demo' };
         return {
           kind: 'family',
           memberId: me.memberId,
           ...(typeof me.pushKey === 'string' ? { pushKey: me.pushKey } : {}),
+          ...(me.canRead === true ? { canRead: true as const } : {}),
+          ...(me.canHear === true ? { canHear: true as const } : {}),
         };
       })
       .then((next) => {

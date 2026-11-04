@@ -43,6 +43,8 @@ export function App() {
         key={mode.memberId}
         memberId={mode.memberId}
         {...(mode.pushKey ? { pushKey: mode.pushKey } : {})}
+        canRead={mode.canRead === true}
+        canHear={mode.canHear === true}
         onSwitched={recheck}
       />
     );
@@ -103,6 +105,8 @@ function Body(props: {
   canHear?: boolean;
   /** お知らせの写真・PDF を書き起こせるか（同じく）。 */
   canPhoto?: boolean;
+  /** 家族の試しの家庭か（読む欄に「架空の文だけ」と、上限の戻る時刻を出す）。 */
+  trial?: boolean;
   lang: UiLanguage;
   route: Route;
   onRoute: (route: Route) => void;
@@ -129,6 +133,7 @@ function Body(props: {
           ...(props.canRead ? { read: live.read } : {}),
           ...(props.canRead && props.canPhoto ? { transcribe: live.transcribe } : {}),
           ...(props.canHear ? { hear: live.hear, confirm: live.confirm } : {}),
+          ...(props.trial ? { trialInput: true as const } : {}),
           preview: live.preview,
           previewHousehold: live.previewHousehold,
           previewChange: live.previewChange,
@@ -260,10 +265,15 @@ function DemoApp() {
 function FamilyApp({
   memberId,
   pushKey,
+  canRead,
+  canHear,
   onSwitched,
 }: {
   memberId: string;
   pushKey?: string;
+  /** お知らせ・一言を Claude で読めるか（試しの家庭で、読み取りの鍵があるサーバーだけ）。 */
+  canRead: boolean;
+  canHear: boolean;
   onSwitched: () => void;
 }) {
   const { t } = useTranslation();
@@ -291,7 +301,17 @@ function FamilyApp({
           onChange={(v) => isUiLanguage(v) && chooseLanguage(v)}
         />
       </div>
-      <Body live={live} me={me} readings={[]} lang={lang} route={route} onRoute={setRoute} />
+      <Body
+        live={live}
+        me={me}
+        readings={[]}
+        canRead={canRead}
+        canHear={canHear}
+        trial={canRead || canHear}
+        lang={lang}
+        route={route}
+        onRoute={setRoute}
+      />
     </div>
   );
 }

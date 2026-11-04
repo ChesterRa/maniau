@@ -1,6 +1,6 @@
 // API。見る人ごとのデモの家庭（架空の家族。ログインなし）と、家族の家庭（Cloudflare Access の身元。
 // Postgres）。どちらも、画面には見せる物だけを渡し、事象の列は渡さない（02-foundation §7.1）。
-import { Command, Household, PreviewCommand, SourceSender } from '@maniau/core';
+import { Command, Household, PreviewCommand, SourceSender, splitSentences } from '@maniau/core';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
@@ -15,6 +15,7 @@ import {
   type PhotoReader,
   type UtteranceReader,
 } from './demo-sessions';
+import { familyInput } from './family-input';
 import { type FamilyMember, type Invitations, memberFor } from './members';
 import type { Notifier } from './notifier';
 import { previewChange, previewChoices, previewHousehold } from './preview';
@@ -80,6 +81,9 @@ export function createApp(
   const listener = family ? undefined : options.listener;
   // 写真の書き起こしも同じ（家族の家庭では、まだ開けない）。
   const transcriber = family ? undefined : options.transcriber;
+  const familyInputs = family
+    ? familyInput({ store: family.store, ...(family.clock ? { clock: family.clock } : {}) })
+    : undefined;
   const app = new Hono();
   // API の返事は、どれも控えに残さない（家族の予定・場所を、端末や途中の控えに置かない）。
   app.use('/api/*', async (c, next) => {
@@ -139,9 +143,15 @@ export function createApp(
     if (!family) return c.json({ mode: 'demo' });
     const member = await memberOf(c, family);
     if (member instanceof Response) return member;
+    const canUseInput =
+      familyInputs && (options.reader || options.listener)
+        ? await familyInputs.canUse(member)
+        : false;
     return c.json({
       mode: 'family',
       memberId: member.memberId,
+      ...(canUseInput && options.reader ? { canRead: true } : {}),
+      ...(canUseInput && options.listener ? { canHear: true } : {}),
       ...(family.push ? { pushKey: family.push.publicKey } : {}),
     });
   });
@@ -255,6 +265,133 @@ export function createApp(
     // 断られた命令でも、今も家族の大人なら、新しい見せる物を返す（外された人には返さない）。
     const view = await viewOf(family, member);
     return view ? c.json({ result, view }, statusOf(result)) : notAMember(c);
+  });
+
+  // 家族の読み取り：本文の as は切り替わりの検出だけに使う。モデルへ送る前と、結果を足す前に、
+  // 身元と家庭をもう一度確かめる。デモの認証なしの口は、家族の家庭では引き続き開かない。
+  const FamilyInputBody = z.object({
+    as: z.string().min(1),
+    operationId: z.string().min(1).max(100),
+    text: z.string().trim().min(1).max(4000),
+    sender: SourceSender.default('school'),
+  });
+  const FamilyUtteranceBody = z.object({
+    as: z.string().min(1),
+    operationId: z.string().min(1).max(100),
+    text: z.string().trim().min(1).max(500),
+  });
+  const FamilyProposalBody = z.object({
+    as: z.string().min(1),
+    operationId: z.string().min(1).max(100),
+  });
+  const inputError = (c: Context, status: string, reason?: string) => {
+    switch (status) {
+      case 'forbidden':
+        return c.json({ error: 'notAMember' }, 403);
+      case 'testOnly':
+        return c.json({ error: 'testHouseholdOnly' }, 403);
+      case 'conflict':
+        return c.json({ error: 'operationReused' }, 409);
+      case 'stale':
+        return c.json({ error: 'readingStale' }, 409);
+      case 'uncertain':
+        return c.json({ error: 'readingUncertain' }, 409);
+      case 'busy':
+        return c.json({ error: 'readingBusy' }, 429);
+      case 'limit':
+        return c.json({ error: 'readingLimit' }, 429);
+      case 'gone':
+        return c.json({ error: 'unknownProposal' }, 404);
+      default:
+        return c.json({ error: 'readingFailed', ...(reason ? { reason } : {}) }, 502);
+    }
+  };
+  app.post('/api/notices', async (c) => {
+    if (!family || !familyInputs) return c.json({ error: 'familyDisabled' }, 404);
+    const refused = refuseWrite(c, family);
+    if (refused) return refused;
+    const member = await memberOf(c, family);
+    if (member instanceof Response) return member;
+    const body = FamilyInputBody.safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badNotice' }, 400);
+    if (body.data.as !== member.memberId) return switched(c);
+    if (splitSentences(body.data.text, 'input').length === 0)
+      return c.json({ error: 'badNotice' }, 400);
+    if (!options.reader) return c.json({ error: 'readingUnavailable' }, 503);
+    const recheck = async () => {
+      const current = await memberOf(c, family);
+      return (
+        !(current instanceof Response) &&
+        current.householdId === member.householdId &&
+        current.memberId === member.memberId &&
+        current.identityId === member.identityId
+      );
+    };
+    const done = await familyInputs.notice(member, body.data, options.reader, recheck);
+    if (done.status !== 'ok')
+      return inputError(c, done.status, 'reason' in done ? done.reason : undefined);
+    if (!(await recheck())) return notAMember(c);
+    const view = await viewOf(family, member);
+    if (!view) return notAMember(c);
+    family.push?.notifier.poke(member.householdId);
+    return c.json({ view, sourceId: done.sourceId, check: done.check });
+  });
+  app.post('/api/utterances', async (c) => {
+    if (!family || !familyInputs) return c.json({ error: 'familyDisabled' }, 404);
+    const refused = refuseWrite(c, family);
+    if (refused) return refused;
+    const member = await memberOf(c, family);
+    if (member instanceof Response) return member;
+    const body = FamilyUtteranceBody.safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badUtterance' }, 400);
+    if (body.data.as !== member.memberId) return switched(c);
+    if (!options.listener) return c.json({ error: 'readingUnavailable' }, 503);
+    const recheck = async () => {
+      const current = await memberOf(c, family);
+      return (
+        !(current instanceof Response) &&
+        current.householdId === member.householdId &&
+        current.memberId === member.memberId &&
+        current.identityId === member.identityId
+      );
+    };
+    const done = await familyInputs.utterance(member, body.data, options.listener, recheck);
+    if (done.status !== 'ok')
+      return inputError(c, done.status, 'reason' in done ? done.reason : undefined);
+    if (!(await recheck())) return notAMember(c);
+    const view = await viewOf(family, member);
+    if (!view) return notAMember(c);
+    // 読み取り中に進んだ計画に、前の答えを並べない。
+    if (view.throughSeq !== done.view.throughSeq || view.now !== done.view.now)
+      return inputError(c, 'stale');
+    return c.json({ view, reply: done.reply });
+  });
+  app.post('/api/proposals/:pid', async (c) => {
+    if (!family || !familyInputs) return c.json({ error: 'familyDisabled' }, 404);
+    const refused = refuseWrite(c, family);
+    if (refused) return refused;
+    const member = await memberOf(c, family);
+    if (member instanceof Response) return member;
+    const body = FamilyProposalBody.safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badConfirm' }, 400);
+    if (body.data.as !== member.memberId) return switched(c);
+    const done = await familyInputs.confirm(member, c.req.param('pid'), body.data.operationId);
+    if (done.status !== 'ok') {
+      if (done.status === 'stale') return c.json({ error: 'proposalChanged' }, 409);
+      return inputError(c, done.status, 'reason' in done ? done.reason : undefined);
+    }
+    const current = await memberOf(c, family);
+    if (
+      current instanceof Response ||
+      current.householdId !== member.householdId ||
+      current.memberId !== member.memberId ||
+      current.identityId !== member.identityId
+    )
+      return notAMember(c);
+    const view = await viewOf(family, member);
+    if (!view) return notAMember(c);
+    family.push?.notifier.poke(member.householdId);
+    return c.json({ view });
   });
   // 知らせの登録（この端末に送る）。大人ごとに一つ。登録先は、知っている Push の事業者の物だけ。
   const PushRegistration = z.object({

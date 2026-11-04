@@ -157,11 +157,52 @@ describe('お知らせの文を入れる', () => {
     expect(reads[2]?.operationId).not.toBe(reads[0]?.operationId);
   });
 
+  it('足していないと分かっている時（前提が変わった・読み取りに失敗した）と、前の結果がサーバーにも分からない時は、次に押すと新しい操作で送る', async () => {
+    for (const first of [
+      { status: 'stale' },
+      { status: 'lost' },
+      { status: 'failed', reason: 'refusal' },
+    ] as ReadResult[]) {
+      const answers: ReadResult[] = [first, OK];
+      const { ctx, reads } = setup(OK);
+      const read = async (input: NoticeInput) => {
+        reads.push(input);
+        return answers.shift() ?? OK;
+      };
+      await step(() => root.render(<SourcesScreen ctx={{ ...ctx, read }} />));
+      const area = host.querySelector('textarea') as HTMLTextAreaElement;
+      await step(() => type(area, '（架空）一つ目'));
+      await step(() => button()?.click());
+      await step(() => button()?.click());
+      expect(reads.map((r) => r.text)).toEqual(['（架空）一つ目', '（架空）一つ目']);
+      expect(reads[1]?.operationId).not.toBe(reads[0]?.operationId);
+      await step(() => root.render(null));
+    }
+  });
+
+  it('混んでいる・数の上限の時は、同じ操作のまま押し直す（足したかを、同じ操作で確かめる）', async () => {
+    for (const first of [{ status: 'busy' }, { status: 'limit' }] as ReadResult[]) {
+      const answers: ReadResult[] = [first, OK];
+      const { ctx, reads } = setup(OK);
+      const read = async (input: NoticeInput) => {
+        reads.push(input);
+        return answers.shift() ?? OK;
+      };
+      await step(() => root.render(<SourcesScreen ctx={{ ...ctx, read }} />));
+      const area = host.querySelector('textarea') as HTMLTextAreaElement;
+      await step(() => type(area, '（架空）一つ目'));
+      await step(() => button()?.click());
+      await step(() => button()?.click());
+      expect(reads[1]?.operationId).toBe(reads[0]?.operationId);
+      await step(() => root.render(null));
+    }
+  });
+
   it('数を使い切った時・混んでいる時・返事が分からない時・読めなかった時は、その旨を出す（戻らない）', async () => {
     for (const [answer, message] of [
       [{ status: 'limit' }, '読める数を使い切りました'],
       [{ status: 'busy' }, 'いま他の読み取りの途中です'],
-      [{ status: 'uncertain' }, '返事が届きませんでした'],
+      [{ status: 'uncertain' }, '結果が分かりませんでした'],
       [{ status: 'stale' }, '読む間に、前に読んだ事項が変わりました'],
       [{ status: 'failed', reason: 'readingFailed' }, '読み取れませんでした'],
     ] as const) {

@@ -151,6 +151,11 @@ export interface Ctx {
   transcribe?: (input: PhotoUpload) => Promise<PhotoResult>;
   /** 家族の一言を読む・その候補を記録する（同じく、使える時だけ）。 */
   hear?: (text: string, operationId: string) => Promise<HearResult>;
+  /**
+   * 家族の試しの家庭の入力か（お知らせ・一言の欄に「架空の文だけ」と、送る物と、上限の戻る時刻を出す）。
+   * デモの家庭には無い。
+   */
+  trialInput?: true;
   confirm?: (proposalId: string, operationId: string) => Promise<ConfirmResult>;
   /** 決める画面の「選んだら」を読む（何も書かない。読めなければ無し）。 */
   preview?: (arrangementKey: string) => Promise<ChoicePreview[] | undefined>;
@@ -3264,13 +3269,40 @@ function requestWhen(ctx: Ctx, request: { window?: { start: string; end: string 
   });
 }
 
-/** 頼み事の中身（何のために頼んだか：頼み事の根拠の事項）と日時。事項が無ければ、中身が分からないと示す。 */
+/** 「すること」の手配への頼み事か（中身は送った時の控えで書き、今の事項で補わない）。 */
+const needRequest = (request: ExternalRequest) =>
+  request.basis.arrangementKey !== undefined && isNeedArrangementKey(request.basis.arrangementKey);
+
+/**
+ * 頼み事を見分ける時（送った時の控え）：頼んだ時間か、「すること」の締切（日だけの締切は日だけ）。どちらも控えから
+ * 取り、今の計画では補わない。
+ */
+function requestTime(ctx: Ctx, request: ExternalRequest): string | undefined {
+  const window = requestWhen(ctx, request);
+  if (window) return window;
+  const deadline = needRequest(request) ? request.askedNeed?.deadline : undefined;
+  if (!deadline) return undefined;
+  return ctx.t('say.requestBy', {
+    by: request.askedNeed?.deadlineDayOnly ? day(ctx, deadline) : dayTime(ctx, deadline),
+  });
+}
+
+/**
+ * 頼み事の中身（何のために頼んだか）と時（頼んだ時間か締切）。「すること」の頼み事は、どちらも送った時の控えで書き、
+ * 控えに中身が無ければ分からないと示す（後で直した今の中身で、前に頼んだ物を書かない。サーバーが一言の前提にするのと
+ * 同じ）。ほかの頼み事は根拠の事項で書き、事項も無ければ、中身が分からないと示す。
+ */
 function requestBase(ctx: Ctx, request: ExternalRequest): string {
-  const item = request.basis.itemIds
-    .map((id) => ctx.items.find((l) => l.item.id === id)?.item)
-    .find((found) => found !== undefined);
-  const what = item ? (item.interpretation.what ?? item.written) : ctx.t('say.unknownRequest');
-  return dated(ctx, 'say.requestFor', { what }, requestWhen(ctx, request));
+  const asked = request.askedNeed?.what;
+  const item =
+    asked === undefined && !needRequest(request)
+      ? request.basis.itemIds
+          .map((id) => ctx.items.find((l) => l.item.id === id)?.item)
+          .find((found) => found !== undefined)
+      : undefined;
+  const what =
+    asked ?? (item ? (item.interpretation.what ?? item.written) : ctx.t('say.unknownRequest'));
+  return dated(ctx, 'say.requestFor', { what }, requestTime(ctx, request));
 }
 
 /**
@@ -3283,6 +3315,11 @@ function requestFor(ctx: Ctx, request: ExternalRequest): string {
     (r) => r.requestId !== request.requestId && r.to === request.to && requestBase(ctx, r) === base,
   );
   if (!twin) return base;
+  // 「すること」の頼み事は、送った時の控えの手順の名前で見分ける（今の作業の題から推さない。無ければ分からない）。
+  if (needRequest(request)) {
+    const step = request.askedNeed?.step?.name ?? ctx.t('say.unknownRequest');
+    return ctx.t('say.requestStep', { step, what: base });
+  }
   const task = ctx.plan.tasks.find((t) => t.key === request.taskKey);
   // 頼んだ日は base（送った時の控え）が持つので、題には今の手配の日を重ねない。
   const step = task ? baseTitle(ctx, task) : ctx.t('say.unknownRequest');
@@ -3407,9 +3444,13 @@ function SayAnswer({
   if (items.length + tasks.length + requests.length === 0) {
     return <Text>{ctx.t('say.nothingFound')}</Text>;
   }
+  // まだ確かめていない読み取りの「すること」（計画に入っていない）。原文に書かれていても、計画とは言わない。
+  const awaiting = (itemId: string) =>
+    ctx.plan.requirements.some((r) => r.unconfirmed === true && r.basis.itemIds.includes(itemId));
+  const anyAwaiting = items.some(({ item }) => awaiting(item.id));
   return (
     <div className="flex flex-col gap-2">
-      <Text quiet>{ctx.t('say.answer')}</Text>
+      <Text quiet>{ctx.t(anyAwaiting ? 'say.answerWithUnconfirmed' : 'say.answer')}</Text>
       <ul className="flex flex-col gap-2">
         {items.map(({ item, conditional, trusted, when: condition }) => {
           const when = item.interpretation.date ?? item.interpretation.deadline;
@@ -3428,11 +3469,15 @@ function SayAnswer({
                   {whenText(ctx, condition) ?? ctx.t('say.conditional')}
                 </span>
               )}
-              {/* 推定・食い違いは、家族が確かめるまで確かな事実として見せない。 */}
-              {!trusted && (
-                <span className="text-sub text-sm">
-                  {ctx.t(item.evidence === 'inferred' ? 'say.inferred' : 'say.unconfirmed')}
-                </span>
+              {/* 確かめていない読み取りの「すること」と、推定・食い違いは、家族が確かめるまで確かな事実として見せない。 */}
+              {awaiting(item.id) ? (
+                <span className="text-sub text-sm">{ctx.t('say.needUnconfirmed')}</span>
+              ) : (
+                !trusted && (
+                  <span className="text-sub text-sm">
+                    {ctx.t(item.evidence === 'inferred' ? 'say.inferred' : 'say.unconfirmed')}
+                  </span>
+                )
               )}
               <MoreLink onClick={() => ctx.go({ name: 'sources', sourceId: item.sourceId })}>
                 {ctx.t('say.source')}
@@ -3518,6 +3563,23 @@ export function SayReply({
       );
       return twin ? 'say.sameTask' : undefined;
     }
+    // 返事・取り消しの記録は、今その記録の先になりうるほかの頼み事と、見せる文を比べる（モデルが一つしか返さなく
+    // ても、同じ文の頼み事がほかにあれば、どれに記録されるか家族に分からない）。
+    if (command.type === 'recordReply' || command.type === 'recordCancellationSent') {
+      const target = (r: ExternalRequest) =>
+        r.state !== 'cancelled' && (command.type === 'recordReply' || !r.live);
+      // 見せる物の全部（候補の文と、控えの行）で比べる。
+      const shown = (r: ExternalRequest | undefined, requestId: string) =>
+        JSON.stringify([
+          proposalLabel(ctx, { ...proposal, command: { ...command, requestId } }),
+          recordDetail(ctx, r),
+        ]);
+      const mine = shown(recordTarget(ctx, proposal), command.requestId);
+      const twin = ctx.plan.requests.some(
+        (r) => r.requestId !== command.requestId && target(r) && shown(r, r.requestId) === mine,
+      );
+      return twin ? 'say.sameRequest' : undefined;
+    }
     if (command.type !== 'answer') return undefined;
     const twin = ctx.plan.requirements.some(
       (r) =>
@@ -3543,6 +3605,11 @@ export function SayReply({
             <div key={proposal.id} className="flex flex-col gap-2">
               <Text quiet>{ctx.t(blocked ?? 'say.confirm')}</Text>
               <Title>{proposalLabel(ctx, proposal)}</Title>
+              {recordDetail(ctx, recordTarget(ctx, proposal)).map((line) => (
+                <Text key={line} quiet>
+                  {line}
+                </Text>
+              ))}
               <Row>
                 {!blocked && (
                   <Button onClick={() => onRecord(proposal)} disabled={busy}>
@@ -3564,14 +3631,16 @@ export function SayReply({
             <>
               <Text quiet>{ctx.t('say.which')}</Text>
               {choices.map(({ proposal, label }) => (
-                <Button
-                  key={proposal.id}
-                  kind="secondary"
-                  onClick={() => onRecord(proposal)}
-                  disabled={busy}
-                >
-                  {label}
-                </Button>
+                <div key={proposal.id} className="flex flex-col gap-1">
+                  <Button kind="secondary" onClick={() => onRecord(proposal)} disabled={busy}>
+                    {label}
+                  </Button>
+                  {recordDetail(ctx, recordTarget(ctx, proposal)).map((line) => (
+                    <Text key={line} quiet>
+                      {line}
+                    </Text>
+                  ))}
+                </div>
               ))}
               <Button kind="secondary" onClick={onClear} disabled={busy}>
                 {ctx.t('say.none')}
@@ -3596,6 +3665,28 @@ export function SayReply({
     </>
   );
 }
+
+/**
+ * 次に押した時に、新しい操作で送ってよい読み取りの結果か：足していないと分かっている（前提が変わった・読み取りに
+ * 失敗した・送る前に止めた）か、結果がサーバーにも分からず、家族が確かめてから入れ直す時。返事が届かない・混んで
+ * いる・数の上限の時は、同じ操作で押し直す（足したかを、同じ操作で確かめる）。
+ */
+const renewable = (result: ReadResult | HearResult) =>
+  result.status === 'stale' || result.status === 'lost' || result.status === 'failed';
+
+/** 返事・取り消しの記録の先の頼み事（候補の命令から）。 */
+function recordTarget(ctx: Ctx, proposal: ShownProposal): ExternalRequest | undefined {
+  const { command } = proposal;
+  if (command.type !== 'recordReply' && command.type !== 'recordCancellationSent') return undefined;
+  return ctx.plan.requests.find((r) => r.requestId === command.requestId);
+}
+
+/**
+ * 記録の先の頼み事を見分けるための行：「すること」の頼み事は、送った時の控えの全部（手順・何を・時間か締切・場所・
+ * だれの分。控えに無ければ分からない）。頼み事の札と同じ行を使う。ほかの頼み事は、候補の文だけで見分ける。
+ */
+const recordDetail = (ctx: Ctx, request: ExternalRequest | undefined): string[] =>
+  request && needRequest(request) ? askedLines(ctx, request) : [];
 
 type SayState =
   | 'idle'
@@ -3640,8 +3731,9 @@ export function SayCard({
       setState('idle');
       return;
     }
-    // 前提が変わった時は、新しい操作で読み直す（同じ操作では、古い答えを返さないので先へ進めない）。
-    if (result.status === 'stale') operation.current = undefined;
+    // 前提が変わった・読み取りに失敗した・前の操作の結果がサーバーにも分からない時は、新しい操作で読み直す（同じ
+    // 操作では、前の答えしか返らないので先へ進めない）。
+    if (renewable(result)) operation.current = undefined;
     setState(result.status);
   };
   const record = async (proposal: ShownProposal) => {
@@ -3692,9 +3784,11 @@ export function SayCard({
           </Button>
         </div>
       </div>
-      <Text quiet>{ctx.t('say.privacy')}</Text>
+      <Text quiet>{ctx.t(ctx.trialInput ? 'say.privacyTrial' : 'say.privacy')}</Text>
       {state !== 'idle' && state !== 'hearing' && state !== 'recording' && (
-        <Text>{ctx.t(`say.${state}`)}</Text>
+        <Text>
+          {ctx.t(state === 'limit' && ctx.trialInput ? 'say.limitTrial' : `say.${state}`)}
+        </Text>
       )}
       {outdated && <Text>{ctx.t('say.outdated')}</Text>}
       {reply && (
@@ -3831,6 +3925,10 @@ function NoticeInputCard({
       ctx.go({ name: 'sources', sourceId: result.sourceId });
       return;
     }
+    // 足していないと分かっている時（読む間に前提が変わった・読み取りに失敗した）と、前の操作の結果がサーバーにも分から
+    // ない時は、同じ操作では送り直さず、次に押したら新しい操作にする（後者は、家族が予定を確かめてから）。結果が分から
+    // ない時（返事が届かない・記録の途中で止まった）と、混んでいる・数の上限の時は、同じ操作のまま押し直す。
+    if (renewable(result)) operation.current = undefined;
     setState(result.status);
   };
   return (
@@ -3925,13 +4023,21 @@ function NoticeInputCard({
         placeholder={ctx.t('input.placeholder')}
         className="w-full rounded-lg border border-line bg-card p-3 text-base leading-relaxed"
       />
-      <Text quiet>{ctx.t('input.clock', { now: dayTime(ctx, ctx.now) })}</Text>
-      <Text quiet>{ctx.t('input.privacy')}</Text>
+      <Text quiet>
+        {ctx.t(ctx.trialInput ? 'input.clockTrial' : 'input.clock', { now: dayTime(ctx, ctx.now) })}
+      </Text>
+      <Text quiet>{ctx.t(ctx.trialInput ? 'input.privacyTrial' : 'input.privacy')}</Text>
       {(state === 'limit' ||
         state === 'busy' ||
         state === 'uncertain' ||
         state === 'stale' ||
-        state === 'failed') && <Text>{ctx.t(`input.${state}`)}</Text>}
+        state === 'lost' ||
+        state === 'testOnly' ||
+        state === 'failed') && (
+        <Text>
+          {ctx.t(state === 'limit' && ctx.trialInput ? 'input.limitTrial' : `input.${state}`)}
+        </Text>
+      )}
       {tooLong && (
         <Text>
           {ctx.t('input.tooLong', { count: count(text.length), max: count(MAX_NOTICE_CHARS) })}

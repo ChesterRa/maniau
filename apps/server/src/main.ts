@@ -155,7 +155,7 @@ const transcriber = anthropic
       }
     }
   : undefined;
-// 家族の家庭を出すサーバーでは、デモの読み取りは開かない（createApp が外す）。
+// 家族の家庭を出すサーバーでは、デモの読み取りは開かない。家族の読み取りは身元を確かめた口で行う。
 const app = createApp({
   ...(family ? { family } : {}),
   ...(demoGate
@@ -176,7 +176,7 @@ app.get('/*', serveStatic({ root: webDist, path: 'index.html' }));
 
 const port = Number(process.env.PORT ?? 8787);
 serve({ fetch: app.fetch, port }, (info) => {
-  const mode = `${family ? `家族の家庭とデモ、知らせ${backend?.jobs ? 'あり' : 'なし'}` : `デモだけ${demoGate ? '（入口で身元を確かめる）' : ''}`}、読み取り${reader && !family ? 'あり' : 'なし'}`;
+  const mode = `${family ? `家族の家庭とデモ、知らせ${backend?.jobs ? 'あり' : 'なし'}` : `デモだけ${demoGate ? '（入口で身元を確かめる）' : ''}`}、読み取り${reader ? 'あり' : 'なし'}`;
   console.log(`まにあう：http://localhost:${info.port}（${mode}）`);
   backend?.jobs?.start();
 });

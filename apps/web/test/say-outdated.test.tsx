@@ -108,5 +108,5 @@ it('記録が届いたか分からない時は、答えを閉じ、確かめる�
   expect(button('記録する')).toBeUndefined();
   // 送り直しと手放しは画面の上の表示だけで行う（片付いた後に、この欄に古い「分からない」を残さない）。
   expect(host.textContent).not.toContain('分かりません');
-  expect(host.textContent).not.toContain('返事が届きませんでした');
+  expect(host.textContent).not.toContain('結果が分かりませんでした');
 });
