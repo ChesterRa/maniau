@@ -236,9 +236,9 @@ Milo、OurHome、Yohana、プリゼロは、公式資料を取得できなかっ
 35. https://techcrunch.com/2017/07/19/claraseriesa/
 36. https://techcrunch.com/2024/08/22/dropbox-acquires-index-ventures-backed-ai-scheduling-tool-reclaim-ai/
 37. https://www.usemotion.com/calendar
-38. https://www.thestack.technology/clockwises-team-joins-salesforce-sunsetting-platform-as-they-go/／https://help.reclaim.ai/en/articles/14071543
+38. <https://www.thestack.technology/clockwises-team-joins-salesforce-sunsetting-platform-as-they-go/>／<https://help.reclaim.ai/en/articles/14071543>
 39. https://blog.google/products/workspace/help-me-schedule-gmail-gemini/
-40. https://mc.merill.net/message/RM542185／https://mc.merill.net/message/MC1296874
+40. <https://mc.merill.net/message/RM542185>／<https://mc.merill.net/message/MC1296874>
 
 **製品（確認日 2026-11-02）**
 
@@ -246,12 +246,12 @@ Milo、OurHome、Yohana、プリゼロは、公式資料を取得できなかっ
 42. https://weekly.ascii.jp/elem/000/004/049/4049464/
 43. https://apps.apple.com/jp/app/papercal/id6757946147
 44. https://apps.apple.com/jp/app/id6443837941
-45. https://www.watch.impress.co.jp/docs/news/1605367.html／https://it.impress.co.jp/articles/-/25184／https://www.advertimes.com/?p=556456／https://timetreeapp.com/intl/ja/newsroom/2026-09-01/mvw-redefine
+45. <https://www.watch.impress.co.jp/docs/news/1605367.html>／<https://it.impress.co.jp/articles/-/25184>／<https://www.advertimes.com/?p=556456>／<https://timetreeapp.com/intl/ja/newsroom/2026-09-01/mvw-redefine>
 46. https://www.watch.impress.co.jp/docs/news/2121879.html
 47. https://www.apple.com/newsroom/2025/06/apple-elevates-the-iphone-experience-with-ios-26/
-48. https://tetoru.jp/／https://apps.apple.com/jp/app/id1513854843／https://machicomi.jp/／https://www.codmon.com/／https://lookmee.jp/
+48. <https://tetoru.jp/>／<https://apps.apple.com/jp/app/id1513854843>／<https://machicomi.jp/>／<https://www.codmon.com/>／<https://lookmee.jp/>
 49. https://media.moneyforward.com/articles/1132
-50. https://apps.apple.com/us/app/id6746368694／https://techcrunch.com/2026/09/01/fambot-introduces-an-ai-chief-of-staff-for-families/
+50. <https://apps.apple.com/us/app/id6746368694>／<https://techcrunch.com/2026/09/01/fambot-introduces-an-ai-chief-of-staff-for-families/>
 51. https://www.ohai.ai/
 52. https://apps.apple.com/us/app/id6739470108
 53. https://heynori.com/appfeatures/email-to-calendar

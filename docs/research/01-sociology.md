@@ -185,9 +185,9 @@ Web検索の上限に達したため、次は確かめられていない。
 - Dean, Churchill & Ruppanner 2022, The mental load, Community, Work & Family. https://doi.org/10.1080/13668803.2021.2002813
 - Reich-Stiebert ら 2023, Gendered Mental Labor, Sex Roles 88:475–494. https://doi.org/10.1007/s11199-023-01362-0
 - Offer 2014, The Costs of Thinking About Work and Family, Sociological Forum 29(4):916–936. https://doi.org/10.1111/socf.12126
-- Ciciolla & Luthar 2019, Invisible Household Labor…, Sex Roles 81:467–486. https://doi.org/10.1007/s11199-018-1001-x （大学の記事：https://news.asu.edu/20190122-discoveries-asu-study-invisible-labor-can-negatively-impact-well-being-mothers）
-- Wayne ら 2023, Who's Remembering to Buy the Eggs?, J Bus Psychol 38(6):1159–1184. https://doi.org/10.1007/s10869-023-09887-7 （大学の記事：https://news.wfu.edu/2025/07/30/whos-remembering-to-buy-the-eggs/）
-- Weeks & Ruppanner 2024, A typology of US parents' mental loads, JMF 87(3):966–989. https://doi.org/10.1111/jomf.13057 （大学の発表：https://bath.ac.uk/announcements/mothers-bear-the-brunt-of-the-mental-load-managing-7-in-10-household-tasks）
+- Ciciolla & Luthar 2019, Invisible Household Labor…, Sex Roles 81:467–486. <https://doi.org/10.1007/s11199-018-1001-x> （大学の記事：<https://news.asu.edu/20190122-discoveries-asu-study-invisible-labor-can-negatively-impact-well-being-mothers>）
+- Wayne ら 2023, Who's Remembering to Buy the Eggs?, J Bus Psychol 38(6):1159–1184. <https://doi.org/10.1007/s10869-023-09887-7> （大学の記事：<https://news.wfu.edu/2025/07/30/whos-remembering-to-buy-the-eggs/>）
+- Weeks & Ruppanner 2024, A typology of US parents' mental loads, JMF 87(3):966–989. <https://doi.org/10.1111/jomf.13057> （大学の発表：<https://bath.ac.uk/announcements/mothers-bear-the-brunt-of-the-mental-load-managing-7-in-10-household-tasks>）
 - Aviv ら 2024, Cognitive household labor, Arch Women's Ment Health. https://doi.org/10.1007/s00737-024-01490-w
 - Harrington & Reese-Melancon 2022, Who is responsible for remembering?, Sex Roles 86:189–207. https://doi.org/10.1007/s11199-021-01264-z
 - Erickson 2005, Why emotion work matters, JMF 67(2):337–351. https://doi.org/10.1111/j.0022-2445.2005.00120.x
@@ -207,7 +207,7 @@ Web検索の上限に達したため、次は確かめられていない。
 - Neustaedter, Brush & Greenberg 2009, The calendar is crucial, ACM TOCHI 16(1). https://doi.org/10.1145/1502800.1502806
 - Davidoff ら 2011, Learning patterns of pick-ups and drop-offs…, CHI 2011:1175–1184. https://doi.org/10.1145/1978942.1979119
 - 総務省統計局「令和3年社会生活基本調査 結果の要約」. https://www.stat.go.jp/data/shakai/2021/pdf/youyakua.pdf ／統計Today No.190. https://www.stat.go.jp/info/today/pdf/190.pdf
-- 国立社会保障・人口問題研究所「第7回全国家庭動向調査」. https://www.ipss.go.jp/ps-katei/j/NSFJ7/Kohyo/Kohyo.asp （要約：https://www.psrn.jp/topics/detail.php?id=28140）
+- 国立社会保障・人口問題研究所「第7回全国家庭動向調査」. <https://www.ipss.go.jp/ps-katei/j/NSFJ7/Kohyo/Kohyo.asp> （要約：<https://www.psrn.jp/topics/detail.php?id=28140>）
 - JILPT「専業主婦世帯と共働き世帯」. https://www.jil.go.jp/kokunai/statistics/timeseries/html/g0212.html ／ https://www.jil.go.jp/kokunai/statistics/qa/a07.html
 - 大和ハウス工業 2017. https://kyodonewsprwire.jp/release/201705121676 ／2026. https://kyodonewsprwire.jp/release/202608264728
 - 不破・筒井 2010「家事分担に対する不公平感の国際比較分析」家族社会学研究 22(1):52–63. https://doi.org/10.4234/jjoffamilysociology.22.52

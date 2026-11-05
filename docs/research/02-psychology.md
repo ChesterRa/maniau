@@ -199,10 +199,10 @@
 11. Kliegel, Jäger & Phillips 2008. Adult age differences in event-based prospective memory. Psychol Aging. https://doi.org/10.1037/0882-7974.23.1.203
 12. Buehler, Griffin & Ross 1994. Exploring the "planning fallacy". JPSP. https://doi.org/10.1037/0022-3514.67.3.366
 13. Kruger & Evans 2004. If you don't want to be late, enumerate. JESP. https://doi.org/10.1016/j.jesp.2003.11.001
-14. Koole & van't Spijker 2000. Overcoming the planning fallacy through willpower. EJSP. https://doi.org/10.1002/1099-0992(200011/12)30:6<873::AID-EJSP22>3.0.CO;2-U
+14. Koole & van't Spijker 2000. Overcoming the planning fallacy through willpower. EJSP. <https://doi.org/10.1002/1099-0992%28200011%2F12%2930%3A6%3C873%3A%3AAID-EJSP22%3E3.0.CO%3B2-U>
 15. Roy, Mitten & Christenfeld 2008. Correcting memory improves accuracy of predicted task duration. JEP:Applied. https://doi.org/10.1037/1076-898X.14.3.266
 16. Flyvbjerg 2008. Curbing optimism bias and strategic misrepresentation in planning. Eur Plan Stud. https://doi.org/10.1080/09654310701747936
-17. Ariely & Wertenbroch 2002. Procrastination, deadlines, and performance. Psychol Sci. https://doi.org/10.1111/1467-9280.00441 （撤回通知：https://doi.org/10.1177/09567976261488042）
+17. Ariely & Wertenbroch 2002. Procrastination, deadlines, and performance. Psychol Sci. <https://doi.org/10.1111/1467-9280.00441> （撤回通知：<https://doi.org/10.1177/09567976261488042>）
 18. Ericson 2017. On the interaction of memory and procrastination. JEEA. https://doi.org/10.1093/jeea/jvw015
 19. Karlan et al. 2016. Getting to the top of mind: How reminders increase saving. Manag Sci. https://doi.org/10.1287/mnsc.2015.2296
 20. Altmann & Traxler 2014. Nudges at the dentist. Eur Econ Rev. https://doi.org/10.1016/j.euroecorev.2014.07.007
