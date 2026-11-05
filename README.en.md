@@ -62,6 +62,13 @@ The model reads, looks around, infers unstated preparations, and explains. Date 
 | Notifications | — | Whether something can't wait, and the independent verifier's gate |
 | Suggestions | Search words for stores, ideas for ways | Nothing changes until the family checks and edits them |
 
+Claude features used in the product:
+
+- **Model:** The six calls (reading notices, transcribing photos and PDFs, quick updates, ideas for ways, store search words, and looking around) default to Claude Opus 5.5 (effort medium). This is set in one place, `apps/server/src/reading/model.ts`, and fast mode is switched on with an environment variable.
+- **Structured outputs:** The five calls other than looking around return structured outputs with a defined schema (Zod). Looking around returns JSON in text, which is checked against a schema in the same way.
+- **Image and PDF input:** Photos and PDFs of notices are read as they are. Before the call, input tokens are counted with the same request shape (count_tokens), and inputs that are too large are refused.
+- **Server-side web search and page fetching:** Looking around uses web_search and web_fetch (with use limits) to find and read pages, and continues responses that pause (pause_turn). Code checks that the sentence Claude cites is in the text of a fetched page.
+
 ## How it works
 
 ```mermaid
@@ -95,6 +102,12 @@ flowchart TB
 - Changes the family records and readings of notices are kept as events, and the plan is always recomputed from the events. What-if calculations, and quick updates or looks around that haven't been confirmed, are not recorded as events. Plans stay linked to the original notice text or to what the family said.
 - The verifier is written without importing the planning engine (a lint rule enforces this) and checks the plan independently against household information and events. What it can't check is reported as undetermined, never as “no problems”.
 - Tests run without an API key (they use Claude responses recorded from fictional material). There are more than 1,800 tests across core, the verifier, the web app and the server.
+
+### The general core and the parts for the first area
+
+- **General core** (not split by area): the event log and sources, “things to do” with a deadline or a time window, ways with their steps and prerequisites, working back to decision deadlines, separate states for proposals, taking on, requests and replies, the differences after a change and drafts of cancellations, what-if calculations (“If you choose this”, “What if they say no?”), what's around us and how the family treats each place, the decision to notify, and the independent verifier.
+- **Parts for the first area** (fitted today to dual-income families raising children): some kinds of items and ways (where a child will be, belongings, drop-off and pick-up, after-school care), the prompts for reading notices and looking around, the kinds of places looked for (sick-child care, temporary childcare, family support), family roles (adult, child, helper), Japanese holidays and time zone, and the demo family.
+- From the screens, you can add to what's around us only stores and places found by looking around (not places of any other kind). Whether this works in other areas will be decided after studying each area's people, resources, deadlines and exceptions, and trying it.
 
 ## Tour of the demo
 
@@ -150,7 +163,9 @@ Next:
 - Regular re-checks of what's around us (for now, Maniau looks again only when the family taps).
 - Using the family's usual places for recommending ways too (such as a usual sick-child care room).
 - More kinds of places to look for (now sick-child care, temporary childcare and family support), and looking around for family households.
-- Whether this extends to similar arrangements outside childcare (choices with deadlines, and favors asked of others). We'll study each area's people, resources, deadlines and exceptions, and try it, before deciding (today's data model and screens assume a household).
+- Outside childcare, we'll look first at arranging gatherings (club activities, events, get-togethers). Not a date poll: it would connect the decision deadlines that come from a venue's application period or group registration, who takes on what after deciding, and whom to check with again after a change. People make the decisions.
+  - Step by step, checking each before the next: the organizer's arrangements, then a way for participants to answer and correct their own replies, then a club's whole season.
+  - Many people deciding one thing needs a new data model that holds each person's intent and who can see what. It isn't built yet (today's data model and screens assume a household).
 
 What Maniau can't do yet, and what hasn't been checked, is listed in [Details and limitations](docs/scope.en.md#current-scope-and-limitations).
 
