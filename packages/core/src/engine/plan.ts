@@ -1412,14 +1412,17 @@ function careOption(
   const optionKey = keys.option(arrangementKey, template.id);
   // 依頼を送って済みになった手順は、送った依頼の日で見る。前の日の分を送った済みは、今の日に当てず、
   // 引き受けた所に戻す（今の日の分を頼み直せるように）。控えに時間の無い古い事象は、時間からは決めない。
-  // 取り消しを伝えた依頼は、送ったことにしない（案がまた要るなら、頼み直す）。
+  // 取り消しを伝えた依頼を理由に、送ったことにしない（頼み直す）のは、手配がまだ要る（生きている）時だけ。要らなく
+  // なった手配では、取り消しを理由には開き直さない（頼んだ・取り消しを伝えた、のどちらも済んだ事。引き受けに戻すと、
+  // もう要らない作業を引き受けた物として本人に見せ、検証器の記録とも食い違う）。前の日の分を今の日に当てない上の
+  // 決まりは、これとは別で、生きているかに関わらず今までどおり。
   const reopenOf = (key: string) => {
     const sentWith = ctx.state.commitmentLog.get(key)?.at(-1)?.requestId;
     const sent = sentWith === undefined ? undefined : ctx.state.requests.get(sentWith);
     const sentDay = sent === undefined ? undefined : requestDay(sent, ctx.tz);
     return (
       sent !== undefined &&
-      (sent.state === 'cancelled' || (sentDay !== undefined && sentDay !== needDate))
+      ((sent.state === 'cancelled' && live) || (sentDay !== undefined && sentDay !== needDate))
     );
   };
   // 済ませた手順（今の用件を済ませた物）は、もう時間を使わない。置くのは残りの手順だけ（済ませた時刻は記録に
