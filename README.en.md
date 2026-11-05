@@ -20,7 +20,7 @@ And the math only works if you know what's around your home. Does the sick-child
 
 | Compare decision deadlines | Around us | See what changes before saving |
 |---|---|---|
-| <img src="docs/images/decide.en.png" width="250" alt="Deciding child care for 陽菜: each option's decision deadline and what happens if you choose it"> | <img src="docs/images/around-us.en.png" width="250" alt="Around us: advance registration for a sick-child care room, and the usual store"> | <img src="docs/images/what-changes.en.png" width="250" alt="Setting the usual store to candidate shows, before saving, that the shirt errand moves to another store"> |
+| <img src="docs/images/decide.en.png" width="250" alt="Deciding child care for 陽菜: four choices left and which goes next, plus after-school care's estimated deadline and what you would start if you chose it"> | <img src="docs/images/around-us.en.png" width="250" alt="Around us: advance registration for a sick-child care room, and the usual store"> | <img src="docs/images/what-changes.en.png" width="250" alt="Setting the usual store to candidate shows, before saving, that the shirt errand moves to another store"> |
 
 All screens show the fictional demo family.
 

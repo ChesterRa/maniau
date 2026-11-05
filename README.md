@@ -20,7 +20,7 @@ Built with Claude: Japan 2026 応募作品
 
 | 決め時を比べる | 周りの資源 | 保存の前に、変わることを見る |
 |---|---|---|
-| <img src="docs/images/decide.ja.png" width="250" alt="陽菜の預け先を決める画面。手ごとの決め時と、選んだら何が起きるか"> | <img src="docs/images/around-us.ja.png" width="250" alt="周りの資源。病児保育室の事前の登録と、いつも使う店"> | <img src="docs/images/what-changes.ja.png" width="250" alt="いつもの店を候補にすると、シャツを買う店が替わることを保存の前に見せる"> |
+| <img src="docs/images/decide.ja.png" width="250" alt="陽菜の預け先を決める画面。残る4つの手と次に消える手、学童に預ける時の決め時と、選んだら始める作業"> | <img src="docs/images/around-us.ja.png" width="250" alt="周りの資源。病児保育室の事前の登録と、いつも使う店"> | <img src="docs/images/what-changes.ja.png" width="250" alt="いつもの店を候補にすると、シャツを買う店が替わることを保存の前に見せる"> |
 
 画面はすべて架空のデモの家族です。
 
