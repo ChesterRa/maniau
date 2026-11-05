@@ -1,14 +1,15 @@
 // @vitest-environment happy-dom
-// 声で欄に入れる：ブラウザの音声認識（試験では偽の物）で一回の発話を文字にし、欄の今の文字の後ろに一度だけ足す。
-// 送らない・読まない（押すのは家族）。押す前に、声を文字にするのはブラウザや端末の認識だと読める。止めた・送った・
-// 画面を離れた後に届いた知らせは使わない。失敗の時の途中の文字は入れず、キーボードのマイクへ案内する。使えない
-// ブラウザでは押しボタンを出さない。偽の認識で確かめるのは、押した後の動きと順だけ（どの端末で認識できるかではない）。
+// 声で欄に入れる：ブラウザの音声認識（試験では偽の物）で発話を文字にし、発話ごとに欄の今の文字の後ろに一度だけ
+// 足す。話の間で黙っても止めず、「止める」を押すか、しばらく黙るまで聞く。送らない・読まない（押すのは家族）。押す
+// 前に、声を文字にするのはブラウザや端末の認識だと読める。止めた・送った・画面を離れた後に届いた知らせは使わない。
+// 失敗の時の途中の文字は入れず、キーボードのマイクへ案内する。使えないブラウザでは押しボタンを出さない。偽の認識で
+// 確かめるのは、押した後の動きと順だけ（どの端末で認識できるか、実際に何秒で発話が切れるかではない）。
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HearResult, NoticeInput, ReadResult } from '../src/family';
 import i18n from '../src/i18n';
 import { type Ctx, SayCard, SourcesScreen } from '../src/screens';
-import { appendHeard } from '../src/voice';
+import { appendHeard, SILENCE_MS } from '../src/voice';
 import { step } from './fake-fetch';
 
 class FakeRecognition {
@@ -21,12 +22,20 @@ class FakeRecognition {
     null;
   onerror: ((event: { error: string }) => void) | null = null;
   onend: (() => void) | null = null;
+  onspeechstart: (() => void) | null = null;
+  onspeechend: (() => void) | null = null;
   calls: string[] = [];
+  /** この後の start のうち、投げる回数（前の認識がまだ離れていない時の形）。 */
+  throwOnStart = 0;
   constructor() {
     FakeRecognition.all.push(this);
   }
   start() {
     this.calls.push('start');
+    if (this.throwOnStart > 0) {
+      this.throwOnStart -= 1;
+      throw new Error('InvalidStateError');
+    }
   }
   stop() {
     this.calls.push('stop');
@@ -40,6 +49,9 @@ class FakeRecognition {
   }
   end() {
     this.onend?.();
+  }
+  speech(started: boolean) {
+    (started ? this.onspeechstart : this.onspeechend)?.();
   }
   fail(error: string) {
     this.onerror?.({ error });
@@ -132,7 +144,7 @@ describe('文字の足し方', () => {
 });
 
 describe('ひとことの欄', () => {
-  it('押す前に注記が読め、押すと画面の言葉で一回だけ聞き、終わりに欄の後ろへ足す（送らない）', async () => {
+  it('押す前に注記が読め、押すと画面の言葉で聞き、発話の終わりに欄の後ろへ足す（送らない）', async () => {
     const { heard } = await sayCard();
     expect(host.textContent).toContain('ブラウザや端末の音声認識が、声を文字にします');
     expect(host.textContent).toContain('アプリには文字だけが届きます');
@@ -151,8 +163,15 @@ describe('ひとことの欄', () => {
     await step(() => r.hear('12月7日は', '大丈夫だって'));
     await step(() => r.end());
     expect(area().value).toBe('おばあちゃん 12月7日は大丈夫だって');
+    // 発話が終わっても、止めるまで聞き続ける（同じ認識を始め直す）。
+    expect(button('止める')).toBeDefined();
+    expect(host.textContent).toContain('「止める」を押してください');
+    await step(() => button('止める')?.click());
+    await step(() => r.end());
+    expect(r.calls).toEqual(['start', 'start', 'stop']);
     expect(button('話す')).toBeDefined();
     expect(host.textContent).not.toContain('聞いています');
+    expect(area().value).toBe('おばあちゃん 12月7日は大丈夫だって');
     expect(heard).toEqual([]);
     // 足した文は、押した時に送る。
     await step(() => button('伝える')?.click());
@@ -196,7 +215,6 @@ describe('ひとことの欄', () => {
       ['not-allowed', 'マイクを使う許可がありません'],
       ['service-not-allowed', 'ここでは音声認識を使えませんでした'],
       ['network', '音声認識につながりませんでした'],
-      ['no-speech', '声が聞き取れませんでした'],
       ['audio-capture', 'マイクが見つかりませんでした'],
       ['bad-grammar', '聞き取れませんでした。もう一度押すか'],
     ];
@@ -212,6 +230,184 @@ describe('ひとことの欄', () => {
     // もう一度押せば、前の失敗の文は消える。
     await step(() => button('話す')?.click());
     expect(host.textContent).not.toContain('聞き取れませんでした。もう一度押すか');
+  });
+
+  it('話の間で黙っても止めず、発話ごとに欄の後ろへ足す（同じ認識を始め直す）', async () => {
+    await sayCard();
+    await step(() => button('話す')?.click());
+    const r = last();
+    await step(() => r.hear('一つ目'));
+    await step(() => r.end());
+    expect(area().value).toBe('一つ目');
+    expect(button('止める')).toBeDefined();
+    // 声の無い間の知らせ（no-speech）は、聞き続ける間は失敗と出さない。
+    await step(() => r.fail('no-speech'));
+    await step(() => r.end());
+    expect(host.textContent).not.toContain('声が聞き取れませんでした');
+    expect(button('止める')).toBeDefined();
+    await step(() => r.hear('二つ目'));
+    await step(() => r.end());
+    expect(area().value).toBe('一つ目 二つ目');
+    expect(FakeRecognition.all).toHaveLength(1);
+    expect(r.calls).toEqual(['start', 'start', 'start', 'start']);
+    // 二つ目の後の失敗では止め、それまでに足した文字は残す（途中の文字は入れない）。
+    await step(() => r.hear('途中'));
+    await step(() => r.fail('network'));
+    await step(() => r.end());
+    expect(area().value).toBe('一つ目 二つ目');
+    expect(button('話す')).toBeDefined();
+    expect(host.textContent).toContain('音声認識につながりませんでした');
+  });
+
+  it('しばらく何も聞こえなければ止まる。一度も聞き取れなかった時だけ、そう出す', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await sayCard();
+      await step(() => button('話す')?.click());
+      const quiet = last();
+      await step(() => vi.advanceTimersByTime(SILENCE_MS - 1000));
+      expect(quiet.calls).toEqual(['start']);
+      await step(() => vi.advanceTimersByTime(1500));
+      expect(quiet.calls).toEqual(['start', 'stop']);
+      await step(() => quiet.fail('no-speech'));
+      await step(() => quiet.end());
+      expect(button('話す')).toBeDefined();
+      expect(host.textContent).toContain('声が聞き取れませんでした');
+
+      // 聞き取れた後に黙った時は、止まるだけ（文字は欄にある）。数えるのは、最後に文字が返った時と、発話の終わり
+      // から（声のやんだ知らせが無いブラウザでも）。
+      await step(() => button('話す')?.click());
+      const r = last();
+      await step(() => vi.advanceTimersByTime(SILENCE_MS - 1000));
+      await step(() => r.hear('はい'));
+      await step(() => vi.advanceTimersByTime(SILENCE_MS - 1000));
+      expect(r.calls).toEqual(['start']);
+      await step(() => r.end());
+      await step(() => vi.advanceTimersByTime(SILENCE_MS - 1000));
+      expect(r.calls).toEqual(['start', 'start']);
+      await step(() => vi.advanceTimersByTime(1500));
+      expect(r.calls).toEqual(['start', 'start', 'stop']);
+      await step(() => r.end());
+      expect(area().value).toBe('はい');
+      expect(button('話す')).toBeDefined();
+      expect(host.textContent).not.toContain('声が聞き取れませんでした');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('声の無いまま終わりと始め直しを繰り返しても、黙ってから 8 秒ほどで止まる', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await sayCard();
+      await step(() => button('話す')?.click());
+      const quiet = last();
+      await step(() => vi.advanceTimersByTime(5000));
+      await step(() => quiet.fail('no-speech'));
+      await step(() => quiet.end());
+      await step(() => vi.advanceTimersByTime(2000));
+      expect(quiet.calls).toEqual(['start', 'start']);
+      await step(() => vi.advanceTimersByTime(1500));
+      expect(quiet.calls).toEqual(['start', 'start', 'stop']);
+      await step(() => quiet.end());
+      expect(host.textContent).toContain('声が聞き取れませんでした');
+
+      // 話した後も同じ：数えるのは話し終えた時からで、声の無い終わりでは数え直さない。
+      await step(() => button('話す')?.click());
+      const r = last();
+      await step(() => r.hear('はい'));
+      await step(() => r.end());
+      await step(() => vi.advanceTimersByTime(5000));
+      await step(() => r.fail('no-speech'));
+      await step(() => r.end());
+      await step(() => vi.advanceTimersByTime(2000));
+      expect(r.calls).toEqual(['start', 'start', 'start']);
+      await step(() => vi.advanceTimersByTime(1500));
+      expect(r.calls).toEqual(['start', 'start', 'start', 'stop']);
+      await step(() => r.end());
+      expect(area().value).toBe('はい');
+      expect(host.textContent).not.toContain('声が聞き取れませんでした');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('声が聞こえている間は、文字がまだ返らなくても止めない（声がやんでから数える）', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await sayCard();
+      await step(() => button('話す')?.click());
+      const r = last();
+      await step(() => vi.advanceTimersByTime(SILENCE_MS - 1000));
+      await step(() => r.speech(true));
+      await step(() => vi.advanceTimersByTime(SILENCE_MS + 2000));
+      expect(r.calls).toEqual(['start']);
+      await step(() => r.hear('ゆっくり話した'));
+      await step(() => vi.advanceTimersByTime(SILENCE_MS + 2000));
+      expect(r.calls).toEqual(['start']);
+      await step(() => r.speech(false));
+      await step(() => vi.advanceTimersByTime(SILENCE_MS - 1000));
+      expect(r.calls).toEqual(['start']);
+      await step(() => vi.advanceTimersByTime(1500));
+      expect(r.calls).toEqual(['start', 'stop']);
+      await step(() => r.end());
+      expect(area().value).toBe('ゆっくり話した');
+      expect(button('話す')).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('送った・画面を離れた後は、時間がたっても止めず、始め直さない', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await sayCard();
+      await step(() => button('話す')?.click());
+      const sent = last();
+      await step(() => type('おばあちゃん大丈夫'));
+      await step(() => button('伝える')?.click());
+      await step(() => vi.advanceTimersByTime(SILENCE_MS * 2));
+      await step(() => sent.end());
+      expect(sent.calls).toEqual(['start', 'abort']);
+
+      await step(() => root.unmount());
+      root = createRoot(host);
+      await sayCard();
+      await step(() => button('話す')?.click());
+      const left = last();
+      await step(() => root.unmount());
+      root = createRoot(host);
+      await step(() => vi.advanceTimersByTime(SILENCE_MS * 2));
+      left.end();
+      expect(left.calls).toEqual(['start', 'abort']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('始め直せない時は、少し待って一度だけ試し、だめなら止める（そこまでの文字は残す）', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await sayCard();
+      await step(() => button('話す')?.click());
+      const r = last();
+      r.throwOnStart = 1;
+      await step(() => r.hear('一つ目'));
+      await step(() => r.end());
+      await step(() => vi.advanceTimersByTime(300));
+      expect(r.calls).toEqual(['start', 'start', 'start']);
+      expect(button('止める')).toBeDefined();
+      r.throwOnStart = 2;
+      await step(() => r.hear('二つ目'));
+      await step(() => r.end());
+      await step(() => vi.advanceTimersByTime(300));
+      expect(r.calls).toEqual(['start', 'start', 'start', 'start', 'start']);
+      expect(button('話す')).toBeDefined();
+      expect(area().value).toBe('一つ目 二つ目');
+      expect(host.textContent).not.toContain('聞き取れませんでした');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('聞いている間に「伝える」を押したら、聞いている物を捨て、押した時の文字で送る（後から届いても足さない）', async () => {

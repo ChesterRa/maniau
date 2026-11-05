@@ -1,5 +1,6 @@
-// 声で欄に入れる：ブラウザの音声認識（あれば）で一回の発話を文字にし、欄の今の文字の後ろに足す。送らない・記録
-// しない（送るのは、家族が文字を確かめて押した時だけ）。声はこのアプリに届かない（受け取るのは、認識した文字だけ）。
+// 声で欄に入れる：ブラウザの音声認識（あれば）で発話を文字にし、欄の今の文字の後ろに足す。話の間で少し黙っても
+// 止めず、「止める」を押すか、しばらく黙るまで聞く。送らない・記録しない（送るのは、家族が文字を確かめて押した時
+// だけ）。声はこのアプリに届かない（受け取るのは、認識した文字だけ）。
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import type { Ctx } from './screens';
 import { Text } from './ui';
@@ -13,6 +14,9 @@ export interface Recognition {
   onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
   onerror: ((event: { error: string }) => void) | null;
   onend: (() => void) | null;
+  /** 人の声が聞こえ始めた・やんだ（届かないブラウザもある。ほかの知らせとの順は決まっていない）。 */
+  onspeechstart: (() => void) | null;
+  onspeechend: (() => void) | null;
   start(): void;
   stop(): void;
   abort(): void;
@@ -47,14 +51,39 @@ export function appendHeard(before: string, heard: string): string {
   return before.length === 0 || /\s$/.test(before) ? `${before}${add}` : `${before} ${add}`;
 }
 
-/** 一回の聞き取り。done の後に届いた知らせは使わない（取り消した後・失敗の後・画面を離れた後）。 */
-type Session = { recognition: Recognition; latest: string; stopping: boolean; done: boolean };
+/** 黙っている時間がこれを超えたら、聞くのを止める（マイクを開けたままにしない）。 */
+export const SILENCE_MS = 8000;
+/** 認識を始め直せなかった時に、もう一度だけ試すまでの間。 */
+const RETRY_MS = 250;
 
 /**
- * 押しボタンと、聞いている間・失敗の一行と、押す前に読める注記。onHeard には聞き取った文字だけを、一回の発話に
- * 一度だけ渡す（欄の今の文字に足すのは呼ぶ側。聞き始めた時の文字で上書きしない）。disabled になったら（送る・
- * 読むを押した等）、聞いている物を捨てる（押した時の文字で送る）。画面を離れた時も捨てる。send は、その欄の送る
- * 押しボタンの名前（注記に使う）。
+ * 一回の聞き取り（「話す」から止まるまで）。認識は発話ごとに終わるので、同じ物を始め直して続けて聞く（続けて聞く
+ * 形は、iOS の Safari で文字が重なることがある）。latest は今の発話の文字、heard はこの聞き取りで文字を渡したか、
+ * speaking は声が聞こえている間（その間は黙っている時間を数えない）。done の後に届いた知らせは使わない（取り消した
+ * 後・失敗の後・画面を離れた後）。
+ */
+type Session = {
+  recognition: Recognition;
+  latest: string;
+  heard: boolean;
+  speaking: boolean;
+  stopping: boolean;
+  quiet: boolean;
+  done: boolean;
+  timer?: ReturnType<typeof setTimeout>;
+};
+
+/** 黙っている時間を数えるのをやめる。 */
+function disarm(s: Session) {
+  clearTimeout(s.timer);
+  s.timer = undefined;
+}
+
+/**
+ * 押しボタンと、聞いている間・失敗の一行と、押す前に読める注記。onHeard には聞き取った文字だけを、一つの発話に
+ * 一度だけ、発話が終わるたびに渡す（欄の今の文字に足すのは呼ぶ側。聞き始めた時の文字で上書きしない）。
+ * disabled になったら（送る・読むを押した等）、今の発話を捨てる（押した時の文字で送る）。画面を離れた時も捨てる。
+ * send は、その欄の送る押しボタンの名前（注記に使う）。
  */
 export function useVoice({
   ctx,
@@ -80,6 +109,7 @@ export function useVoice({
     const s = session.current;
     if (!s) return;
     s.done = true;
+    disarm(s);
     session.current = undefined;
     s.recognition.abort();
     setListening(false);
@@ -90,6 +120,7 @@ export function useVoice({
       const s = session.current;
       if (!s) return;
       s.done = true;
+      disarm(s);
       session.current = undefined;
       s.recognition.abort();
     },
@@ -98,9 +129,45 @@ export function useVoice({
 
   const finish = (s: Session) => {
     s.done = true;
+    disarm(s);
     if (session.current === s) session.current = undefined;
     setListening(false);
     setInterim('');
+  };
+  /**
+   * 黙っている時間を数え直す。超えたら止める（止まった時に、何も聞こえていなければそう出す）。声が聞こえている間は
+   * 数えない（話し始めてから文字が返るまでに止めない）。
+   */
+  const wait = (s: Session) => {
+    disarm(s);
+    if (s.speaking) return;
+    s.timer = setTimeout(() => {
+      s.timer = undefined;
+      if (s.done) return;
+      s.stopping = true;
+      s.quiet = true;
+      s.recognition.stop();
+    }, SILENCE_MS);
+  };
+  /** 発話が終わった後、同じ認識を始め直す。始められなければ少し待って一度だけ試し、だめなら止める。 */
+  const again = (s: Session) => {
+    try {
+      s.recognition.start();
+    } catch {
+      setTimeout(() => {
+        if (s.done) return;
+        // 待つ間に「止める」を押した・黙っている時間が過ぎた：始め直さずに止める。
+        if (s.stopping) {
+          finish(s);
+          return;
+        }
+        try {
+          s.recognition.start();
+        } catch {
+          finish(s);
+        }
+      }, RETRY_MS);
+    }
   };
   const start = () => {
     if (!Recognition || session.current || disabled) return;
@@ -111,7 +178,15 @@ export function useVoice({
       setError('other');
       return;
     }
-    const s: Session = { recognition, latest: '', stopping: false, done: false };
+    const s: Session = {
+      recognition,
+      latest: '',
+      heard: false,
+      speaking: false,
+      stopping: false,
+      quiet: false,
+      done: false,
+    };
     recognition.lang = ctx.lang === 'ja' ? 'ja-JP' : 'en-US';
     recognition.continuous = false;
     recognition.interimResults = true;
@@ -120,18 +195,49 @@ export function useVoice({
       if (s.done) return;
       s.latest = Array.from(event.results, (result) => result[0]?.transcript ?? '').join('');
       setInterim(s.latest);
+      wait(s);
+    };
+    recognition.onspeechstart = () => {
+      if (s.done) return;
+      s.speaking = true;
+      disarm(s);
+    };
+    recognition.onspeechend = () => {
+      if (s.done) return;
+      s.speaking = false;
+      wait(s);
     };
     recognition.onerror = (event) => {
       if (s.done) return;
+      // 声が無かった：止めていなければ聞き続け（終わりで始め直す）、止めていれば終わりで止まる。
+      if (event.error === 'no-speech') return;
+      // ほかの失敗では止める。今の発話の途中の文字は欄に入れない（前の発話の文字は、もう欄にある）。ブラウザが
+      // 取り消した時は、失敗とは出さない（こちらが取り消す時は、先に done にしている）。
       finish(s);
-      // 止めた・押して止めた後に声が無かった、は失敗として出さない。失敗の時の途中の文字は欄に入れない。
-      if (event.error === 'aborted' || (s.stopping && event.error === 'no-speech')) return;
+      if (event.error === 'aborted') return;
       setError(ERRORS[event.error] ?? 'other');
     };
     recognition.onend = () => {
       if (s.done) return;
+      const said = s.latest;
+      const spoke = said.trim().length > 0 || s.speaking;
+      s.latest = '';
+      s.speaking = false;
+      setInterim('');
+      if (said.trim().length > 0) {
+        s.heard = true;
+        heardRef.current(said);
+      }
+      if (!s.stopping) {
+        // 声か文字のあった発話は、その終わりから数え直す（声のやんだ知らせが無いブラウザでも）。何も聞こえずに
+        // 終わった時（no-speech）は数え直さない（声の無いまま終わりと始め直しを繰り返しても、止まるように）。
+        if (spoke || s.timer === undefined) wait(s);
+        again(s);
+        return;
+      }
       finish(s);
-      if (s.latest.trim().length > 0) heardRef.current(s.latest);
+      // 黙っていて止まり、一度も聞き取れなかった時だけ、そう出す（押して止めた時は出さない）。
+      if (s.quiet && !s.heard) setError('noSpeech');
     };
     session.current = s;
     setError(undefined);
@@ -142,7 +248,9 @@ export function useVoice({
     } catch {
       finish(s);
       setError('other');
+      return;
     }
+    wait(s);
   };
   const stop = () => {
     const s = session.current;

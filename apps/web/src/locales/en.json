@@ -1866,7 +1866,7 @@
   "voice": {
     "start": "Speak",
     "stop": "Stop",
-    "listening": "Listening. It stops when you finish speaking.",
+    "listening": "Listening. Press “Stop” when you’re done (it also stops after about 8 seconds of silence).",
     "hearing": "Hearing: {{text}}",
     "notSent": "The text stays in the box until you press “{{send}}”.",
     "about": "“Speak” uses your browser or device’s speech recognition (your voice may be sent to its provider). The app gets only the text.",
