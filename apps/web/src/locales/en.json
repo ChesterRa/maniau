@@ -610,7 +610,7 @@
   },
   "input": {
     "label": "Add a notice",
-    "help": "Paste a notice from school or an activity, or speak it with your keyboard's microphone. Anything that can be planned becomes decisions and deadlines. What each sentence became is shown next to the original.",
+    "help": "Paste a notice from school or an activity, or speak it (your keyboard’s microphone works too, if it has one). Anything that can be planned becomes decisions and deadlines. What each sentence became is shown next to the original.",
     "sender": "From",
     "senders": {
       "school": "School",
@@ -661,6 +661,7 @@
     "label": "Quick update",
     "placeholder": "e.g. Grandma says 12/7 is fine",
     "submit": "Send",
+    "tooLong": "The text is too long ({{count}} characters; up to {{max}}). Delete what isn't needed, then press \"Send\".",
     "hearing": "Reading",
     "privacy": "Your update, this demo's (fictional) family and helper names, and the current items, tasks and requests (including the people and places involved) are sent to Anthropic. Don't include anything that identifies a person or place (names, school names, addresses).",
     "privacySummary": "Your update, the names of family and helpers, and current plans and requests are sent to Anthropic. Leave out words that identify people or places.",
@@ -1695,6 +1696,23 @@
       "invalid": "This link can’t be used (it was stopped or replaced). Please ask the person who sent it.",
       "tooMany": "Opened too many times in a row. Please wait a moment and open it again.",
       "failed": "Couldn’t load right now. Please open it again shortly."
+    }
+  },
+  "voice": {
+    "start": "Speak",
+    "stop": "Stop",
+    "listening": "Listening. It stops when you finish speaking.",
+    "hearing": "Hearing: {{text}}",
+    "notSent": "The text stays in the box until you press “{{send}}”.",
+    "about": "“Speak” uses your browser or device’s speech recognition (your voice may be sent to its provider). The app gets only the text.",
+    "keyboard": "If your keyboard has a microphone, you can speak to type. Check the text, then press “{{send}}” (until you do, this app doesn’t send or record the text).",
+    "error": {
+      "notAllowed": "Microphone access isn’t allowed. Allow it in your browser settings, or use the microphone on your keyboard.",
+      "unavailable": "Speech recognition isn’t available here (it may not work in an app added to the home screen). Use the microphone on your keyboard.",
+      "network": "Couldn’t reach speech recognition. Check your connection, or use the microphone on your keyboard.",
+      "noSpeech": "No speech was heard. Press “Speak” and try again.",
+      "noMic": "No microphone was found.",
+      "other": "Couldn’t recognize speech. Try again, or use the microphone on your keyboard."
     }
   }
 }

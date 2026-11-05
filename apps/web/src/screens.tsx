@@ -93,6 +93,7 @@ import {
   Text,
   Title,
 } from './ui';
+import { appendHeard, useVoice } from './voice';
 import { WhenList } from './when';
 
 export type Route =
@@ -4175,6 +4176,9 @@ type SayState =
   | Exclude<HearResult['status'], 'ok'>
   | Exclude<ConfirmResult['status'], 'ok'>;
 
+/** ひとことの欄に入れられる長さ。 */
+const MAX_SAY_CHARS = 500;
+
 /**
  * ひとこと：家族が話した・打った一言を読み、どの作業・頼み事・値のことかを候補にして見せる。押すまで
  * 何も記録しない。候補の説明と答えの一覧は、計画から作る（モデルの書いた文は見せない）。
@@ -4199,6 +4203,18 @@ export function SayCard({
   // 同じ文の送り直しは同じ操作 ID で（読み直さない）。
   const operation = useRef<string | undefined>(undefined);
   const busy = state === 'hearing' || state === 'recording';
+  // 話した文字は欄の後ろに足すだけ（送るのは「伝える」）。文が変わるので、新しい操作にする。長くなっても切らず、
+  // 長すぎることを示して送らせない（家族が要らない所を消す。話した言葉を黙って落とさない）。
+  const voice = useVoice({
+    ctx,
+    disabled: busy,
+    send: ctx.t('say.submit'),
+    onHeard: (heard) => {
+      operation.current = undefined;
+      setText((before) => appendHeard(before, heard));
+    },
+  });
+  const tooLong = text.length > MAX_SAY_CHARS;
   const submit = async () => {
     setState('hearing');
     setHeard(undefined);
@@ -4253,17 +4269,31 @@ export function SayCard({
             setText(e.target.value);
           }}
           rows={2}
-          maxLength={500}
+          maxLength={MAX_SAY_CHARS}
           aria-label={ctx.t('say.label')}
           placeholder={ctx.t('say.placeholder')}
           className="min-w-0 flex-1 resize-none rounded-lg border border-line bg-card p-3 text-base leading-relaxed"
         />
-        <div className="flex w-24">
-          <Button onClick={() => void submit()} disabled={busy || text.trim().length === 0}>
+        <div className="flex w-24 flex-col gap-1.5">
+          <Button
+            onClick={() => void submit()}
+            disabled={busy || tooLong || text.trim().length === 0}
+          >
             {ctx.t(state === 'hearing' ? 'say.hearing' : 'say.submit')}
           </Button>
+          {voice.button}
         </div>
       </div>
+      {tooLong && (
+        <Text>
+          {ctx.t('say.tooLong', {
+            count: new Intl.NumberFormat(ctx.lang).format(text.length),
+            max: new Intl.NumberFormat(ctx.lang).format(MAX_SAY_CHARS),
+          })}
+        </Text>
+      )}
+      {voice.status}
+      {voice.note}
       {/* 送る物の注記は、後の札を押し下げないよう、要の一文にたたむ（開くと全文）。 */}
       <details className="text-sm text-sub">
         <summary className="min-h-9 cursor-pointer leading-relaxed">
@@ -4397,6 +4427,13 @@ function NoticeInputCard({
     await send(attempt.current);
   };
   const busy = state === 'reading' || photoState === 'preparing' || photoState === 'transcribing';
+  // 話した文字は欄の後ろに足すだけ（読むのは「読み取る」）。書き起こした文と同じく、長くても切らない。
+  const voice = useVoice({
+    ctx,
+    disabled: busy,
+    send: ctx.t('input.submit'),
+    onHeard: (heard) => change(() => setText((before) => appendHeard(before, heard))),
+  });
   // 書き起こした文は、長くても切らずに入れ、長すぎることを示す（読む前に家族が要らない所を消す）。
   const tooLong = text.length > MAX_NOTICE_CHARS;
   const count = (n: number) => new Intl.NumberFormat(ctx.lang).format(n);
@@ -4518,6 +4555,10 @@ function NoticeInputCard({
         placeholder={ctx.t('input.placeholder')}
         className="w-full rounded-lg border border-line bg-card p-3 text-base leading-relaxed"
       />
+      {voice.button && <div className="flex flex-wrap items-center gap-2">{voice.button}</div>}
+      {voice.status}
+      {/* 使えない時は、上の説明がキーボードのマイクを案内する。 */}
+      {voice.supported && voice.note}
       {/* デモだけ：初めて試す人が文を用意しなくてよいように、架空のお知らせを欄に入れる（読み取りは押した時だけ）。 */}
       {!ctx.trialInput && text.length === 0 && !busy && (
         <MoreLink onClick={() => change(() => setText(SAMPLE_NOTICE))}>
