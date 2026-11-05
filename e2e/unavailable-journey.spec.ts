@@ -1,0 +1,63 @@
+import { expect, test } from '@playwright/test';
+
+test('記録と消去の前後で、決めた日への重なりを確認する', async ({ page, request }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('/');
+  await page.getByRole('combobox', { name: '場面' }).selectOption('club');
+  await page.getByRole('button', { name: 'クラブの練習：答えを集めています（候補 2 つ）' }).click();
+  const card = page.locator('section').filter({ has: page.getByRole('heading', { name: /12\/19.*9:00/ }) });
+  await card.getByRole('button', { name: 'この日に決めたら変わることを見る' }).click();
+  await card.getByRole('button', { name: 'この日に決める', exact: true }).click();
+  await expect(page.getByText('決めた日', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'うち', exact: true }).first().click();
+  await page.getByRole('button', { name: 'この日だけ変える' }).click();
+  await page.getByRole('combobox', { name: 'だれ', exact: true }).selectOption('a');
+  await page.getByRole('textbox', { name: '日', exact: true }).fill('2026-12-19');
+  await page.getByLabel('始まり', { exact: true }).fill('09:30');
+  await page.getByLabel('終わり', { exact: true }).fill('10:30');
+  await page.getByRole('button', { name: 'この時間を足して見る' }).click();
+  await expect(page.getByText(/クラブの練習.*健太.*手が離せない時間/)).toBeVisible();
+  await page.getByRole('button', { name: '手が離せない時間を記録する' }).click();
+  await expect(page.getByRole('button', { name: /クラブの練習：決めた日が、記録した手が離せない時間/ })).toBeVisible();
+  await page.getByRole('button', { name: /クラブの練習：決めた日が、記録した手が離せない時間/ }).click();
+  await expect(page.getByText(/今の記録では、健太.*手が離せない時間と重なります/).first()).toBeVisible();
+  await page.getByRole('button', { name: 'うち', exact: true }).first().click();
+  await page.getByRole('button', { name: /健太：手が離せない 09:30–10:30/ }).click();
+  await page.getByRole('button', { name: '外して見る' }).click();
+  await expect(page.getByText(/クラブの練習.*重ならなくなります/)).toBeVisible();
+  await page.getByRole('button', { name: 'この時間を外して記録する' }).click();
+  await expect(page.getByRole('button', { name: /クラブの練習：決めた日が、記録した手が離せない時間/ })).toHaveCount(0);
+  expect(await (await request.get('http://127.0.0.1:18798/__count')).json()).toEqual({ calls: 0 });
+  expect(errors).toEqual([]);
+});
+
+test.describe('English desktop', () => {
+  test.use({ viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false, locale: 'en-US' });
+  test('家族の画面に、記録前と記録後の意味を分けて表示する', async ({ page, request }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.goto('/');
+    await page.getByRole('combobox', { name: '場面' }).selectOption('club');
+    await page.getByRole('button', { name: 'クラブの練習：答えを集めています（候補 2 つ）' }).click();
+    const card = page.locator('section').filter({ has: page.getByRole('heading', { name: /12\/19.*9:00/ }) });
+    await card.getByRole('button', { name: 'この日に決めたら変わることを見る' }).click();
+    await card.getByRole('button', { name: 'この日に決める', exact: true }).click();
+    await page.getByRole('button', { name: 'English', exact: true }).click();
+    await page.getByRole('button', { name: 'Family', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Change just one day' }).click();
+    await page.getByRole('combobox', { name: 'Who', exact: true }).selectOption('a');
+    await page.getByRole('textbox', { name: 'Date', exact: true }).fill('2026-12-19');
+    await page.getByLabel('Start', { exact: true }).fill('09:30');
+    await page.getByLabel('End', { exact: true }).fill('10:30');
+    await expect(page.getByText(/even at home/i)).toBeVisible();
+    await page.getByRole('button', { name: 'Add this time and see' }).click();
+    await expect(page.getByText(/if you record this change.*busy time/i)).toBeVisible();
+    await page.getByRole('button', { name: 'Record the busy time' }).click();
+    await expect(page.getByRole('button', { name: /クラブの練習: the chosen day overlaps a recorded busy time/ })).toBeVisible();
+    await page.getByRole('button', { name: /クラブの練習: the chosen day overlaps a recorded busy time/ }).click();
+    await expect(page.getByText(/By the current record, this overlaps busy time for 健太/).first()).toBeVisible();
+    expect(await (await request.get('http://127.0.0.1:18798/__count')).json()).toEqual({ calls: 0 });
+    expect(errors).toEqual([]);
+  });
+});
