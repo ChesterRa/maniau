@@ -22,6 +22,10 @@ And the math only works if you know what's around your home. Does the sick-child
 
 All screens show the fictional demo family.
 
+## Schools in Japan and working parents
+
+When a Saturday school event turns the following weekday into a make-up school holiday, a family may need to arrange care or adjust work for that day. In a [Children and Families Agency survey](https://www.cfa.go.jp/assets/contents/node/basic_page/field_ref_resources/69799c33-85cb-44f6-8c70-08ed3a292ab5/c253a682/20251222_policies_kosodateshien_houkago-jidou_80.pdf#page=11) (as of 2025-05-01, Japanese), 1,912 of the 25,928 after-school care (gakudō) clubs open on weekdays (7.4%) stayed open until 19:01 or later. The statutory leave for caring for a child (子の看護等休暇) does not cover attending a school observation day or a sports day, though an employer may choose to include them ([Ministry of Health, Labour and Welfare Q&A](https://jsite.mhlw.go.jp/shiga-roudoukyoku/content/contents/002519187.pdf#page=5), Japanese). The maker is also a parent raising children in Japan.
+
 ## Three core ideas
 
 ### 1. Around us: kept by your family and Claude together
@@ -140,6 +144,7 @@ Built: the three core ideas above; reading notices, photos and quick updates; th
 
 Next:
 
+- After the hackathon: once the gate before real family data is met ([foundation design](docs/design/02-foundation.md) §13.1, step 2, including checks in the real environment and on an iPhone), the maker will first use family mode at home. Asking other families to try it comes after those results.
 - Regular re-checks of what's around us (for now, Maniau looks again only when the family taps).
 - Using the family's usual places for recommending ways too (such as a usual sick-child care room).
 - More kinds of places to look for (now sick-child care, temporary childcare and family support), and looking around for family households.
