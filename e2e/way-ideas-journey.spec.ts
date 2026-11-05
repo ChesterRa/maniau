@@ -34,6 +34,7 @@ test('未確認の案は表に写し、家族が選んで見てから保存す�
   });
 
   await page.goto('/');
+  await page.getByRole('button', { name: '用意した場面で見る（審査の方へ）' }).click();
   await page.getByRole('combobox', { name: '場面' }).selectOption('arrived');
   await page.getByRole('button', { name: 'することを足す' }).click();
   await page.getByLabel('言ったこと（そのまま）').fill('明日8時から18時まで見守りをお願いしたい。');

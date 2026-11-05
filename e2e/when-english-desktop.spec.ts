@@ -14,6 +14,7 @@ test('英語のデスクトップで、相手の答えを読み、家族が日�
   try {
     const owner = await ownerContext.newPage();
     await owner.goto('http://127.0.0.1:15183/');
+    await owner.getByRole('button', { name: '用意した場面で見る（審査の方へ）' }).click();
     await owner.getByRole('button', { name: 'English', exact: true }).click();
     await owner.getByRole('combobox', { name: 'Scene' }).selectOption('when');
     await owner.getByRole('button', { name: /collecting answers \(2 candidate days\)/ }).click();

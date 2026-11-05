@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 test('相手の答えが届いた後、家族の表はその答えを見られる', async ({ page, browser, request }) => {
   await page.goto('/');
+  await page.getByRole('button', { name: '用意した場面で見る（審査の方へ）' }).click();
   await expect(page.getByRole('combobox', { name: '場面' })).toBeVisible();
   const created = page.waitForResponse((r) => r.url().endsWith('/api/demo/sessions') && r.request().method() === 'POST' && r.request().postDataJSON()?.stage === 'when');
   await page.getByRole('combobox', { name: '場面' }).selectOption('when');

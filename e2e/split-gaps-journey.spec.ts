@@ -6,6 +6,7 @@ test('分かれた時間の画面と仮の計算を小さな画面で見る', as
   page.on('pageerror', (error) => errors.push(error.message));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
+  await page.getByRole('button', { name: '用意した場面で見る（審査の方へ）' }).click();
   await page.getByRole('combobox', { name: '場面' }).selectOption('chase');
   await expect(page.getByText('デモの時計 11/29', { exact: false })).toBeVisible();
   const created = page.waitForResponse(

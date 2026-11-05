@@ -26,16 +26,21 @@ const fakeModel = createServer((request, response) => {
 fakeModel.on('error', () => stop(1));
 await new Promise((resolve) => fakeModel.listen(18798, '127.0.0.1', resolve));
 
-// 親の環境を引き継がない。読み取り欄の見た目は試験用の値で出し、SDK の送信先は必ず手元にする。
-const env = { PATH: process.env.PATH ?? '', NODE_ENV: 'test', LANG: 'C.UTF-8', NO_COLOR: '1' };
+// 親の環境を引き継がない。通常は SDK の送信先を手元に固定し、試用の入力試験では関数を差し替える。
+const mode = process.env.MANIAU_E2E_MODE;
+const env = { PATH: process.env.PATH ?? '', NODE_ENV: 'test', LANG: 'C.UTF-8', NO_COLOR: '1',
+  ...(mode ? { MANIAU_E2E_MODE: mode } : {}),
+};
 children.push(
-  spawn(process.execPath, ['--import', 'tsx', 'src/main.ts'], {
+  spawn(process.execPath, ['--import', 'tsx', mode ? 'test/support/trial-server.ts' : 'src/main.ts'], {
     cwd: serverDir,
     env: {
       ...env,
       PORT: '18797',
-      ANTHROPIC_API_KEY: 'e2e-only',
-      ANTHROPIC_BASE_URL: 'http://127.0.0.1:18798',
+      ...(mode ? {} : {
+        ANTHROPIC_API_KEY: 'e2e-only',
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:18798',
+      }),
     },
     stdio: ['ignore', 'pipe', 'inherit'],
   }),

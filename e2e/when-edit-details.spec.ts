@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 test('候補のある用件を直す前に、答えとやり方が使えなくなると見せる', async ({ page, request }) => {
   await page.goto('/');
+  await page.getByRole('button', { name: '用意した場面で見る（審査の方へ）' }).click();
   const created = page.waitForResponse((r) => r.url().endsWith('/api/demo/sessions')
     && r.request().method() === 'POST' && r.request().postDataJSON()?.stage === 'club');
   await page.getByRole('combobox', { name: '場面' }).selectOption('club');
@@ -39,6 +40,7 @@ test('候補のある用件を直す前に、答えとやり方が使えなく�
 
 test('決めた後もまだ使っていなければ、直す前に決め直しを知らせる', async ({ page, request }) => {
   await page.goto('/');
+  await page.getByRole('button', { name: '用意した場面で見る（審査の方へ）' }).click();
   const created = page.waitForResponse((r) => r.url().endsWith('/api/demo/sessions')
     && r.request().method() === 'POST' && r.request().postDataJSON()?.stage === 'when');
   await page.getByRole('combobox', { name: '場面' }).selectOption('when');
@@ -69,6 +71,7 @@ test('決めた後もまだ使っていなければ、直す前に決め直し�
 
 test('候補のある用件で、だれのためだけを外して保存できる', async ({ page }) => {
   await page.goto('/');
+  await page.getByRole('button', { name: '用意した場面で見る（審査の方へ）' }).click();
   await page.getByRole('combobox', { name: '場面' }).selectOption('club');
   await page.getByRole('button', { name: 'クラブの練習：答えを集めています（候補 2 つ）' }).click();
   await page.getByRole('button', { name: '中身を直す' }).click();

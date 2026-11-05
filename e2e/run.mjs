@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const home = fileURLToPath(new URL('../.local/e2e-home/', import.meta.url));
 const browsers = fileURLToPath(new URL('../.local/e2e-browsers/', import.meta.url));
+const mode = process.env.MANIAU_E2E_MODE;
+if (mode && mode !== 'reading' && mode !== 'no-reader') throw new Error('試験モードが不正です。');
 await mkdir(home, { recursive: true });
 const env = {
   PATH: process.env.PATH ?? '',
@@ -16,6 +18,7 @@ const env = {
   CI: 'true',
   PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH ?? browsers,
   ...(process.env.MANIAU_E2E_BROWSER ? { MANIAU_E2E_BROWSER: process.env.MANIAU_E2E_BROWSER } : {}),
+  ...(mode ? { MANIAU_E2E_MODE: mode } : {}),
 };
 
 // 使用中のポートを借りずに失敗する。サーバーも起動時に bind するので、競合を再度検出する。
@@ -60,7 +63,8 @@ try {
     });
   });
   runner = spawn(process.execPath, [
-    'node_modules/@playwright/test/cli.js', 'test', '--config', 'e2e/playwright.config.ts',
+    'node_modules/@playwright/test/cli.js', 'test', '--config',
+    mode ? 'e2e/playwright.trial.config.ts' : 'e2e/playwright.config.ts',
     ...process.argv.slice(2),
   ], { cwd: root, env, stdio: 'inherit' });
   const result = await new Promise((resolve, reject) => {

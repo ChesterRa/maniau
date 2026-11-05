@@ -18,12 +18,13 @@ test('決める・選び直す・取り消しを伝える主線', async ({ page,
 
   // 1. 通知が届いた時：彩の「きょう」から決める画面へ。
   await page.goto('/');
+  await page.getByRole('button', { name: '用意した場面で見る（審査の方へ）' }).click();
   await page.getByRole('combobox', { name: '場面' }).selectOption('arrived');
   await expect(page.getByText('デモの時計 11/25', { exact: false })).toBeVisible();
   await expect(page.getByText('ひとこと', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: '決める', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '子どもの見守り方を選ぶ', exact: true })).toBeVisible();
   await shot('01-today');
-  await page.getByRole('button', { name: '決める', exact: true }).click();
+  await page.getByRole('button', { name: '子どもの見守り方を選ぶ', exact: true }).click();
   await expect(page.getByText('学習発表会の実施日が12/5（土）なら要ります', { exact: false })).toBeVisible();
   const school = page.getByRole('button', { name: /^学童に預ける/ });
   const grandma = page.getByRole('button', { name: /^おばあちゃんに頼む/ });
@@ -73,7 +74,7 @@ test('決める・選び直す・取り消しを伝える主線', async ({ page,
   await show(cancellation);
   await shot('09-cancel');
   await draft.click();
-  await expect(page.getByRole('button', { name: 'LINE などで送る' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'LINE などで共有' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'コピー', exact: true })).toBeVisible();
   await show(cancellation);
   await shot('10-cancel-draft');

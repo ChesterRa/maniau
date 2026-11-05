@@ -8,6 +8,7 @@ test('送った「すること」の直し・取り消しを、変わること�
 
   // 架空の家庭で窓型の用件を足し、祖母を本命にして「送った」「OK だった」を記録する。
   await page.goto('/');
+  await page.getByRole('button', { name: '用意した場面で見る（審査の方へ）' }).click();
   await page.getByRole('combobox', { name: '場面' }).selectOption('arrived');
   await page.getByRole('button', { name: 'することを足す' }).click();
   await page.getByLabel('言ったこと（そのまま）').fill(
@@ -33,12 +34,12 @@ test('送った「すること」の直し・取り消しを、変わること�
   await expect(grandma).toBeEnabled();
   await grandma.click();
 
-  await expect(page.getByRole('heading', { name: 'この文を送ります' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '送る文' })).toBeVisible();
   await page.getByRole('button', { name: 'きょう', exact: true }).first().click();
   const task = page.locator('section').filter({ hasText: '祖母に来てもらえるか聞く' });
   await task.getByRole('button', { name: 'やります', exact: true }).click();
   await page.getByRole('button', { name: '送る', exact: true }).click();
-  await page.getByRole('button', { name: '送った', exact: true }).click();
+  await page.getByRole('button', { name: '送ったことを記録', exact: true }).click();
   await page.getByRole('button', { name: 'OK だった', exact: true }).click();
   await expect(page.getByRole('button', { name: 'OK だった', exact: true })).toHaveCount(0);
 

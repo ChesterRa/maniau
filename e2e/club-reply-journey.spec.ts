@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 test('架空の集まりで、相手の返事を読み、日を選び、その日のやり方に進む', async ({ page, browser, request }) => {
   await page.goto('/');
+  await page.getByRole('button', { name: '用意した場面で見る（審査の方へ）' }).click();
   await page.getByRole('combobox', { name: '場面' }).selectOption('club');
   await page.getByRole('button', { name: 'クラブの練習：答えを集めています（候補 2 つ）' }).click();
   await expect(page.getByText('表は横に送れます（右に、ほかの人の答えがあります）。')).toBeVisible();

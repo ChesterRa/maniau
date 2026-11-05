@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 test('選べるやり方が無い時、頼める人と方法を足して本命に選ぶ', async ({ page, request }) => {
   test.setTimeout(90_000);
   await page.goto('/');
+  await page.getByRole('button', { name: '用意した場面で見る（審査の方へ）' }).click();
   await page.getByRole('combobox', { name: '場面' }).selectOption('arrived');
   await expect(page.getByRole('button', { name: '彩', exact: true })).toHaveAttribute(
     'aria-pressed',
@@ -54,7 +55,7 @@ test('選べるやり方が無い時、頼める人と方法を足して本命�
   await primary.click();
 
   // 実際には送らない。登録した相手への草稿と、本人の作業が出るところまで見る。
-  await expect(page.getByRole('heading', { name: 'この文を送ります' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '送る文' })).toBeVisible();
   await expect(page.getByText('架空の友人', { exact: false }).first()).toBeVisible();
   await page.getByRole('button', { name: 'きょう', exact: true }).first().click();
   const task = page.locator('section').filter({ hasText: '近所の人に見守りを聞く' });

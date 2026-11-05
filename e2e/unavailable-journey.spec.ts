@@ -4,6 +4,7 @@ test('記録と消去の前後で、決めた日への重なりを確認する',
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('/');
+  await page.getByRole('button', { name: '用意した場面で見る（審査の方へ）' }).click();
   await page.getByRole('combobox', { name: '場面' }).selectOption('club');
   await page.getByRole('button', { name: 'クラブの練習：答えを集めています（候補 2 つ）' }).click();
   const card = page.locator('section').filter({ has: page.getByRole('heading', { name: /12\/19.*9:00/ }) });
@@ -38,6 +39,7 @@ test.describe('English desktop', () => {
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto('/');
+  await page.getByRole('button', { name: '用意した場面で見る（審査の方へ）' }).click();
     await page.getByRole('combobox', { name: '場面' }).selectOption('club');
     await page.getByRole('button', { name: 'クラブの練習：答えを集めています（候補 2 つ）' }).click();
     const card = page.locator('section').filter({ has: page.getByRole('heading', { name: /12\/19.*9:00/ }) });

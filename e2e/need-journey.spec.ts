@@ -5,6 +5,7 @@ test('「すること」を足し、やり方を選んで、頼んだ後の返�
 
   // 架空のデモで、家族の言葉と、計算に使う日時・対象を別々に入れる。
   await page.goto('/');
+  await page.getByRole('button', { name: '用意した場面で見る（審査の方へ）' }).click();
   await page.getByRole('combobox', { name: '場面' }).selectOption('arrived');
   await expect(page.getByRole('button', { name: '彩', exact: true })).toHaveAttribute(
     'aria-pressed',
@@ -47,7 +48,7 @@ test('「すること」を足し、やり方を選んで、頼んだ後の返�
   await grandma.click();
 
   // 選んだ人の頼む文を確認し、きょうに戻ると、その人だけに作業が提案されている。
-  await expect(page.getByRole('heading', { name: 'この文を送ります' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '送る文' })).toBeVisible();
   await expect(page.getByText('学校がお休み', { exact: false })).toHaveCount(0);
   await page.getByRole('button', { name: 'きょう', exact: true }).first().click();
   const task = page.locator('section').filter({ hasText: '祖母に来てもらえるか聞く' });
@@ -75,10 +76,10 @@ test('「すること」を足し、やり方を選んで、頼んだ後の返�
   await expect(task).toBeVisible();
   await task.getByRole('button', { name: 'やります', exact: true }).click();
   await page.getByRole('button', { name: '送る', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'この文を送ります' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '送る文' })).toBeVisible();
 
   // 本当の相手には送らず、送ったという架空の操作を記録する。返事はまだ確定しない。
-  await page.getByRole('button', { name: '送った', exact: true }).click();
+  await page.getByRole('button', { name: '送ったことを記録', exact: true }).click();
   await expect(page.getByText(/おばあちゃんの返事待ち/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'OK だった', exact: true })).toBeVisible();
   await expect(
