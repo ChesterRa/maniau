@@ -1,4 +1,5 @@
 import { DomainEvent, Household, PlanResult, validateHousehold } from '@maniau/core';
+import { checkSplitCareClaims } from './child-care-split';
 import { collectFacts } from './facts';
 import { checkHistory, checkRequestNeed } from './history';
 import { checkNeedConfirmation } from './need-confirmation';
@@ -89,6 +90,7 @@ export function verifyPlan(input: VerificationInput): VerificationReport {
   checkProposals(plan.data, history, report, household.data, facts);
   checkRequestNeed(plan.data, history, facts, report, household.data.timeZone);
   checkPlan(household.data, plan.data, facts, history, report, whenWindows);
+  checkSplitCareClaims(household.data, plan.data, facts, history, report);
   checkPreparations(household.data, plan.data, facts, history, report, whenWindows);
   checkStorePreferences(household.data, plan.data, facts, history, report);
   checkNeedSelections(household.data, plan.data, facts, history, report);
