@@ -111,9 +111,20 @@ flowchart TB
 
 ## Tour of the demo
 
-Use the scene selector at the top to move between points in time, and “Viewing as” to switch between the two adults (健太 and 彩). Each scene also shows a one-line guide at the top of the screen.
+### Try it from the start
 
-1. **11/25 Notice arrives:** A school-event notice creates child care for 陽菜 on 12/7 and a shirt to prepare. Tap “Decide” to compare each option's decision deadline and what happens if you choose it.
+1. Press “Start” and enter made-up nicknames for the adults and one child. The trial supports one child for now.
+2. Add the example notice with “Try an example”. It uses a prepared reading; nothing is sent to Claude for this example.
+3. When asked about child care, enter what you know, see what changes, and then save. You can leave times you do not know as unknown.
+4. Add a person to ask and a deadline, choose a way, and review the message. Your family sends the message. After sending, press “Record that I sent it”; Today then shows the request under “Waiting on others”. Your family also records the reply, for example with “They said OK”.
+
+The trial clock is separate from the current date and time. The trial is kept in server memory and expires after a period of inactivity. Reading a made-up notice you write sends the text to Claude, on a server where reading is available.
+
+### View prepared scenes
+
+On the first screen, press “View prepared scenes (for judges)”. Use the scene selector at the top to move between points in time, and “Viewing as” to switch between the two adults (健太 and 彩). Each scene also shows a one-line guide at the top of the screen.
+
+1. **11/25 Notice arrives:** A school-event notice creates child care for 陽菜 on 12/7 and a shirt to prepare. Tap “Choose how to arrange care” to compare each option's decision deadline and what happens if you choose it.
 2. **11/26 Errand on the way home:** 彩 asked おばあちゃん and is waiting for the reply. 健太 has a task to buy the shirt at a shop on the way home. It's the store the family marked usual. On a server with map keys, when the lookup succeeds, the walking time and store hours come from Google Maps (otherwise the household's estimates are used and labeled as such).
 3. **11/29 No reply yet:** The after-school care deadline is close. On 彩's screen, Maniau asks whether to hold a backup, and “What if they say no?” shows the calculation if the answer is no.
 4. **11/30 Backup booked:** After-school care is held as a backup while waiting for おばあちゃん.
@@ -138,7 +149,7 @@ The demo doesn't send notifications. Instead, on Today, the demo bar at the top 
 - “Look around us” shows what Claude found when it searched the real web once, on 2026-11-05, around the demo home (Toyosu, Koto ward), saved for the demo: for each candidate, a link to the page it read, Claude's summary, and its reading on advance registration (the full page text and separate quote fields were not saved; a summary may contain the page's words or sentences). Open “Decide how your family treats it” on a candidate, check how to treat it and the advance registration, then press “Add as a candidate for us” to see what would change before saving; you can then copy an existing way to use that place. “Ask Claude to look again now” works up to 3 times per demo and 30 times a day per server (on a server with a reading key).
 - With “Edit”, you can mark each store as usual, candidate or don't use. In scene 2, setting the usual store (the clothing store near Toyosu Station) to candidate shows, before you save, that the shirt errand moves to the other (made-up) store.
 
-To have Claude read a notice, tap “Snap” at the bottom, then “Insert a sample notice (fictional)”, then “Read it” (on a server with a reading key).
+To have Claude read a notice, tap “Notices” at the bottom, then “Insert a sample notice (fictional)”, then “Read it” (on a server with a reading key).
 
 ## What we've checked
 
