@@ -787,8 +787,19 @@ function SurveyPanel({
               when: day(ctx, shown.at),
             })}
           </Text>
+          {/* 何が見つかったかを先に言い、要の限りは見せたまま、照らし方の細部はたたむ（開くと全文）。 */}
+          <Text>
+            {shown.candidates.length === 0
+              ? ctx.t('resources.survey.none')
+              : ctx.t('resources.survey.found', { count: shown.candidates.length })}
+          </Text>
           <Text quiet>{ctx.t('resources.survey.checkedNote')}</Text>
-          {shown.candidates.length === 0 && <Text>{ctx.t('resources.survey.none')}</Text>}
+          <details className="text-sm text-sub">
+            <summary className="min-h-9 cursor-pointer leading-relaxed">
+              {ctx.t('resources.survey.checkedHowLabel')}
+            </summary>
+            <p className="mt-1 leading-relaxed">{ctx.t('resources.survey.checkedHow')}</p>
+          </details>
           {shown.candidates.map(candidateBlock)}
           {reasons && (
             <Text quiet>

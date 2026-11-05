@@ -66,7 +66,7 @@ const SHOWN: SurveyShown = {
   ],
 };
 
-function withSurvey(lang: 'ja' | 'en') {
+function withSurvey(lang: 'ja' | 'en', shown: SurveyShown = SHOWN) {
   const runs: { live: boolean }[] = [];
   const looked: Household[] = [];
   const went: Route[] = [];
@@ -81,7 +81,7 @@ function withSurvey(lang: 'ja' | 'en') {
     survey: {
       run: async (live: boolean) => {
         runs.push({ live });
-        return { status: 'ok', survey: SHOWN };
+        return { status: 'ok', survey: shown };
       },
       recorded: true,
       live: true,
@@ -151,7 +151,22 @@ describe('周りを調べる', () => {
     expect(runs).toEqual([{ live: false }]);
     const text = host.textContent ?? '';
     expect(text).toContain('豊洲（豊洲駅） の周りを 11/5（木） に Claude が調べて記録した結果です');
-    expect(text).toContain('頁が公式か・中身が今も正しいかは確かめていません');
+    // 残さないと言うのは、頁の全文と引用の欄だけ（まとめは頁の言葉を含みうる）。
+    expect(text).toContain('頁の全文と、引用として抜き出した文の欄は残していません');
+    // 何が見つかったかを、候補より先に言う。要の限りは見せたまま、照らし方の細部はたたむ。
+    expect(text).toContain('根拠の文を照らして出す候補は 1 件です。');
+    expect(text.indexOf('根拠の文を照らして出す候補は 1 件です。')).toBeLessThan(
+      text.indexOf('みなと橋病児保育室（架空）'),
+    );
+    expect(text).toContain(
+      'その文がまとめを支えるか・読みが正しいか・頁が公式か・中身が今も正しいかは確かめていないので、リンク先で確かめてください',
+    );
+    const how = [...host.querySelectorAll('details')].find(
+      (d) => d.querySelector('summary')?.textContent === '照らし方',
+    );
+    expect(how?.open).toBe(false);
+    expect(how?.textContent).toContain('全角・半角と空白をそろえて、コードが照らします');
+    expect(how?.textContent).toContain('その文がそろえて 8 字以上なら出しません');
     expect(text).toContain('みなと橋病児保育室（架空）');
     expect(text).toContain('Claude のまとめ：病気の子を、保護者が仕事で見られない時に預かる。');
     expect(text).toContain(
@@ -161,12 +176,12 @@ describe('周りを調べる', () => {
       'Claude の読み：使う前に事前の登録が要る。根拠に挙げた文が頁にあることだけを照らし、意味は確かめていません。頁を開いて確かめてください。',
     );
     // 頁の文は出さない（照らした結果と、頁へのリンクだけ）。日数も出さない。
-    expect(text).toContain('引用として抜き出した文はここに出さず、残しません');
+    expect(how?.textContent).toContain('引用として抜き出した文の欄は、ここに出さず、残しません');
     expect(text).toContain('頁の言葉や文を含むことがあります');
     expect(text).not.toContain('「利用には');
     expect(text).not.toContain('日数');
     expect(text).toContain(
-      'ほかに 2 件は、確かめられなかったので出していません（頁の本文を読めなかった 1 件、根拠に挙げた文を頁の本文で照らせなかった 1 件）',
+      '出していない候補は 2 件です（頁の本文を読めなかった 1 件、根拠に挙げた文を頁の本文で照らせなかった 1 件）',
     );
     const link = host.querySelector('a[href="https://example.invalid/sick-care"]');
     expect(link?.getAttribute('target')).toBe('_blank');
@@ -342,6 +357,42 @@ describe('周りを調べる', () => {
     await step(() => linked.unmount());
   });
 
+  it('出せる候補が無い時は、出せる物が無いとだけ言い、外した訳は別に言う（照らせなかったとは言わない）', async () => {
+    // 根拠の文は照らせたが、まとめが頁の文を写していたので外した物だけ（copied）。
+    for (const [shown, reasons] of [
+      [
+        {
+          ...SHOWN,
+          candidates: [],
+          dropped: [{ url: 'https://example.invalid/z', name: 'Z', reason: 'copied' as const }],
+        },
+        '出していない候補は 1 件です（まとめが頁の文そのものか、根拠に挙げた文を含んでいた 1 件）',
+      ],
+      [{ ...SHOWN, candidates: [], dropped: [] }, undefined],
+    ] as const) {
+      const { ctx } = withSurvey('ja', shown);
+      const host = document.createElement('div');
+      const root = createRoot(host);
+      await step(() => root.render(<ResourcesCard ctx={ctx} />));
+      await click(host, '周りを調べる');
+      const text = host.textContent ?? '';
+      expect(text).toContain('出せる候補はありませんでした。');
+      expect(text).not.toContain('照らせた候補');
+      expect(text).not.toContain('照らして出す候補は');
+      expect(text).not.toContain('確かめられなかった');
+      if (reasons) expect(text).toContain(reasons);
+      else expect(text).not.toContain('出していない候補');
+      await step(() => root.unmount());
+    }
+    const { ctx } = withSurvey('en', { ...SHOWN, candidates: [], dropped: [] });
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    await step(() => root.render(<ResourcesCard ctx={ctx} />));
+    await click(host, 'Look around us');
+    expect(host.textContent).toContain('No candidates are shown.');
+    await step(() => root.unmount());
+  });
+
   it('英語でも同じことを出す', async () => {
     const { ctx } = withSurvey('en');
     const host = document.createElement('div');
@@ -351,10 +402,22 @@ describe('周りを調べる', () => {
     await click(host, 'Decide how your family treats it');
     const text = host.textContent ?? '';
     expect(text).toContain('What Claude found around 豊洲（豊洲駅） on');
-    expect(text).toContain('not that the page is official or still correct');
+    expect(text).toContain('the full page text and separate quote fields aren’t kept');
+    expect(text).toContain(
+      '1 candidate is shown after checking its cited sentence against its page.',
+    );
+    expect(text).toContain(
+      'not whether it supports the summary or the reading, or whether the page is official or still correct',
+    );
+    expect(text).toContain('Claude’s summaries are in Japanese');
+    const how = [...host.querySelectorAll('details')].find(
+      (d) => d.querySelector('summary')?.textContent === 'How we checked',
+    );
+    expect(how?.open).toBe(false);
+    expect(how?.textContent).toContain('8 or more normalized characters');
     expect(text).toContain('Claude’s reading: you must register in advance before using it');
     expect(text).toContain(
-      '2 more are not shown because they couldn’t be checked (1 whose page text couldn’t be read, 1 whose cited sentence couldn’t be checked against the page text).',
+      'Not shown: 2 (1 whose page text couldn’t be read, 1 whose cited sentence couldn’t be checked against the page text).',
     );
     expect(text).toContain('Needed (I checked)');
     expect(text).toContain('Add as a candidate for us');
