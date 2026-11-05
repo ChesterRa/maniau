@@ -424,6 +424,11 @@ function noRecommendation(ctx: Ctx, arrangement: Arrangement): string | undefine
   }
   const open = arrangement.options.filter((o) => !o.expired && o.decisionDeadline !== undefined);
   if (open.length === 0) return undefined;
+  // 選べる手のどれにも、受け持てると示せない時間が残る時だけ、そう書く（訳が混ざる時は全部とは言わない。手ごとの
+  // 印の行が、それぞれの訳を書く）。
+  if (open.every((o) => o.coverGaps !== undefined)) {
+    return ctx.t('decide.noRecommendation.cover');
+  }
   if (open.some((o) => stoppedWay(ctx.household, arrangement, o))) {
     return ctx.t('decide.noRecommendation.stopped');
   }
@@ -755,14 +760,9 @@ export function askDraft(ctx: Ctx, task: Task): string {
     if (place) parts.push(t('draft.needPlace', { place }));
     if (forName) parts.push(t('draft.needFor', { name: forName }));
     if (isConditional(arrangement)) parts.push(t('draft.conditionalNeed'));
-    const reply = replyBy(ctx, arrangement, task.basis.optionKey);
-    if (reply) {
-      parts.push(
-        reply.evening
-          ? t('draft.replyBy', { date: formatLongDay(reply.evening, lng, ctx.tz) })
-          : t('draft.replySoon'),
-      );
-    }
+    // ほかの手の決め時から出した返事の期限は書かない：その手が断られた時に移れる先だと確かめていない（受け持ちの
+    // 置き方・前提・使わない資源・行ける時間を別に確かめるため。仮の計算・返事待ちの行と同じ。2026-11-05）。
+    // 「すること」に書かれた日時は、上の文に書いてある。
     return parts.join('\n');
   }
   const parts = [
@@ -1524,8 +1524,18 @@ export function needGaps(ctx: Ctx, arrangement: Arrangement): string[] {
   return refs.map((ref) => {
     const [start, end] = ref.split('/');
     if (!start || !end) return ref;
-    return `${time(ctx, start)}–${day(ctx, end) === day(ctx, start) ? time(ctx, end) : dayTime(ctx, end)}`;
+    return span(ctx, start, end);
   });
+}
+
+/** 時間の幅（同じ日なら終わりは時刻だけ）。 */
+function span(ctx: Ctx, start: string, end: string): string {
+  return `${time(ctx, start)}–${day(ctx, end) === day(ctx, start) ? time(ctx, end) : dayTime(ctx, end)}`;
+}
+
+/** 手を選び、約束が全部そろっても、受け持てると示せない時間（エンジンが前もって出した物。無ければ空）。 */
+export function optionGaps(ctx: Ctx, option: OptionPlan): string[] {
+  return (option.coverGaps ?? []).map((g) => span(ctx, g.start, g.end));
 }
 
 /**
@@ -3074,6 +3084,15 @@ function OptionRow({
             })}
           </span>
         ))}
+        {option.coverGaps && (
+          <span className="text-sm font-bold text-warn">
+            {ctx.t('decide.coverGaps', {
+              gaps: new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(
+                optionGaps(ctx, option),
+              ),
+            })}
+          </span>
+        )}
         {reply && (
           <span className="text-sm">
             {reply.evening

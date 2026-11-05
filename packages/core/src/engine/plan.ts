@@ -1109,11 +1109,31 @@ function planNeed(
     const gaps = preparationGaps(ctx.household, way, frame.date, item.interpretation.forMemberId);
     // やり方が使う資源のうち、家族が「使わない」とした物（勧める候補にしない）。
     const unused = unusedResources(ctx.household, way);
+    // 窓の「すること」で、約束が全部そろっても受け持てると示せない時間（勧める候補にしない）。やり方の形から分かる
+    // 物に加え、受け持つ人の決まった家族の受け持ちを、今の計算では窓に置けない時（ふだんの予定やほかの作業との
+    // 重なりなど）は、窓の全部（覆ったかの計算は、時刻に置いた受け持ちしか数えない）。受け持つ人がまだ決まって
+    // いない物は数えない（まだ分からない。選ぶ時に決まる）。
+    const unplaced = own.some(
+      (t) =>
+        t.basis.optionKey === option.key &&
+        t.cover === true &&
+        t.assigneeId !== undefined &&
+        t.start === undefined,
+    );
+    const holes =
+      frame.shape !== 'window'
+        ? []
+        : unplaced
+          ? [{ start: frame.start, end: frame.end }]
+          : coverGaps(ctx, way, { start: frame.start, end: frame.end }, item.interpretation.place);
     return {
       ...option,
       ...(stoppedIds.has(way.id) ? { stopped: true as const } : {}),
       ...(gaps.length > 0 ? { needsPreparation: gaps } : {}),
       ...(unused.length > 0 ? { unusedResources: unused } : {}),
+      ...(holes.length > 0
+        ? { coverGaps: holes.map((g) => ({ start: ctx.fmt(g.start), end: ctx.fmt(g.end) })) }
+        : {}),
     };
   });
   addBusy(busy, own);
@@ -1152,6 +1172,43 @@ const familyCover = (step: Way['steps'][number]): boolean =>
   step.cover === true && step.external === undefined;
 
 /**
+ * やり方が、約束が全部そろえば窓を受け持てるか（覆ったかの計算と同じ決まり）：受け持つ手順が一つ以上あり、
+ * 場所の書かれた「すること」なら、家族の受け持ちの手順を含まない（家族の受け持ちは、書かれた場所にいると示せない
+ * ので、覆ったと言わない。その手順が一つでもあれば、約束は全部そろわない）。
+ */
+function wayCanHold(way: Way, place: string | undefined): boolean {
+  return way.steps.some((s) => s.cover) && (place === undefined || !way.steps.some(familyCover));
+}
+
+/** やり方が受け持てる時間：受け持てる時間（covers）があればその日のその内、無ければ窓の全部。 */
+function wayRange(
+  ctx: Context,
+  way: Way,
+  window: { start: EpochMinutes; end: EpochMinutes },
+): { start: EpochMinutes; end: EpochMinutes } {
+  if (!way.covers) return window;
+  const date = localDateOf(window.start, ctx.tz);
+  return {
+    start: zonedToEpochMinutes(date, way.covers.start, ctx.tz),
+    end: zonedToEpochMinutes(date, way.covers.end, ctx.tz),
+  };
+}
+
+/**
+ * 窓の「すること」で、やり方の約束が全部そろっても、今の情報と計算では受け持てると示せない時間（前もって分かる
+ * 物だけ。だれもいないと分かったのではない）。受け持てない
+ * やり方は窓の全部、受け持てる時間が窓より狭ければ、はみ出た時間。まだ引き受けていない・返事の無いことは数えない。
+ */
+function coverGaps(
+  ctx: Context,
+  way: Way,
+  window: { start: EpochMinutes; end: EpochMinutes },
+  place: string | undefined,
+): { start: EpochMinutes; end: EpochMinutes }[] {
+  return uncovered(window, wayCanHold(way, place) ? [wayRange(ctx, way, window)] : []);
+}
+
+/**
  * 窓の「すること」を覆ったと言えるか（今使う案で）。やり方の約束が全部そろった時だけ覆う：家族の受け持ちの作業は
  * どれも、時刻に置いてあり、本人が引き受けた（済んだ）物（引き受け直しを待つ物は除く）。外の相手に頼む手順は
  * どれも（受け持つと書かれた相手も、承認などの前提も）、同じ窓・同じ中身（控えの about）に「はい」の返事のある
@@ -1173,7 +1230,6 @@ function withCoverage(
   const way = ways.find((w) => w.id === inUse.templateId);
   const start = toEpochMinutes(arrangement.start);
   const end = toEpochMinutes(arrangement.end);
-  const date = localDateOf(start, ctx.tz);
   // やり方が覆うのは、そのやり方の約束が全部そろった時だけ：外の相手に頼む手順はどれも、同じ窓・今の中身（控えの
   // about）に「はい」があり、受け持ちの作業はどれも、本人が今の中身で引き受けている（引き受け直しを待たない）。
   // 一つでも欠ければ、窓は覆っていない（有休の受け持ちを引き受けても、申請の承認が無ければ覆ったと言わない）。
@@ -1206,14 +1262,7 @@ function withCoverage(
   // だれもその時間を受け持っていない）。
   const covered =
     way?.steps.some((s) => s.cover) && agreed.every(held)
-      ? [
-          way.covers
-            ? {
-                start: zonedToEpochMinutes(date, way.covers.start, ctx.tz),
-                end: zonedToEpochMinutes(date, way.covers.end, ctx.tz),
-              }
-            : { start, end },
-        ]
+      ? [wayRange(ctx, way, { start, end })]
       : [];
   const gaps = uncovered({ start, end }, covered);
   if (gaps.length === 0) return arrangement;
@@ -1757,9 +1806,11 @@ function withStatus(ctx: Context, arrangement: Arrangement, tasks: Task[]): Arra
     reasons.push({ code: 'noOptionLeft', refs: arrangement.options.map((o) => o.key) });
     return { ...arrangement, status: 'infeasible', reasons };
   }
-  // 家族が「使わない」とした資源を使う案は、勧める候補にしない（選べる。ほかの案は比べて勧める）。候補が残らな
-  // ければ、勧めない。
-  const candidates = open.filter((o) => (o.unusedResources?.length ?? 0) === 0);
+  // 家族が「使わない」とした資源を使う案と、約束が全部そろっても窓に受け持てると示せない時間が残る案は、勧める候補に
+  // しない（選べる。ほかの案は比べて勧める）。候補が残らなければ、勧めない。
+  const candidates = open.filter(
+    (o) => (o.unusedResources?.length ?? 0) === 0 && o.coverGaps === undefined,
+  );
   // 勧めるのは、代償と決め時で比べられる時だけ（比べられなければ、家族が選ぶ）：やめたやり方の案がある、営業時間の
   // 分からない場所でする手順のある案がある（間に合うと言えない）、前もっての前提（事前の登録など）が済んだと
   // 確かめられていない案がある、案が二つ以上で代償の分からない案がある時は、勧めない。

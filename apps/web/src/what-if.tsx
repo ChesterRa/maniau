@@ -114,8 +114,10 @@ export function WhatIfOutcome(props: {
   const recommended = after?.options.find((o) => o.key === after.recommendedOptionKey);
   const others = after?.options.filter((o) => o.key !== declined?.key) ?? [];
   // 選び直しになる時だけ：ほかの手で最も早い決め時の前の晩までに返事をもらえば、断られても間に合う（頼む文・
-  // 決める画面と同じ計算）。
-  const reply = after && !inUse ? replyBy(ctx, after, declined?.key) : undefined;
+  // 決める画面と同じ計算）。子の居場所の手配だけ：通用の「すること」の手は、受け持ちの置き方・前提・使わない資源を
+  // 別に確かめるので、仮の計算でも間に合うとは書かない（返事待ちの行と同じ）。
+  const reply =
+    after && !inUse && after.kind === 'childCare' ? replyBy(ctx, after, declined?.key) : undefined;
   const until =
     after?.kind === 'need' && after.needShape === 'by' ? after.end : (after?.start ?? ctx.now);
   return (

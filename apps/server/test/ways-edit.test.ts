@@ -236,13 +236,23 @@ describe('家族がやり方を足す', () => {
     ).toBeDefined();
   });
 
-  it('本命が断られ、残る案に代償の分からない物があれば勧めないが、選び直しは要る（札に出す）', async () => {
+  /**
+   * 本命（祖母）に断られた後の手配。残る案は病児保育と近所の山田さん。ほかの訳で勧めが止まらないように、窓は病児保育の
+   * 受け持てる時間（8:30–17:30）の内にし（窓の一部しか受け持てない案は、別の試験）、病児保育の事前登録は済ませておく
+   * （済んだか分からない前提も、勧めを止めるので）。山田さんの代償だけを替えて比べる。
+   */
+  const turnedDown = async (neighborCost: Way['cost']) => {
     const app = await setup();
     await app.edit((h) => {
       h.members.push(YAMADA);
-      h.ways.push(NEIGHBOR);
+      h.ways.push({ ...NEIGHBOR, cost: neighborCost });
+      for (const prep of h.preparations) if (prep.id === 'prep-sick-care') prep.state = 'done';
     });
-    await app.stated(['way-sick-care', 'way-grandma', 'way-neighbor']);
+    await app.stated(['way-sick-care', 'way-grandma', 'way-neighbor'], {
+      ...NEED,
+      startTime: '08:30',
+      endTime: '17:30',
+    });
     expect(await app.choose('way-grandma')).toMatchObject({ status: 'ok' });
     const ask = (await app.need()).task('way-grandma');
     expect(await app.accept(ask)).toMatchObject({ status: 'ok' });
@@ -250,8 +260,24 @@ describe('家族がやり方を足す', () => {
     expect(
       await app.run({ type: 'recordReply', requestId: 'r-grandma', reply: 'no' }),
     ).toMatchObject({ status: 'ok' });
-    const { arrangement, plan } = await app.need();
-    if (!arrangement) throw new Error('手配が無い');
+    const now = await app.need();
+    if (!now.arrangement) throw new Error('手配が無い');
+    // 残る二つの案に、代償のほかの止める訳が無い。
+    for (const wayId of ['way-sick-care', 'way-neighbor']) {
+      const option = now.arrangement.options.find((o) => o.templateId === wayId);
+      expect(option?.needsPreparation).toBeUndefined();
+      expect(option?.coverGaps).toBeUndefined();
+      expect(option?.unusedResources).toBeUndefined();
+      expect(option?.expired).toBe(false);
+    }
+    return { app, ...now, arrangement: now.arrangement };
+  };
+
+  it('本命が断られ、残る案に代償の分からない物があれば勧めないが、選び直しは要る（札に出す）', async () => {
+    const { app, arrangement, plan } = await turnedDown(NEIGHBOR.cost);
+    expect(
+      arrangement.options.find((o) => o.templateId === 'way-neighbor')?.cost.unknown,
+    ).toContain('yen');
     expect(arrangement.reasons.map((r) => r.code)).toContain('turnedDown');
     expect(arrangement.inUseOptionKey).toBeUndefined();
     expect(arrangement.recommendedOptionKey).toBeUndefined();
@@ -265,6 +291,10 @@ describe('家族がやり方を足す', () => {
       ).toBe(true);
     }
     expect((await app.checked()).violations).toEqual([]);
+    // 比べ：山田さんの代償が分かっていれば、勧める（止めていたのは代償の分からないことだけ）。
+    const { unknown: _unknown, ...known } = NEIGHBOR.cost;
+    const control = await turnedDown(known);
+    expect(control.arrangement.recommendedOptionKey).toBeDefined();
   });
 
   /**

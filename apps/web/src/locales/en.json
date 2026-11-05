@@ -406,7 +406,8 @@
       "stopped": "One of these ways has been stopped, so we don’t suggest one. Your family chooses.",
       "hours": "One of these ways uses a place whose opening hours aren’t confirmed, so we don’t suggest one (we haven’t checked it can be done in time).",
       "cost": "Some costs aren’t known, so we don’t suggest one (we don’t treat an unknown cost as zero).",
-      "preparation": "Some options need something done beforehand (such as registering in advance) that hasn’t been confirmed, so we don’t recommend one. You can enter whether it’s done under “Around us” in Family."
+      "preparation": "Some options need something done beforehand (such as registering in advance) that hasn’t been confirmed, so we don’t recommend one. You can enter whether it’s done under “Around us” in Family.",
+      "cover": "Every option has some time we can’t confirm anyone would look after, even if everyone agreed, so we don’t suggest one. You can still choose."
     },
     "stoppedWay": "This way has been stopped (it can’t be newly chosen).",
     "noHours": "{{place}}: opening hours not confirmed. Please check that you can go then.",
@@ -424,7 +425,8 @@
         "otherPerson": "it’s for someone else, not this person"
       }
     },
-    "unusedResource": "You marked “{{name}}” as “Don’t use” (not recommended; you can still choose it)."
+    "unusedResource": "You marked “{{name}}” as “Don’t use” (not recommended; you can still choose it).",
+    "coverGaps": "Time we can’t confirm this option would look after, even if everyone agreed: {{gaps}} (not recommended; you can still choose it)."
   },
   "ask": {
     "title": "Send this message",
