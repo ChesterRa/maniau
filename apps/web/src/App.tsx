@@ -9,9 +9,10 @@ import {
   type Notice,
   type Reading,
   type ServerView,
-  useDemoSession,
+  type TrialKind,
   useFamilySession,
   useMode,
+  useTrialSession,
 } from './family';
 import { formatDayTime } from './format';
 import { HouseholdScreen } from './household';
@@ -28,6 +29,7 @@ import {
   TodayScreen,
   WeekScreen,
 } from './screens';
+import { StartScreen } from './start';
 import { TabBar } from './ui';
 import { ideaDraft, WayIdeasScreen } from './way-ideas';
 import { WayScreen } from './ways';
@@ -123,10 +125,14 @@ function Body(props: {
   canSurvey?: boolean;
   /** 家族の試しの家庭か（読む欄に「架空の文だけ」と、上限の戻る時刻を出す）。 */
   trial?: boolean;
+  /** 空から始めた試用（架空の内容だけ）。 */
+  fictional?: boolean;
   lang: UiLanguage;
   route: Route;
   onRoute: (route: Route) => void;
   onRestart?: () => void;
+  /** 空から始めた試用だけ：例のお知らせ（架空）と、それを足す口。 */
+  example?: { title: string; add: () => Promise<boolean> };
 }) {
   const { t, i18n } = useTranslation();
   const { live, me, lang, route } = props;
@@ -169,6 +175,8 @@ function Body(props: {
               }
             : {}),
           ...(props.trial ? { trialInput: true as const } : {}),
+          ...(props.fictional ? { fictional: true as const } : {}),
+          ...(props.example ? { example: props.example } : {}),
           preview: live.preview,
           previewHousehold: live.previewHousehold,
           previewChange: live.previewChange,
@@ -222,23 +230,28 @@ function Body(props: {
   );
 }
 
-/** デモ：見る人ごとのデモの家庭（架空の家族）。段・使う人・言葉を選び、やり直せる。 */
+/**
+ * デモ：空から始める試用（名前だけの家族・見本の家族）と、用意した場面（審査で場面を見る）。初めの画面で始め方を
+ * 選ぶ。同じ端末で開き直すと、同じデモに戻る。試用では、デモの操作（時計・使う人・言葉）を畳んでおく。
+ */
 function DemoApp() {
-  const [stage, setStage] = useState(FIRST_STAGE);
+  const { t } = useTranslation();
   const [memberId, setMemberId] = useState<string>();
   const [route, setRoute] = useState<Route>({ name: 'today' });
-  const demo = useDemoSession(stage, memberId);
+  const [controls, setControls] = useState(false);
+  const demo = useTrialSession(memberId);
   const { session, view } = demo;
 
-  // 段が替わったら、その段で画面を見ている大人を開く（替えられる）。
+  // 始めた・開き直したデモで、画面を見る大人を開く（場面にはその場面の人。替えられる）。
   useEffect(() => {
-    if (!session) return;
-    const viewer = session.stages.find((s) => s.id === stage)?.viewer;
+    if (!session) {
+      setMemberId(undefined);
+      return;
+    }
     const adults = session.household.members.filter((m) => m.kind === 'adult' && m.active);
-    setMemberId((current) =>
-      viewer && adults.some((m) => m.id === viewer) ? viewer : (current ?? adults[0]?.id),
-    );
-  }, [session, stage]);
+    const viewer = session.stages.find((s) => s.id === session.stage)?.viewer;
+    setMemberId(viewer && adults.some((m) => m.id === viewer) ? viewer : adults[0]?.id);
+  }, [session]);
 
   const household = view?.household ?? session?.household;
   const adults = useMemo(
@@ -247,68 +260,195 @@ function DemoApp() {
   );
   const me = adults.find((m) => m.id === memberId);
   const { lang, chooseLanguage } = useMemberLanguage(me, true);
-  const restart = () => {
-    demo.restart();
+  const languages = (
+    <Switcher
+      label={t('language.label')}
+      options={[
+        { value: 'ja', label: '日本語' },
+        { value: 'en', label: 'English' },
+      ]}
+      value={lang}
+      onChange={(v) => isUiLanguage(v) && chooseLanguage(v)}
+    />
+  );
+  const begin = (input: Parameters<typeof demo.start>[0]) => {
     setRoute({ name: 'today' });
+    setControls(false);
+    void demo.start(input);
+  };
+  const leave = () => {
+    demo.leave();
+    setRoute({ name: 'today' });
+    setControls(false);
   };
 
+  if (!session) {
+    return (
+      <div className={FRAME}>
+        <StartScreen
+          phase={demo.phase}
+          expired={demo.expired}
+          onStart={begin}
+          language={languages}
+        />
+      </div>
+    );
+  }
+  const stage = session.stage ?? FIRST_STAGE;
+  const clock = view ? formatDayTime(view.now, lang, view.household.timeZone) : undefined;
+  const onAdvance = view
+    ? (minutes: number) =>
+        void demo.send({
+          type: 'advanceClock',
+          to: formatDateTime(toEpochMinutes(view.now) + minutes, view.household.timeZone),
+        })
+    : undefined;
+  const people = adults.map((m) => ({ value: m.id, label: m.name }));
+  const onMember = (next: string) => {
+    setMemberId(next);
+    setRoute({ name: 'today' });
+  };
+  // 知らせの候補は「きょう」の画面だけに出す（試しの計算の画面で、今の計画の候補を並べない）。
+  const notifications = view && route.name === 'today' && (
+    <DemoNotifications preview={view.notificationPreview} household={view.household} lang={lang} />
+  );
   return (
     <div className={FRAME}>
-      <DemoBar
-        stages={session?.stages.map((s) => s.id) ?? [FIRST_STAGE]}
-        stage={stage}
-        onStage={(next) => {
-          setStage(next);
-          setRoute({ name: 'today' });
-        }}
-        adults={adults.map((m) => ({ value: m.id, label: m.name }))}
-        member={memberId}
-        onMember={(next) => {
-          setMemberId(next);
-          setRoute({ name: 'today' });
-        }}
-        lang={lang}
-        onLang={chooseLanguage}
-        clock={view ? formatDayTime(view.now, lang, view.household.timeZone) : undefined}
-        onAdvance={
-          view
-            ? (minutes) =>
-                void demo.send({
-                  type: 'advanceClock',
-                  to: formatDateTime(toEpochMinutes(view.now) + minutes, view.household.timeZone),
-                })
-            : undefined
-        }
-        onRestart={restart}
-        // 知らせの候補は「きょう」の画面だけに出す（試しの計算の画面で、今の計画の候補を並べない）。
-        notifications={
-          view &&
-          route.name === 'today' && (
-            <DemoNotifications
-              preview={view.notificationPreview}
-              household={view.household}
-              lang={lang}
-            />
-          )
-        }
-      />
+      {session.trial ? (
+        <TrialBar
+          kind={session.trial}
+          clock={clock}
+          open={controls}
+          onToggle={() => setControls((open) => !open)}
+        >
+          <ClockButtons onAdvance={onAdvance} />
+          <div className="flex flex-wrap items-center gap-2">
+            {people.length > 1 && (
+              <Switcher
+                label={t('adult.label')}
+                options={people}
+                value={memberId}
+                onChange={onMember}
+              />
+            )}
+            {languages}
+          </div>
+          <div className="flex flex-wrap gap-x-4">
+            <button type="button" onClick={leave} className="min-h-9 text-accent underline">
+              {t('trial.leave')}
+            </button>
+            <button
+              type="button"
+              onClick={() => begin({ stage: FIRST_STAGE })}
+              className="min-h-9 text-accent underline"
+            >
+              {t('trial.scenes')}
+            </button>
+          </div>
+          {notifications}
+        </TrialBar>
+      ) : (
+        <DemoBar
+          stages={session.stages.map((s) => s.id)}
+          stage={stage}
+          onStage={(next) => begin({ stage: next })}
+          adults={people}
+          member={memberId}
+          onMember={onMember}
+          lang={lang}
+          onLang={chooseLanguage}
+          clock={clock}
+          onAdvance={onAdvance}
+          onRestart={() => begin({ stage })}
+          onLeave={leave}
+          notifications={notifications}
+        />
+      )}
       <Body
         live={demo}
         me={me}
-        readings={session?.readings ?? []}
-        canRead={session?.canRead === true}
-        canHear={session?.canHear === true}
-        canPhoto={session?.canPhoto === true}
-        {...(session?.mapsKey ? { mapsKey: session.mapsKey } : {})}
-        canSearchStores={session?.canSearchStores === true}
-        canSuggestStores={session?.canSuggestStores === true}
-        hasRecordedSurvey={session?.hasRecordedSurvey === true}
-        canSurvey={session?.canSurvey === true}
+        readings={session.readings}
+        canRead={session.canRead === true}
+        canHear={session.canHear === true}
+        canPhoto={session.canPhoto === true}
+        {...(session.mapsKey ? { mapsKey: session.mapsKey } : {})}
+        canSearchStores={session.canSearchStores === true}
+        canSuggestStores={session.canSuggestStores === true}
+        hasRecordedSurvey={session.hasRecordedSurvey === true}
+        canSurvey={session.canSurvey === true}
         lang={lang}
         route={route}
         onRoute={setRoute}
-        onRestart={restart}
+        onRestart={session.trial ? leave : () => begin({ stage })}
+        fictional={session.trial !== undefined}
+        {...(session.trial && session.example
+          ? { example: { title: session.example.title, add: demo.addExample } }
+          : {})}
       />
+    </div>
+  );
+}
+
+/** 試用の帯：試用であること、どの家族か、デモの時計。デモの操作は「操作」を押した時だけ出す。 */
+function TrialBar(props: {
+  kind: TrialKind;
+  clock: string | undefined;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="mx-3 mt-2 flex flex-col gap-2 rounded-2xl border-[1.5px] border-dashed border-warn/60 bg-card px-3 py-1.5 text-sm">
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="shrink-0 rounded bg-warn-soft px-1.5 font-bold text-warn">
+            {t('trial.badge')}
+          </span>
+          <span className="truncate">
+            {props.clock
+              ? t(`trial.${props.kind}At`, { time: props.clock })
+              : t(`trial.${props.kind}`)}
+          </span>
+        </span>
+        <button
+          type="button"
+          aria-expanded={props.open}
+          onClick={props.onToggle}
+          className="min-h-9 shrink-0 text-accent underline"
+        >
+          {t(props.open ? 'trial.close' : 'trial.controls')}
+        </button>
+      </div>
+      {props.open && (
+        <div className="flex flex-col gap-2 border-t border-line pt-2">{props.children}</div>
+      )}
+    </div>
+  );
+}
+
+/** デモの時計を進める（分）。戻せない。決め時の前後で札と知らせがどう変わるかを見るため。 */
+function ClockButtons({ onAdvance }: { onAdvance: ((minutes: number) => void) | undefined }) {
+  const { t } = useTranslation();
+  if (!onAdvance) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-sub">{t('demo.advance')}</span>
+      {(
+        [
+          [60, 'demo.plusHour'],
+          [24 * 60, 'demo.plusDay'],
+        ] as const
+      ).map(([minutes, label]) => (
+        <button
+          key={label}
+          type="button"
+          onClick={() => onAdvance(minutes)}
+          className="min-h-9 rounded-lg border border-line bg-card px-3 font-bold"
+        >
+          {t(label)}
+        </button>
+      ))}
     </div>
   );
 }
@@ -517,6 +657,8 @@ export function DemoBar(props: {
   /** デモの時計を進める（分）。戻せない。決め時の前後で札と知らせがどう変わるかを見るため。 */
   onAdvance: ((minutes: number) => void) | undefined;
   onRestart: () => void;
+  /** 初めの画面へ戻る（この場面を閉じる）。 */
+  onLeave?: () => void;
   /** この時刻の知らせの候補（demo-notify.tsx。無ければ何も出さない）。 */
   notifications?: ReactNode;
 }) {
@@ -527,30 +669,18 @@ export function DemoBar(props: {
         <span className="font-bold text-warn">
           {props.clock ? t('demo.clock', { time: props.clock }) : t('demo.label')}
         </span>
-        <button type="button" onClick={props.onRestart} className="min-h-9 text-accent underline">
-          {t('demo.restart')}
-        </button>
-      </div>
-      {props.onAdvance && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sub">{t('demo.advance')}</span>
-          {(
-            [
-              [60, 'demo.plusHour'],
-              [24 * 60, 'demo.plusDay'],
-            ] as const
-          ).map(([minutes, label]) => (
-            <button
-              key={label}
-              type="button"
-              onClick={() => props.onAdvance?.(minutes)}
-              className="min-h-9 rounded-lg border border-line bg-card px-3 font-bold"
-            >
-              {t(label)}
+        <span className="flex gap-x-3">
+          <button type="button" onClick={props.onRestart} className="min-h-9 text-accent underline">
+            {t('demo.restart')}
+          </button>
+          {props.onLeave && (
+            <button type="button" onClick={props.onLeave} className="min-h-9 text-accent underline">
+              {t('demo.leave')}
             </button>
-          ))}
-        </div>
-      )}
+          )}
+        </span>
+      </div>
+      <ClockButtons onAdvance={props.onAdvance} />
       <div className="flex flex-wrap items-center gap-2">
         {/* 狭い画面でも、場面の長い名前で枠の外へはみ出さない（選ぶ物は端末のまま）。 */}
         <label className="flex min-w-0 max-w-full items-center gap-1">

@@ -72,6 +72,8 @@ const press = async (label: string) => {
 it('「きょう」に出し、「うち」へ移ると出さず、「きょう」に戻るとまた出す', async () => {
   await step(() => root.render(<App />));
   await step(() => take(calls, (c) => c.url === '/api/me').respond(200, { mode: 'demo' }));
+  // 初めの画面から、用意した場面を開く（審査の入口）。
+  await press(i18n.t('start.stages'));
   await step(() =>
     take(calls, (c) => c.url === '/api/demo/sessions').respond(200, {
       sessionId: 's1',

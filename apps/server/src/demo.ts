@@ -131,6 +131,71 @@ export function isDemoStage(value: unknown): value is DemoStageId {
   return DEMO_STAGES.some((s) => s.id === value);
 }
 
+/**
+ * 空から始める試用：前からのお知らせ・出来事の無い家庭。時計はデモの初めの日（段 arrived と同じ 11/25 19:31）で、
+ * 例のお知らせの日付と合う。見本の家族を使うか、名前だけの家族を作る。お知らせは家族が入れる。
+ */
+export const TRIAL_NOW: DateTime = '2026-11-25T19:31+09:00';
+const TRIAL_SET_AT: DateTime = '2026-11-24T21:00+09:00';
+export type TrialStart = 'sample' | 'own';
+
+/** 名前だけの家族を作る時の入力（大人は一人か二人、子は一人）。 */
+export interface TrialNames {
+  adults: string[];
+  child: string;
+}
+
+/**
+ * 名前だけの家族。場所・ふだんの週・手配の手は持たない（分からない事を、勝手に埋めない。要る時に聞く）。
+ * 見本の家族の成員・場所は混ぜない。
+ */
+export function ownHousehold(names: TrialNames): Household {
+  return Household.parse({
+    id: 'trial-own',
+    region: 'JP',
+    timeZone: 'Asia/Tokyo',
+    members: [
+      ...names.adults.map((name, i) => ({ id: `a${i + 1}`, kind: 'adult', name })),
+      { id: 'c1', kind: 'child', name: names.child },
+    ],
+    places: [],
+    routines: [],
+    careOptions: [],
+  });
+}
+
+/** 試用の始まりの事象：家族の情報だけ（お知らせ・答え・引き受けは無い）。 */
+export function trialEvents(household: Household): DomainEvent[] {
+  const actorId = household.members.find((m) => m.kind === 'adult' && m.active)?.id ?? 'system';
+  return [
+    DomainEvent.parse({
+      id: 'trial-1',
+      householdId: household.id,
+      seq: 1,
+      version: 1,
+      occurredAt: TRIAL_SET_AT,
+      recordedAt: TRIAL_SET_AT,
+      actorId,
+      type: 'householdSet',
+      household,
+    }),
+  ];
+}
+
+/**
+ * 例のお知らせ（架空の学習発表会）の出典と、前に録った読み取り。例だけに使い、家族が書いた文の読み取りには
+ * 使わない。録った物か手で書いた形かは reading.origin で画面に出す。
+ */
+export function exampleNotice() {
+  const data = loadDemoData();
+  const source = data.sources[0];
+  const output = data.outputs[0];
+  const extraction = data.extractions[0];
+  const reading = data.readings[0];
+  if (!source || !output || !extraction || !reading) throw new Error('例のお知らせが無い');
+  return { source, output, extraction, reading };
+}
+
 /** デモの段までの事象の列。段は前の段の事象をすべて含む。 */
 export function demoEvents(stage: DemoStageId): DomainEvent[] {
   const data = loadDemoData();

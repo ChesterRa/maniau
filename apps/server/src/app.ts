@@ -9,7 +9,7 @@ import { ACCESS_HEADER, type AccessVerifier } from './auth/access';
 import { nowIn } from './clock';
 import { type CommandResult, runCommand } from './commands';
 import type { Db } from './db/store';
-import { DEMO_STAGES, isDemoStage, loadDemoData } from './demo';
+import { DEMO_STAGES, exampleNotice, isDemoStage, loadDemoData, type TrialStart } from './demo';
 import {
   demoSessions,
   MAX_STORE_TEXT_CHARS,
@@ -529,18 +529,23 @@ export function createApp(
     return c.json({ ok: true });
   });
   // デモの家庭を、見る人ごとにサーバーに作る。計画はサーバーで作り、画面は見せる物を受け取る（§7.1）。
-  app.post('/api/demo/sessions', async (c) => {
-    const body = z.object({ stage: z.string() }).safeParse(await c.req.json().catch(() => ({})));
-    if (!body.success || !isDemoStage(body.data.stage)) {
-      return c.json({ error: 'unknownStage' }, 400);
-    }
-    // 家族（使う人を選ぶため）、読み取りの出どころ（録った応答か、手で書いた形か）、段の一覧も返す。
+  // 用意した段から始めるか（stage）、空から始める試用（start：見本の家族だけ、または名前だけの家族）。
+  // 家族（使う人を選ぶため）、読み取りの出どころ（録った応答か、手で書いた形か）、段の一覧も返す。
+  const sessionInfo = (
+    sessionId: string,
+    household: Household,
+    from: { trial?: TrialStart; stage?: string } = {},
+  ) => {
     const data = loadDemoData();
-    return c.json({
-      sessionId: sessions.create(body.data.stage),
-      household: data.household,
+    return {
+      sessionId,
+      household,
+      ...(from.trial ? { trial: from.trial } : {}),
+      ...(from.stage ? { stage: from.stage } : {}),
       readings: data.readings.map(({ sourceId, origin, model }) => ({ sourceId, origin, model })),
       stages: DEMO_STAGES.map((s) => ({ id: s.id, now: s.now, viewer: s.viewer })),
+      // 例のお知らせ（架空。録った読み取りで足す）の題。
+      example: { sourceId: exampleNotice().source.id, title: exampleNotice().source.title ?? '' },
       // お知らせの文を入れて読めるか（読み取りの鍵があるサーバーだけ）。一言を読めるか。
       canRead: reader !== undefined,
       canHear: listener !== undefined,
@@ -555,7 +560,65 @@ export function createApp(
       // 周りの調べ：記録した調べがあるか。Claude にいま調べてもらえるか。
       ...(data.survey ? { hasRecordedSurvey: true } : {}),
       ...(surveyReader ? { canSurvey: true } : {}),
-    });
+    };
+  };
+  // 名前（大人は一人か二人、子は一人。最初の版は子一人の学校・園のお知らせを扱うので、子を後から足す道は作らず、
+  // 始める時に聞く）。同じ名前の成員は、画面で見分けられないので断る。
+  const TrialName = z
+    .string()
+    .trim()
+    .min(1)
+    .max(20)
+    .refine((v) => ![...v].some((ch) => (ch.codePointAt(0) ?? 0) < 0x20 || ch === '\u007f'));
+  const SessionStart = z.union([
+    z.object({ stage: z.string() }),
+    z.object({ start: z.literal('sample') }),
+    z
+      .object({
+        start: z.literal('own'),
+        adults: z.array(TrialName).min(1).max(2),
+        child: TrialName,
+      })
+      .refine((s) => new Set([...s.adults, s.child]).size === s.adults.length + 1),
+  ]);
+  app.post('/api/demo/sessions', async (c) => {
+    const body = SessionStart.safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'unknownStage' }, 400);
+    const start = body.data;
+    if ('stage' in start) {
+      if (!isDemoStage(start.stage)) return c.json({ error: 'unknownStage' }, 400);
+      return c.json(
+        sessionInfo(sessions.create(start.stage), loadDemoData().household, {
+          stage: start.stage,
+        }),
+      );
+    }
+    const sessionId =
+      start.start === 'sample'
+        ? sessions.createTrial('sample')
+        : sessions.createTrial('own', { adults: start.adults, child: start.child });
+    const meta = await sessions.meta(sessionId);
+    if (!meta) return c.json({ error: 'unknownSession' }, 404);
+    return c.json(sessionInfo(sessionId, meta.household, meta));
+  });
+  // 開き直した画面が、同じデモに戻る（期限が切れていれば 404。画面は新しく始める）。
+  app.get('/api/demo/sessions/:sid', async (c) => {
+    const sessionId = c.req.param('sid');
+    const meta = await sessions.meta(sessionId);
+    if (!meta) return c.json({ error: 'unknownSession' }, 404);
+    c.header('Cache-Control', 'private, no-store');
+    return c.json(sessionInfo(sessionId, meta.household, meta));
+  });
+  // 例のお知らせ（架空）を、録った読み取りで足す（Claude を呼ばない。押し直しても二度入れない）。
+  app.post('/api/demo/sessions/:sid/example-notice', async (c) => {
+    const body = z
+      .object({ memberId: z.string().min(1) })
+      .safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: 'invalidBody' }, 400);
+    const result = await sessions.exampleNotice(c.req.param('sid'), body.data.memberId);
+    if (!result) return c.json({ error: 'unknownSession' }, 404);
+    if (result === 'forbidden') return c.json({ error: 'notAnAdult' }, 403);
+    return c.json(result);
   });
   // デモの家の周りの資源を調べる（記録した調べ、または Claude がいま調べる）。何も書かない（家族が候補を入れる）。
   app.post('/api/demo/sessions/:sid/survey', async (c) => {

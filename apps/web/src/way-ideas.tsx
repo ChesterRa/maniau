@@ -163,7 +163,13 @@ export function WayIdeasScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementK
               />
             </label>
             <Text quiet>
-              {ctx.t(ctx.trialInput ? 'wayIdeas.privacyTrial' : 'wayIdeas.privacy')}
+              {ctx.t(
+                ctx.trialInput
+                  ? 'wayIdeas.privacyTrial'
+                  : ctx.fictional
+                    ? 'wayIdeas.privacyFictional'
+                    : 'wayIdeas.privacy',
+              )}
             </Text>
             {context && <Text quiet>{sentNames(ctx, context)}</Text>}
             <Row>

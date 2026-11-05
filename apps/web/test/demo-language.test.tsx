@@ -46,6 +46,8 @@ const saved = (memberId: string) => localStorage.getItem(`maniau.uiLanguage.${me
 it('デモ：まだ選んでいない大人には今の言葉を引き継ぎ（覚えない）、選んだ大人にはその人の言葉を戻す', async () => {
   await step(() => root.render(<App />));
   await step(() => take(calls, (c) => c.url === '/api/me').respond(200, { mode: 'demo' }));
+  // 初めの画面から、用意した場面を開く（審査の入口）。
+  await press(i18n.t('start.stages'));
   // 最初の場面は彩の画面（data/demo と同じ）。画面の中身（view）は返さない：言葉の切り替えだけを見る。
   await step(() =>
     take(calls, (c) => c.url === '/api/demo/sessions').respond(200, {

@@ -204,6 +204,10 @@ export interface Ctx {
    * デモの家庭には無い。
    */
   trialInput?: true;
+  /** 空から始めた試用（見本の家族・名前だけの家族）：入れてよいのは架空の内容だけ（デモの場面より狭い）。 */
+  fictional?: true;
+  /** 空から始めた試用だけ：例のお知らせ（架空。前に用意した読み取りで足す。Claude に送らない）。 */
+  example?: { title: string; add: () => Promise<boolean> };
   confirm?: (proposalId: string, operationId: string) => Promise<ConfirmResult>;
   /** 決める画面の「選んだら」を読む（何も書かない。読めなければ無し）。 */
   preview?: (arrangementKey: string) => Promise<ChoicePreview[] | undefined>;
@@ -898,6 +902,10 @@ export function TodayScreen({ ctx }: { ctx: Ctx }) {
   const [all, setAll] = useState(false);
   const shown = all ? main : main.slice(0, 3);
   const evening = hourOf(ctx.now, ctx.tz) >= 17;
+  // 空から始めた試用で、まだお知らせが一つも無い。最初の一手（お知らせを入れる）だけを出す（家族の家庭と
+  // 用意した場面は、前のまま）。
+  const fresh =
+    ctx.example !== undefined && ctx.sources.size === 0 && shown.length === 0 && !ctx.changes;
   return (
     <>
       <Header
@@ -906,7 +914,8 @@ export function TodayScreen({ ctx }: { ctx: Ctx }) {
       />
       <Main>
         {ctx.changes && <ChangeCard ctx={ctx} change={ctx.changes} />}
-        {shown.length === 0 && !ctx.changes && (
+        {fresh && <StartCard ctx={ctx} />}
+        {!fresh && shown.length === 0 && !ctx.changes && (
           <Card tone="accent">
             <Title>{ctx.t('today.nothing')}</Title>
             <Text quiet>{ctx.t('today.nothingBody')}</Text>
@@ -917,7 +926,9 @@ export function TodayScreen({ ctx }: { ctx: Ctx }) {
         ))}
         {/* ひとことは、いちばん急ぐ札の後に置く（その札の押し口を、最初の画面で下の帯に隠さない。ほかの札より
             前に置き、探さずに見つかるように）。 */}
-        {ctx.hear && ctx.confirm && <SayCard ctx={ctx} hear={ctx.hear} confirm={ctx.confirm} />}
+        {!fresh && ctx.hear && ctx.confirm && (
+          <SayCard ctx={ctx} hear={ctx.hear} confirm={ctx.confirm} />
+        )}
         {shown.slice(1).map((card) => (
           <CardView key={cardKey(card)} ctx={ctx} card={card} />
         ))}
@@ -928,7 +939,7 @@ export function TodayScreen({ ctx }: { ctx: Ctx }) {
         )}
         {/* 家族が言ったことを、欄で足す（保存の前に、変わることを見る口が要る）。きょうの札を押し下げない
             よう、札の下、「すること」の一覧の前に置く。 */}
-        {ctx.previewChange && (
+        {!fresh && ctx.previewChange && (
           <MoreLink onClick={() => ctx.go({ name: 'stateNeed' })}>
             {ctx.t('today.addNeed')}
           </MoreLink>
@@ -952,6 +963,59 @@ export function TodayScreen({ ctx }: { ctx: Ctx }) {
         )}
       </Main>
     </>
+  );
+}
+
+/**
+ * 空から始めた所の最初の一手：お知らせを入れる（撮る・貼る・話す）。試用では、例のお知らせ（架空）でも
+ * 試せる。例は前に用意した読み取りを使い、Claude には送らない（画面にもそう書く）。
+ */
+function StartCard({ ctx }: { ctx: Ctx }) {
+  const [adding, setAdding] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const example = ctx.example;
+  return (
+    <Card tone="accent">
+      <Title>{ctx.t('start.empty.title')}</Title>
+      <Text quiet>{ctx.t('start.empty.body')}</Text>
+      {/* 読み取りの鍵の無いサーバーでは、書いた文を読めない：入れる口を出さず、そう書く（録った読み取りを当てない）。 */}
+      {ctx.read ? (
+        <Row>
+          <Button onClick={() => ctx.go({ name: 'sources' })}>{ctx.t('start.empty.input')}</Button>
+        </Row>
+      ) : (
+        <Text>{ctx.t('start.empty.cannotRead')}</Text>
+      )}
+      {example && (
+        <>
+          <Row>
+            <Button
+              kind="secondary"
+              disabled={adding}
+              onClick={() => {
+                setAdding(true);
+                setFailed(false);
+                void example.add().then((ok) => {
+                  if (!ok) {
+                    setFailed(true);
+                    setAdding(false);
+                  }
+                });
+              }}
+            >
+              {ctx.t('start.empty.example', { title: example.title })}
+            </Button>
+          </Row>
+          <Text quiet>
+            {ctx.t(failed ? 'start.empty.exampleFailed' : 'start.empty.exampleNote')}
+          </Text>
+        </>
+      )}
+      {/* 手で足す道（お知らせを読むのではない。読み取りの鍵が無くても進める）。 */}
+      <MoreLink onClick={() => ctx.go({ name: 'stateNeed' })}>
+        {ctx.t('start.empty.manual')}
+      </MoreLink>
+    </Card>
   );
 }
 
@@ -4297,10 +4361,22 @@ export function SayCard({
       {/* 送る物の注記は、後の札を押し下げないよう、要の一文にたたむ（開くと全文）。 */}
       <details className="text-sm text-sub">
         <summary className="min-h-9 cursor-pointer leading-relaxed">
-          {ctx.t(ctx.trialInput ? 'say.privacySummaryTrial' : 'say.privacySummary')}
+          {ctx.t(
+            ctx.trialInput
+              ? 'say.privacySummaryTrial'
+              : ctx.fictional
+                ? 'say.privacySummaryFictional'
+                : 'say.privacySummary',
+          )}
         </summary>
         <p className="mt-1 leading-relaxed">
-          {ctx.t(ctx.trialInput ? 'say.privacyTrial' : 'say.privacy')}
+          {ctx.t(
+            ctx.trialInput
+              ? 'say.privacyTrial'
+              : ctx.fictional
+                ? 'say.privacyFictional'
+                : 'say.privacy',
+          )}
         </p>
       </details>
       {state !== 'idle' && state !== 'hearing' && state !== 'recording' && (
@@ -4568,7 +4644,15 @@ function NoticeInputCard({
       <Text quiet>
         {ctx.t(ctx.trialInput ? 'input.clockTrial' : 'input.clock', { now: dayTime(ctx, ctx.now) })}
       </Text>
-      <Text quiet>{ctx.t(ctx.trialInput ? 'input.privacyTrial' : 'input.privacy')}</Text>
+      <Text quiet>
+        {ctx.t(
+          ctx.trialInput
+            ? 'input.privacyTrial'
+            : ctx.fictional
+              ? 'input.privacyFictional'
+              : 'input.privacy',
+        )}
+      </Text>
       {(state === 'limit' ||
         state === 'busy' ||
         state === 'uncertain' ||

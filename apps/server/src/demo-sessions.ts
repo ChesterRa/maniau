@@ -52,7 +52,18 @@ import {
   reopened,
   runCommand,
 } from './commands';
-import { DEMO_STAGES, type DemoStageId, demoEvents, loadDemoData } from './demo';
+import {
+  DEMO_STAGES,
+  type DemoStageId,
+  demoEvents,
+  exampleNotice,
+  loadDemoData,
+  ownHousehold,
+  TRIAL_NOW,
+  type TrialNames,
+  type TrialStart,
+  trialEvents,
+} from './demo';
 import type { LatLng, MapsClient, WalkRoute } from './maps/google';
 import { mapInputsFor, withProposed } from './maps/inputs';
 import { type FoundStore, searchStores } from './maps/search';
@@ -306,6 +317,10 @@ interface StoredProposal {
 interface Session {
   now: DateTime;
   touched: number;
+  /** 空から始めた試用（見本の家族・名前だけの家族）。無いのは、用意した段から始めたデモ。 */
+  trial?: TrialStart;
+  /** 用意した段から始めたデモの段（開き直した画面が、同じ段の案内を出すため）。 */
+  stage?: DemoStageId;
   /** このデモで出した答えるリンクの鍵の sha256（デモを捨てる時に、鍵の表から外す）。 */
   links?: Set<string>;
   /** このデモで読んだ（読もうとした）お知らせの数。 */
@@ -476,6 +491,37 @@ export function demoSessions(
 
   // 誰も触らなくても掃除する。プロセスの終わりは止めない。
   setInterval(sweep, SWEEP_MS).unref();
+
+  /** 段（やり直し）と試用で共通：事象の列から新しいデモを開く。 */
+  const open = (
+    events: DomainEvent[],
+    now: DateTime,
+    from: { trial: TrialStart } | { stage: DemoStageId },
+  ): string => {
+    sweep();
+    const id = randomUUID();
+    store.create(id, events);
+    sessions.set(id, {
+      now,
+      touched: clock(),
+      ...from,
+      readings: 0,
+      operations: new Map(),
+      utterances: 0,
+      photos: 0,
+      photoOperations: new Map(),
+      utteranceOperations: new Map(),
+      wayIdeas: 0,
+      wayIdeasOperations: new Map(),
+      proposals: new Map(),
+      storeKinds: 0,
+      storeSearches: 0,
+      surveys: 0,
+      surveyOperations: new Map(),
+      surveyed: new Map(),
+    });
+    return id;
+  };
 
   // 期限を過ぎたデモは、作る時の掃除を待たずに、触った時にも捨てる。
   const touch = (id: string) => {
@@ -936,30 +982,74 @@ export function demoSessions(
     },
     /** 段から新しいデモの家庭を作る。 */
     create(stage: DemoStageId): string {
-      sweep();
-      const id = randomUUID();
       const now = DEMO_STAGES.find((s) => s.id === stage)?.now;
       if (!now) throw new Error(`デモの段が無い：${stage}`);
-      store.create(id, demoEvents(stage));
-      sessions.set(id, {
-        now,
-        touched: clock(),
-        readings: 0,
-        operations: new Map(),
-        utterances: 0,
-        photos: 0,
-        photoOperations: new Map(),
-        utteranceOperations: new Map(),
-        wayIdeas: 0,
-        wayIdeasOperations: new Map(),
-        proposals: new Map(),
-        storeKinds: 0,
-        storeSearches: 0,
-        surveys: 0,
-        surveyOperations: new Map(),
-        surveyed: new Map(),
+      return open(demoEvents(stage), now, { stage });
+    },
+    /**
+     * 空から始める試用の家庭を作る：見本の家族だけ、または名前だけの家族（お知らせ・出来事は無い）。見本の
+     * 成員・場所を、名前だけの家族に混ぜない。
+     */
+    createTrial(start: TrialStart, names?: TrialNames): string {
+      if (start === 'own' && !names) throw new Error('名前だけの家族には、名前が要る');
+      const household = start === 'own' && names ? ownHousehold(names) : loadDemoData().household;
+      return open(trialEvents(household), TRIAL_NOW, { trial: start });
+    },
+    /**
+     * 例のお知らせ（架空）を、前に録った読み取りと一緒に足す。例だけに使う（家族が書いた文は Claude で読む）。
+     * もう入っていれば足さない（押し直しで二度入れない）。大人でなければ forbidden。
+     */
+    async exampleNotice(
+      id: string,
+      memberId: string,
+    ): Promise<{ view: View; added: boolean } | 'forbidden' | undefined> {
+      const session = touch(id);
+      if (!session) return undefined;
+      const { source, output, extraction } = exampleNotice();
+      const maps = await mapsOf(id);
+      return store.withHousehold(id, (log) => {
+        const events = log.events();
+        const household = foldEvents(events).household;
+        if (!household?.members.some((m) => m.id === memberId && m.kind === 'adult' && m.active)) {
+          return 'forbidden';
+        }
+        if (events.some((e) => e.type === 'noticeReceived' && e.source.id === source.id)) {
+          return { view: demoView(events, memberId, session.now, maps), added: false };
+        }
+        const before = computePlan(events, session.now, maps);
+        log.append([{ type: 'noticeReceived', source }], memberId, source.receivedAt);
+        log.append(
+          [
+            {
+              type: 'modelOutputRecorded',
+              call: 'extract',
+              ...output,
+              sourceId: source.id,
+              sourceVersion: 1,
+              output: extraction,
+            },
+          ],
+          'system',
+          source.receivedAt,
+        );
+        const back = reopened(before, computePlan(log.events(), session.now, maps));
+        if (back.length > 0) log.append(back, 'system', source.receivedAt);
+        return { view: demoView(log.events(), memberId, session.now, maps), added: true };
       });
-      return id;
+    },
+    /** 開き直した画面が、同じデモに戻るための中身（今の家族と、試用か）。期限が切れていれば undefined。 */
+    async meta(
+      id: string,
+    ): Promise<{ household: Household; trial?: TrialStart; stage?: DemoStageId } | undefined> {
+      const session = touch(id);
+      if (!session) return undefined;
+      const household = await store.withHousehold(id, (log) => foldEvents(log.events()).household);
+      if (!household) return undefined;
+      return {
+        household,
+        ...(session.trial ? { trial: session.trial } : {}),
+        ...(session.stage ? { stage: session.stage } : {}),
+      };
     },
     async view(id: string, memberId: string): Promise<View | undefined> {
       const session = touch(id);

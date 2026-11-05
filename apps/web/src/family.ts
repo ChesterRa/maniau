@@ -100,6 +100,12 @@ interface Session {
   household: Household;
   readings: Reading[];
   stages: Stage[];
+  /** 空から始めた試用（見本の家族・名前だけの家族）。無いのは、用意した段のデモ。 */
+  trial?: TrialKind;
+  /** 用意した段から始めたデモの段。 */
+  stage?: string;
+  /** 例のお知らせ（架空。録った読み取りで足す）。 */
+  example?: { sourceId: string; title: string };
   /** お知らせの文を入れて読めるか（読み取りの鍵があるサーバーだけ）。 */
   canRead?: boolean;
   /** 家族の一言を読めるか（同じく、鍵のあるデモのサーバーだけ）。 */
@@ -1116,6 +1122,125 @@ export function useDemoSession(stage: string, memberId: string | undefined) {
     session,
     failed: sessionFailed || live.failed,
     restart: () => setGeneration((g) => g + 1),
+  };
+}
+
+export type TrialKind = 'sample' | 'own';
+/** 試用の始め方：見本の家族だけ、名前だけの家族、または用意した段（審査で場面を見る）。 */
+export type TrialStartInput =
+  | { start: 'sample' }
+  | { start: 'own'; adults: string[]; child?: string }
+  | { stage: string };
+
+const TRIAL_KEY = 'maniau.trial.v1';
+const savedTrial = (): string | undefined => {
+  try {
+    return localStorage.getItem(TRIAL_KEY) ?? undefined;
+  } catch {
+    return undefined;
+  }
+};
+const saveTrial = (sessionId: string | undefined) => {
+  try {
+    if (sessionId) localStorage.setItem(TRIAL_KEY, sessionId);
+    else localStorage.removeItem(TRIAL_KEY);
+  } catch {
+    // 残せない端末（プライベートの窓など）では、開き直すと初めからになる。
+  }
+};
+
+/**
+ * 空から始める試用（と、用意した段のデモ）。同じ端末で開き直すと、同じデモに戻る（サーバーの期限が切れて
+ * いれば、初めの画面に戻し、expired で知らせる）。leave で、この端末の控えを消して初めの画面へ。
+ */
+export function useTrialSession(memberId: string | undefined) {
+  const [session, setSession] = useState<Session>();
+  const [phase, setPhase] = useState<'checking' | 'none' | 'starting' | 'ready' | 'failed'>(() =>
+    savedTrial() ? 'checking' : 'none',
+  );
+  const [expired, setExpired] = useState(false);
+
+  useEffect(() => {
+    const saved = savedTrial();
+    if (!saved) return;
+    let cancelled = false;
+    fetch(`/api/demo/sessions/${encodeURIComponent(saved)}`)
+      .then(async (response) => {
+        if (cancelled) return;
+        if (response.status === 404) {
+          saveTrial(undefined);
+          setExpired(true);
+          setPhase('none');
+          return;
+        }
+        if (!response.ok) throw new Error(String(response.status));
+        const back = (await response.json()) as Session;
+        if (!cancelled) {
+          setSession(back);
+          setPhase('ready');
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPhase('failed');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const live = useServerView(
+    session && memberId ? { kind: 'demo', sessionId: session.sessionId, memberId } : undefined,
+  );
+  return {
+    ...live,
+    session,
+    phase,
+    expired,
+    failed: phase === 'failed' || live.failed,
+    /** 新しく始める（前の控えは捨てる）。 */
+    start: async (input: TrialStartInput): Promise<boolean> => {
+      setPhase('starting');
+      setExpired(false);
+      try {
+        const response = await fetch('/api/demo/sessions', {
+          method: 'POST',
+          headers: json,
+          body: JSON.stringify(input),
+        });
+        if (!response.ok) throw new Error(String(response.status));
+        const made = (await response.json()) as Session;
+        saveTrial(made.sessionId);
+        // 用意した段から始めた時は、頼んだ段を覚える（その段の案内と、最初に見る大人のため）。
+        setSession('stage' in input && !made.stage ? { ...made, stage: input.stage } : made);
+        setPhase('ready');
+        return true;
+      } catch {
+        setPhase('failed');
+        return false;
+      }
+    },
+    /** この端末の控えを消して、初めの画面へ戻る（サーバーのデモは期限で消える）。 */
+    leave: () => {
+      saveTrial(undefined);
+      setSession(undefined);
+      setExpired(false);
+      setPhase('none');
+    },
+    /** 例のお知らせを足す（Claude を呼ばない。押し直しても二度入れない）。足せたら見せる物を読み直す。 */
+    addExample: async (): Promise<boolean> => {
+      if (!session || !memberId) return false;
+      try {
+        const response = await fetch(
+          `/api/demo/sessions/${encodeURIComponent(session.sessionId)}/example-notice`,
+          { method: 'POST', headers: json, body: JSON.stringify({ memberId }) },
+        );
+        if (!response.ok) return false;
+        live.refresh();
+        return true;
+      } catch {
+        return false;
+      }
+    },
   };
 }
 

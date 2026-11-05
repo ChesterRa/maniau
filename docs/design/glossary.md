@@ -75,6 +75,9 @@
 | 家庭 | household | データを分ける単位 | `household` |
 | 成員 | member | 大人・子・頼める人 | `member` |
 | 頼める人 | helper | 祖父母など、家族が頼める外の人 | `helper` |
+| 試用 | trial | 登録なしで、空から始めて試すこと（架空の内容だけ）。サーバーのメモリにだけ置き、12 時間使われなければ消える | `trial` |
+| 見本の家族 | sample family | 試用で選べる、用意した架空の家族（予定・頼める人・取れる手がある） | `start: 'sample'` |
+| 名前だけの家族 | your own family (names only) | 試用で、呼び名だけを入れて始める家族。予定や頼める人は、要る時に聞く | `start: 'own'` |
 | ふだんの週 | usual week | 勤務・通勤・お迎えの担当の決まった形 | `routine` |
 | お迎え | pickup | 学童・園への迎え | `pickup` |
 | 帰り道 | way home | 職場から家まで、お迎えを含む | `commuteHome` |

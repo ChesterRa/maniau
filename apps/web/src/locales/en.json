@@ -63,7 +63,60 @@
       "blocked_one": "{{count}} for {{name}} stopped by the verifier (not sent)",
       "blocked_other": "{{count}} for {{name}} stopped by the verifier (not sent)",
       "blockedAll": "The plan failed a verifier check, so all notifications are held"
+    },
+    "leave": "Back to start"
+  },
+  "start": {
+    "headline": "Turn school notices into a family plan",
+    "body": "maniau shows what to decide by when and who does what, and keeps following up until someone in the family takes it on. Your family makes the choices.",
+    "steps": {
+      "input": "Add a notice",
+      "inputSub": "Take a photo, paste, or speak",
+      "decide": "Decide and ask",
+      "decideSub": "Your family makes the choice",
+      "follow": "maniau follows up",
+      "followSub": "It keeps track of replies and changes until they are settled"
+    },
+    "begin": "Start",
+    "sample": "Try the sample family",
+    "note": "No sign-up needed. This is a trial, so please use made-up details.",
+    "stages": "View prepared scenes (for judges)",
+    "expired": "Your earlier trial has expired. Please start again.",
+    "failed": "Couldn’t start. Check your connection and try again.",
+    "family": {
+      "title": "Who will use it?",
+      "adult": "What should we call you?",
+      "adultPlaceholder": "e.g. Me",
+      "partner": "Another adult (optional)",
+      "partnerPlaceholder": "e.g. Partner",
+      "child": "Your child’s nickname",
+      "childPlaceholder": "e.g. Kiddo",
+      "note": "Use made-up nicknames. One child for now. We’ll ask about work hours and people you can ask when it matters.",
+      "next": "Start with this family",
+      "back": "Back",
+      "sameName": "Each nickname must be different so you can tell them apart."
+    },
+    "empty": {
+      "title": "No notices yet",
+      "body": "Add a school or nursery notice, and what to decide and by when will appear here.",
+      "input": "Add a notice",
+      "cannotRead": "This server can’t read text you write right now. You can try the example notice below.",
+      "example": "Try an example: {{title}} (made-up)",
+      "exampleNote": "The example uses a reading prepared earlier (nothing is sent to Claude now).",
+      "exampleFailed": "Couldn’t add the example. Please try again.",
+      "manual": "Add something to do by hand (no notice is read)"
     }
+  },
+  "trial": {
+    "badge": "Trial",
+    "sample": "Sample family",
+    "own": "Your family",
+    "sampleAt": "Sample family · {{time}}",
+    "ownAt": "Your family · {{time}}",
+    "controls": "Controls",
+    "close": "Close",
+    "leave": "Back to start (end this trial)",
+    "scenes": "View prepared scenes"
   },
   "notice": {
     "changed": "Something changed. Please check the new details.",
@@ -657,7 +710,8 @@
     "lost": "We can't tell whether your earlier reading finished (the server may have stopped partway). Check the plan and the notice list; if it isn't there, press \"Read it\" again (it will be a new reading).",
     "testOnly": "Reading with Claude isn't available for this household (trial households only).",
     "clockTrial": "Words like “tomorrow” are read against the current time ({{now}}).",
-    "sample": "Insert a sample notice (fictional)"
+    "sample": "Insert a sample notice (fictional)",
+    "privacyFictional": "Use fictional text only. Your text, this demo’s recorded items (including family statements), and open questions go to Anthropic’s Claude API. Text is kept in server memory; demos unused for over 12 hours are periodically deleted."
   },
   "say": {
     "label": "Quick update",
@@ -766,7 +820,9 @@
     "testOnly": "Reading with Claude isn't available for this household (trial households only).",
     "answerWithUnconfirmed": "Here is what we have (items marked \"reading not checked yet\" are not in the plan).",
     "needUnconfirmed": "Reading not checked yet (not in the plan)",
-    "requestBy": "by {{by}}"
+    "requestBy": "by {{by}}",
+    "privacySummaryFictional": "Share fictional details only. Your update, family and helper names, and current plans and requests are sent to Anthropic.",
+    "privacyFictional": "Share fictional details only. Your update, this demo’s family and helper names, and the current items, tasks and requests (including the people and places involved) are sent to Anthropic’s Claude API to be read. This demo is kept in server memory and periodically deleted after 12 hours unused."
   },
   "clock": {
     "label": "Until each choice disappears",
@@ -1243,7 +1299,8 @@
     "formIntro": "Claude’s idea is in the form. Nothing changes until you save. Check every field and correct it.",
     "formOutside": "Claude hasn’t filled in the deadline, the time to allow for a reply, the cost, or the hours it can cover. Please enter them.",
     "formEstimates": "Minutes, when it can be done, time off and extra tasks are Claude’s estimates.",
-    "reuseChanged": "Ways you edited after Claude made these ideas aren’t shown here (the earlier reason doesn’t apply to their current content; get ideas again)."
+    "reuseChanged": "Ways you edited after Claude made these ideas aren’t shown here (the earlier reason doesn’t apply to their current content; get ideas again).",
+    "privacyFictional": "Use fictional details only. When you press the button, this to-do (what, when, place and the original text), your thoughts above, the names of the adults, helpers and places, and the names of current ways and their steps are sent to Anthropic’s Claude API. Other household details (the usual week, children, opening hours and so on) are not sent. The ideas are kept only in the server’s memory."
   },
   "whatIf": {
     "link": "What if they say no?",
