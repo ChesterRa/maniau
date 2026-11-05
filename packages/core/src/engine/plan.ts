@@ -713,6 +713,8 @@ interface CareSlot {
   arrangementKey: string;
   /** 大人が家にいない一番長い間。無ければ手配は要らない。 */
   gap?: { start: EpochMinutes; end: EpochMinutes };
+  /** 大人が家にいない間が二つ以上に分かれる時の、その全部（早い順。gap はその一つ）。 */
+  split?: { start: EpochMinutes; end: EpochMinutes }[];
 }
 
 /** 家族が進める案（本命・予備）の手順の鎖。並べ方を試す単位。 */
@@ -744,9 +746,9 @@ function placeCare(
   const slots: CareSlot[] = entries.flatMap((entry) => {
     const date = entry.item.interpretation.date;
     if (!date) return [];
-    const gap = noAdultAtHome(ctx.household, date).sort(
-      (a, b) => b.end - b.start - (a.end - a.start),
-    )[0];
+    // 一番長い間を手配の時間にする（並べば早い方）。ほかの間も黙って落とさず、手配に添える（splitGaps）。
+    const gaps = noAdultAtHome(ctx.household, date).sort((a, b) => a.start - b.start);
+    const gap = [...gaps].sort((a, b) => b.end - b.start - (a.end - a.start))[0];
     return children.map((child) => ({
       entry,
       childId: child.id,
@@ -754,6 +756,7 @@ function placeCare(
       requirementKey: keys.childCareRequirement(entry.rootId, child.id),
       arrangementKey: keys.childCareArrangement(entry.rootId, child.id),
       ...(gap ? { gap } : {}),
+      ...(gaps.length > 1 ? { split: gaps } : {}),
     }));
   });
   const templates = ctx.household.careOptions;
@@ -854,7 +857,17 @@ function placeCare(
             slot.arrangementKey,
             built.map((b) => b.option),
           ),
-          reasons: conflictReasons(placed, slot.arrangementKey),
+          reasons: [
+            ...conflictReasons(placed, slot.arrangementKey),
+            ...(slot.split
+              ? [
+                  {
+                    code: 'splitGaps' as const,
+                    refs: slot.split.map((g) => `${ctx.fmt(g.start)}/${ctx.fmt(g.end)}`),
+                  },
+                ]
+              : []),
+          ],
           live: entry.live,
           ...(entry.conditional ? { conditional: entry.conditional } : {}),
           ...chosen(
@@ -2189,6 +2202,11 @@ function withStatus(ctx: Context, arrangement: Arrangement, tasks: Task[]): Arra
   const candidates = open.filter(
     (o) => (o.unusedResources?.length ?? 0) === 0 && o.coverGaps === undefined,
   );
+  // 見守れる大人を確かめられない時間が分かれる日は、どの案も一番長い時間の分しか見ていない（全部を覆うと示せない）
+  // ので、勧めない。
+  if (reasons.some((r) => r.code === 'splitGaps')) {
+    return { ...arrangement, status: 'decidable', reasons };
+  }
   // 勧めるのは、代償と決め時で比べられる時だけ（比べられなければ、家族が選ぶ）：やめたやり方の案がある、営業時間の
   // 分からない場所でする手順のある案がある（間に合うと言えない）、前もっての前提（事前の登録など）が済んだと
   // 確かめられていない案がある、案が二つ以上で代償の分からない案がある時は、勧めない。

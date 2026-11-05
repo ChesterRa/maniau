@@ -429,6 +429,9 @@ function noRecommendation(ctx: Ctx, arrangement: Arrangement): string | undefine
   }
   const open = arrangement.options.filter((o) => !o.expired && o.decisionDeadline !== undefined);
   if (open.length === 0) return undefined;
+  if (arrangement.reasons.some((r) => r.code === 'splitGaps')) {
+    return ctx.t('decide.noRecommendation.split');
+  }
   // 選べる手のどれにも、受け持てると示せない時間が残る時だけ、そう書く（訳が混ざる時は全部とは言わない。手ごとの
   // 印の行が、それぞれの訳を書く）。
   if (open.every((o) => o.coverGaps !== undefined)) {
@@ -1201,6 +1204,7 @@ function DecideCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 
   const { arrangement, requirement, recommended } = card;
   const turnedDown = arrangement.reasons.some((r) => r.code === 'turnedDown');
   const date = requirement?.date ?? arrangement.start;
+  const split = splitLine(ctx, arrangement);
   return (
     <Card>
       <Label tone="warn">{ctx.t('card.decide.label')}</Label>
@@ -1208,6 +1212,7 @@ function DecideCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 
         {ctx.t('card.decide.title', { date: day(ctx, date), what: requirement?.what ?? '' })}
       </Title>
       {turnedDown && <Text>{ctx.t('card.decide.turnedDown')}</Text>}
+      {split && <Text>{ctx.t('card.decide.split', split)}</Text>}
       <ConditionLine
         ctx={ctx}
         basis={{
@@ -1426,6 +1431,8 @@ export function StuckCard({
   };
   const usual = storesOf('usualStoreUnavailable');
   const notUsed = storesOf('storeNotUsed');
+  // 子の居場所で、見守れる大人を確かめられない時間が分かれる日は、全部の時間と、この手配の分を書く。
+  const split = purchase ? undefined : splitLine(ctx, arrangement);
   return (
     <Card>
       <Label tone="warn">
@@ -1476,6 +1483,7 @@ export function StuckCard({
             )
           : ctx.t('card.stuck.childCare', { child: childLabel(ctx, arrangement.childId) })}
       </Text>
+      {split && <Text>{ctx.t('card.decide.split', split)}</Text>}
       {purchase && unknownId && requirement && (
         <Row>
           <Button
@@ -1541,6 +1549,26 @@ export function needGaps(ctx: Ctx, arrangement: Arrangement): string[] {
 /** 時間の幅（同じ日なら終わりは時刻だけ）。 */
 function span(ctx: Ctx, start: string, end: string): string {
   return `${time(ctx, start)}–${day(ctx, end) === day(ctx, start) ? time(ctx, end) : dayTime(ctx, end)}`;
+}
+
+/**
+ * 子の居場所で、見守れる大人を確かめられない時間が分かれる日の、その全部と手配の分（エンジンの splitGaps。無ければ
+ * 無し）。手配の時間（一番長い物）だけを頼む文に書くので、ほかの時間は家族で確かめてもらう。
+ */
+export function splitLine(
+  ctx: Ctx,
+  arrangement: Arrangement,
+): { times: string; main: string } | undefined {
+  const refs = arrangement.reasons.find((r) => r.code === 'splitGaps')?.refs ?? [];
+  if (refs.length < 2) return undefined;
+  const spans = refs.map((ref) => {
+    const [start, end] = ref.split('/');
+    return start && end ? span(ctx, start, end) : ref;
+  });
+  return {
+    times: new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(spans),
+    main: span(ctx, arrangement.start, arrangement.end),
+  };
 }
 
 /** 手を選び、約束が全部そろっても、受け持てると示せない時間（エンジンが前もって出した物。無ければ空）。 */
@@ -2693,6 +2721,7 @@ export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey
     .map((m) => ctx.t('decide.person', { name: m.name }));
   // 選んだ手の作業が、ほかに進める作業と重ならずに置けていない（時刻を置いていない）。
   const conflicted = arrangement.reasons.find((r) => r.code === 'timeConflict')?.refs ?? [];
+  const split = splitLine(ctx, arrangement);
 
   // 元の文へ：根拠の事項の出典（事項の ID から推し量らない。ID は中身を持たない）。
   const basisItems = ctx.items.filter(({ item }) => requirement?.basis.itemIds.includes(item.id));
@@ -2717,6 +2746,13 @@ export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey
         {conflicted.length > 0 && (
           <Card tone="warn">
             <Text>{ctx.t('decide.conflicted', { options: optionList(ctx, conflicted) })}</Text>
+          </Card>
+        )}
+        {split && (
+          <Card tone="warn">
+            <Text>
+              {ctx.t('decide.split', { ...split, child: childLabel(ctx, arrangement.childId) })}
+            </Text>
           </Card>
         )}
         <Text quiet>
@@ -3186,6 +3222,9 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
   if (!task) return <Missing ctx={ctx} />;
   const helper = helperOf(ctx, task);
   const draft = askDraft(ctx, task);
+  // 見守れる大人を確かめられない時間が分かれる日は、頼む文がどの時間の分かと、ほかの時間を書く。
+  const found = arrangementOf(ctx, task.basis.arrangementKey);
+  const split = found?.kind === 'childCare' ? splitLine(ctx, found) : undefined;
   // 送ったと記録する。控え（相手・根拠・条件・時間）は、サーバーが今の計画から作る。見せた文の頼む時間を
   // 付ける（見せた後に日が直されていたら、サーバーが断る）。
   const sent = async () => {
@@ -3209,6 +3248,11 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
           <p className="whitespace-pre-line text-base leading-relaxed">{draft}</p>
           <Text quiet>{ctx.t('ask.editable')}</Text>
         </Card>
+        {split && (
+          <Card tone="warn">
+            <Text>{ctx.t('card.decide.split', split)}</Text>
+          </Card>
+        )}
         <DraftActions ctx={ctx} draft={draft} />
         <Button kind="secondary" onClick={() => void sent()}>
           {ctx.t('ask.sent')}

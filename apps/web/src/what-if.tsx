@@ -14,6 +14,7 @@ import {
   nameOf,
   optionTitle,
   replyBy,
+  splitLine,
 } from './screens';
 import { Button, Card, Header, Label, Main, MoreLink, Text, Title } from './ui';
 
@@ -120,6 +121,9 @@ export function WhatIfOutcome(props: {
     after && !inUse && after.kind === 'childCare' ? replyBy(ctx, after, declined?.key) : undefined;
   const until =
     after?.kind === 'need' && after.needShape === 'by' ? after.end : (after?.start ?? ctx.now);
+  // 見守れる大人を確かめられない時間が分かれる日は、仮の計算もこの手配の時間の分だけなので、全部の時間を添える
+  // （間に合うと書く行が、一日の全部のことだと読まれないように）。
+  const split = after?.kind === 'childCare' ? splitLine(ctx, after) : undefined;
   return (
     <>
       <Card>
@@ -135,6 +139,7 @@ export function WhatIfOutcome(props: {
         {lostBackup && declined && (
           <Text>{ctx.t('whatIf.backupLost', { option: optionTitle(ctx, declined) })}</Text>
         )}
+        {split && <Text>{ctx.t('card.decide.split', split)}</Text>}
         {reply && (
           <Text>
             {reply.evening

@@ -92,7 +92,8 @@
       "action": "Decide",
       "conditional": "Needed only if the notice's condition holds (not settled yet).",
       "conditionalWhen": "Needed {{when}} (not settled yet).",
-      "turnedDown": "The person you asked said no. Please pick another option."
+      "turnedDown": "The person you asked said no. Please pick another option.",
+      "split": "From the times on record, the times we can’t confirm an adult to watch are split ({{times}}). This arrangement is for {{main}} only. Please check the other times together."
     },
     "question": {
       "label": "Please tell us",
@@ -395,6 +396,7 @@
     "go": "Choose this option",
     "reversible": "You can change this later. If you do, Maniau shows what needs cancelling or asking again as tasks (your family does the contacting).",
     "conflicted": "We couldn't find times for the tasks of {{options}} that don't overlap another task the same person is doing, so they have no time yet. Review the options, who does them, or the times.",
+    "split": "From the times on record, we can’t confirm an adult to watch {{child}} during {{times}} on this day. This arrangement is for {{main}} only (the message to send asks about that time only). Please check together what to do about the other times.",
     "replyBy": "If you hear back by the evening of {{night}}, you can still switch to “{{fallback}}” if they say no",
     "replySoon": "The decision deadline for “{{fallback}}” is around {{deadline}} (estimate), so try to hear back as soon as you can",
     "quoted": "“{{title}}”",
@@ -411,7 +413,8 @@
       "hours": "One of these ways uses a place whose opening hours aren’t confirmed, so we don’t suggest one (we haven’t checked it can be done in time).",
       "cost": "Some costs aren’t known, so we don’t suggest one (we don’t treat an unknown cost as zero).",
       "preparation": "Some options need something done beforehand (such as registering in advance) that hasn’t been confirmed, so we don’t recommend one. You can enter whether it’s done under “Around us” in Family.",
-      "cover": "Every option has some time we can’t confirm anyone would look after, even if everyone agreed, so we don’t suggest one. You can still choose."
+      "cover": "Every option has some time we can’t confirm anyone would look after, even if everyone agreed, so we don’t suggest one. You can still choose.",
+      "split": "The times we can’t confirm an adult for are split, and this arrangement is for only one of them, so we don’t suggest one. You can still choose."
     },
     "stoppedWay": "This way has been stopped (it can’t be newly chosen).",
     "noHours": "{{place}}: opening hours not confirmed. Please check that you can go then.",
@@ -872,6 +875,8 @@
         "moved": "Time needed for {{what}}: {{before}} → {{after}}",
         "new": "Newly needed: {{what}} ({{when}})",
         "gone": "No longer needed: {{what}} ({{when}})",
+        "split": "{{what}}: from the times on record, the times we can’t confirm an adult to watch are split ({{times}}). The arrangement is for {{main}} only. Please check the other times together.",
+        "joined": "{{what}}: from the times on record, the time we can’t confirm an adult to watch becomes {{main}} only (before: {{before}}).",
         "need": "“{{what}}”",
         "by": "by {{by}}"
       },

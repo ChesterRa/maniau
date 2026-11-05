@@ -209,7 +209,14 @@ export function householdPreviewLines(
   for (const w of changes.windows) {
     const span = spanOf(w);
     const what = arrangementName(w);
-    if (w.before && w.after) {
+    const sameWindow =
+      w.before !== undefined &&
+      w.after !== undefined &&
+      w.before.start === w.after.start &&
+      w.before.end === w.after.end;
+    if (sameWindow) {
+      // 手配の時間は同じで、分かれ方だけが変わる（下の行で書く）。
+    } else if (w.before && w.after) {
       lines.push(
         ctx.t('household.preview.window.moved', {
           what,
@@ -221,6 +228,27 @@ export function householdPreviewLines(
       lines.push(ctx.t('household.preview.window.new', { what, when: span(w.after) }));
     } else if (w.before) {
       lines.push(ctx.t('household.preview.window.gone', { what, when: span(w.before) }));
+    }
+    // 見守れる大人を確かめられない時間が分かれる日は、全部の時間と、手配がどの時間の分かを書く。分かれていた日が
+    // 分かれなくなる時も書く（手配の時間が同じでも、短い時間が消えることを黙らない）。
+    const list = (gs: readonly { start: string; end: string }[]) =>
+      new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(gs.map((g) => span(g)));
+    if (w.split && w.after) {
+      lines.push(
+        ctx.t('household.preview.window.split', {
+          what,
+          times: list(w.split),
+          main: span(w.after),
+        }),
+      );
+    } else if (w.splitBefore && w.after) {
+      lines.push(
+        ctx.t('household.preview.window.joined', {
+          what,
+          before: list(w.splitBefore),
+          main: span(w.after),
+        }),
+      );
     }
   }
   for (const d of changes.deadlines) {

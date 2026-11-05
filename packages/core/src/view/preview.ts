@@ -169,6 +169,13 @@ export interface WindowChange {
   needShape?: Arrangement['needShape'];
   before?: { start: DateTime; end: DateTime };
   after?: { start: DateTime; end: DateTime };
+  /**
+   * 子の居場所で、変えた後に、見守れる大人を確かめられない時間が分かれる時の、その全部（手配の splitGaps。早い順。
+   * after はその一つ）。手配の時間が同じでも、分かれ方が変われば出す（ほかの時間を黙って落とさない）。
+   */
+  split?: { start: DateTime; end: DateTime }[];
+  /** 変える前に分かれていた時の、その全部（分かれなくなる・分かれ方が変わることを書くため）。 */
+  splitBefore?: { start: DateTime; end: DateTime }[];
 }
 
 export interface DeadlineChange {
@@ -388,6 +395,8 @@ export function planChanges(before: PlanResult, after: PlanResult): PlanChanges 
   const arrangementsBefore = liveArrangements(before);
   const arrangementsAfter = liveArrangements(after);
   const windows: WindowChange[] = [];
+  const splitOf = (a: Arrangement | undefined) =>
+    a?.reasons.find((r) => r.code === 'splitGaps')?.refs ?? [];
   for (const key of new Set([...arrangementsBefore.keys(), ...arrangementsAfter.keys()])) {
     const earlier = arrangementsBefore.get(key);
     const later = arrangementsAfter.get(key);
@@ -395,10 +404,18 @@ export function planChanges(before: PlanResult, after: PlanResult): PlanChanges 
       earlier &&
       later &&
       sameTime(earlier.start, later.start) &&
-      sameTime(earlier.end, later.end)
+      sameTime(earlier.end, later.end) &&
+      splitOf(earlier).join() === splitOf(later).join()
     ) {
       continue;
     }
+    const spans = (refs: readonly string[]) =>
+      refs.flatMap((ref) => {
+        const [start, end] = ref.split('/');
+        return start && end ? [{ start: start as DateTime, end: end as DateTime }] : [];
+      });
+    const split = spans(splitOf(later));
+    const splitBefore = spans(splitOf(earlier));
     const either = later ?? earlier;
     if (!either) continue;
     const what =
@@ -413,6 +430,8 @@ export function planChanges(before: PlanResult, after: PlanResult): PlanChanges 
       ...(either.needShape === undefined ? {} : { needShape: either.needShape }),
       ...(earlier ? { before: { start: earlier.start, end: earlier.end } } : {}),
       ...(later ? { after: { start: later.start, end: later.end } } : {}),
+      ...(split.length > 1 ? { split } : {}),
+      ...(splitBefore.length > 1 ? { splitBefore } : {}),
     });
   }
   const recommendations: RecommendationChange[] = [];

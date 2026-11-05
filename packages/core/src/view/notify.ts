@@ -18,7 +18,14 @@ import {
   toEpochMinutes,
   zonedToEpochMinutes,
 } from '../time';
-import { BACKUP_LEAD_MIN, choosable, needStep, type TodayCard, todayCards } from './today';
+import {
+  BACKUP_LEAD_MIN,
+  choosable,
+  mustChooseAgain,
+  needStep,
+  type TodayCard,
+  todayCards,
+} from './today';
 
 /** 決める事・問いを知らせ始める時：期限のこの時間前から（予備の勧めと同じ、前の晩）。 */
 export const URGENT_LEAD_MIN = BACKUP_LEAD_MIN;
@@ -263,6 +270,9 @@ function intentOf(
       // 決める事は、最初に選べなくなる案の決め時が近づいた時だけ（届いた時は、画面で足りる）。
       // 選んだ案が使えなくなった時は、その案を除いて数える。
       const { arrangement } = card;
+      // 選んだ後も残す札（見守れる大人を確かめられない時間が分かれる日。splitOpen）は、知らせない（画面で足りる）。
+      if (arrangement.chosenOptionKey !== undefined && !mustChooseAgain(arrangement))
+        return undefined;
       const first = arrangement.options
         .filter(
           (o) =>

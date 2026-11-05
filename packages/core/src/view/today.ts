@@ -178,6 +178,28 @@ export function needOpen(
 }
 
 /**
+ * 子の居場所で、見守れる大人を確かめられない時間が分かれる日（splitGaps）の、最後の時間が終わる前か。手配は一番長い時間の分だけ
+ * なので、案を選んで「はい」が来ても、決める札を残す（「いま決めることはありません」と見せない）。選んだ後の札は
+ * 知らせない（知らせるのは、今までどおり選んでいない・選び直しの時だけ。notify）。
+ */
+export function splitOpen(arrangement: Arrangement, now: number): boolean {
+  return arrangement.reasons.some((r) => r.code === 'splitGaps') && careEnd(arrangement) > now;
+}
+
+/**
+ * 手配の要る時間の終わり。見守れる大人を確かめられない時間が分かれる日は、最後の時間の終わり（手配の end は一番長い
+ * 時間の終わりで、それより後の時間が残ることがある）。
+ */
+export function careEnd(arrangement: Arrangement): number {
+  const refs = arrangement.reasons.find((r) => r.code === 'splitGaps')?.refs ?? [];
+  const last = refs.at(-1)?.split('/')[1];
+  return Math.max(
+    toEpochMinutes(arrangement.end),
+    last === undefined ? Number.NEGATIVE_INFINITY : toEpochMinutes(last as DateTime),
+  );
+}
+
+/**
  * 「すること」で家族が次に決めること（札・画面・知らせが同じ物を使う）。やり方を選ぶ・選び直す、間に合う進め方が
  * 無い、本命を選ぶ（選べる案が、家族がやめたやり方の物しか無ければ、やり方を選び直す：waysStopped）、受け持ちを
  * 確かめられない時間が残る、の順に見る。
@@ -333,11 +355,25 @@ export function todayCards(
 
   const backup: TodayCard[] = [];
   const decide: TodayCard[] = [];
+  const decideCard = (arrangement: Arrangement): TodayCard => {
+    const recommended = arrangement.options.find((o) => o.key === arrangement.recommendedOptionKey);
+    const requirement = requirementOf(arrangement);
+    return {
+      kind: 'decide',
+      arrangement,
+      ...(requirement ? { requirement } : {}),
+      ...(recommended ? { recommended } : {}),
+    };
+  };
   for (const arrangement of plan.arrangements) {
     // 予備の勧めは、通用の「すること」にも出す（選び直す所は「すること」の画面）。決める札は、子の居場所だけ
     // （「すること」は need の札）。
     if (!arrangement.live) continue;
     if (arrangement.status === 'dependsOnReply') {
+      // 返事を待つ間も、見守れる大人を確かめられない時間が分かれる日は、決める札を残す（splitOpen）。
+      if (arrangement.kind === 'childCare' && splitOpen(arrangement, now)) {
+        decide.push(decideCard(arrangement));
+      }
       // 根拠が分からない依頼は、ふつうの返事待ちとして予備を勧めない（まず要るかを確かめる）。
       const waitingFor = plan.requests.find(
         (r) =>
@@ -364,17 +400,8 @@ export function todayCards(
     }
     if (arrangement.kind === 'childCare' && arrangement.status !== 'askFirst') {
       const needsChoice = arrangement.chosenOptionKey === undefined || mustChooseAgain(arrangement);
-      if (needsChoice && arrangement.status !== 'infeasible') {
-        const recommended = arrangement.options.find(
-          (o) => o.key === arrangement.recommendedOptionKey,
-        );
-        const requirement = requirementOf(arrangement);
-        decide.push({
-          kind: 'decide',
-          arrangement,
-          ...(requirement ? { requirement } : {}),
-          ...(recommended ? { recommended } : {}),
-        });
+      if ((needsChoice || splitOpen(arrangement, now)) && arrangement.status !== 'infeasible') {
+        decide.push(decideCard(arrangement));
       }
     }
   }
@@ -410,7 +437,7 @@ export function todayCards(
           r.code === 'storeNotUsed',
       );
     if (!noStore && !arrangement.reasons.some((r) => r.code === 'noOptionLeft')) continue;
-    if (toEpochMinutes(arrangement.end) <= now) continue;
+    if (careEnd(arrangement) <= now) continue;
     const requirement = requirementOf(arrangement);
     stuck.push({ kind: 'stuck', arrangement, ...(requirement ? { requirement } : {}) });
   }
