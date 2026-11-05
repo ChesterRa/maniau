@@ -350,6 +350,7 @@
     "context": "{{names}}は、仕事の日です。",
     "source": "いつ・なぜ を、元の文で見る",
     "by": "{{deadline}}ごろまで（目安）",
+    "byWho": "{{deadline}}ごろまで（目安。{{name}}がする時）",
     "daysLeft": "あと{{count}}日",
     "daysLeft_other": "あと{{count}}日",
     "expired": "決め時を過ぎました",

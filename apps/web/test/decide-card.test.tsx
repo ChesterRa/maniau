@@ -4,7 +4,7 @@ import type { ChoicePreview } from '@maniau/core';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { ChoiceClock } from '../src/choice-clock';
-import { DecideScreen, previewLines } from '../src/screens';
+import { DecideScreen, deadlineHolder, previewLines } from '../src/screens';
 import { ctxFor } from './ctx';
 
 const care = 'arr:childCare:n1:i6:c';
@@ -119,6 +119,62 @@ describe('決める画面の札', () => {
       later: { memberId: 'a', start: '2026-11-30T17:20+09:00' },
     });
     expect(laterEn.some((l) => l.includes('健太 could still make it if they start by'))).toBe(true);
+  });
+
+  it('決め時が、後まで間に合う大人の始める最後と同じ分の時だけ、その人の名を添える（違えば添えない）', () => {
+    const ctx = ctxFor('arrived', 'b', 'ja');
+    const option = ctx.plan.arrangements
+      .find((a) => a.key === care)
+      ?.options.find((o) => o.decisionDeadline !== undefined);
+    expect(option?.decisionDeadline).toBeDefined();
+    if (!option?.decisionDeadline) return;
+    const base: ChoicePreview = {
+      arrangementKey: care,
+      optionKey: option.key,
+      current: false,
+      steps: [],
+      cancels: [],
+      conflicts: [],
+      moved: [],
+      assigneeId: 'b',
+    };
+    // 同じ分（書き方の違う同じ時刻も同じ分として比べる。ここでは UTC の書き方）：その大人。
+    expect(
+      deadlineHolder(option, {
+        ...base,
+        later: { memberId: 'a', start: new Date(option.decisionDeadline).toISOString() },
+      }),
+    ).toBe('a');
+    // 一分でも違えば、推して名を付けない。
+    const shifted = new Date(new Date(option.decisionDeadline).getTime() + 60_000).toISOString();
+    expect(deadlineHolder(option, { ...base, later: { memberId: 'a', start: shifted } })).toBe(
+      undefined,
+    );
+    // 後まで間に合う人がいなければ、添えない。「選んだら」を読めていなくても、添えない。
+    expect(deadlineHolder(option, base)).toBe(undefined);
+    expect(deadlineHolder(option, undefined)).toBe(undefined);
+    // 決め時の無い手には、添えない。
+    const { decisionDeadline: _, ...noDeadline } = option;
+    expect(
+      deadlineHolder(noDeadline, {
+        ...base,
+        later: { memberId: 'a', start: option.decisionDeadline },
+      }),
+    ).toBe(undefined);
+    // 文：目安であることと、だれがする時の決め時かを日英で書く。
+    const ja = ctx.t('decide.byWho', {
+      deadline: '12/1（月）17:20',
+      name: ctx.t('decide.person', { name: '健太' }),
+    });
+    expect(ja).toContain('目安');
+    expect(ja).toContain('健太さんがする時');
+    const en = ctxFor('arrived', 'b', 'en');
+    const enText = en.t('decide.byWho', {
+      deadline: 'Mon 12/1 17:20',
+      name: en.t('decide.person', { name: '健太' }),
+    });
+    expect(enText).toContain('estimate');
+    expect(enText).toContain('if 健太 does it');
   });
 
   it('休みは、登録された長さのまま日英とも数に合わせて書く（日に換えない。英語で「hour(s)」と書かない）', () => {

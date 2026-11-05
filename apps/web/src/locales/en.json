@@ -351,6 +351,7 @@
     "context": "{{names}} are working that day.",
     "source": "See when and why in the original text",
     "by": "By about {{deadline}} (estimate)",
+    "byWho": "By about {{deadline}} (estimate; if {{name}} does it)",
     "daysLeft_one": "{{count}} day left",
     "daysLeft_other": "{{count}} days left",
     "expired": "Too late to choose",

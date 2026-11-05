@@ -2948,6 +2948,18 @@ function Consequences({ ctx, preview }: { ctx: Ctx; preview: ChoicePreview }) {
   );
 }
 
+/**
+ * 決め時が、「選んだら」の後まで間に合う大人の始める最後と同じ分なら、その大人（決め時は、だれかが間に合う最後）。
+ * 自分の分が先に過ぎる時に、札の決め時と「選んだら」の自分の時刻を、食い違いに見せないために名を添える。
+ * 同じ分の時だけ（違えば添えない。札の決め時と「選んだら」は別の計算なので、推して名を付けない）。
+ */
+export function deadlineHolder(option: OptionPlan, preview?: ChoicePreview): string | undefined {
+  if (!option.decisionDeadline || !preview?.later) return undefined;
+  return toEpochMinutes(preview.later.start) === toEpochMinutes(option.decisionDeadline)
+    ? preview.later.memberId
+    : undefined;
+}
+
 function OptionRow({
   ctx,
   option,
@@ -2968,6 +2980,7 @@ function OptionRow({
     ? daysBetween(ctx.now, option.decisionDeadline, ctx.tz)
     : undefined;
   const urgent = left !== undefined && left <= 5 && !option.expired;
+  const holder = deadlineHolder(option, preview);
   const current = arrangement.chosenOptionKey === option.key;
   const backup = arrangement.backupOptionKeys.includes(option.key);
   // やめたやり方の案は、新しくは選べない（今、本命か予備に選んである物は、そのまま）。
@@ -3021,7 +3034,12 @@ function OptionRow({
                 <Icon path={ICON.clock} size={18} />
               </span>
               <span className="min-w-0">
-                {ctx.t('decide.by', { deadline: dayTime(ctx, option.decisionDeadline) })}
+                {holder !== undefined
+                  ? ctx.t('decide.byWho', {
+                      deadline: dayTime(ctx, option.decisionDeadline),
+                      name: ctx.t('decide.person', { name: nameOf(ctx.household, holder) }),
+                    })
+                  : ctx.t('decide.by', { deadline: dayTime(ctx, option.decisionDeadline) })}
               </span>
             </span>
             {urgent && left !== undefined && (
