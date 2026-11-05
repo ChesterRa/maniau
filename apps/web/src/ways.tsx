@@ -18,7 +18,7 @@ import {
   type Way,
   type WayStep,
 } from '@maniau/core';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { deadlineText, householdPreviewLines } from './household';
 import { SourceLink } from './resources';
 import { type Ctx, leaveText, nameOf, succeeded } from './screens';
@@ -150,6 +150,9 @@ export function useHouseholdSave(ctx: Ctx) {
   const [shown, setShown] = useState<{ key: string; preview: HouseholdPreview }>();
   const [refused, setRefused] = useState<{ key: string; reason: string }>();
   const [busy, setBusy] = useState(false);
+  // 見る頼みの番号。後から頼んだ物の答えが先に届くことがあるので、最後の頼みの答えだけを使う（前の答えで、今見て
+  // いる物の答えや「計算しています」を上書きしない。計画が進んで同じ中身を見直した時も、前の答えを使わない）。
+  const ticket = useRef(0);
   const keyOf = (household: Household) => JSON.stringify(household);
   return {
     busy,
@@ -160,8 +163,10 @@ export function useHouseholdSave(ctx: Ctx) {
     look: async (household: Household) => {
       if (!ctx.previewHousehold) return;
       const key = keyOf(household);
+      const mine = ++ticket.current;
       setBusy(true);
       const result = await ctx.previewHousehold(household);
+      if (ticket.current !== mine) return;
       setBusy(false);
       if (!result) setRefused({ key, reason: 'unavailable' });
       else if ('refused' in result) setRefused({ key, reason: result.refused });
