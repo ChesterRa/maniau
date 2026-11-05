@@ -105,7 +105,7 @@ flowchart TB
 
 ### The general core and the parts for the first area
 
-- **General core** (not split by area): the event log and sources, “things to do” with a deadline or a time window, ways with their steps and prerequisites, working back to decision deadlines, separate states for proposals, taking on, requests and replies, the differences after a change and drafts of cancellations, what-if calculations (“If you choose this”, “What if they say no?”), what's around us and how the family treats each place, the decision to notify, and the independent verifier.
+- **General core** (not split by area): the event log and sources, “things to do” with a deadline or a time window, ways with their steps and prerequisites, working back to decision deadlines, separate states for proposals, taking on, requests and replies, the differences after a change and drafts of cancellations, what-if calculations (“If you choose this”, “What if they say no?”), candidate days and answers (who answers, where each answer came from, the counts, and a record of what the decision was based on), what's around us and how the family treats each place, the decision to notify, and the independent verifier.
 - **Parts for the first area** (fitted today to dual-income families raising children): some kinds of items and ways (where a child will be, belongings, drop-off and pick-up, after-school care), the prompts for reading notices and looking around, the kinds of places looked for (sick-child care, temporary childcare, family support), family roles (adult, child, helper), Japanese holidays and time zone, and the demo family.
 - From the screens, you can add to what's around us only stores and places found by looking around (not places of any other kind). Whether this works in other areas will be decided after studying each area's people, resources, deadlines and exceptions, and trying it.
 
@@ -118,6 +118,18 @@ Use the scene selector at the top to move between points in time, and “Viewing
 3. **11/29 No reply yet:** The after-school care deadline is close. On 彩's screen, Maniau asks whether to hold a backup, and “What if they say no?” shows the calculation if the answer is no.
 4. **11/30 Backup booked:** After-school care is held as a backup while waiting for おばあちゃん.
 5. **12/4 Postponed:** Child care that is no longer needed, and the cancellations to send, split between the two adults.
+6. **12/5 Choose a day for a sitter:**
+   1. Open “陽菜を見てもらう” on Today and see the answers from おばあちゃん and 近所のサトウさん.
+   2. Use “Make a new link” for 近所のサトウさん and open it in another tab or browser.
+   3. On the answer page, answer “Yes” for 12/13, then return to the family screen and press “Load the latest answers (from other screens or links)”.
+   4. Open “See what changes if you choose this day” for 12/13, press “Choose this day”, then “See the arrangement for this day”.
+7. **12/6 Choose a practice day:**
+   1. Open “クラブの練習” on Today and see that at least six “yes” answers and the coach's “yes” are needed.
+   2. Use “Make a new link” for コーチ, open it in another tab or browser, and answer “Yes” for 12/19.
+   3. On the family screen, press “Load the latest answers (from other screens or links)” and compare the answers and whose answers can change it.
+   4. Open “See what changes if you choose this day” for 12/19, choose the day, then open “See the arrangement for this day” to see the gym arrangement.
+
+Answer links work only in demo households. Anyone holding a link can answer; the holder's identity is not checked. Meeting the answer and number requirements does not confirm that the venue has room. To change the day after someone has been asked or taken on a task, mark the “thing to do” as not needed and add it again.
 
 The demo doesn't send notifications. Instead, on Today, the demo bar at the top shows a collapsed summary of the notification candidates at that demo time, assuming none were sent yet. Open it to read the lock-screen text, with candidates for now kept apart from those held until morning. On 11/29 the only candidate is for 彩; on 12/4 there is one for each adult. At night (from 22:00), notifications that can wait are held until 7:00 the next morning (move the clock forward to try it).
 
@@ -155,7 +167,7 @@ Development centered on Claude Code, and we chose each feature for a purpose. Wh
 
 ## What's built and what's next
 
-Built: the three core ideas above; reading notices, photos and quick updates; things to do (what the family says, and attendance or applications a notice asks for) with a table of ways to handle them; map-based errands; and family mode (identity checks with Cloudflare Access, Postgres storage, Web Push notifications; not yet checked on a real iPhone).
+Built: the three core ideas above; reading notices, photos and quick updates; things to do (what the family says, and attendance or applications a notice asks for) with a table of ways to handle them; choosing the day from candidate days and answers (per-person answer links work only in demo households); map-based errands; and family mode (identity checks with Cloudflare Access, Postgres storage, Web Push notifications; not yet checked on a real iPhone).
 
 Next:
 
@@ -163,9 +175,8 @@ Next:
 - Regular re-checks of what's around us (for now, Maniau looks again only when the family taps).
 - Using the family's usual places for recommending ways too (such as a usual sick-child care room).
 - More kinds of places to look for (now sick-child care, temporary childcare and family support), and looking around for family households.
-- Outside childcare, we'll look first at arranging gatherings (club activities, events, get-togethers). Not a date poll: it would connect the decision deadlines that come from a venue's application period or group registration, who takes on what after deciding, and whom to check with again after a change. People make the decisions.
-  - Step by step, checking each before the next: the organizer's arrangements, then a way for participants to answer and correct their own replies, then a club's whole season.
-  - Many people deciding one thing needs a new data model that holds each person's intent and who can see what. It isn't built yet (today's data model and screens assume a household).
+- Outside childcare, you can try arranging a fictional club practice with the same “thing to do”, candidate days and answers. Whether it works for real gatherings or other areas needs checking with that area's people, resources, deadlines and exceptions. People make the decisions.
+  - Choosing different ways for each candidate, changing the day after asking someone or a task is taken on, and answer links in family mode are not available yet. Arranging a club's whole season is also future work.
 
 What Maniau can't do yet, and what hasn't been checked, is listed in [Details and limitations](docs/scope.en.md#current-scope-and-limitations).
 
