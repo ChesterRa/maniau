@@ -463,9 +463,17 @@ export function planFromState(state: EngineState, now?: DateTime, maps?: MapInpu
     }
     if (item.kind === 'need') needs.push(entry);
   }
-  // 通用の「すること」は、子の居場所と買い物の作業を置いた後に（同じ人の時間を重ねない）。
+  // 通用の「すること」は、子の居場所と買い物の作業を置いた後に（同じ人の時間を重ねない）。ほかの用事へ渡す
+  // ふさがりは、時間を使う作業と、本人が引き受けた作業だけ（blocksOthers。比べるだけの候補は入れない）。
   const needBusy = new Map<string, Busy[]>();
-  addBusy(needBusy, tasks);
+  const placedBefore = {
+    arrangements,
+    requests: externalRequests(ctx, tasks, arrangements, items),
+  };
+  addBusy(
+    needBusy,
+    tasks.filter((t) => blocksOthers(t, placedBefore)),
+  );
   for (const entry of needs) {
     planNeed(ctx, entry, needBusy, { requirements, arrangements, tasks }, items);
   }
@@ -1229,7 +1237,15 @@ function planNeed(
   let result = build(new Set());
   const idle = idleOptionKeys(ctx, [result.arrangement], result.tasks, items);
   if (idle.size > 0) result = build(idle);
-  addBusy(busy, result.tasks);
+  // 後の用事へ渡すふさがりは、この用事で時間を使う作業と、本人が引き受けた作業だけ（blocksOthers）。
+  const view = {
+    arrangements: [result.arrangement],
+    requests: externalRequests(ctx, result.tasks, [result.arrangement], items),
+  };
+  addBusy(
+    busy,
+    result.tasks.filter((t) => blocksOthers(t, view)),
+  );
   out.tasks.push(...result.tasks);
   out.arrangements.push(result.arrangement);
 }
@@ -2001,6 +2017,18 @@ function occupies(t: Task, chosen: Chosen): boolean {
   // 手配が分からない時は、重ねない側（使う）にする。
   if (!arrangement) return true;
   return isActiveTask(chosen, t) || arrangement.recommendedOptionKey === t.basis.optionKey;
+}
+
+/**
+ * ほかの用事のふさがりに渡す作業か（後の用事の作業を置く時に避ける）。addBusy が数えるのは、時刻と担当があり、
+ * 生きていて、済んでもやめてもいない作業だけ（済んだ作業は渡さない。今までどおり）。その中で、時間を使う作業
+ * （occupies：案の無い作業と取り消しの作業、進める案と勧める案の作業。勧める案は、検証器もほかの用事の進める作業と
+ * 重ねさせない）と、本人が引き受けた作業（休む予備や、選んでいない案を引き受けた記録も、約束として守る。検証器の
+ * 執行の範囲より広い）を入れる。比べるだけで、勧めてもおらず、だれも引き受けていない候補は入れない（しない作業で、
+ * ほかの用事の決め時を早めない）。
+ */
+function blocksOthers(t: Task, chosen: Chosen): boolean {
+  return occupies(t, chosen) || (t.live && t.commitment === 'accepted');
 }
 
 /** その人が、時刻のある作業に使う時間（検証器と同じく、移動と寄り道の帰りを含む）。 */
