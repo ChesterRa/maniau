@@ -75,9 +75,11 @@
 | 家庭 | household | データを分ける単位 | `household` |
 | 成員 | member | 大人・子・頼める人 | `member` |
 | 頼める人 | helper | 祖父母など、家族が頼める外の人 | `helper` |
+| 見られる・見られない・分からない | can watch / can’t watch / don’t know | 大人がその日、子を見られるかの答え。分からない所は、不在にも見られるにも数えない。子の居場所だけに使い、ほかの事ができる時間とは言わない | `dayAnswers`・`can`・`cannot`・`rest` |
+| 聞きたいこと | need to know | 子を見られるか分からない時間が残る時に、きょうに出す札。答えるまで手配が要るとも要らないとも言わない | `facts`・`missingAdults` |
 | 試用 | trial | 登録なしで、空から始めて試すこと（架空の内容だけ）。サーバーのメモリにだけ置き、12 時間使われなければ消える | `trial` |
 | 見本の家族 | sample family | 試用で選べる、用意した架空の家族（予定・頼める人・取れる手がある） | `start: 'sample'` |
-| 名前だけの家族 | your own family (names only) | 試用で、呼び名だけを入れて始める家族。予定や頼める人は、要る時に聞く | `start: 'own'` |
+| 名前だけの家族 | your own family (names only) | 試用で、呼び名だけを入れて始める家族。予定や頼める人は、要る時に聞く | `start: 'own'`・`confirmDays` |
 | ふだんの週 | usual week | 勤務・通勤・お迎えの担当の決まった形 | `routine` |
 | お迎え | pickup | 学童・園への迎え | `pickup` |
 | 帰り道 | way home | 職場から家まで、お迎えを含む | `commuteHome` |

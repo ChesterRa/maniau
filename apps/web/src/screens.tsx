@@ -43,6 +43,7 @@ import {
 import type { TFunction } from 'i18next';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChoiceClock } from './choice-clock';
+import { FactsCard, HelperAskCard } from './facts';
 import {
   type ConfirmResult,
   type Heard,
@@ -100,6 +101,8 @@ export type Route =
   | { name: 'today' }
   | { name: 'household' }
   | { name: 'decide'; key: string }
+  /** 子の居場所の足りない事実（その日にだれが子を見られるか）を入れる（要件の key）。 */
+  | { name: 'facts'; key: string }
   /** 通用の「すること」の一つ（手配の key）。 */
   | { name: 'need'; key: string }
   /** いつにするかの候補のある「すること」（要件の key）。 */
@@ -1138,6 +1141,7 @@ function cardKey(card: TodayCard): string {
       return `${card.kind}:${card.request.requestId}`;
     case 'bring':
     case 'needCheck':
+    case 'facts':
       return `${card.kind}:${card.requirement.key}`;
   }
 }
@@ -1177,6 +1181,8 @@ function CardView({ ctx, card }: { ctx: Ctx; card: TodayCard }) {
       return <NeedCard ctx={ctx} card={card} />;
     case 'needCheck':
       return <NeedCheckCard ctx={ctx} card={card} />;
+    case 'facts':
+      return <FactsCard ctx={ctx} card={card} />;
     default:
       return null;
   }
@@ -1498,19 +1504,23 @@ export function StuckCard({
   const notUsed = storesOf('storeNotUsed');
   // 子の居場所で、見守れる大人を確かめられない時間が分かれる日は、全部の時間と、この手配の分を書く。
   const split = purchase ? undefined : splitLine(ctx, arrangement);
+  // 子の居場所で、取れる手がまだ一つも無い（空から始めた家庭）：間に合わないのではなく、手を足せば選べる。
+  const noOptions = !purchase && arrangement.options.length === 0;
   return (
     <Card>
       <Label tone="warn">
         {ctx.t(
-          noStore
-            ? 'card.stuck.noStoreLabel'
-            : unconfirmed
-              ? 'card.stuck.unconfirmedLabel'
-              : usual !== undefined
-                ? 'card.stuck.usualLabel'
-                : notUsed !== undefined
-                  ? 'card.stuck.notUsedLabel'
-                  : 'card.stuck.label',
+          noOptions
+            ? 'card.stuck.noOptionsLabel'
+            : noStore
+              ? 'card.stuck.noStoreLabel'
+              : unconfirmed
+                ? 'card.stuck.unconfirmedLabel'
+                : usual !== undefined
+                  ? 'card.stuck.usualLabel'
+                  : notUsed !== undefined
+                    ? 'card.stuck.notUsedLabel'
+                    : 'card.stuck.label',
         )}
       </Label>
       <Title>
@@ -1546,7 +1556,12 @@ export function StuckCard({
                 stores: usual ?? notUsed ?? '',
               },
             )
-          : ctx.t('card.stuck.childCare', { child: childLabel(ctx, arrangement.childId) })}
+          : noOptions
+            ? ctx.t('card.stuck.noOptions', {
+                when: `${day(ctx, arrangement.start)} ${time(ctx, arrangement.start)}–${time(ctx, arrangement.end)}`,
+                child: childLabel(ctx, arrangement.childId),
+              })
+            : ctx.t('card.stuck.childCare', { child: childLabel(ctx, arrangement.childId) })}
       </Text>
       {split && <Text>{ctx.t('card.decide.split', split)}</Text>}
       {purchase && unknownId && requirement && (
@@ -1568,6 +1583,12 @@ export function StuckCard({
       )}
       {/* 買う店が分からない・置けない品物は、駅の近くで店を探して、この品物を買う店として足せる（地図のあるデモ）。 */}
       {purchase && requirement && <StoreSearch ctx={ctx} what={requirement.what} first={noStore} />}
+      {/* 子の居場所で取れる手が無い：頼める人を足せる（決める画面で）。 */}
+      {!purchase && (
+        <Button onClick={() => ctx.go({ name: 'decide', key: arrangement.key })}>
+          {ctx.t('card.stuck.addHelper')}
+        </Button>
+      )}
     </Card>
   );
 }
@@ -2841,6 +2862,8 @@ export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey
           </MoreLink>
         )}
         <OptionChooser ctx={ctx} arrangement={arrangement} />
+        {/* 子の居場所は、頼める人を足して手を増やせる（取れる手が無い家庭も、ここから進める）。 */}
+        {arrangement.kind === 'childCare' && <HelperAskCard ctx={ctx} />}
       </Main>
     </>
   );
@@ -2889,6 +2912,10 @@ export function OptionChooser({ ctx, arrangement }: { ctx: Ctx; arrangement: Arr
       ctx.go({ name: 'ask', taskKey: first.key });
     } else ctx.go({ name: 'today' });
   };
+  // 子の居場所で、取れる手がまだ一つも無い（空から始めた家庭）：消えたのではないので、時計を出さず、足し方を書く。
+  if (arrangement.kind === 'childCare' && arrangement.options.length === 0) {
+    return <Text>{ctx.t('decide.noOptionsYet')}</Text>;
+  }
   // 締切までに済ませる「すること」は、締切までの時計（窓の「すること」と子の居場所は、要る時の始まりまで）。
   const until =
     arrangement.kind === 'need' && arrangement.needShape === 'by'

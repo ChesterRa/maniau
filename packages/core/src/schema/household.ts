@@ -117,6 +117,12 @@ export const RoutineDay = z.object({
   memberId: Id,
   weekday: Weekday,
   segments: z.array(RoutineSegment),
+  /**
+   * 家族が、この一日の全部を確かめて記録した印（最初の区間の前と最後の区間の後は家にいて子を見られる、も含めて。
+   * 記録した大人本人が答えたとは言わない）。日の記録の読み方は
+   * 印があっても無くても同じ（一日の全部）。印の要る家庭（Household.confirmDays）で、新しく足す日の記録に要る。
+   */
+  allDay: z.literal(true).optional(),
 });
 export type RoutineDay = z.infer<typeof RoutineDay>;
 
@@ -129,6 +135,8 @@ export const RoutineException = z.object({
   memberId: Id,
   date: LocalDate,
   segments: z.array(RoutineSegment).min(1),
+  /** 家族が、この一日の全部を確かめて記録した印（RoutineDay.allDay と同じ）。 */
+  allDay: z.literal(true).optional(),
 });
 export type RoutineException = z.infer<typeof RoutineException>;
 
@@ -146,6 +154,28 @@ export const Unavailable = z.object({
   end: LocalTime,
 });
 export type Unavailable = z.infer<typeof Unavailable>;
+
+/** 日の中の時間（半開 [start, end)、同じ日の中、分の精度）。 */
+export const DaySpan = z.object({ start: LocalTime, end: LocalTime });
+export type DaySpan = z.infer<typeof DaySpan>;
+
+/**
+ * 大人がその日、子を見られるかの、家族の答え（その大人について。一つの端末で、段取りを受け持つ人がもう一人の分も
+ * 入れられる。だれが入れたかは事象の記録に残る）。見られる時間（can）・見られない時間（cannot）と、それ以外の時間
+ * （rest）が見られる・見られない・分からない。子の見守りの計算では、その人のその日の区間（ふだんの週・その日だけの
+ * 一日）より先に使う（作業を置く所は、今までどおり区間で決める）。「分からない」と答え直すのも答え（rest が
+ * unknown で can・cannot が空）で、前の答えや区間をその日に戻さない。同じ人・同じ日は一つ。can と cannot は重ならない。
+ * 手が離せない時間は、どちらに書いてあっても、いつも見られない時間に入る。使う所は子の居場所だけ：答えは「その子を
+ * 見られるか」で、ほかの事ができる時間ではない（作業の置き場・いつにするか・買い物には使わない。02-foundation §3.7）。
+ */
+export const DayAnswer = z.object({
+  memberId: Id,
+  date: LocalDate,
+  can: z.array(DaySpan),
+  cannot: z.array(DaySpan),
+  rest: z.enum(['can', 'cannot', 'unknown']),
+});
+export type DayAnswer = z.infer<typeof DayAnswer>;
 
 /** 締切の決まり。手配が要る日から逆算する。 */
 export const DeadlineRule = z.discriminatedUnion('type', [
@@ -370,6 +400,13 @@ export const Household = z.object({
   routineExceptions: z.array(RoutineException).default([]),
   /** 手が離せない時間。無いのは、記録した物が無い（前からの記録に欄を足さない）。 */
   unavailable: z.array(Unavailable).optional(),
+  /** 大人がその日、子を見られるかの答え。無いのは、答えた物が無い（前からの記録に欄を足さない）。 */
+  dayAnswers: z.array(DayAnswer).optional(),
+  /**
+   * この家庭では、日の記録（ふだんの週の一日・その日だけの一日）を新しく足す時、家族が一日の全部を確かめて記録した印
+   * （allDay）が要る。空から始めた家庭に付ける。無いのは前からの家庭で、前からの記録は今までの決まりのまま読む。
+   */
+  confirmDays: z.literal(true).optional(),
   careOptions: z.array(CareOptionTemplate),
   /** 通用の「すること」のやり方（家族が確かめた物）。 */
   ways: z.array(Way).default([]),
@@ -387,3 +424,36 @@ export const Household = z.object({
   preparations: z.array(Preparation).default([]),
 });
 export type Household = z.infer<typeof Household>;
+
+/** 家族が足せる「頼める人に頼む」の締切：その日の何日前の 21:00 までに頼むか（家族が選ぶ）。 */
+export const HELPER_ASK_DAYS = [1, 3, 7] as const;
+
+/**
+ * 家族が足せる取れる手：頼める人に頼む（頼める人一人に一つ）。手順と代償は決まった形で、締切だけを家族が選ぶ
+ * （HELPER_ASK_DAYS）。返事を待つ時間は置かない（相手の都合を、前もって決めない）。サーバーは、この形と同じ物だけを
+ * 足させる（ほかの取れる手は、今までどおり足せない）。
+ */
+export function helperAskOption(
+  id: string,
+  helperId: string,
+  days: (typeof HELPER_ASK_DAYS)[number],
+): CareOptionTemplate {
+  return CareOptionTemplate.parse({
+    id,
+    kind: 'askHelper',
+    titleKey: 'option.askHelper',
+    providerId: helperId,
+    deadline: { type: 'daysBefore', days, at: '21:00' },
+    steps: [
+      {
+        id: 'ask',
+        titleKey: 'task.helper.ask',
+        durationMin: 5,
+        segments: ['home', 'commute', 'work'],
+        external: { to: helperId, kind: 'reply' },
+      },
+    ],
+    cost: { helperRequests: 1 },
+    cancellable: true,
+  });
+}

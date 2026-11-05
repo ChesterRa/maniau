@@ -161,6 +161,8 @@ export function ownHousehold(names: TrialNames): Household {
     places: [],
     routines: [],
     careOptions: [],
+    // 日の記録を足す時は、家族が一日の全部を確かめて記録した物だけ（分からない時間を、家にいると見なさない）。
+    confirmDays: true,
   });
 }
 

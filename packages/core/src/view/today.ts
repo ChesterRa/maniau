@@ -59,6 +59,11 @@ export type TodayCard =
    * まで計画に入れない（手配も作業も無い）。大人の全員に出し、元の文と読み取り（何を・いつ・条件・作用）を見せる。
    */
   | { kind: 'needCheck'; requirement: Requirement }
+  /**
+   * 子の居場所で、見られる大人がいるか分からない時間が残る（要件の missingAdults）。答えるまで「何もない」とも
+   * 「手配が要る」とも言わず、大人の全員に、だれのいつが分からないかを出して聞く。その日が終わるまで。
+   */
+  | { kind: 'facts'; requirement: Requirement }
   /** 答えで段取りが変わる問い。 */
   | { kind: 'question'; question: Question; requirement?: Requirement }
   /** 自分が頼んで、返事を待っている。 */
@@ -420,6 +425,17 @@ export function todayCards(
     .filter((r) => r.kind === 'need' && r.unconfirmed === true)
     .map((requirement) => ({ kind: 'needCheck', requirement }));
 
+  const facts: TodayCard[] = plan.requirements
+    .filter(
+      (r) =>
+        r.live &&
+        r.kind === 'childCare' &&
+        (r.missingAdults?.length ?? 0) > 0 &&
+        r.date !== undefined &&
+        now < toEpochMinutes(`${addDays(r.date, 1)}T00:00${plan.now.slice(16)}`),
+    )
+    .map((requirement) => ({ kind: 'facts', requirement }));
+
   const stuck: TodayCard[] = [];
   for (const arrangement of plan.arrangements) {
     if (!arrangement.live || arrangement.status === 'askFirst' || arrangement.kind === 'need')
@@ -558,6 +574,7 @@ export function todayCards(
       ...cancel,
       ...check,
       ...backup,
+      ...facts,
       ...decide,
       ...need,
       ...needCheck,

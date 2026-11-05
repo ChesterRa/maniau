@@ -5,11 +5,14 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   applyCorrection,
   atHomeAnswerable,
+  type CareOptionTemplate,
   type Command,
   type DateTime,
   DomainEvent,
   formatDateTime,
+  HELPER_ASK_DAYS,
   type Household,
+  helperAskOption,
   type Interpretation,
   isActiveTask,
   isNeedArrangementKey,
@@ -1483,7 +1486,8 @@ function checkHouseholdEdit(
   if (
     next.id !== current.id ||
     next.region !== current.region ||
-    next.timeZone !== current.timeZone
+    next.timeZone !== current.timeZone ||
+    next.confirmDays !== current.confirmDays
   ) {
     return invalid('householdIdentity');
   }
@@ -1535,7 +1539,13 @@ function checkHouseholdEdit(
   const pairsBefore = sameNamePairs(current);
   if ([...sameNamePairs(next)].some((pair) => !pairsBefore.has(pair))) return invalid('nameTaken');
   const ids = next.careOptions.map((o) => o.id);
-  if (new Set(ids).size !== ids.length || ids.length !== current.careOptions.length) {
+  // 新しく足せる取れる手は、頼める人に頼む（決まった形。締切だけ家族が選ぶ）を、頼める人一人に一つだけ。
+  const added = next.careOptions.filter((o) => !current.careOptions.some((c) => c.id === o.id));
+  if (
+    new Set(ids).size !== ids.length ||
+    ids.length !== current.careOptions.length + added.length ||
+    added.some((o) => !helperAskAllowed(o, next))
+  ) {
     return invalid('careOptionsLocked');
   }
   for (const option of current.careOptions) {
@@ -1574,9 +1584,14 @@ function checkHouseholdEdit(
     );
     return mismatch ? 'routinePlace' : undefined;
   };
+  // 空から始めた家庭（confirmDays）では、足した・直した日の記録に、家族が一日の全部を確かめて記録した印が要る
+  // （記録した大人本人が答えた・確かめたとは言わない。だれが記録したかは事象に残る）。
   for (const day of next.routines) {
     if (!adults.has(day.memberId)) continue;
-    if (sameJson(dayOf(current, day.memberId, day.weekday)?.segments, day.segments)) continue;
+    const before = dayOf(current, day.memberId, day.weekday);
+    if (sameJson(before, day)) continue;
+    if (next.confirmDays && day.allDay !== true) return invalid('dayNotConfirmed');
+    if (sameJson(before?.segments, day.segments)) continue;
     const bad = badDay(day.segments);
     if (bad) return invalid(bad);
   }
@@ -1585,10 +1600,20 @@ function checkHouseholdEdit(
     const before = current.routineExceptions.find(
       (e) => e.memberId === day.memberId && e.date === day.date,
     );
+    if (next.confirmDays && !sameJson(before, day) && day.allDay !== true) {
+      return invalid('dayNotConfirmed');
+    }
     if (sameJson(before?.segments, day.segments)) continue;
     if (!adults.has(day.memberId)) return invalid('routineExceptionMember');
     const bad = badDay(day.segments);
     if (bad) return invalid(bad);
+  }
+  // その日に子を見られるかの答えは、今いる大人の物だけ（形は validateHousehold が確かめる）。
+  const active = new Set(
+    next.members.filter((m) => m.kind === 'adult' && m.active).map((m) => m.id),
+  );
+  if ((next.dayAnswers ?? []).some((a) => !active.has(a.memberId))) {
+    return invalid('dayAnswerMember');
   }
   // 営業時間の調べた所と時刻はサーバーが持つ：時間（曜日ごとの区間・休みの日）を直していなければ、今の記録の
   // 物をそのまま使う（送られた調べた所・時刻は採らない）。直した・新しく入れた時間は、家族が確かめた物として
@@ -1770,6 +1795,26 @@ function checkResources(
 
 /** 新しく足す成員・場所・やり方・手順の ID（画面が作る。ID は比べるだけで、区切って読まない。これは守りの形）。 */
 const NEW_ID = /^[a-z0-9][a-z0-9-]{0,47}$/;
+
+/**
+ * 家族が足す取れる手が、頼める人に頼む決まった形か（helperAskOption と同じ中身。締切は選べる物だけ）。頼める人は今いる
+ * 手伝いの人で、その人に頼む手は一つだけ。
+ */
+function helperAskAllowed(option: CareOptionTemplate, next: Household): boolean {
+  const helper = next.members.find(
+    (m) => m.id === option.providerId && m.kind === 'helper' && m.active,
+  );
+  const days = option.deadline.type === 'daysBefore' ? option.deadline.days : undefined;
+  const allowed = HELPER_ASK_DAYS.find((d) => d === days);
+  return (
+    helper !== undefined &&
+    allowed !== undefined &&
+    NEW_ID.test(option.id) &&
+    sameJson(option, helperAskOption(option.id, helper.id, allowed)) &&
+    next.careOptions.filter((o) => o.kind === 'askHelper' && o.providerId === helper.id).length ===
+      1
+  );
+}
 const NEW_PLACE_KINDS: ReadonlySet<PlaceKind> = new Set(['store', 'helperHome', 'other']);
 /** 手順のかかる時間・返事を待つ時間の上限（分。打ち間違いで、何日も先の置き方を探さない）。 */
 const MAX_STEP_MIN = 24 * 60;

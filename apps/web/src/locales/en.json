@@ -273,7 +273,10 @@
       "usualLabel": "No time at your usual store",
       "usual": "It’s needed by {{date}}, but no time to stop at your usual store ({{stores}}) was found. We won’t move it to another store until your family chooses one. To buy it elsewhere, change your stores in “Around us” under “Family”. If you get it another way, tap \"Got it\".",
       "notUsedLabel": "Only stores you don’t use",
-      "notUsed": "It’s needed by {{date}}, but the only stores that sell it are ones your family marked “Don’t use” ({{stores}}). To buy it there, change that in “Around us” under “Family”. If you get it another way, tap \"Got it\"."
+      "notUsed": "It’s needed by {{date}}, but the only stores that sell it are ones your family marked “Don’t use” ({{stores}}). To buy it there, change that in “Around us” under “Family”. If you get it another way, tap \"Got it\".",
+      "addHelper": "Add someone you can ask",
+      "noOptionsLabel": "No ways to arrange yet",
+      "noOptions": "Someone needs to watch {{child}} on {{when}}. Add someone you can ask, and you can choose to ask them."
     },
     "timing": {
       "fixed": "{{day}} {{from}}–{{to}}",
@@ -375,6 +378,13 @@
       "targetJoin": "; ",
       "fromDay": "the notice received {{day}}",
       "fromTitled": "“{{title}}” received {{day}}"
+    },
+    "facts": {
+      "label": "Need to know",
+      "title": "{{date}}: who can watch {{child}}?",
+      "wholeDay": "We don’t know yet whether {{who}} can watch on this day. Until we know, we won’t decide whether care needs arranging.",
+      "times": "We don’t know yet whether anyone can watch {{times}} ({{who}}). Until we know, we won’t decide whether care needs arranging.",
+      "action": "Enter who can watch"
     }
   },
   "answer": {
@@ -488,7 +498,62 @@
       }
     },
     "unusedResource": "You marked “{{name}}” as “Don’t use” (not recommended; you can still choose it).",
-    "coverGaps": "Time we can’t confirm this option would look after, even if everyone agreed: {{gaps}} (not recommended; you can still choose it)."
+    "coverGaps": "Time we can’t confirm this option would look after, even if everyone agreed: {{gaps}} (not recommended; you can still choose it).",
+    "noOptionsYet": "There are no ways to choose yet. Add one with “Add someone you can ask” below."
+  },
+  "facts": {
+    "title": "{{date}}: who can watch {{child}}?",
+    "intro": "Enter only what you know. Anything left as “Don’t know” stays unknown, and we won’t decide whether care needs arranging.",
+    "gone": "Nothing to ask now",
+    "goneBody": "This day is already settled or no longer needs care.",
+    "week": {
+      "label": "Usual weekday (Mon–Fri)",
+      "office": "Goes to work",
+      "remote": "Works from home",
+      "short": "Works shorter hours",
+      "home": "At home on weekdays (no work)",
+      "unknown": "Don’t know (skip)",
+      "officeLine": "{{start}}–{{end}}: at work or travelling, can’t watch the child. Before and after this, at home and can watch the child.",
+      "remoteLine": "{{start}}–{{end}}: working at home, can’t watch the child. Before and after this, at home and can watch the child.",
+      "shortLine": "{{start}}–{{end}}: at work or travelling, can’t watch the child. Before and after this, at home and can watch the child.",
+      "homeLine": "At home all day on weekdays and can watch the child.",
+      "badTimes": "Use times after 6:00 and before 23:00, with the start before the end."
+    },
+    "day": {
+      "label": "On {{date}}",
+      "usual": "As usual",
+      "all": "Can watch all day",
+      "notSome": "Can’t watch for part of the day",
+      "someOnly": "Only know when they can watch",
+      "unknown": "Don’t know",
+      "rest": "The rest of the day:",
+      "restCan": "Can watch",
+      "restUnknown": "Don’t know",
+      "someOnlyLine": "Other times are treated as “Don’t know”.",
+      "badTimes": "Make the start earlier than the end."
+    },
+    "start": "Start",
+    "end": "End",
+    "look": "See what this changes",
+    "save": "Save",
+    "refused": "We couldn’t save this answer. Please check the times."
+  },
+  "helperAsk": {
+    "label": "Add someone you can ask",
+    "body": "Grandparents, neighbours and so on. Once added, you can choose “Ask them” (use a made-up nickname).",
+    "name": "Their nickname",
+    "namePlaceholder": "e.g. Mr Sato next door",
+    "by": "Ask by",
+    "choose": "Choose",
+    "days": {
+      "1": "21:00 the day before",
+      "3": "21:00, 3 days before",
+      "7": "21:00, 1 week before"
+    },
+    "look": "See what this changes",
+    "add": "Add {{name}}",
+    "added": "Added {{name}}. You can choose them above.",
+    "refused": "Couldn’t add them. Check the nickname (it can’t match someone already added)."
   },
   "ask": {
     "title": "Send this message",

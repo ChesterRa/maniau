@@ -60,7 +60,7 @@ import { type DutyTurn, dutyTurn, statedTurn } from '../view/ours';
 import { preparationGaps, unusedResources } from '../view/preparations';
 import { isActiveTask } from '../view/today';
 import { hoursUnknownAt, stoppedWay } from '../view/ways';
-import { noAdultAtHome } from './availability';
+import { careCoverage } from './availability';
 import { type Busy, optionDeadline, placeStep, ruleDeadline } from './deadline';
 import { bestOrder } from './joint';
 import { purchaseOpportunities, purchaseStores, searchPurchase } from './purchase';
@@ -715,6 +715,8 @@ interface CareSlot {
   gap?: { start: EpochMinutes; end: EpochMinutes };
   /** 大人が家にいない間が二つ以上に分かれる時の、その全部（早い順。gap はその一つ）。 */
   split?: { start: EpochMinutes; end: EpochMinutes }[];
+  /** 見られる大人がいるとも、全員が見られないとも分からない時間と、そこに分からない時間がある大人。 */
+  unsure?: { spans: { start: EpochMinutes; end: EpochMinutes }[]; adults: string[] };
 }
 
 /** 家族が進める案（本命・予備）の手順の鎖。並べ方を試す単位。 */
@@ -746,8 +748,11 @@ function placeCare(
   const slots: CareSlot[] = entries.flatMap((entry) => {
     const date = entry.item.interpretation.date;
     if (!date) return [];
-    // 一番長い間を手配の時間にする（並べば早い方）。ほかの間も黙って落とさず、手配に添える（splitGaps）。
-    const gaps = noAdultAtHome(ctx.household, date).sort((a, b) => a.start - b.start);
+    // 手配は、大人の全員が見られないと分かっている時間だけに置く（careCoverage）。一番長い間を手配の時間にする
+    // （並べば早い方）。ほかの間も黙って落とさず、手配に添える（splitGaps）。分からない時間は、手配にも「見られる」
+    // にも数えず、要件に添えて聞く（missingAdults）。
+    const coverage = careCoverage(ctx.household, date);
+    const gaps = [...coverage.certain].sort((a, b) => a.start - b.start);
     const gap = [...gaps].sort((a, b) => b.end - b.start - (a.end - a.start))[0];
     return children.map((child) => ({
       entry,
@@ -757,6 +762,9 @@ function placeCare(
       arrangementKey: keys.childCareArrangement(entry.rootId, child.id),
       ...(gap ? { gap } : {}),
       ...(gaps.length > 1 ? { split: gaps } : {}),
+      ...(coverage.missing.length > 0
+        ? { unsure: { spans: coverage.unsure, adults: coverage.missing } }
+        : {}),
     }));
   });
   const templates = ctx.household.careOptions;
@@ -815,6 +823,15 @@ function placeCare(
       basis: { itemIds: [entry.item.id], requirementKey: slot.requirementKey },
       live: entry.live,
       ...(entry.conditional ? { conditional: entry.conditional } : {}),
+      ...(slot.unsure
+        ? {
+            missingAdults: slot.unsure.adults,
+            unsure: slot.unsure.spans.map((s) => ({
+              start: ctx.fmt(s.start),
+              end: ctx.fmt(s.end),
+            })),
+          }
+        : {}),
     });
     if (!slot.gap) continue;
     // まだ選んでいない案は、進める案と済ませた手順の作業を避ける（同じ手配の物も。本命と並べて予備にする

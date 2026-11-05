@@ -95,6 +95,29 @@ export function validateHousehold(household: Household): HouseholdIssue[] {
     if (clash) issues.push({ path: at, problem: 'overlap', detail: `${clash.id}` });
   }
 
+  // その日に子を見られるかの答え：人は家の大人、同じ人の同じ日は一つ、どの時間も始まりは終わりより前、見られる時間と
+  // 見られない時間（どちらの中でも）は重ならない（端が接するのは重なりではない）。
+  const answered = new Set<string>();
+  for (const [i, a] of (household.dayAnswers ?? []).entries()) {
+    const at = `dayAnswers.${i}`;
+    if (!adults.has(a.memberId))
+      issues.push({ path: `${at}.memberId`, problem: 'unknownRef', detail: a.memberId });
+    const key = `${a.memberId}/${a.date}`;
+    if (answered.has(key)) issues.push({ path: at, problem: 'duplicateId', detail: key });
+    answered.add(key);
+    const spans = [...a.can, ...a.cannot];
+    for (const s of spans) {
+      if (s.start >= s.end)
+        issues.push({ path: at, problem: 'badSegment', detail: `${s.start}–${s.end}` });
+    }
+    const sorted = [...spans].sort((x, y) => x.start.localeCompare(y.start));
+    for (const [j, s] of sorted.entries()) {
+      const previous = sorted[j - 1];
+      if (previous && previous.end > s.start)
+        issues.push({ path: at, problem: 'overlap', detail: `${previous.end} > ${s.start}` });
+    }
+  }
+
   for (const [i, o] of household.careOptions.entries()) {
     const base = `careOptions.${i}`;
     ref(`${base}.providerId`, o.providerId, anyIds);

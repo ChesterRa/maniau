@@ -5,6 +5,7 @@ import { formatDateTime, type Member, toEpochMinutes } from '@maniau/core';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DemoNotifications } from './demo-notify';
+import { FactsScreen } from './facts';
 import {
   type Notice,
   type Reading,
@@ -559,6 +560,8 @@ function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {
       return <TodayScreen ctx={ctx} />;
     case 'decide':
       return <DecideScreen ctx={ctx} arrangementKey={route.key} />;
+    case 'facts':
+      return <FactsScreen ctx={ctx} requirementKey={route.key} />;
     case 'need':
       return <NeedScreen ctx={ctx} arrangementKey={route.key} />;
     case 'when':

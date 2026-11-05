@@ -1,7 +1,13 @@
 // 手が離せない時間（家庭の unavailable）：家にいても子を見守れず、作業も置かない。場所の区間は切らず、使う所で除く。
 import { describe, expect, it } from 'vitest';
 import { Household, proposalSnapshot, type Unavailable, validateHousehold } from '../src';
-import { computePlan, noAdultAtHome, placeStep, purchaseOpportunities } from '../src/engine';
+import {
+  careCoverage,
+  computePlan,
+  noAdultAtHome,
+  placeStep,
+  purchaseOpportunities,
+} from '../src/engine';
 import { zonedToEpochMinutes } from '../src/time';
 import { household, noticeArrived } from './fixtures/demo';
 
@@ -87,19 +93,22 @@ describe('見守れる大人がいない時間（noAdultAtHome）', () => {
     ).toEqual([span('2026-12-07', '10:00', '11:00')]);
   });
 
-  it('その日の区間の無い大人：手が離せない時間を足しても、ほかの大人で決めた時間は縮まない', () => {
+  it('その日の区間の無い大人は分からない：ほかの大人が家の外でも、手配の要る時間にせず、分からない時間として出す', () => {
     const noA = Household.parse({
       ...household,
       routines: household.routines.filter((r) => !(r.memberId === 'a' && r.weekday === 1)),
     });
-    const before = noAdultAtHome(noA, '2026-12-07');
-    expect(before.length).toBeGreaterThan(0);
+    const before = careCoverage(noA, '2026-12-07');
+    expect(before.certain).toEqual([]);
+    expect(before.missing).toEqual(['a']);
+    expect(before.unsure.length).toBeGreaterThan(0);
+    // 手が離せない時間は、その人が見られないと分かる時間：彩も家の外の時間なら、そこだけ手配が要る。
     expect(
       noAdultAtHome(withBusy([busy('a', '2026-12-07', '09:00', '10:00')], noA), '2026-12-07'),
-    ).toEqual(before);
+    ).toEqual([span('2026-12-07', '09:00', '10:00')]);
   });
 
-  it('どの大人にも区間が無い日：手が離せないと分かる時間だけ', () => {
+  it('どの大人にも区間が無い日：全員の手が離せない時間の重なりだけが、手配の要る時間', () => {
     const none = Household.parse({
       ...household,
       routines: household.routines.filter((r) => r.weekday !== 1),
@@ -113,9 +122,10 @@ describe('見守れる大人がいない時間（noAdultAtHome）', () => {
       none,
     );
     expect(noAdultAtHome(both, '2026-12-07')).toEqual([span('2026-12-07', '09:00', '10:00')]);
+    // 一人の手が離せないだけでは、全員が見られないとは言わない（もう一人は分からない）。
     expect(
       noAdultAtHome(withBusy([busy('a', '2026-12-07', '09:00', '10:00')], none), '2026-12-07'),
-    ).toEqual([span('2026-12-07', '09:00', '10:00')]);
+    ).toEqual([]);
   });
 
   it('手が離せない時間を足しても、前からの時間は消えない（含む）', () => {
