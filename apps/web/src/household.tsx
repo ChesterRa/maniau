@@ -81,13 +81,13 @@ export function deadlineText(ctx: Ctx, rule: DeadlineRule): string {
   }
 }
 
-/** 取れる手の名前（決める画面と同じ言葉）。 */
-function wayTitle(ctx: Ctx, way: CareOptionTemplate): string {
-  const name =
-    way.kind === 'askHelper'
-      ? nameOf(ctx.household, way.providerId)
-      : nameOf(ctx.household, way.steps[0]?.assigneeId);
-  return ctx.t(`${way.titleKey}.title`, { name });
+/**
+ * 取れる手の名前（決める画面と同じ言葉）。from は名前を引く家の情報（保存の前の見通しでは直した後の物。そこで
+ * 足す頼める人は、今の家の情報にはまだ居ない）。
+ */
+function wayTitle(ctx: Ctx, way: CareOptionTemplate, from: Household = ctx.household): string {
+  const id = way.kind === 'askHelper' ? way.providerId : way.steps[0]?.assigneeId;
+  return ctx.t(`${way.titleKey}.title`, { name: nameOf(from, id) || nameOf(ctx.household, id) });
 }
 
 function stepsText(ctx: Ctx, way: CareOptionTemplate): string {
@@ -161,7 +161,7 @@ export function householdPreviewLines(
       const way = household.ways.find((w) => w.id === templateId);
       if (way) return ctx.t('option.way.title', { name: way.name });
       const template = household.careOptions.find((o) => o.id === templateId);
-      if (template) return wayTitle(ctx, template);
+      if (template) return wayTitle(ctx, template, household);
     }
     return undefined;
   };
