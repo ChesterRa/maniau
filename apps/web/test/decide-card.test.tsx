@@ -29,7 +29,7 @@ describe('決める画面の札', () => {
       (o) => !o.expired && o.key !== arrangement?.chosenOptionKey,
     );
     expect(choosable.length).toBeGreaterThan(0);
-    expect(shown.split('この手で進める').length - 1).toBe(choosable.length);
+    expect(shown.split('これに決める').length - 1).toBe(choosable.length);
   });
 
   it('英語でも同じ物を出す', () => {
@@ -38,7 +38,7 @@ describe('決める画面の札', () => {
     expect(shown).toContain('Suggested');
     expect(shown).toContain('Until each choice disappears');
     expect(shown).toContain('You can change your choice later');
-    expect(shown).toContain('Choose this option');
+    expect(shown).toContain('Go with this');
   });
 
   it('「選んだら」を、最初の一手・ほかの作業の数・取り消し・動く作業の文にする', () => {
@@ -246,7 +246,7 @@ describe('決める画面の札', () => {
     );
     expect(text(html)).toContain('計算しています');
     // 選べない間は、押すと進めるとは書かない。
-    expect(text(html)).not.toContain('この手で進める');
+    expect(text(html)).not.toContain('これに決める');
   });
 
   it('条件しだいの手配は、決める画面でもそう書く', () => {

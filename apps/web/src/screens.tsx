@@ -41,7 +41,7 @@ import {
   zonedToEpochMinutes,
 } from '@maniau/core';
 import type { TFunction } from 'i18next';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { ChoiceClock } from './choice-clock';
 import { FactsCard, HelperAskCard } from './facts';
 import {
@@ -70,7 +70,6 @@ import {
   formatDayTime,
   formatLongDay,
   formatTime,
-  hourOf,
   localDate,
   minutesBetween,
 } from './format';
@@ -95,10 +94,13 @@ import {
   Title,
 } from './ui';
 import { appendHeard, useVoice } from './voice';
-import { WhenList } from './when';
+import { openWhen, WhenList } from './when';
+
+/** 押した後に、きょうの上に一行で出す結果（送ったと記録した・返事を記録した）。次に画面を移るまで出す。 */
+export type TodayDone = 'sent' | 'replyYes' | 'replyNo';
 
 export type Route =
-  | { name: 'today' }
+  | { name: 'today'; done?: TodayDone }
   | { name: 'household' }
   | { name: 'decide'; key: string }
   /** 子の居場所の足りない事実（その日にだれが子を見られるか）を入れる（要件の key）。 */
@@ -899,40 +901,48 @@ export function cancelTwin(ctx: Ctx, request: ExternalRequest): boolean {
 
 // ── きょう ──────────────────────────────
 
-export function TodayScreen({ ctx }: { ctx: Ctx }) {
+export function TodayScreen({ ctx, done }: { ctx: Ctx; done?: TodayDone }) {
   const { main, quiet } = ctx.today;
   // 初めは三つまで見せ、残りは押せば全部出す（隠したままにしない）。
   const [all, setAll] = useState(false);
   const shown = all ? main : main.slice(0, 3);
-  const evening = hourOf(ctx.now, ctx.tz) >= 17;
+  // 三つに分ける。今やること：札と、自分が引き受けてまだ済んでいない作業（まだ送っていない頼み事を含む）と
+  // 持ち物。頼んだこと：相手の返事や、もう一人の引き受けを待つ物。決まったこと：相手が OK と言ったと記録した
+  // 頼み事（手配の全部が済んだとは言わない）。
+  const mine = quiet.filter((c) => c.kind === 'todo' || c.kind === 'bring');
+  const asked = quiet.filter((c) => c.kind === 'waiting' || c.kind === 'pending');
+  const agreed = settledRequests(ctx);
   // 空から始めた試用で、まだお知らせが一つも無い。最初の一手（お知らせを入れる）だけを出す（家族の家庭と
   // 用意した場面は、前のまま）。
   const fresh =
     ctx.example !== undefined && ctx.sources.size === 0 && shown.length === 0 && !ctx.changes;
+  // 日を決める事が残る「すること」（WhenList）も今やることに数える（決める物があるのに「無い」と言わない）。
+  const now = shown.length > 0 || mine.length > 0 || openWhen(ctx).length > 0;
   return (
     <>
-      <Header
-        eyebrow={formatLongDay(ctx.now, ctx.lang, ctx.tz)}
-        title={ctx.t(evening ? 'today.titleEvening' : 'today.title')}
-      />
+      <Header eyebrow={formatLongDay(ctx.now, ctx.lang, ctx.tz)} title={ctx.t('today.title')} />
       <Main>
+        {done && (
+          <p
+            role="status"
+            className="flex items-start gap-2 rounded-2xl bg-accent-soft px-4 py-3 text-base"
+          >
+            <span className="shrink-0 text-accent">
+              <Icon path={ICON.check} size={20} />
+            </span>
+            {ctx.t(`today.done.${done}`)}
+          </p>
+        )}
         {ctx.changes && <ChangeCard ctx={ctx} change={ctx.changes} />}
         {fresh && <StartCard ctx={ctx} />}
-        {!fresh && shown.length === 0 && !ctx.changes && (
+        {!fresh && !now && !ctx.changes && (
           <Card tone="accent">
             <Title>{ctx.t('today.nothing')}</Title>
             <Text quiet>{ctx.t('today.nothingBody')}</Text>
           </Card>
         )}
-        {shown.slice(0, 1).map((card) => (
-          <CardView key={cardKey(card)} ctx={ctx} card={card} />
-        ))}
-        {/* ひとことは、いちばん急ぐ札の後に置く（その札の押し口を、最初の画面で下の帯に隠さない。ほかの札より
-            前に置き、探さずに見つかるように）。 */}
-        {!fresh && ctx.hear && ctx.confirm && (
-          <SayCard ctx={ctx} hear={ctx.hear} confirm={ctx.confirm} />
-        )}
-        {shown.slice(1).map((card) => (
+        {now && <SectionTitle>{ctx.t('today.now')}</SectionTitle>}
+        {shown.map((card) => (
           <CardView key={cardKey(card)} ctx={ctx} card={card} />
         ))}
         {main.length > shown.length && (
@@ -940,32 +950,115 @@ export function TodayScreen({ ctx }: { ctx: Ctx }) {
             {ctx.t('today.more', { count: main.length - shown.length })}
           </MoreLink>
         )}
-        {/* 家族が言ったことを、欄で足す（保存の前に、変わることを見る口が要る）。きょうの札を押し下げない
-            よう、札の下、「すること」の一覧の前に置く。 */}
-        {!fresh && ctx.previewChange && (
-          <MoreLink onClick={() => ctx.go({ name: 'stateNeed' })}>
-            {ctx.t('today.addNeed')}
-          </MoreLink>
-        )}
-        <WhenList ctx={ctx} />
-        <NeedList ctx={ctx} />
-        {quiet.length > 0 && (
+        {mine.length > 0 && (
           <Card>
-            <Label tone="sub">{ctx.t('today.quiet')}</Label>
             <div className="flex flex-col">
-              {quiet.map((card, index) => (
+              {mine.map((card, index) => (
                 <QuietRow
                   key={cardKey(card)}
                   ctx={ctx}
                   card={card}
-                  last={index === quiet.length - 1}
+                  last={index === mine.length - 1}
                 />
               ))}
             </div>
           </Card>
         )}
+        {/* いつにするかの決まっていない「すること」（日を決める事が残る）は、今やることの終わりに置く。 */}
+        <WhenList ctx={ctx} />
+        {asked.length > 0 && (
+          <>
+            <SectionTitle>{ctx.t('today.asked')}</SectionTitle>
+            <Card>
+              <div className="flex flex-col">
+                {asked.map((card, index) => (
+                  <QuietRow
+                    key={cardKey(card)}
+                    ctx={ctx}
+                    card={card}
+                    last={index === asked.length - 1}
+                  />
+                ))}
+              </div>
+            </Card>
+          </>
+        )}
+        {agreed.length > 0 && (
+          <>
+            <SectionTitle>{ctx.t('today.settled')}</SectionTitle>
+            <Card>
+              <div className="flex flex-col">
+                {agreed.map((request, index) => (
+                  <AgreedRow
+                    key={request.requestId}
+                    ctx={ctx}
+                    request={request}
+                    last={index === agreed.length - 1}
+                  />
+                ))}
+              </div>
+            </Card>
+          </>
+        )}
+        {/* 入れる口（ひとこと・することを足す）と「すること」の一覧は、三つの後に置く（押した後に、今の状態が
+            最初の画面に見えるように。札の押し口も、入れる欄で下に押しやらない）。 */}
+        {!fresh && ctx.hear && ctx.confirm && (
+          <SayCard ctx={ctx} hear={ctx.hear} confirm={ctx.confirm} />
+        )}
+        {!fresh && ctx.previewChange && (
+          <MoreLink onClick={() => ctx.go({ name: 'stateNeed' })}>
+            {ctx.t('today.addNeed')}
+          </MoreLink>
+        )}
+        <NeedList ctx={ctx} />
       </Main>
     </>
+  );
+}
+
+/** きょうの一まとまり（今やること・頼んだこと・決まったこと）の見出し。 */
+function SectionTitle({ children }: { children: ReactNode }) {
+  return <h2 className="px-1 pt-1 text-[15px] font-bold tracking-wide text-sub">{children}</h2>;
+}
+
+/**
+ * 決まったこと：相手が OK と言った（受け付けた・承認した）と家族が記録した頼み事。今の根拠で成り立ち、確かめの
+ * 要らない物だけを、頼んだ時間（無ければ手配の終わり、「すること」の締切）が過ぎるまで出す。返事は頼み事一つの物で、
+ * 手配の全部が済んだとは言わない（分かれた時間の残りは、決める札が出す）。家の大人の全員に出す。
+ */
+function settledRequests(ctx: Ctx): ExternalRequest[] {
+  const now = toEpochMinutes(ctx.now);
+  return ctx.plan.requests.filter((request) => {
+    if (!request.live || request.needsCheck === true || request.state !== 'confirmed') return false;
+    const end =
+      request.window?.end ??
+      arrangementOf(ctx, request.basis.arrangementKey)?.end ??
+      request.askedNeed?.deadline;
+    return end === undefined || toEpochMinutes(end) > now;
+  });
+}
+
+function AgreedRow({ ctx, request, last }: { ctx: Ctx; request: ExternalRequest; last: boolean }) {
+  const condition = conditionOf(ctx, request.basis);
+  // 予備に押さえた手の受け付け（本命の返事待ちの間）は、予備だと書く（この手で決まったとは言わない）。
+  const optionKey = request.basis.optionKey;
+  const backup =
+    optionKey !== undefined &&
+    arrangementOf(ctx, request.basis.arrangementKey)?.backupOptionKeys.includes(optionKey) === true;
+  return (
+    <div className={`flex flex-col gap-0.5 py-2.5 ${last ? '' : 'border-b border-line'}`}>
+      <span className="flex items-center gap-2">
+        <span className="text-accent">
+          <Icon path={ICON.check} size={20} />
+        </span>
+        {ctx.t(`today.agreed.${request.kind}`, { to: nameOf(ctx.household, request.to) })}
+      </span>
+      <span className="text-sm text-sub">{requestFor(ctx, request)}</span>
+      {backup && <span className="text-sm text-sub">{ctx.t('today.agreedBackup')}</span>}
+      {condition && (
+        <span className="text-sm text-sub">{condition.when ?? ctx.t('say.conditional')}</span>
+      )}
+    </div>
   );
 }
 
@@ -1302,7 +1395,9 @@ function DecideCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 
         </Text>
       )}
       <Button onClick={() => ctx.go({ name: 'decide', key: arrangement.key })}>
-        {ctx.t('card.decide.action')}
+        {ctx.t(
+          arrangement.kind === 'childCare' ? 'card.decide.actionChildCare' : 'card.decide.action',
+        )}
       </Button>
     </Card>
   );
@@ -2564,8 +2659,16 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
   const border = last ? '' : 'border-b border-line';
   if (card.kind === 'waiting') {
     const { request } = card;
+    // 記録できたら、きょうの上に何を記録したかだけを一行で出す（その後にどの札が出るかは、頼んだ時間や手の
+    // 残りしだいなので言わない）。
     const reply = (value: 'yes' | 'no') =>
-      void ctx.send({ type: 'recordReply', requestId: request.requestId, reply: value });
+      void ctx
+        .send({ type: 'recordReply', requestId: request.requestId, reply: value })
+        .then((result) => {
+          if (succeeded(result)) {
+            ctx.go({ name: 'today', done: value === 'yes' ? 'replyYes' : 'replyNo' });
+          }
+        });
     // 「送った」を押し間違えた時だけ、押した本人が、返事の前に無かった事にできる（§5.6）。
     const mistaken =
       request.sentBy === ctx.me.id && request.state === 'awaitingReply'
@@ -3321,8 +3424,21 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
   // 付ける（見せた後に日が直されていたら、サーバーが断る）。
   const sent = async () => {
     const result = await ctx.send(sentCommand(ctx, task));
-    if (succeeded(result)) ctx.go({ name: 'today' });
+    if (succeeded(result)) ctx.go({ name: 'today', done: 'sent' });
   };
+  // 返事が無いまま、次に選べる手の決め時が近づくと、きょうにその手を出す（予備を押さえるか）。次の手が無い・予備を
+  // もう押さえてある時は、起きない事なので書かない。
+  const taken = new Set([
+    task.basis.optionKey,
+    found?.chosenOptionKey,
+    ...(found?.backupOptionKeys ?? []),
+  ]);
+  const nextLater =
+    found !== undefined &&
+    securedBackup(ctx.plan, found) === undefined &&
+    found.options.some(
+      (o) => !taken.has(o.key) && choosable(found, o) && o.decisionDeadline !== undefined,
+    );
   return (
     <>
       <Header
@@ -3338,7 +3454,6 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
             {ctx.t('ask.draft')}
           </span>
           <p className="whitespace-pre-line text-base leading-relaxed">{draft}</p>
-          <Text quiet>{ctx.t('ask.editable')}</Text>
         </Card>
         {split && (
           <Card tone="warn">
@@ -3352,7 +3467,7 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
         <Card tone="plain" className="bg-paper">
           <Label tone="accent">{ctx.t('ask.nextLabel')}</Label>
           <Text>{ctx.t('ask.next1')}</Text>
-          <Text>{ctx.t('ask.next2')}</Text>
+          {nextLater && <Text>{ctx.t('ask.next2')}</Text>}
         </Card>
       </Main>
     </>
@@ -4604,7 +4719,10 @@ function NoticeInputCard({
             />
             {ctx.t(busy && photoState !== 'idle' ? 'input.transcribing' : 'input.photo')}
           </label>
-          <Text quiet>{ctx.t('input.photoPrivacy')}</Text>
+          {/* 選ぶとすぐ Claude に送る。空から始めた試用は架空の物だけ（選ぶ前に、この欄のそばで見せる）。 */}
+          <Text quiet>
+            {ctx.t(ctx.fictional ? 'input.photoPrivacyFictional' : 'input.photoPrivacy')}
+          </Text>
         </div>
       )}
       {photo && (

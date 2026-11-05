@@ -634,6 +634,26 @@ describe('写真・PDF から書き起こす', () => {
     ]);
   });
 
+  it('空から始めた試用では、選ぶ前に、架空の物だけ・選ぶと送ることを、選ぶ欄のそばに出す', async () => {
+    const { ctx } = setup(OK);
+    const photos: PhotoUpload[] = [];
+    const fictional: Ctx = {
+      ...ctx,
+      fictional: true,
+      transcribe: async (input) => {
+        photos.push(input);
+        return { status: 'ok', text: '12月7日(月)は振替休業日です。' };
+      },
+    };
+    await step(() => root.render(<SourcesScreen ctx={fictional} />));
+    const note = i18n.getFixedT('ja')('input.photoPrivacyFictional');
+    expect(host.textContent).toContain(note);
+    expect(host.textContent).not.toContain('人や場所が分からない物で');
+    expect(photos).toEqual([]);
+    await choose(pdf());
+    expect(photos).toHaveLength(1);
+  });
+
   it('文字が読めなかった時は、欄を変えずにその旨を出す。書き起こしの口が無ければ、選ぶ欄を出さない', async () => {
     const { ctx } = setup(OK);
     await step(() => root.render(<SourcesScreen ctx={ctx} />));

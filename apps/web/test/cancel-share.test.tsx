@@ -287,7 +287,7 @@ describe('取り消しの文を渡す', () => {
     // 文を見る前は、送る手段を出さない（何を送るか見てから渡す）。
     expect(button('コピー')).toBeUndefined();
     await step(() => button('伝える文を見る')?.click());
-    await step(() => button('LINE などで送る')?.click());
+    await step(() => button('LINE などで共有')?.click());
     await step(() => button('コピー')?.click());
     expect(shared).toEqual([{ text: draft }]);
     expect(written).toEqual([draft]);
@@ -299,7 +299,7 @@ describe('取り消しの文を渡す', () => {
       device({ share });
       written = [];
       await open();
-      await step(() => button('LINE などで送る')?.click());
+      await step(() => button('LINE などで共有')?.click());
       expect(written).toEqual([cancelDraft(ctx, request)]);
       expect(host.textContent).toContain('貼り付けて送ってください');
       await step(() => root.render(<span />));
@@ -309,7 +309,7 @@ describe('取り消しの文を渡す', () => {
   it('共有が中断された時（やめた・送れる先が無い）は、何も出さず、勝手にコピーもしない', async () => {
     device({ share: 'abort' });
     await open();
-    await step(() => button('LINE などで送る')?.click());
+    await step(() => button('LINE などで共有')?.click());
     expect(written).toEqual([]);
     expect(host.textContent).not.toContain('貼り付けて');
     expect(host.textContent).not.toContain('コピーできませんでした');

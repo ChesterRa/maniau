@@ -156,7 +156,7 @@ describe('受け持てると示せない時間が残る手', () => {
       renderToStaticMarkup(<NeedScreen ctx={await app.ctx()} arrangementKey={arrangement.key} />),
     );
     expect(ja).toContain('どの手にも、選んで約束がそろっても受け持てると確かめられない時間がある');
-    expect(ja).toContain('この手で進める');
+    expect(ja).toContain('これに決める');
   });
 
   it('訳が混ざる時は、全部とは言わない（手ごとの印の行が、それぞれの訳を書く）', async () => {

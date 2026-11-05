@@ -406,10 +406,12 @@ function TrialBar(props: {
           <span className="shrink-0 rounded bg-warn-soft px-1.5 font-bold text-warn">
             {t('trial.badge')}
           </span>
-          <span className="truncate">
-            {props.clock
-              ? t(`trial.${props.kind}At`, { time: props.clock })
-              : t(`trial.${props.kind}`)}
+          {/* 日時は試用の時計（今の本当の日時ではない）。狭い画面でも切らずに、名前の下の行に出す。 */}
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate">{t(`trial.${props.kind}`)}</span>
+            {props.clock && (
+              <span className="text-sub">{t('trial.clockAt', { time: props.clock })}</span>
+            )}
           </span>
         </span>
         <button
@@ -557,7 +559,7 @@ function PushControl({
 function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {
   switch (route.name) {
     case 'today':
-      return <TodayScreen ctx={ctx} />;
+      return <TodayScreen ctx={ctx} {...(route.done ? { done: route.done } : {})} />;
     case 'decide':
       return <DecideScreen ctx={ctx} arrangementKey={route.key} />;
     case 'facts':

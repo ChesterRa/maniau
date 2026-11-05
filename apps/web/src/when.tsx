@@ -47,17 +47,22 @@ const chosenCandidate = (when: NeedWhen): Candidate | undefined =>
   when.candidates.find((c) => c.id === when.chosen?.candidateId && c.rev === when.chosen.rev);
 
 /**
- * きょうの画面：日を決めていない（決めた後に根拠の変わった）候補の「すること」を、一行ずつ出す。決めた日が、後から
- * 記録した手が離せない時間と重なった物も出す（根拠は変わらないので、そのままでは見えなくなる）。
+ * 日を決める事が残る「すること」：日を決めていない・決めた後に根拠の変わった・決めた日が後から記録した手が離せない
+ * 時間と重なった（根拠は変わらないので、そのままでは見えなくなる）。きょうの一覧と、今やることがあるかの判定で使う。
  */
-export function WhenList({ ctx }: { ctx: Ctx }) {
-  const open = ctx.plan.requirements.filter(
+export function openWhen(ctx: Ctx): (Requirement & { when: NeedWhen })[] {
+  return ctx.plan.requirements.filter(
     (r): r is Requirement & { when: NeedWhen } =>
       r.kind === 'need' &&
       r.live &&
       r.when !== undefined &&
       (!r.when.chosen || r.when.chosen.stale || chosenCandidate(r.when)?.unavailable !== undefined),
   );
+}
+
+/** きょうの画面：日を決める事が残る「すること」を、一行ずつ出す。 */
+export function WhenList({ ctx }: { ctx: Ctx }) {
+  const open = openWhen(ctx);
   if (open.length === 0) return null;
   return (
     <Card>

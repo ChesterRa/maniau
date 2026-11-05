@@ -5,7 +5,7 @@
   },
   "nav": {
     "today": "Today",
-    "snap": "Snap",
+    "snap": "Notices",
     "week": "Schedule",
     "household": "Family"
   },
@@ -75,7 +75,7 @@
       "decide": "Decide and ask",
       "decideSub": "Your family makes the choice",
       "follow": "maniau follows up",
-      "followSub": "It keeps track of replies and changes until they are settled"
+      "followSub": "Record the reply, and see the next step"
     },
     "begin": "Start",
     "sample": "Try the sample family",
@@ -111,12 +111,11 @@
     "badge": "Trial",
     "sample": "Sample family",
     "own": "Your family",
-    "sampleAt": "Sample family · {{time}}",
-    "ownAt": "Your family · {{time}}",
     "controls": "Controls",
     "close": "Close",
     "leave": "Back to start (end this trial)",
-    "scenes": "View prepared scenes"
+    "scenes": "View prepared scenes",
+    "clockAt": "Trial clock: {{time}}"
   },
   "notice": {
     "changed": "Something changed. Please check the new details.",
@@ -129,26 +128,39 @@
   },
   "today": {
     "title": "Today",
-    "titleEvening": "Tonight",
     "nothing": "Nothing to decide right now",
     "nothingBody": "When a notice arrives, it shows up here.",
     "more_one": "Show {{count}} more",
     "more_other": "Show {{count}} more",
-    "quiet": "Waiting and to do",
     "addNeed": "Add something to do",
     "needs": "To do",
-    "needItem": "{{what}} ({{when}})"
+    "needItem": "{{what}} ({{when}})",
+    "now": "To do now",
+    "asked": "Waiting on others",
+    "settled": "Settled",
+    "done": {
+      "sent": "Recorded as sent. When they reply, record it under “Waiting on others”.",
+      "replyYes": "Recorded their OK.",
+      "replyNo": "Recorded that they said no."
+    },
+    "agreed": {
+      "reply": "{{to}} said OK",
+      "acceptance": "{{to}} accepted it",
+      "approval": "{{to}} approved it"
+    },
+    "agreedBackup": "Held as a backup"
   },
   "card": {
     "decide": {
       "label": "To decide",
       "title": "{{date}}: {{what}}",
       "body": "For {{child}}: to go with “{{option}}”, decide by about {{deadline}} (estimate).",
-      "action": "Decide",
+      "action": "Choose how",
       "conditional": "Needed only if the notice's condition holds (not settled yet).",
       "conditionalWhen": "Needed {{when}} (not settled yet).",
       "turnedDown": "The person you asked said no. Please pick another option.",
-      "split": "From the times on record, the times we can’t confirm an adult to watch are split ({{times}}). This arrangement is for {{main}} only. Please check the other times together."
+      "split": "From the times on record, the times we can’t confirm an adult to watch are split ({{times}}). This arrangement is for {{main}} only. Please check the other times together.",
+      "actionChildCare": "Choose how to arrange care"
     },
     "question": {
       "label": "Please tell us",
@@ -458,7 +470,7 @@
       "releasedCheck": "“{{what}}”, which {{name}} took on, will drop out of the plan (they will be asked to check whether it is still needed)",
       "releasedCheckYou": "“{{what}}”, which you took on, will drop out of the plan (please check whether it is still needed)"
     },
-    "go": "Choose this option",
+    "go": "Go with this",
     "reversible": "You can change your choice later. Any cancellations or new requests appear as tasks; your family contacts people.",
     "conflicted": "We couldn't find times for the tasks of {{options}} that don't overlap another task the same person is doing, so they have no time yet. Review the options, who does them, or the times.",
     "split": "From the times on record, we can’t confirm an adult to watch {{child}} during {{times}} on this day. This arrangement is for {{main}} only (the message to send asks about that time only). Please check together what to do about the other times.",
@@ -556,18 +568,17 @@
     "refused": "Couldn’t add them. Check the nickname (it can’t match someone already added)."
   },
   "ask": {
-    "title": "Send this message",
+    "title": "Message to send",
     "body": "Send it by LINE or similar. {{name}} doesn't need this app.",
     "draft": "Draft",
-    "editable": "You can edit it before sending.",
-    "share": "Send via LINE etc.",
+    "share": "Share via LINE etc.",
     "copy": "Copy",
     "copied": "Copied",
     "pasteToSend": "The message is copied. Paste it into LINE or another app to send it.",
     "copyFailed": "Copying isn't available on this device. Press and hold the message above to select and copy it.",
-    "sent": "I sent it",
+    "sent": "Record that I sent it",
     "nextLabel": "Next",
-    "next1": "When they reply, tap “They said OK” here.",
+    "next1": "When they reply, tap “They said OK” or “They said no” under “Waiting on others” on Today.",
     "next2": "If there's no reply, the backup option shows on Today about a day before its deadline."
   },
   "child": {
@@ -776,7 +787,8 @@
     "testOnly": "Reading with Claude isn't available for this household (trial households only).",
     "clockTrial": "Words like “tomorrow” are read against the current time ({{now}}).",
     "sample": "Insert a sample notice (fictional)",
-    "privacyFictional": "Use fictional text only. Your text, this demo’s recorded items (including family statements), and open questions go to Anthropic’s Claude API. Text is kept in server memory; demos unused for over 12 hours are periodically deleted."
+    "privacyFictional": "Use fictional text only. Your text, this demo’s recorded items (including family statements), and open questions go to Anthropic’s Claude API. Text is kept in server memory; demos unused for over 12 hours are periodically deleted.",
+    "photoPrivacyFictional": "Use fictional photos and PDFs only. As soon as you choose one, it is sent to Anthropic’s Claude API to check its size and transcribe it. The app does not keep photos."
   },
   "say": {
     "label": "Quick update",

@@ -628,7 +628,7 @@ describe('ひとこと', () => {
     expect(markup).toMatch(/<\/summary><p[^>]*>一言と、このデモの家族/);
   });
 
-  it('一言の欄は、いちばん急ぐ札の後、ほかの札の前に置く（変わったことの札は一番上のまま）', async () => {
+  it('一言の欄は、きょうの札と頼んだことの後に置く（押した後に、今の状態が先に見える。変わったことの札は一番上のまま）', async () => {
     const hearing = (ctx: Ctx) =>
       text(
         renderToStaticMarkup(
@@ -646,10 +646,13 @@ describe('ひとこと', () => {
       expect(index, label).toBeGreaterThanOrEqual(0);
       return index;
     };
-    // 最初の場面（彩）：決めることの札、一言、教えてくださいの札の順。
+    // 最初の場面（彩）：決めることの札、教えてくださいの札、一言の順。
     const arrived = hearing(await ctxOf('arrived', 'b'));
-    expect(at(arrived, '決めること')).toBeLessThan(at(arrived, 'ひとこと'));
-    expect(at(arrived, 'ひとこと')).toBeLessThan(at(arrived, '教えてください'));
+    expect(at(arrived, '決めること')).toBeLessThan(at(arrived, '教えてください'));
+    expect(at(arrived, '教えてください')).toBeLessThan(at(arrived, 'ひとこと'));
+    // 頼んだ後（彩）：頼んだことの返事待ちが、一言より先。
+    const asked = hearing(await ctxOf('asked', 'b'));
+    expect(at(asked, '頼んだこと')).toBeLessThan(at(asked, 'ひとこと'));
     // 延期の場面：変わったことの札、いちばん急ぐ札（取り消し）、一言の順。
     const postponed = hearing(await ctxOf('postponed', 'b'));
     expect(at(postponed, '変わったこと')).toBeLessThan(at(postponed, 'もう要らないこと'));
