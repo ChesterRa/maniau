@@ -41,14 +41,22 @@ function slot(ctx: Ctx, c: Pick<Candidate, 'date' | 'start' | 'end'>) {
   });
 }
 
-/** きょうの画面：日を決めていない（決めた後に根拠の変わった）候補の「すること」を、一行ずつ出す。 */
+/** 決めた日（今の代）の候補。 */
+const chosenCandidate = (when: NeedWhen): Candidate | undefined =>
+  when.chosen &&
+  when.candidates.find((c) => c.id === when.chosen?.candidateId && c.rev === when.chosen.rev);
+
+/**
+ * きょうの画面：日を決めていない（決めた後に根拠の変わった）候補の「すること」を、一行ずつ出す。決めた日が、後から
+ * 記録した手が離せない時間と重なった物も出す（根拠は変わらないので、そのままでは見えなくなる）。
+ */
 export function WhenList({ ctx }: { ctx: Ctx }) {
   const open = ctx.plan.requirements.filter(
     (r): r is Requirement & { when: NeedWhen } =>
       r.kind === 'need' &&
       r.live &&
       r.when !== undefined &&
-      (!r.when.chosen || r.when.chosen.stale),
+      (!r.when.chosen || r.when.chosen.stale || chosenCandidate(r.when)?.unavailable !== undefined),
   );
   if (open.length === 0) return null;
   return (
@@ -56,14 +64,36 @@ export function WhenList({ ctx }: { ctx: Ctx }) {
       <Label tone="sub">{ctx.t('when.list.label')}</Label>
       {open.map((r) => (
         <MoreLink key={r.key} onClick={() => ctx.go({ name: 'when', key: r.key })}>
-          {ctx.t(r.when.chosen ? 'when.list.stale' : 'when.list.item', {
-            what: r.what,
-            count: r.when.candidates.length,
-          })}
+          {ctx.t(
+            !r.when.chosen
+              ? 'when.list.item'
+              : r.when.chosen.stale
+                ? 'when.list.stale'
+                : 'when.list.busy',
+            { what: r.what, count: r.when.candidates.length },
+          )}
         </MoreLink>
       ))}
     </Card>
   );
+}
+
+/**
+ * 候補の時間が、答える家の人の記録した手が離せない時間と重なる時の一行（家族にだけ見せる。答えは変えない。本人が
+ * 確かめた事でも、ほかの時間が空いている事でもない）。
+ */
+function BusyLine({ ctx, candidate: c }: { ctx: Ctx; candidate: Candidate }) {
+  if (!c.unavailable) return null;
+  const list = c.unavailable
+    .map((u) =>
+      ctx.t('when.busy.item', {
+        name: nameOf(ctx.household, u.personId),
+        from: formatTime(u.start, ctx.lang, ctx.tz),
+        to: formatTime(u.end, ctx.lang, ctx.tz),
+      }),
+    )
+    .join(ctx.t('when.join'));
+  return <Text>{ctx.t('when.busy.line', { list })}</Text>;
 }
 
 export function WhenScreen({ ctx, requirementKey }: { ctx: Ctx; requirementKey: string }) {
@@ -88,6 +118,7 @@ export function WhenScreen({ ctx, requirementKey }: { ctx: Ctx; requirementKey: 
           <Card tone={when.chosen.stale ? 'warn' : 'accent'}>
             <Label tone={when.chosen.stale ? 'warn' : 'accent'}>{ctx.t('when.chosen.label')}</Label>
             <Title>{slot(ctx, chosen)}</Title>
+            <BusyLine ctx={ctx} candidate={chosen} />
             {when.chosen.stale && (
               <Text>
                 {ctx.t('when.chosen.stale', {
@@ -250,6 +281,7 @@ function Recommendation({ ctx, when }: { ctx: Ctx; when: NeedWhen }) {
       <Label tone="accent">{ctx.t('when.recommend.label')}</Label>
       <Title>{slot(ctx, candidate)}</Title>
       <Text>{ctx.t(`when.recommend.${reason}`, { meets: recommended.meetsCount })}</Text>
+      <BusyLine ctx={ctx} candidate={candidate} />
       {openOthers && <Text quiet>{ctx.t('when.recommend.openOthers')}</Text>}
     </Card>
   );
@@ -281,6 +313,7 @@ function CandidateCard(props: { ctx: Ctx; when: NeedWhen; candidate: Candidate; 
       </Label>
       <Title>{slot(ctx, c)}</Title>
       <Text>{ctx.t('when.count', { yes: c.yes, possible: c.possible, count: when.minCount })}</Text>
+      <BusyLine ctx={ctx} candidate={c} />
       {c.requiredNo.length > 0 && (
         <Text>{ctx.t('when.requiredNo', { names: names(c.requiredNo) })}</Text>
       )}

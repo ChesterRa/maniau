@@ -12,6 +12,7 @@ import {
   type Household,
   type MemberDayReply,
   type RoutineSegment,
+  type Unavailable,
 } from '@maniau/core';
 import { useEffect, useState } from 'react';
 import { localDate } from './format';
@@ -69,6 +70,29 @@ function withDay(
     ...household,
     routineExceptions: segments ? [...others, { memberId, date, segments }] : others,
   };
+}
+
+/** 手が離せない時間の直し：一つ足す（ID は押した時に作る）か、一つ外す。 */
+type BusyEdit =
+  | { kind: 'add'; id: string; from: string; to: string }
+  | { kind: 'remove'; id: string };
+
+/** 手が離せない時間を一つ足す・外した家の情報（場所の区間は変えない）。 */
+function withBusy(household: Household, edit: BusyEdit, memberId: string, date: string): Household {
+  const list = household.unavailable ?? [];
+  const next: Unavailable[] =
+    edit.kind === 'remove'
+      ? list.filter((u) => u.id !== edit.id)
+      : [...list, { id: edit.id, memberId, date, start: edit.from, end: edit.to }];
+  return { ...household, unavailable: next };
+}
+
+function busyId(): string {
+  try {
+    return `u-${crypto.randomUUID()}`;
+  } catch {
+    return `u-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  }
 }
 
 /**
@@ -159,9 +183,14 @@ export function MemberDayScreen({ ctx, route }: { ctx: Ctx; route: MemberDayRout
   const [usual, setUsual] = useState(false);
   // 一言から決められなかった欄。家族がその欄を直すまで、計算しない。
   const [asks, setAsks] = useState<DayAsk[]>(route.asks ?? []);
+  // 手が離せない時間の直し（その日の過ごし方の変え方とは別。押すまで、どちらも記録しない）。
+  const [busyEdit, setBusyEdit] = useState<BusyEdit | undefined>();
+  const [busyFrom, setBusyFrom] = useState('');
+  const [busyTo, setBusyTo] = useState('');
   const flow = useHouseholdSave(ctx);
   const set = (patch: Partial<Form>) => {
     setUsual(false);
+    setBusyEdit(undefined);
     setAsks((left) =>
       left.filter(
         (a) =>
@@ -188,16 +217,42 @@ export function MemberDayScreen({ ctx, route }: { ctx: Ctx; route: MemberDayRout
     typeof wanted === 'object'
       ? draftDay(ctx.household, form.memberId, form.date, wanted)
       : undefined;
-  const proposed: Household | undefined = usual
-    ? withDay(ctx.household, form.memberId, form.date, undefined)
-    : draft?.ok
-      ? withDay(ctx.household, form.memberId, form.date, draft.segments)
-      : undefined;
+  const dayOk = Boolean(form.memberId) && DATE.test(form.date) && form.date >= today;
+  const busyOfDay = dayOk
+    ? (ctx.household.unavailable ?? [])
+        .filter((u) => u.memberId === form.memberId && u.date === form.date)
+        .sort((a, b) => a.start.localeCompare(b.start))
+    : [];
+  // 足す時間の確かめ（サーバーも同じ決まりで断る）：時刻の形、始まりが終わりより前、同じ人の同じ日の物と重ならない。
+  const busyProblem: 'time' | 'overlap' | undefined =
+    busyFrom === '' && busyTo === ''
+      ? undefined
+      : !TIME.test(busyFrom) || !TIME.test(busyTo) || busyFrom >= busyTo
+        ? 'time'
+        : busyOfDay.some((u) => u.start < busyTo && busyFrom < u.end)
+          ? 'overlap'
+          : undefined;
+  const proposed: Household | undefined =
+    busyEdit && dayOk
+      ? withBusy(ctx.household, busyEdit, form.memberId, form.date)
+      : usual
+        ? withDay(ctx.household, form.memberId, form.date, undefined)
+        : draft?.ok
+          ? withDay(ctx.household, form.memberId, form.date, draft.segments)
+          : undefined;
+  const startBusy = (edit: BusyEdit) => {
+    setUsual(false);
+    setForm((f) => {
+      const { change: _change, ...rest } = f;
+      return { ...rest, from: '', to: '' };
+    });
+    setBusyEdit(edit);
+  };
   const shown = proposed ? flow.shownFor(proposed) : undefined;
   const refused = proposed ? flow.refusedFor(proposed) : undefined;
   // 前提が決まったら、すぐに書かない計算を見る（計画が進んだら見直す）。押すまで何も書かない。
   const lookKey = proposed
-    ? `${JSON.stringify(proposed.routineExceptions)}|${ctx.plan.throughSeq}`
+    ? `${JSON.stringify([proposed.routineExceptions, proposed.unavailable ?? null])}|${ctx.plan.throughSeq}`
     : '';
   // biome-ignore lint/correctness/useExhaustiveDependencies: 前提と計画の版が替わった時だけ見る（flow は毎回新しい）
   useEffect(() => {
@@ -339,8 +394,70 @@ export function MemberDayScreen({ ctx, route }: { ctx: Ctx; route: MemberDayRout
           </Card>
         )}
 
+        {dayOk && (
+          <Card>
+            <Label tone="sub">{ctx.t('memberDay.busy.label')}</Label>
+            <Text quiet>{ctx.t('memberDay.busy.about')}</Text>
+            {busyOfDay.length === 0 && <Text quiet>{ctx.t('memberDay.busy.none')}</Text>}
+            {busyOfDay.map((u) => (
+              <div key={u.id} className="flex flex-wrap items-center gap-2">
+                <span className="font-bold">
+                  {ctx.t('memberDay.busy.item', { from: u.start, to: u.end })}
+                </span>
+                <Button kind="secondary" onClick={() => startBusy({ kind: 'remove', id: u.id })}>
+                  {ctx.t('memberDay.busy.removeOne')}
+                </Button>
+              </div>
+            ))}
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="time"
+                aria-label={ctx.t('memberDay.busy.from')}
+                className={input}
+                value={busyFrom}
+                onChange={(e) => {
+                  // 見た後に時刻を変えたら、前に見た物では記録させない（もう一度「足して見る」）。
+                  setBusyEdit(undefined);
+                  setBusyFrom(e.target.value);
+                }}
+              />
+              <span>–</span>
+              <input
+                type="time"
+                aria-label={ctx.t('memberDay.busy.to')}
+                className={input}
+                value={busyTo}
+                onChange={(e) => {
+                  setBusyEdit(undefined);
+                  setBusyTo(e.target.value);
+                }}
+              />
+              <Button
+                kind="secondary"
+                disabled={busyFrom === '' || busyTo === '' || busyProblem !== undefined}
+                onClick={() => startBusy({ kind: 'add', id: busyId(), from: busyFrom, to: busyTo })}
+              >
+                {ctx.t('memberDay.busy.add')}
+              </Button>
+            </div>
+            {busyProblem && <Text>{ctx.t(`memberDay.busy.problem.${busyProblem}`)}</Text>}
+          </Card>
+        )}
+
         {proposed && (
           <Card>
+            {busyEdit && (
+              <Text>
+                {busyEdit.kind === 'add'
+                  ? ctx.t('memberDay.busy.adding', { from: busyEdit.from, to: busyEdit.to })
+                  : ctx.t('memberDay.busy.removing', {
+                      time: (() => {
+                        const u = busyOfDay.find((x) => x.id === busyEdit.id);
+                        return u ? ctx.t('memberDay.busy.item', { from: u.start, to: u.end }) : '';
+                      })(),
+                    })}
+              </Text>
+            )}
             {!shown && !refused && <Text quiet>{ctx.t('memberDay.loading')}</Text>}
             {refused === 'unavailable' && !flow.busy && (
               <Button kind="secondary" onClick={() => void flow.look(proposed)}>
@@ -355,15 +472,32 @@ export function MemberDayScreen({ ctx, route }: { ctx: Ctx; route: MemberDayRout
             />
             <Row>
               <Button onClick={() => void save()} disabled={!shown || flow.busy}>
-                {ctx.t(usual ? 'memberDay.restore' : 'memberDay.record')}
+                {ctx.t(
+                  busyEdit
+                    ? busyEdit.kind === 'add'
+                      ? 'memberDay.busy.record'
+                      : 'memberDay.busy.remove'
+                    : usual
+                      ? 'memberDay.restore'
+                      : 'memberDay.record',
+                )}
               </Button>
             </Row>
-            <Text quiet>{ctx.t('memberDay.recordNote')}</Text>
+            <Text quiet>
+              {ctx.t(busyEdit ? 'memberDay.busy.recordNote' : 'memberDay.recordNote')}
+            </Text>
           </Card>
         )}
 
         {recorded && !usual && (
-          <Button kind="secondary" onClick={() => setUsual(true)}>
+          <Button
+            kind="secondary"
+            onClick={() => {
+              // 手が離せない時間の直しを見ていたら、それは捨てて、ふだんに戻すことを見る（押した方だけを記録する）。
+              setBusyEdit(undefined);
+              setUsual(true);
+            }}
+          >
             {ctx.t('memberDay.toUsual')}
           </Button>
         )}
@@ -377,10 +511,16 @@ export function RecordedDays({ ctx }: { ctx: Ctx }) {
   const days = [...ctx.household.routineExceptions].sort((a, b) =>
     a.date === b.date ? a.memberId.localeCompare(b.memberId) : a.date.localeCompare(b.date),
   );
+  const busy = [...(ctx.household.unavailable ?? [])].sort(
+    (a, b) =>
+      a.date.localeCompare(b.date) ||
+      a.memberId.localeCompare(b.memberId) ||
+      a.start.localeCompare(b.start),
+  );
   return (
     <div className="flex flex-col gap-1.5">
       <Title>{ctx.t('memberDay.list.label')}</Title>
-      {days.length === 0 && <Text quiet>{ctx.t('memberDay.list.none')}</Text>}
+      {days.length === 0 && busy.length === 0 && <Text quiet>{ctx.t('memberDay.list.none')}</Text>}
       {days.map((d) => (
         <button
           key={`${d.memberId}:${d.date}`}
@@ -392,6 +532,22 @@ export function RecordedDays({ ctx }: { ctx: Ctx }) {
             day: day(ctx, d.date),
             name: nameOf(ctx.household, d.memberId),
             segments: d.segments.map((s) => segmentText(ctx, s)).join('・'),
+          })}
+        </button>
+      ))}
+      {/* 手が離せない時間（その日の画面で、一つずつ外せる）。 */}
+      {busy.map((u) => (
+        <button
+          key={u.id}
+          type="button"
+          onClick={() => ctx.go({ name: 'memberDay', memberId: u.memberId, date: u.date })}
+          className="min-h-11 rounded-xl border-[1.5px] border-btn-line bg-white px-3 py-2 text-left"
+        >
+          {ctx.t('memberDay.busy.list', {
+            day: day(ctx, u.date),
+            name: nameOf(ctx.household, u.memberId),
+            from: u.start,
+            to: u.end,
           })}
         </button>
       ))}

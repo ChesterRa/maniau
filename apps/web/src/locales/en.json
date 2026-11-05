@@ -35,7 +35,8 @@
       "backup": "11/30 Backup booked",
       "postponed": "12/4 Postponed",
       "when": "12/5 Choose a day for a sitter",
-      "club": "12/6 Choose a practice day"
+      "club": "12/6 Choose a practice day",
+      "busy": "12/6 Busy time"
     },
     "guideLead": "At the start",
     "guide": {
@@ -45,7 +46,8 @@
       "backup": "After-school care is held as a backup. If おばあちゃん says no, the plan moves on to it (see “What if they say no?” on 彩's screen).",
       "postponed": "A postponement notice means child care on 12/7 is no longer needed. The cancellations to send are split between the two adults.",
       "when": "Both parents are out one afternoon, so the family is choosing between 12/12 and 12/13 for someone to watch Hina. Compare answers from Grandma (Aya asked by phone) and Ms. Sato next door (answered by link), see whose answers can change it, and the deadline to ask. Open it from “Choosing the day” on Today.",
-      "club": "Choose the club practice day: 12/12 or 12/19. The coach is required, and at least 6 people. 12/12 needs one more; 12/19 depends on the coach. Make a new link and answer in another tab to see the table change."
+      "club": "Choose the club practice day: 12/12 or 12/19. The coach is required, and at least 6 people. 12/12 needs one more; 12/19 depends on the coach. Make a new link and answer in another tab to see the table change.",
+      "busy": "健太 recorded busy time on 12/19, 9:30–10:30 (an online meeting at home). The 12/19 practice candidate now shows an “overlaps” line (answers and counts stay as they are). Open that day from the list in Family and remove it, and the line goes away. It also changes where tasks go: in the “11/26 Errand on the way home” scene, add 18:30–19:30 on 11/26 for 健太 and look — the shirt purchase moves to 11/27."
     },
     "notify": {
       "summary": "Notifications if not yet sent (the demo sends none): {{list}}",
@@ -869,6 +871,10 @@
       "label": "What this change would do",
       "none": "The plan doesn't change.",
       "aWay": "a way",
+      "overlap": {
+        "added": "Candidate {{when}} for “{{what}}”: if you record this change, it overlaps {{name}}’s busy time ({{busy}}). Answers stay as they are.",
+        "removed": "Candidate {{when}} for “{{what}}”: it no longer overlaps {{name}}’s busy time ({{busy}})."
+      },
       "window": {
         "childCare": "care for {{child}}",
         "aChild": "the child",
@@ -1392,6 +1398,26 @@
     "restore": "Go back to usual and record",
     "recordNote": "Recording changes only this day (the same weekday before and after stays the same). If the plan changed after you looked, we recalculate and show it again instead of recording.",
     "toUsual": "Set this day back to usual",
+    "busy": {
+      "label": "Busy time",
+      "about": "Time when you can’t watch the children or do other tasks, even at home (for example, an online meeting at home). It’s used when placing upcoming tasks and when working out who can watch the children. Where you are (home or out) doesn’t change.",
+      "none": "No busy time recorded for this day.",
+      "item": "{{from}}–{{to}}",
+      "from": "Start",
+      "to": "End",
+      "add": "Add this time and see",
+      "removeOne": "Remove and see",
+      "problem": {
+        "time": "Enter a start and an end, with the start first.",
+        "overlap": "This overlaps a busy time already recorded for this day. Choose a time that doesn’t overlap."
+      },
+      "adding": "If you add {{from}}–{{to}} as busy time:",
+      "removing": "If you remove the busy time ({{time}}):",
+      "record": "Record the busy time",
+      "remove": "Remove this time and record",
+      "recordNote": "Recording changes only this person’s day. If the plan changed after you looked, it isn’t recorded; we recalculate and show you again.",
+      "list": "{{day}} {{name}}: busy {{from}}–{{to}}"
+    },
     "list": {
       "label": "Single-day changes",
       "none": "No days recorded.",
@@ -1528,7 +1554,12 @@
     "list": {
       "label": "Choosing the day",
       "item": "{{what}}: collecting answers ({{count}} candidate days)",
-      "stale": "{{what}}: answers changed after you chose. Please check"
+      "stale": "{{what}}: answers changed after you chose. Please check",
+      "busy": "{{what}}: the chosen day overlaps a recorded busy time. Please check"
+    },
+    "busy": {
+      "line": "By the current record, this overlaps busy time for {{list}}. Please check.",
+      "item": "{{name}} ({{from}}–{{to}})"
     },
     "chosen": {
       "label": "Chosen day",

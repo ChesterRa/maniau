@@ -122,6 +122,8 @@ export const DEMO_STAGES = [
   // いつにするかの候補（02-foundation §3.4）：前の五つの段の事象は変えず、その後ろに足す。
   { id: 'when', now: '2026-12-05T21:00+09:00', viewer: 'b' },
   { id: 'club', now: '2026-12-06T10:00+09:00', viewer: 'a' },
+  // 手が離せない時間（02-foundation §3.6）：前の七つの段の事象は変えず、その後ろに足す。
+  { id: 'busy', now: '2026-12-06T10:30+09:00', viewer: 'a' },
 ] as const satisfies readonly { id: string; now: DateTime; viewer: string }[];
 export type DemoStageId = (typeof DEMO_STAGES)[number]['id'];
 
@@ -267,6 +269,7 @@ export function demoEvents(stage: DemoStageId): DomainEvent[] {
   if (upTo >= 4) notice(1, '2026-12-04T17:52+09:00');
   if (upTo >= 5) whenStage(add, () => events);
   if (upTo >= 6) clubStage(add, () => events, data.household);
+  if (upTo >= 7) busyStage(add, () => events);
   return events;
 }
 
@@ -518,6 +521,25 @@ function clubStage(add: Add, events: () => DomainEvent[], household: Household) 
   family('g-kato', 'c2', 'yes');
   family('g-endo', 'c1', 'maybe', '午前だけなら');
   family('g-okada', 'c2', 'yes');
+}
+
+/**
+ * 段「busy」（12/6 の朝、club の後）：健太が、12/19 の 9:30〜10:30 に手が離せない時間（家でのオンライン会議）を記録
+ * した。練習日の候補 12/19（9〜12 時）と重なるので、計画にその事実が出る（この段では、答え・数え・勧めは変わらない）。記録は家の
+ * 情報の直し（画面の「見る → 記録する」と同じ householdSet）。
+ */
+function busyStage(add: Add, events: () => DomainEvent[]) {
+  const household = foldEvents(events()).household;
+  if (!household) throw new Error('デモの家の情報が無い');
+  add('2026-12-06T10:20+09:00', 'a', {
+    type: 'householdSet',
+    household: {
+      ...household,
+      unavailable: [
+        { id: 'u-demo-meeting', memberId: 'a', date: '2026-12-19', start: '09:30', end: '10:30' },
+      ],
+    },
+  });
 }
 
 export function demoPlan(stage: DemoStageId) {

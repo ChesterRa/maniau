@@ -251,6 +251,22 @@ export function householdPreviewLines(
       );
     }
   }
+  // いつにするかの候補と、記録した手が離せない時間の重なりが、新しくできる・無くなる（答えは変えない）。
+  for (const o of changes.overlaps ?? []) {
+    lines.push(
+      ctx.t(
+        o.change === 'added'
+          ? 'household.preview.overlap.added'
+          : 'household.preview.overlap.removed',
+        {
+          what: o.what ?? '',
+          when: `${dayTime(ctx, o.candidate.start)}–${timeOnly(ctx, o.candidate.end)}`,
+          name: (after ? nameOf(after, o.personId) : '') || nameOf(ctx.household, o.personId),
+          busy: `${timeOnly(ctx, o.busy.start)}–${timeOnly(ctx, o.busy.end)}`,
+        },
+      ),
+    );
+  }
   for (const d of changes.deadlines) {
     const name = optionName(d);
     const { before, after } = d;
