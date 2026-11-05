@@ -38,6 +38,7 @@ export function checkSplitCareClaims(
   facts: FactState,
   history: History,
   report: Collector,
+  handled: ReadonlySet<string> = new Set(),
 ): void {
   const unavailable = household.unavailable ?? [];
   const validBasis = (requirement: Requirement): boolean => {
@@ -65,6 +66,7 @@ export function checkSplitCareClaims(
         );
       continue;
     }
+    if (handled.has(arrangement.requirementKey)) continue;
     const requirement = plan.requirements.find((entry) => entry.key === arrangement.requirementKey);
     if (!requirement?.live || requirement.kind !== 'childCare' || !requirement.date) {
       if (splits.length)
@@ -145,6 +147,7 @@ export function checkSplitCareClaims(
   }
 
   for (const requirement of plan.requirements) {
+    if (handled.has(requirement.key)) continue;
     if (
       !requirement.live ||
       requirement.kind !== 'childCare' ||
