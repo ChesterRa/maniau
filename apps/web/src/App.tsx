@@ -298,11 +298,16 @@ function DemoApp() {
   const stage = session.stage ?? FIRST_STAGE;
   const clock = view ? formatDayTime(view.now, lang, view.household.timeZone) : undefined;
   const onAdvance = view
-    ? (minutes: number) =>
+    ? (minutes: number) => {
+        // 時計を進めたら、押した後の一行（「送ったと記録しました」など）は消す（日が変わっても出たままにしない）。
+        setRoute((current) =>
+          current.name === 'today' && current.done !== undefined ? { name: 'today' } : current,
+        );
         void demo.send({
           type: 'advanceClock',
           to: formatDateTime(toEpochMinutes(view.now) + minutes, view.household.timeZone),
-        })
+        });
+      }
     : undefined;
   const people = adults.map((m) => ({ value: m.id, label: m.name }));
   const onMember = (next: string) => {
