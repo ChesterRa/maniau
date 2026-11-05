@@ -2,8 +2,9 @@
 // 言葉・やり直すを選べる。家族の家庭では、使う人はログインの身元で決まり、言葉だけを選ぶ。
 // 計画と「きょう」の札はサーバーが作る。ここは受け取った見せる物を画面に渡し、命令を送るだけ。
 import { formatDateTime, type Member, toEpochMinutes } from '@maniau/core';
-import { useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { DemoNotifications } from './demo-notify';
 import {
   type Notice,
   type Reading,
@@ -277,6 +278,17 @@ function DemoApp() {
             : undefined
         }
         onRestart={restart}
+        // 知らせの候補は「きょう」の画面だけに出す（試しの計算の画面で、今の計画の候補を並べない）。
+        notifications={
+          view &&
+          route.name === 'today' && (
+            <DemoNotifications
+              preview={view.notificationPreview}
+              household={view.household}
+              lang={lang}
+            />
+          )
+        }
       />
       <Body
         live={demo}
@@ -501,6 +513,8 @@ export function DemoBar(props: {
   /** デモの時計を進める（分）。戻せない。決め時の前後で札と知らせがどう変わるかを見るため。 */
   onAdvance: ((minutes: number) => void) | undefined;
   onRestart: () => void;
+  /** この時刻の知らせの候補（demo-notify.tsx。無ければ何も出さない）。 */
+  notifications?: ReactNode;
 }) {
   const { t } = useTranslation();
   return (
@@ -575,6 +589,7 @@ export function DemoBar(props: {
           {t(`demo.guide.${props.stage}`)}
         </p>
       )}
+      {props.notifications}
     </div>
   );
 }

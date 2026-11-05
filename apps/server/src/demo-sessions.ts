@@ -42,6 +42,7 @@ import { DEMO_STAGES, type DemoStageId, demoEvents, loadDemoData } from './demo'
 import type { LatLng, MapsClient, WalkRoute } from './maps/google';
 import { mapInputsFor, withProposed } from './maps/inputs';
 import { type FoundStore, searchStores } from './maps/search';
+import { notificationPreview } from './notify-preview';
 import { previewChange, previewChoices } from './preview';
 import {
   buildExtractInput,
@@ -383,6 +384,20 @@ function titleOf(text: string): string | undefined {
 const contextDigest = (context: UtteranceContext) =>
   createHash('sha256').update(JSON.stringify(context)).digest('hex');
 
+/**
+ * デモの見せる物：家族の家庭と同じ物に、この時刻の知らせの候補を添える（送らない・記録しない。
+ * notify-preview.ts）。デモには送り手が無いので、知らせの決まりを画面で確かめられるようにする。
+ */
+function demoView(
+  events: readonly DomainEvent[],
+  memberId: string,
+  now: DateTime,
+  maps: MapInputs | undefined,
+): View {
+  const view = viewFor(events, memberId, now, maps);
+  return { ...view, notificationPreview: notificationPreview(events, view.plan, view.household) };
+}
+
 export function demoSessions(
   clock: () => number = Date.now,
   /** 試験で数の上限を小さくする。 */
@@ -547,7 +562,7 @@ export function demoSessions(
         // 新しいお知らせで、「もう要りません」と出ていた引き受けが戻ったら、本人にもう一度頼む。
         const back = reopened(before, computePlan(log.events(), session.now, maps));
         if (back.length > 0) log.append(back, 'system', prior.at);
-        const view = viewFor(log.events(), memberId, session.now, maps);
+        const view = demoView(log.events(), memberId, session.now, maps);
         // 足し終えてから、操作を済みにする（途中で投げて戻した時に、済みと答えない）。
         session.operations.set(input.operationId, { digest, state: 'done', sourceId, check });
         return { status: 'ok', view, sourceId, check };
@@ -751,7 +766,7 @@ export function demoSessions(
           return { status: 'stale' };
         const now = utteranceContext(events, memberId, session.now, input.text, maps);
         if (!now || JSON.stringify(now) !== JSON.stringify(context)) return { status: 'stale' };
-        const view = viewFor(log.events(), memberId, session.now, maps);
+        const view = demoView(log.events(), memberId, session.now, maps);
         const shown = show(session, reply, memberId, context, view.plan, throughSeq);
         session.utteranceOperations.set(input.operationId, {
           digest,
@@ -899,7 +914,7 @@ export function demoSessions(
       const session = touch(id);
       if (!session) return undefined;
       const maps = await mapsOf(id);
-      return store.withHousehold(id, (log) => viewFor(log.events(), memberId, session.now, maps));
+      return store.withHousehold(id, (log) => demoView(log.events(), memberId, session.now, maps));
     },
     /** 決める画面の「選んだら」（何も書かない）。家庭が無ければ null、手配が無ければ undefined。 */
     async preview(
@@ -972,7 +987,7 @@ export function demoSessions(
         command,
       );
       const view = await store.withHousehold(id, (log) =>
-        viewFor(log.events(), memberId, session.now, maps),
+        demoView(log.events(), memberId, session.now, maps),
       );
       return { result, view };
     },
@@ -1075,7 +1090,7 @@ export function demoSessions(
         // 読み直さず、数えず、今の見せる物で答える。
         return store.withHousehold(id, (log) => ({
           status: 'ok' as const,
-          view: viewFor(log.events(), memberId, session.now, maps),
+          view: demoView(log.events(), memberId, session.now, maps),
           sourceId,
           check,
         }));
@@ -1141,7 +1156,7 @@ export function demoSessions(
         return store.withHousehold(id, (log): UtteranceOutcome => {
           const now = utteranceContext(log.events(), memberId, session.now, input.text, maps);
           if (!now || contextDigest(now) !== context) return { status: 'stale' };
-          return { status: 'ok', view: viewFor(log.events(), memberId, session.now, maps), reply };
+          return { status: 'ok', view: demoView(log.events(), memberId, session.now, maps), reply };
         });
       }
       const today = new Date(clock()).toISOString().slice(0, 10);
@@ -1357,7 +1372,7 @@ export function demoSessions(
         guard,
       );
       const view = await store.withHousehold(id, (log) =>
-        viewFor(log.events(), memberId, session.now, maps),
+        demoView(log.events(), memberId, session.now, maps),
       );
       if (result.status === 'ok' || result.status === 'noop') return { status: 'ok', view };
       if (result.status === 'conflict' && result.reason === 'proposalChanged') {

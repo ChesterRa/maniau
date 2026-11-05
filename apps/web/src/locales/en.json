@@ -42,6 +42,21 @@
       "chase": "おばあちゃん hasn't replied, and the after-school care deadline is close. On 彩's screen, Maniau asks whether to hold a backup, and “What if they say no?” shows the calculation if the answer is no.",
       "backup": "After-school care is held as a backup. If おばあちゃん says no, the plan moves on to it (see “What if they say no?” on 彩's screen).",
       "postponed": "A postponement notice means child care on 12/7 is no longer needed. The cancellations to send are split between the two adults."
+    },
+    "notify": {
+      "summary": "Notifications if not yet sent (the demo sends none): {{list}}",
+      "item_one": "{{count}} to {{name}}",
+      "item_other": "{{count}} to {{name}}",
+      "itemBlocked_one": "{{count}} stopped by the verifier",
+      "itemBlocked_other": "{{count}} stopped by the verifier",
+      "itemBlockedAll": "all held by the verifier",
+      "note": "Held overnight until morning, and passed through the verifier's gate.",
+      "now": "To {{name}}: “{{text}}”",
+      "morning": "To {{name}} (held for the night until {{time}}): “{{text}}”",
+      "none": "{{name}}: none",
+      "blocked_one": "{{count}} for {{name}} stopped by the verifier (not sent)",
+      "blocked_other": "{{count}} for {{name}} stopped by the verifier (not sent)",
+      "blockedAll": "The plan failed a verifier check, so all notifications are held"
     }
   },
   "notice": {

@@ -100,6 +100,8 @@ Use the scene selector at the top to move between points in time, and “Viewing
 4. **11/30 Backup booked:** After-school care is held as a backup while waiting for おばあちゃん.
 5. **12/4 Postponed:** Child care that is no longer needed, and the cancellations to send, split between the two adults.
 
+The demo doesn't send notifications. Instead, on Today, the demo bar at the top shows a collapsed summary of the notification candidates at that demo time, assuming none were sent yet. Open it to read the lock-screen text, with candidates for now kept apart from those held until morning. On 11/29 the only candidate is for 彩; on 12/4 there is one for each adult. At night (from 22:00), notifications that can wait are held until 7:00 the next morning (move the clock forward to try it).
+
 **See what's around us:** tap “Family” at the bottom, then go to “Around us”.
 
 - “Look around us” shows what Claude found when it searched the real web once, on 2026-11-05, around the demo home (Toyosu, Koto ward), saved for the demo: for each candidate, the page it read, the quote, and its reading on advance registration. Adding a candidate with “Add as a candidate for us” shows what would change before saving, and you can then copy an existing way to use that place. “Ask Claude to look again now” works up to 3 times per demo and 30 times a day per server (on a server with a reading key).

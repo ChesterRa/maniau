@@ -25,6 +25,7 @@ import {
   liveItems,
   planFromState,
 } from '@maniau/core/engine';
+import type { NotificationPreview } from './notify-preview';
 
 export interface View {
   /** この見せる物を作った、最後の通し番号。命令に付けて返すと、見た版が分かる。 */
@@ -44,6 +45,8 @@ export interface View {
   readings: { sourceId: string; model: string; check: string[]; checkAll: boolean }[];
   /** 今の事項（確かめてほしい推定も含む）。条件しだいの事項には、分かる時だけ条件を添える。 */
   items: (LiveItem & { when?: ItemWhen } & NeedShown)[];
+  /** デモだけ：この時刻の知らせの候補（送らない。notify-preview.ts）。家族の家庭では付けない。 */
+  notificationPreview?: NotificationPreview;
 }
 
 /**

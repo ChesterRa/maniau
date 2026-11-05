@@ -11,6 +11,7 @@ import type {
   Household,
   HouseholdPreview,
   MemberDayReply,
+  NotificationTitle,
   PlaceAttribution,
   PlanResult,
   PreviewCommand,
@@ -65,6 +66,24 @@ export interface SessionView {
   readings?: { sourceId: string; model: string; check: string[]; checkAll: boolean }[];
   /** 今の事項。条件しだいの事項には、一つの値で決まる時だけ条件が付く。 */
   items: (LiveItem & { when?: ItemWhen })[];
+  /** デモだけ：この時刻の知らせの候補（送らない）。家族の家庭では来ない。 */
+  notificationPreview?: NotificationPreview;
+}
+
+/** デモの時刻の知らせの候補（apps/server/src/notify-preview.ts と同じ形）。 */
+export interface NotificationPreview {
+  /** 計画に検証器の違反があり、全部を止めた。 */
+  blockedAll: boolean;
+  /** 有効な大人の全員（候補が無い大人も入る）。 */
+  members: {
+    memberId: string;
+    /** 今送る候補（二つ以上なら、送る文は件数の文にまとまる）。 */
+    now: NotificationTitle[];
+    /** 夜なので、朝まで待つ候補と、送ってよい朝の時刻。 */
+    morning?: { at: DateTime; titles: NotificationTitle[] };
+    /** 検証器が止めた候補の数。 */
+    blocked: number;
+  }[];
 }
 
 /** 条件しだいの事項の条件（一つの未定の値で決まる時。apps/server/src/views.ts と同じ形）。 */
