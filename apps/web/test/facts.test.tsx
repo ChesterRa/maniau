@@ -151,7 +151,7 @@ describe('聞く札', () => {
     const { ctx, went } = probe();
     await step(() => root.render(<FactsCard ctx={ctx} card={factsCard()} />));
     expect(text()).toContain('子Hを見る人は？');
-    expect(text()).toContain('大人A・大人B');
+    expect(text()).toContain('大人A、大人Bがこの日に見られるか');
     expect(text()).toContain('手配が要るとも要らないとも決めません');
     await press(i18n.t('card.facts.action'));
     expect(went).toEqual([{ name: 'facts', key: factsCard().requirement.key }]);
@@ -162,6 +162,9 @@ describe('聞く札', () => {
     await step(() => root.render(<FactsCard ctx={ctx} card={factsCard()} />));
     expect(text()).toContain('who can watch 子H?');
     expect(text()).toContain('Enter who can watch');
+    // 文の中の人の並びは英語の並べ方（費用の区切りの「 · 」で並べない）。
+    expect(text()).toContain('whether 大人A and 大人B can watch');
+    expect(text()).not.toContain('大人A · 大人B');
   });
 });
 

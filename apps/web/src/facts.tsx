@@ -44,10 +44,12 @@ export function FactsCard({
   card: Extract<TodayCard, { kind: 'facts' }>;
 }) {
   const { requirement } = card;
-  const separator = ctx.t('list.separator');
-  const who = (requirement.missingAdults ?? []).map((id) => nameOf(ctx.household, id));
-  const times = (requirement.unsure ?? []).map(
-    (s) => `${timeOnly(ctx, s.start)}–${timeOnly(ctx, s.end)}`,
+  // 文の中の並びは、言葉ごとの並べ方で（英語は「A and B」。費用などの区切り「・」は使わない）。
+  const list = (parts: string[]) =>
+    new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(parts);
+  const who = list((requirement.missingAdults ?? []).map((id) => nameOf(ctx.household, id)));
+  const times = list(
+    (requirement.unsure ?? []).map((s) => `${timeOnly(ctx, s.start)}–${timeOnly(ctx, s.end)}`),
   );
   return (
     <Card>
@@ -64,8 +66,8 @@ export function FactsCard({
       />
       <Text>
         {wholeDay(requirement)
-          ? ctx.t('card.facts.wholeDay', { who: who.join(separator) })
-          : ctx.t('card.facts.times', { who: who.join(separator), times: times.join(separator) })}
+          ? ctx.t('card.facts.wholeDay', { who })
+          : ctx.t('card.facts.times', { who, times })}
       </Text>
       <Button onClick={() => ctx.go({ name: 'facts', key: requirement.key })}>
         {ctx.t('card.facts.action')}
