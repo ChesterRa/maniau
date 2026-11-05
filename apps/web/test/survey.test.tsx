@@ -60,7 +60,10 @@ const SHOWN: SurveyShown = {
   at: '2026-11-05T10:00+09:00',
   recorded: true,
   candidates: [CANDIDATE],
-  dropped: [{ url: 'https://example.invalid/x', name: 'X', reason: 'notRead' }],
+  dropped: [
+    { url: 'https://example.invalid/x', name: 'X', reason: 'notRead' },
+    { url: 'https://example.invalid/y', name: 'Y', reason: 'quoteNotFound' },
+  ],
 };
 
 function withSurvey(lang: 'ja' | 'en') {
@@ -163,7 +166,7 @@ describe('周りを調べる', () => {
     expect(text).not.toContain('「利用には');
     expect(text).not.toContain('日数');
     expect(text).toContain(
-      'ほかに 1 件は、確かめられなかったので出していません（頁の本文を読めなかった 1 件）',
+      'ほかに 2 件は、確かめられなかったので出していません（頁の本文を読めなかった 1 件、根拠に挙げた文を頁の本文で照らせなかった 1 件）',
     );
     const link = host.querySelector('a[href="https://example.invalid/sick-care"]');
     expect(link?.getAttribute('target')).toBe('_blank');
@@ -350,6 +353,9 @@ describe('周りを調べる', () => {
     expect(text).toContain('What Claude found around 豊洲（豊洲駅） on');
     expect(text).toContain('not that the page is official or still correct');
     expect(text).toContain('Claude’s reading: you must register in advance before using it');
+    expect(text).toContain(
+      '2 more are not shown because they couldn’t be checked (1 whose page text couldn’t be read, 1 whose cited sentence couldn’t be checked against the page text).',
+    );
     expect(text).toContain('Needed (I checked)');
     expect(text).toContain('Add as a candidate for us');
     await step(() => root.unmount());

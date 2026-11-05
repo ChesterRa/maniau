@@ -1440,7 +1440,7 @@
       "dropped": "{{count}} more are not shown because they couldn’t be checked ({{reasons}}).",
       "reason": {
         "notRead": "{{count}} whose page text couldn’t be read",
-        "quoteNotFound": "{{count}} whose cited sentence wasn’t in the page text",
+        "quoteNotFound": "{{count}} whose cited sentence couldn’t be checked against the page text",
         "copied": "{{count}} whose summary was a page sentence or contained the cited sentence",
         "kind": "{{count}} of a kind we didn’t ask for"
       },

@@ -1423,7 +1423,7 @@
       "dropped": "ほかに {{count}} 件は、確かめられなかったので出していません（{{reasons}}）。",
       "reason": {
         "notRead": "頁の本文を読めなかった {{count}} 件",
-        "quoteNotFound": "根拠に挙げた文が頁の本文に無かった {{count}} 件",
+        "quoteNotFound": "根拠に挙げた文を頁の本文で照らせなかった {{count}} 件",
         "copied": "まとめが頁の文そのものか、根拠に挙げた文を含んでいた {{count}} 件",
         "kind": "頼んでいない種類 {{count}} 件"
       },

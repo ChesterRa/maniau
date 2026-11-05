@@ -128,6 +128,21 @@ describe('調べた候補の確かめ', () => {
     ]);
   });
 
+  it('引用が本文にあっても、そろえて 8 字に満たなければ照らせない物として外す（本文に無いとは限らない）', () => {
+    const short = '予約は利用日';
+    expect(page.text).toContain(short);
+    expect(quoteOnPage(short, page)).toBe(false);
+    const { candidates, dropped } = checkSurvey(
+      { candidates: [candidate({ name: 'E（架空）', quote: short })] },
+      [page],
+      KINDS,
+      idOf,
+      AT,
+    );
+    expect(candidates).toEqual([]);
+    expect(dropped.map((d) => [d.name, d.reason])).toEqual([['E（架空）', 'quoteNotFound']]);
+  });
+
   it('登録の引用が本文に無ければ、登録の読みも前提の案も付けない', () => {
     const [c] = checkSurvey(
       {

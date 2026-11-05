@@ -66,7 +66,8 @@ export type SurveyCandidate = z.infer<typeof SurveyCandidate>;
 
 /**
  * 候補にしなかった物と、その訳（家族には訳ごとの数を見せる）。notRead：頁の本文を読んでいない（読んでいない・PDF・
- * 読めなかった）。quoteNotFound：引用が頁の本文に無い。copied：まとめが頁の文の写し。kind：頼んでいない種類。同じ頁・
+ * 読めなかった）。quoteNotFound：引用を頁の本文で照らせなかった（本文に無い、
+ * またはそろえて 8 字に満たない。どちらかは返さない）。copied：まとめが頁の文の写し。kind：頼んでいない種類。同じ頁・
  * 同じ名前の重なりは、同じ候補なので数えない。
  */
 export const SurveyDropped = z.object({
