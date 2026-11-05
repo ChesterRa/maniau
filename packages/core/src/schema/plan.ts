@@ -124,8 +124,130 @@ export const Requirement = z.object({
       addedBy: z.string().min(1).optional(),
     })
     .optional(),
+  /**
+   * いつにするかを相手の答えで決める「すること」だけ（候補のある窓の need）：候補ごとの答えの数え、成り立ち、左右
+   * する人、使えるやり方と決め時、勧め、決めた事（NeedWhen）。候補の無い「すること」には無い。
+   */
+  when: z.lazy(() => NeedWhen).optional(),
 });
 export type Requirement = z.infer<typeof Requirement>;
+
+/** 候補 × やり方の、その日に使えるか（作業・依頼・案は作らず、読むだけ）。 */
+export const CandidateWay = z.object({
+  wayId: Id,
+  /** 同じやり方の上で、使えると示せた（決め時が来ていない・前提・やめた・使わない資源・受け持ち・置ける・営業時間・行き帰り）。 */
+  usable: z.boolean(),
+  decisionDeadline: DateTime.optional(),
+  deadlineCertainty: z.enum(['checked', 'estimate', 'undetermined']).optional(),
+  /** 使えると言えない理由（無ければ使える）。 */
+  reasons: z.array(
+    z.enum([
+      'expired',
+      'undetermined',
+      'needsPreparation',
+      'stopped',
+      'unusedResources',
+      'coverGaps',
+      'unplaced',
+      'hoursUnknown',
+      'travelUnknown',
+    ]),
+  ),
+  /** 代償に分からない欄がある（比べない）。 */
+  costUnknown: z.literal(true).optional(),
+});
+export type CandidateWay = z.infer<typeof CandidateWay>;
+
+/** 一つの候補の、答えの数えと、その日のやり方。 */
+export const CandidateState = z.object({
+  id: Id,
+  rev: z.number().int().positive(),
+  date: LocalDate,
+  start: DateTime,
+  end: DateTime,
+  /** 「はい」の人数（L）。 */
+  yes: z.number().int().nonnegative(),
+  /** 「はい」と未定の人数（U）。未定は、たぶん・食い違い・未回答。 */
+  possible: z.number().int().nonnegative(),
+  /** 要る人のうち「いいえ」の人。 */
+  requiredNo: z.array(Id),
+  /** 要る人のうち未定の人。 */
+  requiredOpen: z.array(Id),
+  /** 答えの条件：meets（満たす）・open（まだ分からない）・cannot（今の名簿と答えでは満たせない）。 */
+  condition: z.enum(['meets', 'open', 'cannot']),
+  /** 未定の人のうち、その人の答えで成り立ちが変わり得る人（家族にだけ見せる）。 */
+  pivotal: z.array(Id),
+  /** 候補ごとの、選んだやり方の使えるか。 */
+  ways: z.array(CandidateWay),
+  /** 使えるやり方の決め時のうち一番遅い物（目安）。使えるやり方が無ければ無い。 */
+  decisionDeadline: DateTime.optional(),
+  /** waysUndecided：やり方を選んでいない。noUsableWay：まだ使えると確かめられたやり方が無い。 */
+  flags: z.array(z.enum(['waysUndecided', 'noUsableWay'])),
+});
+export type CandidateState = z.infer<typeof CandidateState>;
+
+/** 候補への、一人の今の答え（未回答は出さない）。 */
+export const CandidateAnswer = z.object({
+  personId: Id,
+  candidateId: Id,
+  /** conflict：出所（自分の画面・リンク・家族の記録）の答えが違う（未定として数える）。 */
+  value: z.enum(['yes', 'maybe', 'no', 'conflict']),
+  /**
+   * 効いている出所ごとの一番後の記録と、だれが・いつ書いたか（family は書いた家の大人。link はリンクから。本人の
+   * 確かめではない）。たぶんの条件の一言は、出所ごとに持つ。
+   */
+  sources: z.array(
+    z.object({
+      source: z.enum(['self', 'link', 'family']),
+      answer: z.enum(['yes', 'maybe', 'no']),
+      note: z.string().optional(),
+      by: z.string().min(1),
+      at: DateTime,
+      seq: z.number().int().nonnegative(),
+    }),
+  ),
+});
+export type CandidateAnswer = z.infer<typeof CandidateAnswer>;
+
+export const NeedWhen = z.object({
+  candidates: z.array(CandidateState),
+  people: z.array(
+    z.object({ id: Id, kind: z.enum(['member', 'guest']), name: z.string().optional() }),
+  ),
+  required: z.array(Id),
+  minCount: z.number().int().nonnegative(),
+  answers: z.array(CandidateAnswer),
+  /**
+   * 決めた候補（今の代と同じ時だけ）。stale：決めた時の根拠が変わった（確かめ待ち）。changes は変わった物（people：
+   * 名簿、rule：要る人か最少の人数、answers：その候補への効く答え）。
+   */
+  chosen: z
+    .object({
+      candidateId: Id,
+      rev: z.number().int().positive(),
+      stale: z.boolean(),
+      changes: z.array(z.enum(['people', 'rule', 'answers'])),
+    })
+    .optional(),
+  /**
+   * 勧め。onlyUsable：答えの条件を満たし使えるやり方がある候補が一つだけ。dominates：同じ一つのやり方の上で、人数と
+   * 決め時がほかのどれにも劣らず一つは勝る。meetsCount は答えの条件を満たす候補の数（使えるやり方の有無に関わらない）、
+   * usableCount はそのうち使えるやり方がある数。
+   */
+  recommended: z
+    .object({
+      candidateId: Id,
+      reason: z.enum(['onlyUsable', 'dominates']),
+      meetsCount: z.number().int().nonnegative(),
+      usableCount: z.number().int().nonnegative(),
+    })
+    .optional(),
+  /** 相手ごとの今のリンクがあるか（鍵・ハッシュ・linkId は出さない）。 */
+  links: z.array(z.object({ personId: Id, active: z.boolean() })),
+  /** 一度でも依頼を送ったか、作業を引き受けたことがある（日を替えられない。この版の限り）。 */
+  inUse: z.boolean(),
+});
+export type NeedWhen = z.infer<typeof NeedWhen>;
 
 export const OptionPlan = z.object({
   key: z.string().min(1),

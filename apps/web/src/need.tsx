@@ -45,6 +45,12 @@ function refusedKey(reason: string): string {
     'wayUnknown',
     'wayInactive',
     'unavailable',
+    'candidatesNeedWindow',
+    'candidateDuplicate',
+    'candidateUnknown',
+    'candidateNeedTimeLocked',
+    'candidateChanged',
+    'decisionInUse',
   ].includes(reason)
     ? reason
     : 'other';
@@ -54,7 +60,7 @@ function refusedKey(reason: string): string {
  * 見る → 保存。見た物は、見た時の命令（の要約）と一緒に持ち、欄や選びが替われば見せない（替わった中身を、
  * 前に見た物で保存しない）。保存は、見た計画の番号と見た物の要約を付ける（サーバーが同じ計算で確かめる）。
  */
-function usePreviewSave(ctx: Ctx) {
+export function usePreviewSave(ctx: Ctx) {
   const [shown, setShown] = useState<{ key: string; preview: HouseholdPreview }>();
   const [refused, setRefused] = useState<{ key: string; reason: string }>();
   const [busy, setBusy] = useState(false);
@@ -97,11 +103,17 @@ function usePreviewSave(ctx: Ctx) {
 }
 
 /** 「この変更で変わること」（サーバーが同じ計算で出した物）か、保存できない理由。 */
-function PreviewBlock(props: { ctx: Ctx; preview?: HouseholdPreview; refused?: string }) {
-  const { ctx, preview, refused } = props;
+export function PreviewBlock(props: {
+  ctx: Ctx;
+  preview?: HouseholdPreview;
+  refused?: string;
+  /** 計画の差の表に出ない、この変更で変わること（画面が今の状態から確かに言える物）。 */
+  notes?: readonly string[];
+}) {
+  const { ctx, preview, refused, notes = [] } = props;
   if (refused) return <Text>{ctx.t(`need.refused.${refusedKey(refused)}`)}</Text>;
   if (!preview) return null;
-  const lines = householdPreviewLines(ctx, preview);
+  const lines = [...notes, ...householdPreviewLines(ctx, preview)];
   return (
     <div className="flex flex-col gap-1 rounded-xl bg-paper px-3 py-2.5">
       <Label tone="accent">{ctx.t('household.preview.label')}</Label>
@@ -129,17 +141,29 @@ export function StateNeedScreen({ ctx }: { ctx: Ctx }) {
   const [to, setTo] = useState('');
   const [byTime, setByTime] = useState('');
   const [forId, setForId] = useState('');
+  // 窓の形で、日を相手の答えで決める時の候補（2〜8）と、窓の間ずっとだれかが受け持つ必要があるか。
+  const [byAnswers, setByAnswers] = useState(false);
+  const [slots, setSlots] = useState(() =>
+    [0, 1].map((n) => ({ key: n, date: localDate(ctx.now, ctx.tz), from: '', to: '' })),
+  );
+  const [hold, setHold] = useState(true);
   const flow = usePreviewSave(ctx);
   const people = ctx.household.members.filter(
     (m) => m.active && (m.kind === 'adult' || m.kind === 'child'),
   );
+  const candidates = shape === 'window' && byAnswers;
   const filled =
     text.trim() !== '' &&
     what.trim() !== '' &&
-    date !== '' &&
-    (shape === 'by' || (from !== '' && to !== ''));
+    (candidates
+      ? slots.length >= 2 && slots.every((s) => s.date !== '' && s.from !== '' && s.to !== '')
+      : date !== '' && (shape === 'by' || (from !== '' && to !== '')));
   const interpretation = (): NeedInterpretation => {
-    const base = { what: what.trim(), shape, date, ...(forId ? { forMemberId: forId } : {}) };
+    const who = forId ? { forMemberId: forId } : {};
+    // 受け持ちが要るか：要らない時だけ書く（書かなければ要る。既定の値で埋めない）。
+    const held = shape === 'window' && !hold ? { holdNeeded: false } : {};
+    if (candidates) return { what: what.trim(), shape, ...who, ...held };
+    const base = { what: what.trim(), shape, date, ...who, ...held };
     if (shape === 'window') return { ...base, startTime: from, endTime: to };
     return {
       ...base,
@@ -148,7 +172,16 @@ export function StateNeedScreen({ ctx }: { ctx: Ctx }) {
     };
   };
   const command: SaveablePreview | undefined = filled
-    ? { type: 'stateNeed', text: text.trim(), interpretation: interpretation() }
+    ? {
+        type: 'stateNeed',
+        text: text.trim(),
+        interpretation: interpretation(),
+        ...(candidates
+          ? {
+              candidates: slots.map((s) => ({ date: s.date, startTime: s.from, endTime: s.to })),
+            }
+          : {}),
+      }
     : undefined;
   const shown = command && flow.shownFor(command);
   const refused = command && flow.refusedFor(command);
@@ -199,16 +232,100 @@ export function StateNeedScreen({ ctx }: { ctx: Ctx }) {
               </label>
             ))}
           </fieldset>
-          <label className={field}>
-            <span className={label}>{ctx.t('need.add.date')}</span>
-            <input
-              type="date"
-              className={input}
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-            />
-          </label>
-          {shape === 'window' ? (
+          {shape === 'window' && (
+            <label className="flex min-h-11 items-center gap-2">
+              <input
+                type="checkbox"
+                className="size-5 accent-accent"
+                checked={byAnswers}
+                onChange={(e) => setByAnswers(e.target.checked)}
+              />
+              {ctx.t('need.add.byAnswers')}
+            </label>
+          )}
+          {candidates ? (
+            <div className="flex flex-col gap-2">
+              <Text quiet>{ctx.t('need.add.candidatesNote')}</Text>
+              {slots.map((s, index) => (
+                <div key={s.key} className="flex flex-wrap items-end gap-2">
+                  <label className={field}>
+                    <span className={label}>{ctx.t('need.add.candidate', { n: index + 1 })}</span>
+                    <input
+                      type="date"
+                      className={input}
+                      value={s.date}
+                      onChange={(e) =>
+                        setSlots((list) =>
+                          list.map((x) => (x.key === s.key ? { ...x, date: e.target.value } : x)),
+                        )
+                      }
+                    />
+                  </label>
+                  <label className={field}>
+                    <span className={label}>{ctx.t('need.add.from')}</span>
+                    <input
+                      type="time"
+                      className={input}
+                      value={s.from}
+                      onChange={(e) =>
+                        setSlots((list) =>
+                          list.map((x) => (x.key === s.key ? { ...x, from: e.target.value } : x)),
+                        )
+                      }
+                    />
+                  </label>
+                  <label className={field}>
+                    <span className={label}>{ctx.t('need.add.to')}</span>
+                    <input
+                      type="time"
+                      className={input}
+                      value={s.to}
+                      onChange={(e) =>
+                        setSlots((list) =>
+                          list.map((x) => (x.key === s.key ? { ...x, to: e.target.value } : x)),
+                        )
+                      }
+                    />
+                  </label>
+                  {slots.length > 2 && (
+                    <MoreLink
+                      onClick={() => setSlots((list) => list.filter((x) => x.key !== s.key))}
+                    >
+                      {ctx.t('need.add.removeCandidate')}
+                    </MoreLink>
+                  )}
+                </div>
+              ))}
+              {slots.length < 8 && (
+                <MoreLink
+                  onClick={() =>
+                    setSlots((list) => [
+                      ...list,
+                      {
+                        key: Math.max(...list.map((x) => x.key)) + 1,
+                        date: list.at(-1)?.date ?? localDate(ctx.now, ctx.tz),
+                        from: list.at(-1)?.from ?? '',
+                        to: list.at(-1)?.to ?? '',
+                      },
+                    ])
+                  }
+                >
+                  {ctx.t('need.add.addCandidate')}
+                </MoreLink>
+              )}
+            </div>
+          ) : (
+            <label className={field}>
+              <span className={label}>{ctx.t('need.add.date')}</span>
+              <input
+                type="date"
+                className={input}
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+              />
+            </label>
+          )}
+          {candidates ? null : shape === 'window' ? (
             <div className="flex flex-wrap gap-3">
               <label className={field}>
                 <span className={label}>{ctx.t('need.add.from')}</span>
@@ -238,6 +355,17 @@ export function StateNeedScreen({ ctx }: { ctx: Ctx }) {
                 value={byTime}
                 onChange={(e) => setByTime(e.target.value)}
               />
+            </label>
+          )}
+          {shape === 'window' && (
+            <label className="flex min-h-11 items-center gap-2">
+              <input
+                type="checkbox"
+                className="size-5 accent-accent"
+                checked={hold}
+                onChange={(e) => setHold(e.target.checked)}
+              />
+              {ctx.t('need.add.hold')}
             </label>
           )}
           <label className={field}>
@@ -326,6 +454,11 @@ export function NeedScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey: 
           <Text>{needWhen(ctx, arrangement, item)}</Text>
           {forId && <Text>{ctx.t('need.for', { name: nameOf(ctx.household, forId) })}</Text>}
           {place && <Text>{ctx.t('need.place', { place })}</Text>}
+          {requirement?.when && (
+            <MoreLink onClick={() => ctx.go({ name: 'when', key: requirement.key })}>
+              {ctx.t('when.fromNeed')}
+            </MoreLink>
+          )}
           <ConditionLine
             ctx={ctx}
             basis={{
@@ -385,7 +518,7 @@ export function NeedScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey: 
  * 計画に入っている「すること」を直す・要らないにする入口。直すは直す画面へ。要らないは（お知らせから読んだ物は理由を
  * 選び）、この変更で変わること（要らなくなる引き受け・頼んだ相手への取り消しの連絡など）を見てから決める。
  */
-function NeedActions({ ctx, item }: { ctx: Ctx; item: Item }) {
+export function NeedActions({ ctx, item }: { ctx: Ctx; item: Item }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState<'other' | 'notOurs' | 'misread'>('other');
   const [failed, setFailed] = useState(false);
@@ -583,11 +716,21 @@ export function NeedFixScreen({ ctx, itemId }: { ctx: Ctx; itemId: string }) {
       a.kind === 'need' &&
       ctx.plan.requirements.find((r) => r.key === a.requirementKey)?.basis.itemIds.includes(itemId),
   );
+  // いつにするかの候補のある「すること」：日と時刻は候補が持つ（サーバーも、ここからは直させない）。日の欄を出さず、
+  // 何を・だれのためのうち替えた欄だけを送り、「いつにするか」へ戻る（直すと候補の代が進み、集めた答えを数えなくなる
+  // ので、何も替えていなければ送らない）。
+  const byAnswers = ctx.plan.requirements.find(
+    (r) => r.when !== undefined && r.basis.itemIds.includes(itemId),
+  );
   const back = () =>
-    !awaiting && arrangement
-      ? ctx.go({ name: 'need', key: arrangement.key })
-      : ctx.go({ name: 'today' });
-  const backLabel = ctx.t(!awaiting && arrangement ? 'need.label' : 'nav.today');
+    byAnswers
+      ? ctx.go({ name: 'when', key: byAnswers.key })
+      : !awaiting && arrangement
+        ? ctx.go({ name: 'need', key: arrangement.key })
+        : ctx.go({ name: 'today' });
+  const backLabel = ctx.t(
+    byAnswers ? 'when.eyebrow' : !awaiting && arrangement ? 'need.label' : 'nav.today',
+  );
   if (!live || !i) {
     return (
       <>
@@ -604,22 +747,31 @@ export function NeedFixScreen({ ctx, itemId }: { ctx: Ctx; itemId: string }) {
     (m) => m.active && (m.kind === 'adult' || m.kind === 'child'),
   );
   const filled =
-    what.trim() !== '' && date !== '' && (shape === 'by' || (from !== '' && to !== ''));
+    what.trim() !== '' &&
+    (byAnswers !== undefined || (date !== '' && (shape === 'by' || (from !== '' && to !== ''))));
   const base = {
     what: what.trim(),
     ...(i.shape === undefined ? { shape } : {}),
     // 選ばないにしたら、前の「だれのため」を外す（直しは前の欄に重ねるので、外すには null を送る）。
     ...(forId ? { forMemberId: forId } : i.forMemberId !== undefined ? { forMemberId: null } : {}),
   };
+  const changed = {
+    ...(what.trim() !== (i.what ?? live.item.written) ? { what: what.trim() } : {}),
+    ...(forId !== (i.forMemberId ?? '') ? { forMemberId: forId === '' ? null : forId } : {}),
+  };
   const interpretation: CorrectedInterpretation | undefined = !filled
     ? undefined
-    : shape === 'window'
-      ? { ...base, date, startTime: from, endTime: to }
-      : {
-          ...base,
-          deadline: formatDateTime(zonedToEpochMinutes(date, byTime || '00:00', ctx.tz), ctx.tz),
-          deadlineDayOnly: byTime === '',
-        };
+    : byAnswers
+      ? Object.keys(changed).length > 0
+        ? changed
+        : undefined
+      : shape === 'window'
+        ? { ...base, date, startTime: from, endTime: to }
+        : {
+            ...base,
+            deadline: formatDateTime(zonedToEpochMinutes(date, byTime || '00:00', ctx.tz), ctx.tz),
+            deadlineDayOnly: byTime === '',
+          };
   const command: SaveablePreview | undefined = interpretation && {
     type: 'correctItem',
     itemId,
@@ -627,6 +779,19 @@ export function NeedFixScreen({ ctx, itemId }: { ctx: Ctx; itemId: string }) {
   };
   const shown = command && !awaiting ? flow.shownFor(command) : undefined;
   const refused = command && !awaiting ? flow.refusedFor(command) : undefined;
+  // 候補のある物を直すと、サーバーは全部の候補の代を進める：今の答えは数えなくなり、決めた日は使わなくなる。選んだ
+  // やり方も、中身が変わるので選び直しになる（どれも、決める前は計画の差の表に出ないので、今の状態から言う）。
+  const resets = byAnswers?.when
+    ? [
+        ...(byAnswers.when.answers.length > 0
+          ? [ctx.t('need.fix.answersReset', { count: byAnswers.when.answers.length })]
+          : []),
+        ...(byAnswers.when.chosen ? [ctx.t('need.fix.chosenReset')] : []),
+        ...(byAnswers.when.candidates.some((c) => c.ways.length > 0)
+          ? [ctx.t('need.fix.waysReset')]
+          : []),
+      ]
+    : [];
   const save = async () => {
     if (!command) return;
     setFailed(undefined);
@@ -670,69 +835,75 @@ export function NeedFixScreen({ ctx, itemId }: { ctx: Ctx; itemId: string }) {
               onChange={(e) => setWhat(e.target.value)}
             />
           </label>
-          {i.shape === undefined ? (
-            <fieldset className={field}>
-              <legend className={label}>{ctx.t('need.add.shape')}</legend>
-              {(['window', 'by'] as const).map((value) => (
-                <label key={value} className="flex min-h-11 items-center gap-2">
+          {byAnswers ? (
+            <Text quiet>{ctx.t('need.fix.candidateTime')}</Text>
+          ) : (
+            <>
+              {i.shape === undefined ? (
+                <fieldset className={field}>
+                  <legend className={label}>{ctx.t('need.add.shape')}</legend>
+                  {(['window', 'by'] as const).map((value) => (
+                    <label key={value} className="flex min-h-11 items-center gap-2">
+                      <input
+                        type="radio"
+                        name="need-fix-shape"
+                        className="size-5 accent-accent"
+                        checked={shape === value}
+                        onChange={() => setShape(value)}
+                      />
+                      {ctx.t(`need.add.${value}`)}
+                    </label>
+                  ))}
+                </fieldset>
+              ) : (
+                <Text quiet>
+                  {ctx.t(awaiting ? 'need.fix.shape' : 'need.fix.shapePlanned', {
+                    shape: ctx.t(`need.add.${i.shape}`),
+                  })}
+                </Text>
+              )}
+              <label className={field}>
+                <span className={label}>{ctx.t('need.add.date')}</span>
+                <input
+                  type="date"
+                  className={input}
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                />
+              </label>
+              {shape === 'window' ? (
+                <div className="flex flex-wrap gap-3">
+                  <label className={field}>
+                    <span className={label}>{ctx.t('need.add.from')}</span>
+                    <input
+                      type="time"
+                      className={input}
+                      value={from}
+                      onChange={(e) => setFrom(e.target.value)}
+                    />
+                  </label>
+                  <label className={field}>
+                    <span className={label}>{ctx.t('need.add.to')}</span>
+                    <input
+                      type="time"
+                      className={input}
+                      value={to}
+                      onChange={(e) => setTo(e.target.value)}
+                    />
+                  </label>
+                </div>
+              ) : (
+                <label className={field}>
+                  <span className={label}>{ctx.t('need.add.byTime')}</span>
                   <input
-                    type="radio"
-                    name="need-fix-shape"
-                    className="size-5 accent-accent"
-                    checked={shape === value}
-                    onChange={() => setShape(value)}
+                    type="time"
+                    className={input}
+                    value={byTime}
+                    onChange={(e) => setByTime(e.target.value)}
                   />
-                  {ctx.t(`need.add.${value}`)}
                 </label>
-              ))}
-            </fieldset>
-          ) : (
-            <Text quiet>
-              {ctx.t(awaiting ? 'need.fix.shape' : 'need.fix.shapePlanned', {
-                shape: ctx.t(`need.add.${i.shape}`),
-              })}
-            </Text>
-          )}
-          <label className={field}>
-            <span className={label}>{ctx.t('need.add.date')}</span>
-            <input
-              type="date"
-              className={input}
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-            />
-          </label>
-          {shape === 'window' ? (
-            <div className="flex flex-wrap gap-3">
-              <label className={field}>
-                <span className={label}>{ctx.t('need.add.from')}</span>
-                <input
-                  type="time"
-                  className={input}
-                  value={from}
-                  onChange={(e) => setFrom(e.target.value)}
-                />
-              </label>
-              <label className={field}>
-                <span className={label}>{ctx.t('need.add.to')}</span>
-                <input
-                  type="time"
-                  className={input}
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                />
-              </label>
-            </div>
-          ) : (
-            <label className={field}>
-              <span className={label}>{ctx.t('need.add.byTime')}</span>
-              <input
-                type="time"
-                className={input}
-                value={byTime}
-                onChange={(e) => setByTime(e.target.value)}
-              />
-            </label>
+              )}
+            </>
           )}
           <label className={field}>
             <span className={label}>{ctx.t('need.add.for')}</span>
@@ -764,6 +935,7 @@ export function NeedFixScreen({ ctx, itemId }: { ctx: Ctx; itemId: string }) {
             <>
               <PreviewBlock
                 ctx={ctx}
+                notes={resets}
                 {...(shown ? { preview: shown } : {})}
                 {...(refused ? { refused } : {})}
               />

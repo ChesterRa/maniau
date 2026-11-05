@@ -1,7 +1,7 @@
 // 命令（02-foundation §7.2）。画面がサーバーに送る物。サーバーが権限と前提を確かめて、事象に展開する。
 // 画面とサーバーの間の約束なので core に置く（画面はエンジンを読み込まずに使える）。
 import { z } from 'zod';
-import { DateTime } from '../time';
+import { DateTime, LocalDate, LocalTime } from '../time';
 import { ProposalSnapshot, TaskContent } from './events';
 import { Household, Id } from './household';
 import { CommitmentState, ExternalRequestState } from './plan';
@@ -33,6 +33,7 @@ export const NeedInterpretation = Interpretation.pick({
   place: true,
   audience: true,
   forMemberId: true,
+  holdNeeded: true,
 }).extend({
   what: z.string().trim().min(1).max(200),
   shape: z.enum(['by', 'window']),
@@ -64,10 +65,43 @@ const UpdateHousehold = z.object({ type: z.literal('updateHousehold'), household
  * 確かめた欄（何を・形・日・時刻・締切・場所・だれのため）。サーバーが、家族の出典と、その出典の事項（need。
  * evidence stated）に展開する。
  */
+/**
+ * いつにするかの候補の時（同じ日の中の始まり–終わり）。id は、前からある候補を直す時だけ付ける（サーバーが付けた
+ * もの）。新しい候補には付けない（サーバーが付ける）。
+ */
+export const CandidateTime = z.object({
+  id: Id.optional(),
+  date: LocalDate,
+  startTime: LocalTime,
+  endTime: LocalTime,
+});
+export type CandidateTime = z.infer<typeof CandidateTime>;
+
 const StateNeed = z.object({
   type: z.literal('stateNeed'),
   text: z.string().trim().min(1).max(500),
   interpretation: NeedInterpretation,
+  /**
+   * 窓の「すること」で、いつにするかを相手の答えで決める時の候補（2〜8）。あれば、日・始まり・終わりは要らない
+   * （候補が持つ）。サーバーが候補の ID と代（rev）を付ける。
+   */
+  candidates: z.array(CandidateTime).min(2).max(8).optional(),
+});
+/**
+ * 窓の「すること」の候補を置き直す（全部を送る）。前からある候補は id を付ける。時刻が変われば、サーバーがその
+ * 候補の代（rev）を進め、前の代への答えは当てない。消した候補の id は使い回さない。
+ */
+const SetNeedCandidates = z.object({
+  type: z.literal('setNeedCandidates'),
+  itemId: Id,
+  candidates: z.array(CandidateTime).min(2).max(8),
+});
+/** 候補の一つに決める（その候補の今の代）。決めると、その時が「すること」の窓になる。 */
+const ChooseCandidate = z.object({
+  type: z.literal('chooseCandidate'),
+  itemId: Id,
+  candidateId: Id,
+  rev: z.number().int().positive(),
 });
 /**
  * 「すること」に使うやり方を選ぶ（家族の選択。空にすれば、選んでいない状態に戻す）。サーバーは、選んだ時の
@@ -112,6 +146,8 @@ export const PreviewCommand = z.discriminatedUnion('type', [
   UpdateHousehold,
   StateNeed,
   SetNeedWays,
+  SetNeedCandidates,
+  ChooseCandidate,
   CorrectItem,
   DismissItem,
   RecordReply,
@@ -240,6 +276,42 @@ export const Command = z.discriminatedUnion('type', [
   UpdateHousehold.extend({ seen: Seen.optional() }),
   StateNeed.extend({ seen: Seen.optional() }),
   SetNeedWays.extend({ seen: Seen.optional() }),
+  SetNeedCandidates.extend({ seen: Seen.optional() }),
+  ChooseCandidate.extend({ seen: Seen.optional() }),
+  /**
+   * 「すること」をだれと調整するか。members は家の大人と頼める人（家庭の成員の ID）、guests はその用件の中の相手
+   * （名前だけ。家庭の成員にしない。id は前からいる相手だけ付ける）。required は要る人、minCount は最少の人数。
+   * 名簿から外した人のリンクは、サーバーが止める。
+   */
+  z.object({
+    type: z.literal('setNeedPeople'),
+    itemId: Id,
+    members: z.array(Id).max(30),
+    guests: z
+      .array(z.object({ id: Id.optional(), name: z.string().trim().min(1).max(40) }))
+      .max(30),
+    required: z.array(Id).max(30),
+    minCount: z.number().int().min(0).max(60),
+  }),
+  /**
+   * 候補への答えを記録する。personId が自分なら自分の答え（self）、ほかの人なら家族の記録（family）。withdrawn は、
+   * その出所の答えを取り下げる（未回答に戻す。「いいえ」ではない）。note は「たぶん」の条件や一言。
+   */
+  z.object({
+    type: z.literal('recordAvailability'),
+    itemId: Id,
+    candidateId: Id,
+    rev: z.number().int().positive(),
+    personId: Id,
+    answer: z.enum(['yes', 'maybe', 'no', 'withdrawn']),
+    note: z.string().trim().min(1).max(140).optional(),
+  }),
+  /**
+   * 相手一人の、答えるリンクを出す（出し直すと、前のリンクは効かない）。鍵は応答で一度だけ返す。デモの家庭だけ。
+   */
+  z.object({ type: z.literal('issueAnswerLink'), itemId: Id, personId: Id }),
+  /** 相手一人の、今のリンクを止める。 */
+  z.object({ type: z.literal('revokeAnswerLink'), itemId: Id, personId: Id }),
   /** 時計を進める。デモの家庭だけ。 */
   z.object({ type: z.literal('advanceClock'), to: DateTime }),
 ]);

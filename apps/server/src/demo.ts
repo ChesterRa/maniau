@@ -1,6 +1,7 @@
 // デモ（架空の家族とお知らせ）の事象の列と、デモの時計の段。docs/plan/02-product.md §2・§8。
 // 読み取りは、録った Claude の応答（data/demo/recorded/）があればそれを、無ければ手で書いた
 // 正しい読み取りの形（data/demo/expected/）を使い、どちらを使ったかを返す（画面に示す）。
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import {
   type DateTime,
@@ -16,7 +17,7 @@ import {
   toExtraction,
   validateHousehold,
 } from '@maniau/core';
-import { computePlan, keys, requestSnapshot } from '@maniau/core/engine';
+import { computePlan, foldEvents, keys, needWaysBasis, requestSnapshot } from '@maniau/core/engine';
 
 const ROOT = new URL('../../../', import.meta.url);
 const read = (path: string) => readFileSync(new URL(path, ROOT), 'utf8');
@@ -118,6 +119,9 @@ export const DEMO_STAGES = [
   { id: 'chase', now: '2026-11-29T21:00+09:00', viewer: 'b' },
   { id: 'backup', now: '2026-11-30T18:10+09:00', viewer: 'b' },
   { id: 'postponed', now: '2026-12-04T18:10+09:00', viewer: 'b' },
+  // いつにするかの候補（02-foundation §3.4）：前の五つの段の事象は変えず、その後ろに足す。
+  { id: 'when', now: '2026-12-05T21:00+09:00', viewer: 'b' },
+  { id: 'club', now: '2026-12-06T10:00+09:00', viewer: 'a' },
 ] as const satisfies readonly { id: string; now: DateTime; viewer: string }[];
 export type DemoStageId = (typeof DEMO_STAGES)[number]['id'];
 
@@ -261,18 +265,272 @@ export function demoEvents(stage: DemoStageId): DomainEvent[] {
     });
   }
   if (upTo >= 4) notice(1, '2026-12-04T17:52+09:00');
+  if (upTo >= 5) whenStage(add, () => events);
+  if (upTo >= 6) clubStage(add, () => events, data.household);
   return events;
+}
+
+type Add = (at: string, actorId: string, body: Record<string, unknown>) => void;
+
+/**
+ * 家族の言明の「すること」を、いつにするかの候補つきで足す（サーバーの stateNeed と同じ形の事象）。デモの出典の ID は
+ * 読める名前にする（言明の出典は、ID の作り方に依らない）。
+ */
+function statedWithCandidates(
+  add: Add,
+  at: string,
+  actorId: string,
+  sourceId: string,
+  text: string,
+  interpretation: Record<string, unknown>,
+  candidates: { date: string; startTime: string; endTime: string }[],
+): string {
+  const itemId = `${sourceId}:i1`;
+  add(at, actorId, {
+    type: 'noticeReceived',
+    source: {
+      id: sourceId,
+      version: 1,
+      receivedAt: at,
+      sender: 'family',
+      language: 'ja',
+      medium: 'text',
+      sentences: [{ id: `${sourceId}#1`, text }],
+    },
+  });
+  add(at, actorId, {
+    type: 'itemsStated',
+    sourceId,
+    items: [
+      {
+        id: itemId,
+        sourceId,
+        sentenceIds: [`${sourceId}#1`],
+        kind: 'need',
+        written: text,
+        interpretation,
+        evidence: 'stated',
+        effects: [],
+      },
+    ],
+  });
+  add(at, actorId, {
+    type: 'needCandidatesSet',
+    itemId,
+    candidates: candidates.map((c, i) => ({ id: `c${i + 1}`, rev: 1, ...c })),
+  });
+  return itemId;
+}
+
+/** やり方を選ぶ（選んだ時の中身とやり方の控えは、その時の事象から作る。サーバーの setNeedWays と同じ）。 */
+function chooseWays(
+  add: Add,
+  events: () => DomainEvent[],
+  at: string,
+  actorId: string,
+  itemId: string,
+  wayIds: string[],
+) {
+  const about = needWaysBasis(foldEvents(events()), itemId, wayIds);
+  if (about === undefined) throw new Error(`デモの「すること」が無い：${itemId}`);
+  add(at, actorId, { type: 'needWaysSet', itemId, wayIds, about });
+}
+
+/**
+ * デモに焼いたリンク（その鍵はだれも持たない。デモで答えるには、画面で出し直す）。ハッシュは、鍵の形（43 字）に
+ * ならない文から作るので、どの鍵とも合わない。
+ */
+const bakedLink = (name: string) =>
+  createHash('sha256').update(`demo-baked-link:${name}`).digest('hex');
+
+/**
+ * 段「when」（12/5 の夜）：二人とも出る用事のある午後に、陽菜を見てもらう日を、12/12（土）か 12/13（日）から決める。
+ * おばあちゃん（頼める人）と、近所のサトウさん（名前だけの相手。リンクで答える）に聞いた。少なくとも一人。
+ */
+function whenStage(add: Add, events: () => DomainEvent[]) {
+  const itemId = statedWithCandidates(
+    add,
+    '2026-12-05T20:30+09:00',
+    'b',
+    'f-demo-sitter',
+    '12/12 か 12/13 の午後1時から3時は、二人とも出る用事がある。どちらかの日に、陽菜を見てもらえる人を探す。おばあちゃんと、近所のサトウさんに聞いてみる。',
+    { what: '陽菜を見てもらう', shape: 'window', forMemberId: 'c' },
+    [
+      { date: '2026-12-12', startTime: '13:00', endTime: '15:00' },
+      { date: '2026-12-13', startTime: '13:00', endTime: '15:00' },
+    ],
+  );
+  chooseWays(add, events, '2026-12-05T20:31+09:00', 'b', itemId, ['way-grandma']);
+  add('2026-12-05T20:32+09:00', 'b', {
+    type: 'needPeopleSet',
+    itemId,
+    people: [
+      { id: 'g', kind: 'member' },
+      { id: 'g-sato', kind: 'guest', name: '近所のサトウさん' },
+    ],
+    required: [],
+    minCount: 1,
+  });
+  add('2026-12-05T20:33+09:00', 'b', {
+    type: 'answerLinkIssued',
+    itemId,
+    personId: 'g-sato',
+    linkId: 'l-demo-sato',
+    tokenHash: bakedLink('sato'),
+  });
+  // おばあちゃんには電話で聞き、彩が記録した（家族の記録）。サトウさんはリンクから答えた。
+  const answer = (at: string, actorId: string, body: Record<string, unknown>) =>
+    add(at, actorId, { type: 'availabilityRecorded', itemId, rev: 1, ...body });
+  answer('2026-12-05T20:40+09:00', 'b', {
+    candidateId: 'c1',
+    personId: 'g',
+    answer: 'no',
+    source: 'family',
+  });
+  answer('2026-12-05T20:40+09:00', 'b', {
+    candidateId: 'c2',
+    personId: 'g',
+    answer: 'yes',
+    source: 'family',
+  });
+  answer('2026-12-05T20:52+09:00', 'link', {
+    candidateId: 'c1',
+    personId: 'g-sato',
+    answer: 'maybe',
+    note: '2時までなら',
+    source: 'link',
+    linkId: 'l-demo-sato',
+  });
+}
+
+/** 体育室の予約（架空。地区センターの営業時間の中に電話する）。 */
+const BOOK_HALL = {
+  id: 'way-book-hall',
+  name: '地区センターの体育室を予約する',
+  steps: [
+    {
+      id: 'book',
+      name: '地区センターに電話して、体育室を予約する',
+      durationMin: 10,
+      segments: ['home', 'commute', 'work'],
+      external: { to: 'ward-center', kind: 'reply' },
+    },
+  ],
+  deadline: { type: 'daysBefore', days: 3, at: '17:00' },
+  cost: { yen: 1500 },
+  cancellable: true,
+};
+
+/**
+ * 段「club」（12/6 の朝）：陽菜のクラブの練習日を、12/12（土）か 12/19（土）の 9〜12 時から決める。コーチは要る、
+ * 6 人以上。窓の間ずっと家族が受け持つ用事ではない（holdNeeded: false）。会場は体育室の予約（家族が足したやり方）。
+ */
+function clubStage(add: Add, events: () => DomainEvent[], household: Household) {
+  add('2026-12-06T09:00+09:00', 'a', {
+    type: 'householdSet',
+    household: { ...household, ways: [...household.ways, BOOK_HALL] },
+  });
+  const itemId = statedWithCandidates(
+    add,
+    '2026-12-06T09:05+09:00',
+    'a',
+    'f-demo-club',
+    'クラブの練習日を、12/12 か 12/19 の 9 時から 12 時で決める。コーチは必ず。6 人以上そろえば、地区センターの体育室でやる。',
+    {
+      what: 'クラブの練習',
+      shape: 'window',
+      forMemberId: 'c',
+      place: 'みらい橋地区センター（架空）の体育室',
+      holdNeeded: false,
+    },
+    [
+      { date: '2026-12-12', startTime: '09:00', endTime: '12:00' },
+      { date: '2026-12-19', startTime: '09:00', endTime: '12:00' },
+    ],
+  );
+  chooseWays(add, events, '2026-12-06T09:06+09:00', 'a', itemId, ['way-book-hall']);
+  const guests = [
+    ['g-coach', 'コーチ'],
+    ['g-aoki', 'アオキさん'],
+    ['g-ishida', 'イシダさん'],
+    ['g-ueno', 'ウエノさん'],
+    ['g-endo', 'エンドウさん'],
+    ['g-okada', 'オカダさん'],
+    ['g-kato', 'カトウさん'],
+    ['g-kimura', 'キムラさん'],
+  ] as const;
+  add('2026-12-06T09:07+09:00', 'a', {
+    type: 'needPeopleSet',
+    itemId,
+    people: [
+      { id: 'a', kind: 'member' },
+      ...guests.map(([id, name]) => ({ id, kind: 'guest', name })),
+    ],
+    required: ['g-coach'],
+    minCount: 6,
+  });
+  // コーチと三人にはリンクを送り、ほかの人の返事はグループの連絡を見て健太が記録した。
+  for (const id of ['g-coach', 'g-aoki', 'g-ishida', 'g-ueno']) {
+    add('2026-12-06T09:08+09:00', 'a', {
+      type: 'answerLinkIssued',
+      itemId,
+      personId: id,
+      linkId: `l-demo-${id}`,
+      tokenHash: bakedLink(id),
+    });
+  }
+  const link = (at: string, personId: string, candidateId: string, answer: string, note?: string) =>
+    add(at, 'link', {
+      type: 'availabilityRecorded',
+      itemId,
+      candidateId,
+      rev: 1,
+      personId,
+      answer,
+      ...(note ? { note } : {}),
+      source: 'link',
+      linkId: `l-demo-${personId}`,
+    });
+  const family = (personId: string, candidateId: string, answer: string, note?: string) =>
+    add('2026-12-06T09:50+09:00', 'a', {
+      type: 'availabilityRecorded',
+      itemId,
+      candidateId,
+      rev: 1,
+      personId,
+      answer,
+      ...(note ? { note } : {}),
+      source: personId === 'a' ? 'self' : 'family',
+    });
+  // 12/12：コーチは来られる。はいは 5 人で、あと 1 人。オカダさん・キムラさんがまだ、エンドウさんは「たぶん」。
+  // 12/19：はいは 6 人いるが、コーチが「たぶん」（午後に別の試合）。答えは、届いた順に記録する。
+  link('2026-12-06T09:20+09:00', 'g-coach', 'c1', 'yes');
+  link('2026-12-06T09:20+09:00', 'g-coach', 'c2', 'maybe', '午後に別の試合がある');
+  link('2026-12-06T09:25+09:00', 'g-aoki', 'c1', 'yes');
+  link('2026-12-06T09:25+09:00', 'g-aoki', 'c2', 'yes');
+  link('2026-12-06T09:31+09:00', 'g-ishida', 'c1', 'yes');
+  link('2026-12-06T09:31+09:00', 'g-ishida', 'c2', 'yes');
+  link('2026-12-06T09:40+09:00', 'g-ueno', 'c1', 'no');
+  link('2026-12-06T09:40+09:00', 'g-ueno', 'c2', 'yes');
+  family('a', 'c1', 'yes');
+  family('a', 'c2', 'yes');
+  family('g-kato', 'c1', 'yes');
+  family('g-kato', 'c2', 'yes');
+  family('g-endo', 'c1', 'maybe', '午前だけなら');
+  family('g-okada', 'c2', 'yes');
 }
 
 export function demoPlan(stage: DemoStageId) {
   const data = loadDemoData();
   const now = DEMO_STAGES.find((s) => s.id === stage)?.now;
   if (!now) throw new Error(`デモの段が無い：${stage}`);
-  const plan = computePlan(demoEvents(stage), now);
+  const events = demoEvents(stage);
+  const plan = computePlan(events, now);
   return {
     stage,
     stages: DEMO_STAGES.map((s) => ({ id: s.id, now: s.now })),
-    household: data.household,
+    // その段の家の情報（後の段で家族が足したやり方も含む）。
+    household: foldEvents(events).household ?? data.household,
     sources: data.sources,
     readings: data.readings,
     plan,

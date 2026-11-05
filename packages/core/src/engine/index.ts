@@ -4,3 +4,4 @@ export * from './deadline';
 export * from './plan';
 export * from './purchase';
 export * from './state';
+export * from './when';

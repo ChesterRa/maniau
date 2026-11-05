@@ -125,6 +125,13 @@ export const Interpretation = z.object({
    * いない・一人に決まらない時は無い（分からない）。替われば、前の選び・引き受け・返事を当てない。
    */
   forMemberId: z.string().min(1).optional(),
+  /**
+   * 窓の「すること」で、窓の間ずっと、だれかが受け持つ必要があるか（家族が言う）。子を見てもらう等は要る（true）。
+   * 練習や集まりの時間のように、その事が起きる時間というだけなら要らない（false）。無いのは古い事象か読み取りで、
+   * 要るとして扱う（今までの意味）。無い時に値を補って書かない（控えの要約の形を変えない）。要らない時は、
+   * 受け持ちの確かめ（覆う）をしない。人数の答え・場所が使えるか・申し込みが通ったかは、別の事実のまま。
+   */
+  holdNeeded: z.boolean().optional(),
 });
 export type Interpretation = z.infer<typeof Interpretation>;
 

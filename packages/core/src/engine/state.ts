@@ -57,6 +57,29 @@ export interface EscortStatement {
   place: string | null;
 }
 
+/** 窓の「すること」の候補の一つ（id と rev はサーバーが付ける。rev は意味の代で、戻らない）。 */
+export interface NeedCandidate {
+  id: string;
+  rev: number;
+  date: string;
+  startTime: string;
+  endTime: string;
+}
+
+/** 候補への答えの記録（availabilityRecorded から。by は書いた家の大人の ID か link）。 */
+export interface AvailabilityRecord {
+  itemId: string;
+  seq: number;
+  personId: string;
+  candidateId: string;
+  rev: number;
+  answer: 'yes' | 'maybe' | 'no' | 'withdrawn';
+  note?: string;
+  source: 'self' | 'link' | 'family';
+  by: string;
+  at: string;
+}
+
 export interface EngineState {
   household?: Household;
   sources: Map<string, Source>;
@@ -139,6 +162,34 @@ export interface EngineState {
    * 違えば当てない。
    */
   needWays: Map<string, { wayIds: string[]; about: string; seq: number }>;
+  /** 窓の「すること」の、いつにするかの候補（事項の ID → 候補。後の needCandidatesSet が前に代わる）。 */
+  needCandidates: Map<string, NeedCandidate[]>;
+  /**
+   * 「すること」をだれと調整するか（事項の ID → 名簿・要る人・最少の人数と、人ごとに今の名簿へ最後に加わった
+   * 通し番号 since。外して戻した人の、外す前の答えは当てない）。
+   */
+  needPeople: Map<
+    string,
+    {
+      people: { id: string; kind: 'member' | 'guest'; name?: string }[];
+      required: string[];
+      minCount: number;
+      since: Map<string, number>;
+      seq: number;
+    }
+  >;
+  /** 候補への答えの記録（事象の順。出所ごと。当てるかは計算の時に決める）。 */
+  availability: AvailabilityRecord[];
+  /**
+   * 相手ごとの答えるリンク（事項の ID → 人 → 一番後に出したリンク）。効くのは止めていない一番後の物だけ。
+   * tokenHash はエンジンの計算には使わない（サーバーが鍵を確かめる表を作り直すのに使う）。
+   */
+  answerLinks: Map<
+    string,
+    Map<string, { linkId: string; tokenHash: string; revoked: boolean; seq: number }>
+  >;
+  /** 家族が決めた候補（事項の ID → 候補・代・根拠の控え・通し番号）。 */
+  chosenCandidate: Map<string, { candidateId: string; rev: number; basis: string; seq: number }>;
   /** 書き起こしを直した事のある出典（読んだ版の無い読み取りは、もう使わない）。 */
   correctedSources: Set<string>;
   /**
@@ -209,6 +260,11 @@ export function emptyState(): EngineState {
     withdrawnSources: new Set(),
     statedSources: new Set(),
     needWays: new Map(),
+    needCandidates: new Map(),
+    needPeople: new Map(),
+    availability: [],
+    answerLinks: new Map(),
+    chosenCandidate: new Map(),
     correctedSources: new Set(),
     declaredUnknowns: new Map(),
     purgedSources: new Map(),
@@ -278,6 +334,11 @@ const FAMILY_ONLY = new Set<DomainEvent['type']>([
   'escortStated',
   'itemsStated',
   'needWaysSet',
+  'needCandidatesSet',
+  'needPeopleSet',
+  'answerLinkIssued',
+  'answerLinkRevoked',
+  'candidateChosen',
   'sourceWithdrawn',
   'transcriptionCorrected',
   'requestRecordCorrected',
@@ -416,6 +477,92 @@ function apply(state: EngineState, event: DomainEvent): void {
         seq: event.seq,
       });
       return;
+    case 'needCandidatesSet':
+      state.needCandidates.set(
+        event.itemId,
+        event.candidates.map((c) => ({ ...c })),
+      );
+      return;
+    case 'needPeopleSet': {
+      const before = state.needPeople.get(event.itemId);
+      const since = new Map<string, number>();
+      for (const person of event.people) {
+        since.set(person.id, before?.since.get(person.id) ?? event.seq);
+      }
+      state.needPeople.set(event.itemId, {
+        people: event.people.map((p) => ({ ...p })),
+        required: [...event.required],
+        minCount: event.minCount,
+        since,
+        seq: event.seq,
+      });
+      return;
+    }
+    case 'availabilityRecorded': {
+      // 自分の画面（self）と家族の記録（family）は、その時の有効な大人だけ。self は本人、family はほかの人の答え。
+      // リンク（link）は、その時のその人の止めていない一番後のリンクからだけ（actorId は link）。
+      if (event.source === 'link') {
+        const link = state.answerLinks.get(event.itemId)?.get(event.personId);
+        if (event.actorId !== 'link' || !link || link.revoked || link.linkId !== event.linkId) {
+          state.rejected.push({ seq: event.seq, reason: '効かないリンクからの答え' });
+          return;
+        }
+      } else {
+        const member = state.household?.members.find((m) => m.id === event.actorId);
+        const self = event.actorId === event.personId;
+        if (member?.kind !== 'adult' || !member.active || (event.source === 'self') !== self) {
+          state.rejected.push({ seq: event.seq, reason: '答えを書けない人の記録' });
+          return;
+        }
+      }
+      state.availability.push({
+        itemId: event.itemId,
+        seq: event.seq,
+        personId: event.personId,
+        candidateId: event.candidateId,
+        rev: event.rev,
+        answer: event.answer,
+        ...(event.note === undefined ? {} : { note: event.note }),
+        source: event.source,
+        by: event.actorId,
+        at: event.occurredAt,
+      });
+      return;
+    }
+    case 'answerLinkIssued': {
+      const links = state.answerLinks.get(event.itemId) ?? new Map();
+      links.set(event.personId, {
+        linkId: event.linkId,
+        tokenHash: event.tokenHash,
+        revoked: false,
+        seq: event.seq,
+      });
+      state.answerLinks.set(event.itemId, links);
+      return;
+    }
+    case 'answerLinkRevoked': {
+      // その linkId だけを止める（遅れて届いた古い止めが、新しいリンクを止めない）。
+      const link = state.answerLinks.get(event.itemId)?.get(event.personId);
+      if (link && link.linkId === event.linkId) link.revoked = true;
+      return;
+    }
+    case 'candidateChosen': {
+      // 別の候補か、同じ候補の新しい代に決め直したら、その「すること」の手配の本命・予備を空にする（前の日の選びを
+      // 新しい日に当てない）。同じ候補・同じ代の確かめ直し（根拠の更新）では空にしない。
+      const before = state.chosenCandidate.get(event.itemId);
+      if (before && (before.candidateId !== event.candidateId || before.rev !== event.rev)) {
+        const arrangementKey = needArrangementKeyOf(event.itemId);
+        state.primary.delete(arrangementKey);
+        state.backups.delete(arrangementKey);
+      }
+      state.chosenCandidate.set(event.itemId, {
+        candidateId: event.candidateId,
+        rev: event.rev,
+        basis: event.basis,
+        seq: event.seq,
+      });
+      return;
+    }
     case 'answered':
       state.answers.push({
         unknownId: event.unknownId,
@@ -1059,10 +1206,20 @@ export function needWaysBasis(
       deadlineDayOnly: i.deadlineDayOnly,
       place: i.place,
       forMemberId: i.forMemberId,
+      // 無い時は書かない（JSON に出ない。古い needWaysSet.about と同じ文字列のまま）。
+      holdNeeded: i.holdNeeded,
       condition: conditionShape(item.conditionNodeId, nodes),
     },
     ways: wayIds.map((id) => state.household?.ways.find((w) => w.id === id) ?? null),
   });
+}
+
+/**
+ * 家族の言明の「すること」の手配の key（plan.ts の keys.needArrangement と同じ形。言明の事項は置き換わらないので、
+ * 元の事項の ID は事項の ID）。候補のある「すること」は、家族の言明だけ（サーバーが確かめる）。
+ */
+export function needArrangementKeyOf(itemId: string): string {
+  return `arr:need:${itemId}`;
 }
 
 /** 鍵の並びによらない JSON（同じ中身なら同じ文字列）。 */

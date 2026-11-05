@@ -7,7 +7,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { HouseholdPreviewResult } from '../src/family';
 import i18n from '../src/i18n';
-import { NeedScreen, StateNeedScreen } from '../src/need';
+import { NeedFixScreen, NeedScreen, StateNeedScreen } from '../src/need';
 import type { Ctx } from '../src/screens';
 import { step } from './fake-fetch';
 
@@ -199,9 +199,10 @@ describe('「すること」の操作', () => {
     await step(() => root.render(<StateNeedScreen ctx={ctx} />));
     expect(button('この変更で変わることを見る')?.disabled).toBe(true);
     const [said] = host.querySelectorAll('textarea');
-    const [what, date] = host.querySelectorAll<HTMLInputElement>(
-      'input:not([type=radio]):not([type=time])',
+    const [what] = host.querySelectorAll<HTMLInputElement>(
+      'input:not([type=radio]):not([type=time]):not([type=checkbox]):not([type=date])',
     );
+    const date = host.querySelector<HTMLInputElement>('input[type=date]');
     const radios = host.querySelectorAll<HTMLInputElement>('input[type=radio]');
     const forWhom = host.querySelector('select');
     if (!said || !what || !date || !forWhom) throw new Error('欄が無い');
@@ -266,5 +267,101 @@ describe('「すること」の操作', () => {
         seen: { throughSeq: 7, changes: 'S-2' },
       }),
     ]);
+  });
+
+  it('することを足す：日を相手の答えで決める時は、候補だけを送る（窓の日と時刻は送らない）。受け持ちが要らない時だけ書く', async () => {
+    const { ctx, looked } = materials(() => ({ preview: shown('S-3') }));
+    await step(() => root.render(<StateNeedScreen ctx={ctx} />));
+    const [said] = host.querySelectorAll('textarea');
+    const [what] = host.querySelectorAll<HTMLInputElement>(
+      'input:not([type=radio]):not([type=time]):not([type=checkbox]):not([type=date])',
+    );
+    const boxes = () => [...host.querySelectorAll<HTMLInputElement>('input[type=checkbox]')];
+    if (!said || !what) throw new Error('欄が無い');
+    await step(() => enter(said, '練習日を 12/12 か 12/19 で決める。'));
+    await step(() => enter(what, '練習'));
+    // 一つ目の箱は「日は、相手の答えで決める」、二つ目は「ずっとだれかが受け持つ」（初めは入っている）。
+    expect(boxes()[1]?.checked).toBe(true);
+    await step(() => boxes()[0]?.click());
+    await step(() => boxes()[1]?.click());
+    const dates = () => [...host.querySelectorAll<HTMLInputElement>('input[type=date]')];
+    const times = () => [...host.querySelectorAll<HTMLInputElement>('input[type=time]')];
+    expect(dates()).toHaveLength(2);
+    expect(button('この変更で変わることを見る')?.disabled).toBe(true);
+    const [d1, d2] = dates();
+    const [f1, t1, f2, t2] = times();
+    if (!d1 || !d2 || !f1 || !t1 || !f2 || !t2) throw new Error('候補の欄が無い');
+    await step(() => enter(d1, '2026-12-12'));
+    await step(() => enter(d2, '2026-12-19'));
+    await step(() => enter(f1, '09:00'));
+    await step(() => enter(t1, '12:00'));
+    await step(() => enter(f2, '09:00'));
+    await step(() => enter(t2, '12:00'));
+    await step(() => button('この変更で変わることを見る')?.click());
+    expect(looked.at(-1)).toEqual({
+      type: 'stateNeed',
+      text: '練習日を 12/12 か 12/19 で決める。',
+      interpretation: { what: '練習', shape: 'window', holdNeeded: false },
+      candidates: [
+        { date: '2026-12-12', startTime: '09:00', endTime: '12:00' },
+        { date: '2026-12-19', startTime: '09:00', endTime: '12:00' },
+      ],
+    });
+  });
+
+  it('候補のある「すること」を直す：日と時刻の欄を出さず、替えた欄だけを送り、「いつにするか」へ戻る', async () => {
+    const { ctx, looked } = materials(() => ({ preview: shown('S-4') }));
+    const went: unknown[] = [];
+    const [requirement] = ctx.plan.requirements;
+    const byAnswers = {
+      ...ctx,
+      go: (route: unknown) => went.push(route),
+      plan: {
+        ...ctx.plan,
+        // 決める前は、手配が無い。
+        arrangements: [],
+        requirements: [
+          {
+            ...requirement,
+            when: {
+              // 選んだやり方が当たっている候補（直すと、選び直しになる）。
+              candidates: [{ id: 'c1', ways: [{ wayId: 'way-1', usable: true }] }],
+              people: [],
+              required: [],
+              minCount: 1,
+              // 今の答えが一つある（直すと、数えなくなる）。
+              answers: [{ personId: 'g', candidateId: 'c1', value: 'yes', sources: [] }],
+              links: [],
+              inUse: false,
+            },
+          },
+        ],
+      },
+      items: ctx.items.map((l) => ({
+        ...l,
+        item: { ...l.item, interpretation: { what: '倉庫の鍵を返す', shape: 'window' } },
+      })),
+    } as unknown as Ctx;
+    await step(() => root.render(<NeedFixScreen ctx={byAnswers} itemId={ITEM} />));
+    expect(host.querySelectorAll('input[type=date], input[type=time]')).toHaveLength(0);
+    expect(host.textContent).toContain('ここでは直せません');
+    // 何も替えていなければ、見られない（同じ中身で直すと、集めた答えを数えなくなる）。
+    const look = () => button('この変更で変わることを見る');
+    expect(look()?.disabled).toBe(true);
+    const what = host.querySelector<HTMLInputElement>('input');
+    if (!what) throw new Error('欄が無い');
+    await step(() => enter(what, '倉庫の鍵を二本返す'));
+    await step(() => look()?.click());
+    expect(looked.at(-1)).toEqual({
+      type: 'correctItem',
+      itemId: ITEM,
+      interpretation: { what: '倉庫の鍵を二本返す' },
+    });
+    // 計画の差の表に出なくても、今の答えを数えなくなることを言う（「計画は変わりません」とは言わない）。
+    expect(host.textContent).toContain('今の答え 1 件は前の中身への物になり、数えなくなります');
+    expect(host.textContent).toContain('選んだやり方を、もう一度選んでもらいます');
+    expect(host.textContent).not.toContain('計画は変わりません');
+    await step(() => button('いつにするか')?.click());
+    expect(went).toEqual([{ name: 'when', key: 'req:need:f-1:i1' }]);
   });
 });

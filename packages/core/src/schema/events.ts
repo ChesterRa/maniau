@@ -1,6 +1,6 @@
 // 事象（状態の正本）。追記だけの列で、今の状態はいつでも事象から作り直せる（docs/design/01-model.md §2）。
 import { z } from 'zod';
-import { DateTime, toEpochMinutes } from '../time';
+import { DateTime, LocalDate, LocalTime, toEpochMinutes } from '../time';
 import { ExternalKind, Household, Id } from './household';
 import { Basis, type Task, untimed } from './plan';
 import { CorrectedInterpretation, Item, Sentence, Source } from './source';
@@ -401,6 +401,97 @@ export const DomainEvent = z.discriminatedUnion('type', [
   z.object({ ...envelope, type: z.literal('requestRecordCorrected'), requestId: Id }),
   /** 時計を進めた。試験とデモだけ。 */
   z.object({ ...envelope, type: z.literal('clockAdvanced'), to: DateTime }),
+  /**
+   * 窓の「すること」の、いつにするかの候補を置いた（全部。後の物が前に代わる）。id と rev はサーバーが付ける：
+   * rev は候補の意味の代で、時刻か「すること」の中身（何を・場所・だれのため・受け持ちが要るか）が変われば進み、
+   * 戻らない。答えと決めた事は、同じ id・同じ rev の時だけ当たる。消した候補の id は使い回さない。
+   */
+  z.object({
+    ...envelope,
+    type: z.literal('needCandidatesSet'),
+    itemId: Id,
+    candidates: z
+      .array(
+        z.object({
+          id: Id,
+          rev: z.number().int().positive(),
+          date: LocalDate,
+          startTime: LocalTime,
+          endTime: LocalTime,
+        }),
+      )
+      .min(2)
+      .max(8),
+  }),
+  /**
+   * 「すること」をだれと調整するか（全部。後の物が前に代わる）。member は家の大人か頼める人（家庭の成員の ID）、
+   * guest はその用件の中の相手（名前だけ。家庭の成員ではない）。required は要る人、minCount は最少の人数。
+   */
+  z.object({
+    ...envelope,
+    type: z.literal('needPeopleSet'),
+    itemId: Id,
+    people: z
+      .array(
+        z.object({
+          id: Id,
+          kind: z.enum(['member', 'guest']),
+          name: z.string().min(1).max(40).optional(),
+        }),
+      )
+      .max(30),
+    required: z.array(Id).max(30),
+    minCount: z.number().int().min(0).max(60),
+  }),
+  /**
+   * 候補への答え（都合）。引き受けでも、施設の受付でもない。self は家の大人が自分の答えを、family は家の大人が
+   * ほかの人の答えを記録した物、link はリンクを持つ人の答え（本人の確かめではない。actorId は link、linkId を持つ）。
+   * withdrawn は、その出所の答えを取り下げた（未回答に戻す）。出所ごとに後の物が効く。
+   */
+  z.object({
+    ...envelope,
+    type: z.literal('availabilityRecorded'),
+    itemId: Id,
+    candidateId: Id,
+    rev: z.number().int().positive(),
+    personId: Id,
+    answer: z.enum(['yes', 'maybe', 'no', 'withdrawn']),
+    note: z.string().min(1).max(140).optional(),
+    source: z.enum(['self', 'link', 'family']),
+    linkId: Id.optional(),
+  }),
+  /**
+   * 相手一人の、答えるリンクを出した。鍵そのものは持たず、sha256 の 16 進だけを持つ。その人に効くのは、一番後に
+   * 出した linkId だけ（出し直すと前のリンクは効かない）。
+   */
+  z.object({
+    ...envelope,
+    type: z.literal('answerLinkIssued'),
+    itemId: Id,
+    personId: Id,
+    linkId: Id,
+    tokenHash: z.string().regex(/^[0-9a-f]{64}$/),
+  }),
+  /** 相手一人のリンク（その linkId だけ）を止めた。 */
+  z.object({
+    ...envelope,
+    type: z.literal('answerLinkRevoked'),
+    itemId: Id,
+    personId: Id,
+    linkId: Id,
+  }),
+  /**
+   * 家族が、候補の一つ（その代）に決めた。決めた時が「すること」の窓になる。basis は決めた時の根拠の控え（名簿・
+   * 要る人・最少の人数と、その候補への効く答えの要約。サーバーが作る）。今の根拠と違えば、決めた事は確かめ待ち。
+   */
+  z.object({
+    ...envelope,
+    type: z.literal('candidateChosen'),
+    itemId: Id,
+    candidateId: Id,
+    rev: z.number().int().positive(),
+    basis: z.string().min(1),
+  }),
 ]);
 export type DomainEvent = z.infer<typeof DomainEvent>;
 export type DomainEventType = DomainEvent['type'];

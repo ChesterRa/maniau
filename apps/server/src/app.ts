@@ -4,6 +4,7 @@ import { Command, Household, PreviewCommand, SourceSender, splitSentences } from
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
+import { AnswerSubmit } from './answer-link';
 import { ACCESS_HEADER, type AccessVerifier } from './auth/access';
 import { nowIn } from './clock';
 import { type CommandResult, runCommand } from './commands';
@@ -698,6 +699,41 @@ export function createApp(
     const done = await sessions.command(c.req.param('sid'), memberId, operationId, command);
     if (!done) return c.json({ error: 'unknownSession' }, 404);
     return c.json(done, statusOf(done.result));
+  });
+  // 答えるリンクの頁（家の外の人が、いつにするかの候補に答える。デモの家庭だけ）。鍵は Authorization: Bearer で
+  // 受け、Cookie は見ない。ブラウザは Bearer を勝手に付けないので、別のサイトの頁からは書けない。さらに、ブラウザの
+  // 付ける Sec-Fetch-Site で別のサイトからの要求を断り、書き込みは JSON だけを受ける。効かない鍵は、どれが違う
+  // かを言わずに同じ形で断る（401）。
+  const bearerOf = (c: Context) =>
+    /^Bearer ([A-Za-z0-9_-]{43})$/.exec(c.req.header('authorization') ?? '')?.[1];
+  const crossSite = (c: Context) => {
+    const site = c.req.header('sec-fetch-site');
+    return site !== undefined && site !== 'same-origin' && site !== 'none';
+  };
+  app.get('/api/answer', async (c) => {
+    c.header('Referrer-Policy', 'no-referrer');
+    if (crossSite(c)) return c.json({ error: 'badOrigin' }, 403);
+    const token = bearerOf(c);
+    const view = token ? await sessions.answerView(token) : undefined;
+    if (view === 'tooMany') return c.json({ error: 'tooMany' }, 429);
+    return view ? c.json({ view }) : c.json({ error: 'linkInvalid' }, 401);
+  });
+  app.post('/api/answer', async (c) => {
+    c.header('Referrer-Policy', 'no-referrer');
+    if (crossSite(c)) return c.json({ error: 'badOrigin' }, 403);
+    if (!(c.req.header('content-type') ?? '').toLowerCase().startsWith('application/json')) {
+      return c.json({ error: 'notJson' }, 415);
+    }
+    const token = bearerOf(c);
+    if (!token) return c.json({ error: 'linkInvalid' }, 401);
+    const body = AnswerSubmit.safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: 'invalidBody' }, 400);
+    const result = await sessions.answerSubmit(token, body.data);
+    if (result === 'tooMany') return c.json({ error: 'tooMany' }, 429);
+    if (!result || result.status === 'unauthorized') return c.json({ error: 'linkInvalid' }, 401);
+    return result.status === 'conflict'
+      ? c.json({ error: result.reason, view: result.view }, 409)
+      : c.json({ status: result.status, view: result.view });
   });
   // デモの家庭に、お知らせの文を入れる（貼る・キーボードのマイクで話す）。Claude で読み、計画に入れる。
   const NoticeInput = z.object({

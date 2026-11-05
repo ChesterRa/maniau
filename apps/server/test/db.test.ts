@@ -121,6 +121,65 @@ function otherKinds(): DomainEvent[] {
       },
     ],
     ['b', { type: 'clockAdvanced', to: at }],
+    [
+      'a',
+      {
+        type: 'needCandidatesSet',
+        itemId: 's1:i1',
+        candidates: [
+          { id: 'c1', rev: 1, date: '2026-12-09', startTime: '13:00', endTime: '15:00' },
+          { id: 'c2', rev: 1, date: '2026-12-11', startTime: '13:00', endTime: '15:00' },
+        ],
+      },
+    ],
+    [
+      'a',
+      {
+        type: 'needPeopleSet',
+        itemId: 's1:i1',
+        people: [
+          { id: 'g', kind: 'member' },
+          { id: 'g-1a2b3c4d', kind: 'guest', name: '架空の近所の人' },
+        ],
+        required: [],
+        minCount: 1,
+      },
+    ],
+    [
+      'link',
+      {
+        type: 'availabilityRecorded',
+        itemId: 's1:i1',
+        candidateId: 'c1',
+        rev: 1,
+        personId: 'g-1a2b3c4d',
+        answer: 'maybe',
+        note: '架空の条件',
+        source: 'link',
+        linkId: 'l-1',
+      },
+    ],
+    [
+      'a',
+      {
+        type: 'answerLinkIssued',
+        itemId: 's1:i1',
+        personId: 'g-1a2b3c4d',
+        linkId: 'l-1',
+        tokenHash: 'a'.repeat(64),
+      },
+    ],
+    ['a', { type: 'answerLinkRevoked', itemId: 's1:i1', personId: 'g-1a2b3c4d', linkId: 'l-1' }],
+    [
+      'b',
+      {
+        type: 'candidateChosen',
+        itemId: 's1:i1',
+        candidateId: 'c1',
+        rev: 1,
+        basis: '{"people":["g"]}',
+      },
+    ],
   ];
   return rows.map(([actorId, fields], i) =>
     DomainEvent.parse({
@@ -167,6 +226,8 @@ describe('乾かす・戻す（§6.2）', () => {
       '架空の名前',
       '架空の持ち物',
       '架空の当番',
+      '架空の近所の人',
+      '架空の条件',
     ].filter((s) => s.length >= 2);
     expect(secrets.length).toBeGreaterThan(10);
     for (const event of all) {

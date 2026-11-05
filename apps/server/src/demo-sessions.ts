@@ -37,7 +37,21 @@ import {
   wayIdeasContext,
 } from '@maniau/core';
 import { computePlan, currentItems, foldEvents } from '@maniau/core/engine';
-import { type CommandGuard, type CommandResult, reopened, runCommand } from './commands';
+import {
+  type AnswerResult,
+  type AnswerSubmit,
+  type AnswerView,
+  answerView,
+  type LinkEntry,
+  submitAnswer,
+} from './answer-link';
+import {
+  answerTokenHash,
+  type CommandGuard,
+  type CommandResult,
+  reopened,
+  runCommand,
+} from './commands';
 import { DEMO_STAGES, type DemoStageId, demoEvents, loadDemoData } from './demo';
 import type { LatLng, MapsClient, WalkRoute } from './maps/google';
 import { mapInputsFor, withProposed } from './maps/inputs';
@@ -66,6 +80,10 @@ import { utteranceContext } from './utterance-context';
 import { type View, viewFor } from './views';
 
 const MAX_SESSIONS = 200;
+/** 一つの答えるリンクで、一分に受ける数（読む・書くの合計）。 */
+export const MAX_LINK_REQUESTS_PER_MINUTE = 30;
+/** 一つのデモで出せる答えるリンクの数（鍵の表を際限なく大きくしない）。 */
+export const MAX_LINKS_PER_SESSION = 50;
 const TTL_MS = 12 * 60 * 60 * 1000;
 /** 使われないデモも、この間ごとに捨てる（入れた文を、使わなくなってから長く置かない）。 */
 const SWEEP_MS = 10 * 60 * 1000;
@@ -288,6 +306,8 @@ interface StoredProposal {
 interface Session {
   now: DateTime;
   touched: number;
+  /** このデモで出した答えるリンクの鍵の sha256（デモを捨てる時に、鍵の表から外す）。 */
+  links?: Set<string>;
   /** このデモで読んだ（読もうとした）お知らせの数。 */
   readings: number;
   /** いま読んでいる操作の ID（お知らせと一言で一つずつ）。 */
@@ -421,13 +441,27 @@ export function demoSessions(
   /** いま読んでいる数（サーバー全体）。 */
   let inFlight = 0;
 
+  /** 答えるリンクの鍵の sha256 → どのデモの、どの「すること」の、だれのリンクか（デモと同じ寿命）。 */
+  const linkIndex = new Map<string, LinkEntry>();
+  /** 答えるリンクごとの、今の一分に受けた数。 */
+  const linkRequests = new Map<string, { start: number; count: number }>();
+  const drop = (id: string) => {
+    const session = sessions.get(id);
+    sessions.delete(id);
+    store.drop(id);
+    for (const hash of session?.links ?? []) {
+      linkIndex.delete(hash);
+      linkRequests.delete(hash);
+    }
+  };
+
   const sweep = () => {
     const now = clock();
     for (const [id, session] of sessions) {
-      if (now - session.touched > TTL_MS) {
-        sessions.delete(id);
-        store.drop(id);
-      }
+      if (now - session.touched > TTL_MS) drop(id);
+    }
+    for (const [hash, window] of linkRequests) {
+      if (now - window.start >= 60_000) linkRequests.delete(hash);
     }
     while (sessions.size >= MAX_SESSIONS) {
       // 読んでいる途中のデモは追い出さない（外に送った後の結果を捨てず、後の段の呼び出しも無駄にしない）。
@@ -436,8 +470,7 @@ export function demoSessions(
         .filter(([, s]) => s.reading === undefined)
         .sort((a, b) => a[1].touched - b[1].touched)[0];
       if (!oldest) break;
-      sessions.delete(oldest[0]);
-      store.drop(oldest[0]);
+      drop(oldest[0]);
     }
   };
 
@@ -449,12 +482,30 @@ export function demoSessions(
     const session = sessions.get(id);
     if (!session) return undefined;
     if (clock() - session.touched > TTL_MS) {
-      sessions.delete(id);
-      store.drop(id);
+      drop(id);
       return undefined;
     }
     session.touched = clock();
     return session;
+  };
+  /**
+   * 答えるリンクの鍵から、生きているデモと表の一行を引く（数の上限を超えたら tooMany）。鍵が今も効くかは、押さえた
+   * 中で確かめ直す（answer-link）。
+   */
+  const linkOf = (
+    token: string,
+  ): { hash: string; entry: LinkEntry; session: Session } | 'tooMany' | undefined => {
+    const hash = answerTokenHash(token);
+    const entry = linkIndex.get(hash);
+    if (!entry) return undefined;
+    const session = sessions.get(entry.householdId);
+    if (!session || clock() - session.touched > TTL_MS) return undefined;
+    const now = clock();
+    const window = linkRequests.get(hash);
+    if (!window || now - window.start >= 60_000) linkRequests.set(hash, { start: now, count: 1 });
+    else if (window.count >= MAX_LINK_REQUESTS_PER_MINUTE) return 'tooMany';
+    else window.count += 1;
+    return { hash, entry, session };
   };
   // 待つ間に、期限が切れた・数の上限で捨てたデモではないか（外に送る前と、結果を足す前に確かめる）。
   const alive = (id: string, session: Session) =>
@@ -973,6 +1024,18 @@ export function demoSessions(
       if (!session) return undefined;
       const maps = await mapsOf(id, proposedOf(command));
       // 時計を進めたデモの時刻は、命令の処理が家庭を押さえた中で事象から決める（ここで先に読まない）。
+      if (
+        command.type === 'issueAnswerLink' &&
+        (session.links?.size ?? 0) >= MAX_LINKS_PER_SESSION
+      ) {
+        const view = await store.withHousehold(id, (log) =>
+          demoView(log.events(), memberId, session.now, maps),
+        );
+        return {
+          result: { status: 'invalid', reason: 'tooManyLinks', throughSeq: view.plan.throughSeq },
+          view,
+        };
+      }
       const result = await runCommand(
         store,
         id,
@@ -986,10 +1049,53 @@ export function demoSessions(
         },
         command,
       );
+      // 出した鍵を表に足す（鍵そのものは置かない。sha256 から引く）。
+      if (
+        command.type === 'issueAnswerLink' &&
+        'answerLink' in result &&
+        result.answerLink &&
+        alive(id, session)
+      ) {
+        const hash = answerTokenHash(result.answerLink.token);
+        linkIndex.set(hash, {
+          householdId: id,
+          itemId: command.itemId,
+          personId: result.answerLink.personId,
+        });
+        session.links = (session.links ?? new Set()).add(hash);
+      }
       const view = await store.withHousehold(id, (log) =>
         demoView(log.events(), memberId, session.now, maps),
       );
       return { result, view };
+    },
+    /** 答えるリンクの頁に見せる物。鍵が効かなければ undefined、数の上限なら tooMany。 */
+    async answerView(token: string): Promise<AnswerView | 'tooMany' | undefined> {
+      const found = linkOf(token);
+      if (found === undefined || found === 'tooMany') return found;
+      const { hash, entry, session } = found;
+      const view = await store
+        .withHousehold(entry.householdId, (log) => answerView(log, entry, hash))
+        .catch(() => undefined);
+      if (view) session.touched = clock();
+      return view;
+    },
+    /** 答えるリンクからの答えを書く。鍵が効かなければ undefined、数の上限なら tooMany。 */
+    async answerSubmit(
+      token: string,
+      body: AnswerSubmit,
+    ): Promise<AnswerResult | 'tooMany' | undefined> {
+      const found = linkOf(token);
+      if (found === undefined || found === 'tooMany') return found;
+      const { hash, entry, session } = found;
+      const result = await store
+        .withHousehold(entry.householdId, (log) =>
+          submitAnswer(log, entry, hash, body, session.now),
+        )
+        .catch(() => undefined);
+      if (!result || result.status === 'unauthorized') return undefined;
+      session.touched = clock();
+      return result;
     },
     /**
      * 家族が貼った・話したお知らせの文を、Claude で読んで計画に入れる。読む間は家庭を押さえない

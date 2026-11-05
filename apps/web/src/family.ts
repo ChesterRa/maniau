@@ -262,7 +262,11 @@ export type ConfirmResult = {
 };
 
 export type SendResult =
-  | { status: 'ok' | 'noop' }
+  | {
+      status: 'ok' | 'noop';
+      /** 答えるリンクを出した時だけ、その鍵（応答で一度だけ）。 */
+      answerLink?: { personId: string; token: string };
+    }
   | { status: 'conflict' | 'forbidden' | 'invalid' | 'failed'; reason?: string };
 
 /**
@@ -431,6 +435,15 @@ export function useServerView(where: Where | undefined) {
     pending.current = undefined;
     setNotice(undefined);
   }, [epoch]);
+  // 別のタブ（相手の答える頁など）から戻った時は、見せる物を読み直す（その間に、だれかの答えが届いているかも
+  // しれない。読むだけで、何も書かない）。
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') setReload((n) => n + 1);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
   // 使う人を替えたら（届いたか分からない時も）、その人の見せる物を読み直す。
   useEffect(() => {
     void reload;
@@ -1052,6 +1065,8 @@ export function useServerView(where: Where | undefined) {
       else if (result.status === 'changed') setNotice('changed');
       else if (result.status === 'refused' || result.status === 'gone') setNotice('refused');
     },
+    /** 見せる物を読み直す（何も書かない。相手の答えなど、ほかから届いた物を見る）。 */
+    refresh: () => setReload((n) => n + 1),
     /** 届いたか分からない操作を、送り直さずに手放す（次の押下は別の操作になる）。 */
     discard: () => {
       pending.current = undefined;

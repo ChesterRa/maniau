@@ -32,6 +32,7 @@ import { TabBar } from './ui';
 import { ideaDraft, WayIdeasScreen } from './way-ideas';
 import { WayScreen } from './ways';
 import { WhatIfScreen } from './what-if';
+import { WhenScreen } from './when';
 
 const FIRST_STAGE = 'arrived';
 const FRAME = 'mx-auto flex min-h-dvh max-w-md flex-col';
@@ -171,6 +172,7 @@ function Body(props: {
           preview: live.preview,
           previewHousehold: live.previewHousehold,
           previewChange: live.previewChange,
+          refresh: live.refresh,
           me,
           lang,
           tz: view.household.timeZone,
@@ -419,6 +421,8 @@ function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {
       return <DecideScreen ctx={ctx} arrangementKey={route.key} />;
     case 'need':
       return <NeedScreen ctx={ctx} arrangementKey={route.key} />;
+    case 'when':
+      return <WhenScreen ctx={ctx} requirementKey={route.key} />;
     case 'stateNeed':
       return <StateNeedScreen ctx={ctx} />;
     case 'needFix':

@@ -209,3 +209,19 @@ describe('写真の書き起こしの返事', () => {
     expect(result).toEqual({ status: 'tooLarge' });
   });
 });
+
+describe('ほかから届いた物を読み直す', () => {
+  it('別のタブから戻った時と、読み直しを押した時に、同じデモの見せる物を読み直す（新しいデモを作らない）', async () => {
+    await step(() => take(isView('a')).respond(200, view(12)));
+    // 相手が別のタブで答えた後、家族のタブに戻る。
+    await step(() => document.dispatchEvent(new Event('visibilitychange')));
+    const back = view(13);
+    await step(() => take(isView('a')).respond(200, back));
+    expect(demo?.view).toBe(back);
+    await step(() => demo?.refresh());
+    const latest = view(14);
+    await step(() => take(isView('a')).respond(200, latest));
+    expect(demo?.view).toBe(latest);
+    expect(calls.filter(isSession)).toHaveLength(1);
+  });
+});

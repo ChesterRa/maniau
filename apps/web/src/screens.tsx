@@ -93,6 +93,7 @@ import {
   Text,
   Title,
 } from './ui';
+import { WhenList } from './when';
 
 export type Route =
   | { name: 'today' }
@@ -100,6 +101,8 @@ export type Route =
   | { name: 'decide'; key: string }
   /** 通用の「すること」の一つ（手配の key）。 */
   | { name: 'need'; key: string }
+  /** いつにするかの候補のある「すること」（要件の key）。 */
+  | { name: 'when'; key: string }
   /** 家族の言明で「すること」を足す。 */
   | { name: 'stateNeed' }
   /** モデルが読んだ「すること」の読み取りを、家族が直す（事項の ID）。 */
@@ -210,6 +213,8 @@ export interface Ctx {
    * 書けない変更は理由を返す。
    */
   previewChange?: (command: PreviewCommand) => Promise<HouseholdPreviewResult | undefined>;
+  /** 見せる物を読み直す（何も書かない。相手の答えなど、ほかから届いた物を見る）。 */
+  refresh?: () => void;
   /**
    * 地図（地図のあるデモだけ）：画面の鍵（あれば地図を描く）、店までの徒歩の道を読む口、駅の近くの店を探す口、
    * 探す言葉の案（Claude）を聞く口。
@@ -924,6 +929,7 @@ export function TodayScreen({ ctx }: { ctx: Ctx }) {
             {ctx.t('today.addNeed')}
           </MoreLink>
         )}
+        <WhenList ctx={ctx} />
         <NeedList ctx={ctx} />
         {quiet.length > 0 && (
           <Card>
@@ -1506,11 +1512,15 @@ export function needItem(ctx: Ctx, arrangement: Arrangement): Item | undefined {
  */
 export function needWhen(ctx: Ctx, arrangement: Arrangement, item: Item | undefined): string {
   if (arrangement.needShape === 'window') {
-    return ctx.t('need.when.window', {
-      day: day(ctx, arrangement.start),
-      from: time(ctx, arrangement.start),
-      to: time(ctx, arrangement.end),
-    });
+    // 窓の間ずっと受け持つ必要が無い「すること」（練習に行く等）は、「だれかが要る」と言わない。
+    return ctx.t(
+      item?.interpretation.holdNeeded === false ? 'need.when.windowFree' : 'need.when.window',
+      {
+        day: day(ctx, arrangement.start),
+        from: time(ctx, arrangement.start),
+        to: time(ctx, arrangement.end),
+      },
+    );
   }
   const dayOnly = item?.interpretation.deadlineDayOnly === true;
   return ctx.t('need.when.by', {

@@ -60,6 +60,13 @@ const KEEP: Record<DomainEvent['type'], readonly string[]> = {
   sourceContentPurged: ['sourceId', 'scope'],
   transcriptionCorrected: ['sourceId', 'sourceVersion'],
   clockAdvanced: ['to'],
+  // いつにするかの候補（日と時刻）・名簿（客の名前・人数）・答えの一言・決めた時の根拠は、payloads に置く。
+  needCandidatesSet: ['itemId'],
+  needPeopleSet: ['itemId'],
+  availabilityRecorded: ['itemId', 'candidateId', 'rev', 'personId', 'answer', 'source', 'linkId'],
+  answerLinkIssued: ['itemId', 'personId', 'linkId', 'tokenHash'],
+  answerLinkRevoked: ['itemId', 'personId', 'linkId'],
+  candidateChosen: ['itemId', 'candidateId', 'rev'],
 };
 
 export interface DriedEvent {

@@ -30,8 +30,10 @@ import type { MapInputs } from '../schema/maps';
 import type {
   Arrangement,
   Basis,
+  CandidateWay,
   CommitmentState,
   ExternalRequest,
+  NeedWhen,
   OptionPlan,
   PlanResult,
   PlanStatus,
@@ -73,6 +75,15 @@ import {
   type RequestRecord,
   retiredUnknowns,
 } from './state';
+import {
+  basisChanges,
+  type CountValue,
+  countCandidate,
+  countValueOf,
+  decisionBasis,
+  effectiveAnswer,
+  recommend,
+} from './when';
 
 /** 代償の重みの初期値（家族が変えられる。§8）。安い案ほど小さい。 */
 export const DEFAULT_COST_WEIGHTS = {
@@ -876,6 +887,21 @@ type NeedFrame =
 
 function needFrame(ctx: Context, item: Item): NeedFrame | undefined {
   const i = item.interpretation;
+  // いつにするかの候補のある「すること」は、家族が決めた候補（今の代）の時が窓。決めていなければ窓は無い（いつ、の段）。
+  const candidates = ctx.state.needCandidates.get(item.id);
+  if (i.shape === 'window' && candidates && candidates.length > 0) {
+    const decision = ctx.state.chosenCandidate.get(item.id);
+    const decided = candidates.find(
+      (c) => c.id === decision?.candidateId && c.rev === decision?.rev,
+    );
+    if (!decided || decided.startTime >= decided.endTime) return undefined;
+    return {
+      shape: 'window',
+      date: decided.date,
+      start: zonedToEpochMinutes(decided.date, decided.startTime, ctx.tz),
+      end: zonedToEpochMinutes(decided.date, decided.endTime, ctx.tz),
+    };
+  }
   if (i.shape === 'window') {
     if (!i.date || !i.startTime || !i.endTime || i.startTime >= i.endTime) return undefined;
     return {
@@ -1099,6 +1125,7 @@ function planNeed(
   }
   const frame = needFrame(ctx, item);
   const date = frame?.date ?? item.interpretation.date;
+  const when = needWhen(ctx, item, arrangementKey, requirementKey, live, busy);
   out.requirements.push({
     key: requirementKey,
     kind: 'need',
@@ -1109,9 +1136,12 @@ function planNeed(
     basis: { itemIds: [item.id], requirementKey },
     live,
     ...(conditional ? { conditional } : {}),
+    ...(when ? { when } : {}),
   });
   if (!frame) return;
   const { ways, stale } = chosenWays(ctx, item);
+  // 窓の間ずっとだれかが受け持つ必要があるか（無い古い事象は要る。要らない時は、受け持ちの確かめをしない）。
+  const hold = item.interpretation.holdNeeded !== false;
   const stoppedIds = new Set(ctx.household.stoppedWayIds ?? []);
   const keyOf = (way: Way) => keys.option(arrangementKey, way.id);
   const place = (way: Way, around: ReadonlyMap<string, readonly Busy[]>): PlacedChain => {
@@ -1185,7 +1215,7 @@ function planNeed(
           t.start === undefined,
       );
       const holes =
-        frame.shape !== 'window'
+        frame.shape !== 'window' || !hold
           ? []
           : unplaced
             ? [{ start: frame.start, end: frame.end }]
@@ -1228,7 +1258,7 @@ function planNeed(
     const placed = withStatus(ctx, base, own);
     return {
       arrangement:
-        frame.shape === 'window'
+        frame.shape === 'window' && hold
           ? withCoverage(ctx, placed, own, ways, item.interpretation.place)
           : placed,
       tasks: own,
@@ -1248,6 +1278,243 @@ function planNeed(
   );
   out.tasks.push(...result.tasks);
   out.arrangements.push(result.arrangement);
+}
+
+/**
+ * いつにするかの候補のある「すること」の、候補ごとの答えの数え・やり方・勧め・決めた事（02-foundation
+ * §3.4.1）。候補の無い「すること」は無し。答えは、今の候補の代と同じで、その人が今の名簿に最後に加わった後の
+ * 記録だけを当てる。
+ */
+function needWhen(
+  ctx: Context,
+  item: Item,
+  arrangementKey: string,
+  requirementKey: string,
+  live: boolean,
+  busy: ReadonlyMap<string, readonly Busy[]>,
+): NeedWhen | undefined {
+  const candidates = ctx.state.needCandidates.get(item.id);
+  if (!candidates || candidates.length === 0) return undefined;
+  const roster = ctx.state.needPeople.get(item.id);
+  const people = roster?.people ?? [];
+  const ids = people.map((p) => p.id);
+  const required = roster?.required ?? [];
+  const minCount = roster?.minCount ?? 0;
+  const records = ctx.state.availability.filter((r) => r.itemId === item.id);
+  const hold = item.interpretation.holdNeeded !== false;
+  const { ways } = chosenWays(ctx, item);
+  const answers: NeedWhen['answers'] = [];
+  const states = candidates.map((c) => {
+    const values = new Map<string, CountValue>();
+    for (const person of people) {
+      const since = roster?.since.get(person.id) ?? Number.POSITIVE_INFINITY;
+      const mine = records
+        .filter(
+          (r) =>
+            r.personId === person.id && r.candidateId === c.id && r.rev === c.rev && r.seq > since,
+        )
+        .map((r) => ({ ...r }));
+      const effective = effectiveAnswer(mine);
+      values.set(person.id, countValueOf(effective));
+      if (effective) {
+        answers.push({
+          personId: person.id,
+          candidateId: c.id,
+          value: effective.value,
+          sources: effective.sources.map((r) => ({
+            source: r.source,
+            answer: r.answer as 'yes' | 'maybe' | 'no',
+            ...(r.note === undefined ? {} : { note: r.note }),
+            by: r.by,
+            at: r.at,
+            seq: r.seq,
+          })),
+        });
+      }
+    }
+    // 名簿が無ければ、だれの答えで決めるか分からない（数えない。まだ分からない）。
+    const counted = roster
+      ? countCandidate({ people: ids, required, minCount, values })
+      : {
+          yes: 0,
+          possible: 0,
+          requiredNo: [],
+          requiredOpen: [],
+          condition: 'open' as const,
+          pivotal: [],
+        };
+    const start = zonedToEpochMinutes(c.date, c.startTime, ctx.tz);
+    const end = zonedToEpochMinutes(c.date, c.endTime, ctx.tz);
+    const frame = { shape: 'window' as const, date: c.date, start, end };
+    const wayStates = ways.map((way) =>
+      candidateWay(ctx, way, frame, arrangementKey, requirementKey, item, live, busy, hold),
+    );
+    const latest = wayStates
+      .filter((w) => w.usable && w.decisionDeadline !== undefined)
+      .map((w) => w.decisionDeadline as string)
+      .sort((a, b) => toEpochMinutes(b) - toEpochMinutes(a))[0];
+    const flags: ('waysUndecided' | 'noUsableWay')[] =
+      ways.length === 0
+        ? ['waysUndecided']
+        : wayStates.some((w) => w.usable)
+          ? []
+          : ['noUsableWay'];
+    return {
+      id: c.id,
+      rev: c.rev,
+      date: c.date,
+      start: ctx.fmt(start),
+      end: ctx.fmt(end),
+      ...counted,
+      ways: wayStates,
+      ...(latest === undefined ? {} : { decisionDeadline: latest }),
+      flags,
+    };
+  });
+  const decision = ctx.state.chosenCandidate.get(item.id);
+  const decided = candidates.find((c) => c.id === decision?.candidateId && c.rev === decision?.rev);
+  const chosenNow =
+    decision && decided
+      ? (() => {
+          const now = decisionBasis({
+            people: ids,
+            required,
+            minCount,
+            answers: answers
+              .filter((a) => a.candidateId === decided.id)
+              .map((a) => ({ personId: a.personId, value: a.value, sources: a.sources })),
+          });
+          const changes = basisChanges(decision.basis, now);
+          return {
+            candidateId: decided.id,
+            rev: decided.rev,
+            stale: changes.length > 0,
+            changes,
+          };
+        })()
+      : undefined;
+  const recommended = roster
+    ? recommend(states.map((s) => ({ id: s.id, condition: s.condition, yes: s.yes, ways: s.ways })))
+    : undefined;
+  const links = people.map((p) => {
+    const link = ctx.state.answerLinks.get(item.id)?.get(p.id);
+    return { personId: p.id, active: link !== undefined && !link.revoked };
+  });
+  return {
+    candidates: states,
+    people: people.map((p) => ({
+      id: p.id,
+      kind: p.kind,
+      ...(p.name === undefined ? {} : { name: p.name }),
+    })),
+    required,
+    minCount,
+    answers,
+    ...(chosenNow ? { chosen: chosenNow } : {}),
+    ...(recommended ? { recommended } : {}),
+    links,
+    inUse: needArrangementInUse(ctx.state, arrangementKey),
+  };
+}
+
+/**
+ * 候補の日に、やり方を一つ読む（作業・依頼・案の鍵は計画に出さない。別の鍵で置いて捨てる）。使えるのは、同じ
+ * やり方の上で、決め時が来ていない（確かさが undetermined でない）・前提・やめた・使わない資源・受け持ち（要る時）・
+ * 置けない手順・営業時間・行き帰りの、どれも無い時だけ。
+ */
+function candidateWay(
+  ctx: Context,
+  way: Way,
+  frame: NeedFrame & { shape: 'window' },
+  arrangementKey: string,
+  requirementKey: string,
+  item: Item,
+  live: boolean,
+  busy: ReadonlyMap<string, readonly Busy[]>,
+  hold: boolean,
+): CandidateWay {
+  const tasks: Task[] = [];
+  const { option, conflicted } = wayOption(
+    ctx,
+    way,
+    frame,
+    `${arrangementKey}~when~${frame.date}`,
+    requirementKey,
+    item,
+    live,
+    tasks,
+    busy,
+  );
+  const reasons: CandidateWay['reasons'] = [];
+  if (option.expired) reasons.push('expired');
+  if (option.deadlineCertainty === 'undetermined' || option.decisionDeadline === undefined) {
+    reasons.push('undetermined');
+  }
+  if (preparationGaps(ctx.household, way, frame.date, item.interpretation.forMemberId).length > 0) {
+    reasons.push('needsPreparation');
+  }
+  if ((ctx.household.stoppedWayIds ?? []).includes(way.id)) reasons.push('stopped');
+  if (unusedResources(ctx.household, way).length > 0) reasons.push('unusedResources');
+  if (hold) {
+    const unplacedCover = tasks.some(
+      (t) => t.cover === true && t.assigneeId !== undefined && t.start === undefined,
+    );
+    const holes = coverGaps(
+      ctx,
+      way,
+      { start: frame.start, end: frame.end },
+      item.interpretation.place,
+    );
+    if (unplacedCover || holes.length > 0) reasons.push('coverGaps');
+  }
+  if (
+    conflicted ||
+    tasks.some(
+      (t) => t.cover !== true && !t.extra && t.commitment !== 'done' && t.start === undefined,
+    )
+  ) {
+    reasons.push('unplaced');
+  }
+  if (hoursUnknownAt(ctx.household, { kind: 'need' }, { templateId: way.id })) {
+    reasons.push('hoursUnknown');
+  }
+  // 家以外の決まった場所へ行く手順で、行き帰りの時間の出どころが無い（家庭の目安も地図も無い）。
+  const away = new Set(
+    ctx.household.places.filter((place) => place.kind !== 'home').map((place) => place.id),
+  );
+  if (
+    way.steps.some((step) => step.placeId !== undefined && away.has(step.placeId)) &&
+    tasks.some(
+      (t) => t.atPlaceId !== undefined && away.has(t.atPlaceId) && t.travelSource === 'none',
+    )
+  ) {
+    reasons.push('travelUnknown');
+  }
+  return {
+    wayId: way.id,
+    usable: reasons.length === 0,
+    ...(option.decisionDeadline === undefined ? {} : { decisionDeadline: option.decisionDeadline }),
+    deadlineCertainty: option.deadlineCertainty,
+    reasons,
+    ...((way.cost.unknown ?? []).length > 0 ? { costUnknown: true as const } : {}),
+  };
+}
+
+/**
+ * その「すること」の手配で、一度でも依頼を送ったか、作業を引き受けた・済ませたことがある（履歴で見る。日を替え
+ * られない。この版の限り）。候補の無い前からの「すること」にも使う（使った後に候補を足して日を替えさせない）。
+ */
+export function needArrangementInUse(state: EngineState, arrangementKey: string): boolean {
+  const prefix = `task:${keys.option(arrangementKey, '')}`;
+  for (const [taskKey, log] of state.commitmentLog) {
+    if (!taskKey.startsWith(prefix)) continue;
+    if (
+      log.some((e) => e.state === 'accepted' || e.state === 'done' || e.requestId !== undefined)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** 通用の「すること」の、置いた手配とその作業。 */

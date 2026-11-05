@@ -1,5 +1,7 @@
 // 命令（02-foundation §7.2・§7.3）。画面は事象を直接書かず、命令を送る。サーバーが、権限と前提を
 // 確かめて事象に展開する。一つの命令は、家庭を押さえた一続きの中で処理する。
+
+import { createHash, randomBytes } from 'node:crypto';
 import {
   applyCorrection,
   atHomeAnswerable,
@@ -32,12 +34,15 @@ import {
 import {
   awaitingConfirmation,
   currentReadings,
+  decisionBasis,
   type EngineState,
   familyQuestionBasis,
   foldEvents,
   itemShown,
   itemsOf,
+  keys,
   liveItems,
+  needArrangementInUse,
   needWaysBasis,
   optionStarted,
   planFromState,
@@ -68,7 +73,12 @@ export interface CommandContext {
 }
 
 export type CommandResult =
-  | { status: 'ok' | 'noop'; throughSeq: number }
+  | {
+      status: 'ok' | 'noop';
+      throughSeq: number;
+      /** 答えるリンクを出した時だけ、その鍵（応答で一度だけ。送り直しの noop には付けない）。 */
+      answerLink?: { personId: string; token: string };
+    }
   /** 見た物が古い（提案が変わった等）。新しい計画を見せて、本人に見直してもらう（409）。 */
   | { status: 'conflict'; reason: string; throughSeq: number }
   | { status: 'forbidden' | 'invalid'; reason: string; throughSeq: number };
@@ -214,7 +224,13 @@ function handle(
     digest,
     throughSeq: throughSeq(),
   });
-  return { status: bodies.length > 0 ? 'ok' : 'noop', throughSeq: throughSeq() };
+  return {
+    status: bodies.length > 0 ? 'ok' : 'noop',
+    throughSeq: throughSeq(),
+    ...('answerLink' in decided && decided.answerLink && bodies.length > 0
+      ? { answerLink: decided.answerLink }
+      : {}),
+  };
 }
 
 /**
@@ -333,7 +349,7 @@ function asEvents(
 }
 
 type Expanded =
-  | { bodies: EventBody[] }
+  | { bodies: EventBody[]; answerLink?: { personId: string; token: string } }
   | { status: 'conflict' | 'forbidden' | 'invalid'; reason: string };
 
 interface Now {
@@ -763,6 +779,24 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       }
       // 家族の言明の「すること」は、直した後も言った時と同じ決まりで確かめる。形（締切か時間か）は替えない
       // （替えるなら言い直す。前の形の欄を残したまま別の形にしない）。読み取りに形が無かった物だけ、形を入れられる。
+      // いつにするかの候補のある「すること」：形・日・時刻はいつも直せない（時刻は候補が持つ）。何を・場所・だれのため・
+      // 受け持ちが要るかは、使う前だけ直せて、全部の候補の代を進める（答えと決めた事を古い中身に当てない）。
+      const candidates = state.needCandidates.get(item.id) ?? [];
+      let bumped: EventBody[] = [];
+      if (item.kind === 'need' && candidates.length > 0) {
+        const locked = ['shape', 'date', 'startTime', 'endTime', 'deadline', 'deadlineDayOnly'];
+        if (Object.keys(command.interpretation).some((key) => locked.includes(key))) {
+          return { status: 'invalid', reason: 'candidateNeedTimeLocked' };
+        }
+        if (whenOf(plan, item.id)?.inUse) return { status: 'conflict', reason: 'decisionInUse' };
+        bumped = [
+          {
+            type: 'needCandidatesSet',
+            itemId: item.id,
+            candidates: candidates.map((c) => ({ ...c, rev: c.rev + 1 })),
+          },
+        ];
+      }
       if (item.kind === 'need') {
         // 直しの null（だれのためを外す）は、外した後の中身で確かめる。
         const merged = applyCorrection(item.interpretation, command.interpretation);
@@ -770,16 +804,21 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         if (item.interpretation.shape !== undefined && merged.shape !== item.interpretation.shape) {
           return { status: 'invalid', reason: 'needShapeLocked' };
         }
-        const checked = checkNeed(state.household, {
-          ...merged,
-          what: merged.what ?? item.written,
-          shape: merged.shape,
-        });
+        const checked = checkNeed(
+          state.household,
+          {
+            ...merged,
+            what: merged.what ?? item.written,
+            shape: merged.shape,
+          },
+          candidates.length > 0,
+        );
         if ('reason' in checked) return checked;
       }
       return {
         bodies: [
           { type: 'itemCorrected', itemId: item.id, interpretation: command.interpretation },
+          ...bumped,
         ],
       };
     }
@@ -911,8 +950,15 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
     case 'stateNeed': {
       // 家族の一言（原文）を家族の出典にし、確かめた欄をその出典の「すること」（言明）にする。出典の ID は、
       // 言った人・中身・見た時の番号から決める（見せた「変わること」と書く時で同じ ID。原文は ID に入れない）。
-      const checked = checkNeed(state.household, command.interpretation);
+      // いつにするかの候補があれば、窓の日と時刻は候補が持つ（一つの命令で候補も置く）。
+      const candidates = command.candidates;
+      if (candidates !== undefined && command.interpretation.shape !== 'window') {
+        return { status: 'invalid', reason: 'candidatesNeedWindow' };
+      }
+      const checked = checkNeed(state.household, command.interpretation, candidates !== undefined);
       if ('reason' in checked) return checked;
+      const placed = candidates === undefined ? undefined : placeCandidates([], [], candidates);
+      if (placed !== undefined && 'reason' in placed) return placed;
       const sourceId = `f-${sha256Of({
         by: me,
         text: command.text,
@@ -952,6 +998,15 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
               },
             ],
           },
+          ...(placed === undefined
+            ? []
+            : [
+                {
+                  type: 'needCandidatesSet' as const,
+                  itemId: `${sourceId}:i1`,
+                  candidates: placed.candidates,
+                },
+              ]),
         ],
       };
     }
@@ -985,6 +1040,217 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         bodies: [{ type: 'needWaysSet', itemId: command.itemId, wayIds: command.wayIds, about }],
       };
     }
+    case 'setNeedCandidates': {
+      const need = statedNeed(state, command.itemId);
+      if ('reason' in need) return need;
+      if (need.item.interpretation.shape !== 'window') {
+        return { status: 'invalid', reason: 'candidatesNeedWindow' };
+      }
+      const before = state.needCandidates.get(command.itemId) ?? [];
+      const placed = placeCandidates(
+        before,
+        usedCandidateIds(events, command.itemId),
+        command.candidates,
+      );
+      if ('reason' in placed) return placed;
+      // 使った後（送った・引き受けた・済ませた）は、決めた候補をそのままにする時だけ受ける：決めた候補の時刻を直す・
+      // 消すのも、候補の無かった前からの「すること」に候補を足すのも断る（日を替えて、引き受けた作業を黙って別の日に
+      // 動かさない。この版の限り。替えるなら外して作り直す）。
+      if (needArrangementInUse(state, keys.needArrangement(need.rootId))) {
+        const decided = whenOf(plan, command.itemId)?.chosen;
+        const kept = decided && placed.candidates.find((c) => c.id === decided.candidateId);
+        if (!decided || !kept || kept.rev !== decided.rev) {
+          return { status: 'conflict', reason: 'decisionInUse' };
+        }
+      }
+      if (sameJson(before, placed.candidates)) return { bodies: [] };
+      return {
+        bodies: [
+          { type: 'needCandidatesSet', itemId: command.itemId, candidates: placed.candidates },
+        ],
+      };
+    }
+    case 'setNeedPeople': {
+      const need = statedNeed(state, command.itemId);
+      if ('reason' in need) return need;
+      const household = state.household;
+      const members = household?.members ?? [];
+      if (
+        new Set(command.members).size !== command.members.length ||
+        command.members.some((id) => {
+          const m = members.find((x) => x.id === id);
+          return !m?.active || (m.kind !== 'adult' && m.kind !== 'helper');
+        })
+      ) {
+        return { status: 'invalid', reason: 'personUnknown' };
+      }
+      const before = state.needPeople.get(command.itemId);
+      const guestsBefore = new Map(
+        (before?.people ?? []).filter((p) => p.kind === 'guest').map((p) => [p.id, p]),
+      );
+      if (command.guests.some((g) => g.id !== undefined && !guestsBefore.has(g.id))) {
+        return { status: 'invalid', reason: 'personUnknown' };
+      }
+      const people = [
+        ...command.members.map((id) => ({ id, kind: 'member' as const })),
+        ...command.guests.map((g) => ({
+          id: g.id ?? `g-${randomBytes(4).toString('hex')}`,
+          kind: 'guest' as const,
+          name: g.name,
+        })),
+      ];
+      const ids = new Set(people.map((p) => p.id));
+      if (ids.size !== people.length) return { status: 'invalid', reason: 'personDuplicate' };
+      if (
+        new Set(command.required).size !== command.required.length ||
+        command.required.some((id) => !ids.has(id))
+      ) {
+        return { status: 'invalid', reason: 'requiredNotInPeople' };
+      }
+      if (command.minCount > people.length)
+        return { status: 'invalid', reason: 'minCountTooLarge' };
+      if (
+        before &&
+        sameJson(before.people, people) &&
+        sameJson(before.required, command.required) &&
+        before.minCount === command.minCount
+      ) {
+        return { bodies: [] };
+      }
+      // 名簿から外した人のリンクは止める（戻してもリンクは戻らない。出し直す）。
+      const revoked: EventBody[] = [];
+      for (const [personId, link] of state.answerLinks.get(command.itemId) ?? []) {
+        if (!ids.has(personId) && !link.revoked) {
+          revoked.push({
+            type: 'answerLinkRevoked',
+            itemId: command.itemId,
+            personId,
+            linkId: link.linkId,
+          });
+        }
+      }
+      return {
+        bodies: [
+          {
+            type: 'needPeopleSet',
+            itemId: command.itemId,
+            people,
+            required: command.required,
+            minCount: command.minCount,
+          },
+          ...revoked,
+        ],
+      };
+    }
+    case 'recordAvailability': {
+      const need = statedNeed(state, command.itemId);
+      if ('reason' in need) return need;
+      const candidate = (state.needCandidates.get(command.itemId) ?? []).find(
+        (c) => c.id === command.candidateId,
+      );
+      if (!candidate || candidate.rev !== command.rev) {
+        return { status: 'conflict', reason: 'candidateChanged' };
+      }
+      const roster = state.needPeople.get(command.itemId);
+      if (!roster?.people.some((p) => p.id === command.personId)) {
+        return { status: 'invalid', reason: 'personUnknown' };
+      }
+      if (command.answer === 'withdrawn' && command.note !== undefined) {
+        return { status: 'invalid', reason: 'noteWithoutAnswer' };
+      }
+      return {
+        bodies: [
+          {
+            type: 'availabilityRecorded',
+            itemId: command.itemId,
+            candidateId: command.candidateId,
+            rev: command.rev,
+            personId: command.personId,
+            answer: command.answer,
+            ...(command.note === undefined ? {} : { note: command.note }),
+            source: command.personId === me ? 'self' : 'family',
+          },
+        ],
+      };
+    }
+    case 'issueAnswerLink': {
+      // 答えるリンクは、デモの家庭（架空）でだけ出す。家族の家庭には、別の門と設計が要る。
+      if (!context.demo) return { status: 'forbidden', reason: 'linksDemoOnly' };
+      const need = statedNeed(state, command.itemId);
+      if ('reason' in need) return need;
+      if (!state.needPeople.get(command.itemId)?.people.some((p) => p.id === command.personId)) {
+        return { status: 'invalid', reason: 'personUnknown' };
+      }
+      const token = randomBytes(32).toString('base64url');
+      return {
+        bodies: [
+          {
+            type: 'answerLinkIssued',
+            itemId: command.itemId,
+            personId: command.personId,
+            linkId: `l-${randomBytes(8).toString('hex')}`,
+            tokenHash: answerTokenHash(token),
+          },
+        ],
+        answerLink: { personId: command.personId, token },
+      };
+    }
+    case 'revokeAnswerLink': {
+      const link = state.answerLinks.get(command.itemId)?.get(command.personId);
+      if (!link || link.revoked) return { bodies: [] };
+      return {
+        bodies: [
+          {
+            type: 'answerLinkRevoked',
+            itemId: command.itemId,
+            personId: command.personId,
+            linkId: link.linkId,
+          },
+        ],
+      };
+    }
+    case 'chooseCandidate': {
+      const need = statedNeed(state, command.itemId);
+      if ('reason' in need) return need;
+      const candidate = (state.needCandidates.get(command.itemId) ?? []).find(
+        (c) => c.id === command.candidateId,
+      );
+      if (!candidate || candidate.rev !== command.rev) {
+        return { status: 'conflict', reason: 'candidateChanged' };
+      }
+      const when = whenOf(plan, command.itemId);
+      if (!when) return { status: 'conflict', reason: 'needGone' };
+      const decided = when.chosen;
+      const sameDecision =
+        decided?.candidateId === command.candidateId && decided.rev === command.rev;
+      // 使った後（送った・引き受けた・済ませた）は、日を替えない（決めていなかった前からの物も。この版の限り。
+      // 替えるなら外して作り直す）。
+      if (when.inUse && !sameDecision) {
+        return { status: 'conflict', reason: 'decisionInUse' };
+      }
+      const basis = decisionBasis({
+        people: when.people.map((p) => p.id),
+        required: when.required,
+        minCount: when.minCount,
+        answers: when.answers
+          .filter((a) => a.candidateId === command.candidateId)
+          .map((a) => ({ personId: a.personId, value: a.value, sources: a.sources })),
+      });
+      if (sameDecision && state.chosenCandidate.get(command.itemId)?.basis === basis) {
+        return { bodies: [] };
+      }
+      return {
+        bodies: [
+          {
+            type: 'candidateChosen',
+            itemId: command.itemId,
+            candidateId: command.candidateId,
+            rev: command.rev,
+            basis,
+          },
+        ],
+      };
+    }
     case 'advanceClock': {
       if (!context.demo) return { status: 'forbidden', reason: 'demoOnly' };
       // 時計は進めるだけ（戻すと、記録の時刻が前後する）。
@@ -997,6 +1263,98 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
 }
 
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/** 答えるリンクの鍵の要約（事象とサーバーの表は、これだけを持つ）。 */
+export function answerTokenHash(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+/** 家族の言明の「すること」で、今も生きている物（候補・名簿・答え・リンク・決める命令の前提）。 */
+function statedNeed(
+  state: EngineState,
+  itemId: string,
+):
+  | { item: ReturnType<typeof liveItems>[number]['item']; rootId: string }
+  | { status: 'conflict' | 'invalid'; reason: string } {
+  const live = liveItems(state).find((l) => l.item.id === itemId);
+  if (live?.item.kind !== 'need') return { status: 'conflict', reason: 'needGone' };
+  if (!state.statedSources.has(live.item.sourceId)) {
+    return { status: 'invalid', reason: 'notStatedNeed' };
+  }
+  return { item: live.item, rootId: live.rootId };
+}
+
+/** 計画の、その「すること」のいつの段（候補の無い・無い「すること」は無し）。 */
+function whenOf(plan: PlanResult, itemId: string) {
+  return plan.requirements.find((r) => r.kind === 'need' && r.basis.itemIds.includes(itemId))?.when;
+}
+
+/** その事項で、これまでに使った候補の ID（消した物も。使い回さない）。 */
+function usedCandidateIds(events: readonly DomainEvent[], itemId: string): string[] {
+  return events.flatMap((e) =>
+    e.type === 'needCandidatesSet' && e.itemId === itemId ? e.candidates.map((c) => c.id) : [],
+  );
+}
+
+/**
+ * 候補に ID と代を付ける。前からある候補（id 付き）は、時刻が同じなら同じ代、違えば代を一つ進める。新しい候補は、
+ * これまでに使っていない番号（c1, c2…）で代 1。同じ日・同じ時刻の候補を二つ置かない。日をまたぐ候補は断る。
+ */
+function placeCandidates(
+  before: readonly { id: string; rev: number; date: string; startTime: string; endTime: string }[],
+  used: readonly string[],
+  asked: readonly { id?: string; date: string; startTime: string; endTime: string }[],
+):
+  | {
+      candidates: { id: string; rev: number; date: string; startTime: string; endTime: string }[];
+    }
+  | { status: 'invalid'; reason: string } {
+  const invalid = (reason: string) => ({ status: 'invalid' as const, reason });
+  const seen = new Set<string>();
+  let next =
+    Math.max(
+      0,
+      ...[...used, ...before.map((c) => c.id)].map((id) => Number(/^c(\d+)$/.exec(id)?.[1] ?? 0)),
+    ) + 1;
+  const candidates: {
+    id: string;
+    rev: number;
+    date: string;
+    startTime: string;
+    endTime: string;
+  }[] = [];
+  for (const c of asked) {
+    if (c.startTime >= c.endTime) return invalid('needWindowOvernight');
+    const slot = `${c.date} ${c.startTime}-${c.endTime}`;
+    if (seen.has(slot)) return invalid('candidateDuplicate');
+    seen.add(slot);
+    if (c.id !== undefined) {
+      const prev = before.find((b) => b.id === c.id);
+      if (!prev) return invalid('candidateUnknown');
+      const same =
+        prev.date === c.date && prev.startTime === c.startTime && prev.endTime === c.endTime;
+      candidates.push({
+        id: c.id,
+        rev: same ? prev.rev : prev.rev + 1,
+        date: c.date,
+        startTime: c.startTime,
+        endTime: c.endTime,
+      });
+    } else {
+      candidates.push({
+        id: `c${next++}`,
+        rev: 1,
+        date: c.date,
+        startTime: c.startTime,
+        endTime: c.endTime,
+      });
+    }
+  }
+  if (new Set(candidates.map((c) => c.id)).size !== candidates.length) {
+    return invalid('candidateDuplicate');
+  }
+  return { candidates };
+}
 
 /**
  * 家と暮らしの情報の直しを、エンジンが正しく扱える範囲に限る（validateHousehold に加えて。02-foundation §6）。
@@ -1049,12 +1407,26 @@ export function previewedInput(
       return { input: command.household, ...(command.seen ? { seen: command.seen } : {}) };
     case 'stateNeed':
       return {
-        input: { text: command.text, interpretation: command.interpretation },
+        input: {
+          text: command.text,
+          interpretation: command.interpretation,
+          ...(command.candidates === undefined ? {} : { candidates: command.candidates }),
+        },
         ...(command.seen ? { seen: command.seen } : {}),
       };
     case 'setNeedWays':
       return {
         input: { itemId: command.itemId, wayIds: command.wayIds },
+        ...(command.seen ? { seen: command.seen } : {}),
+      };
+    case 'setNeedCandidates':
+      return {
+        input: { itemId: command.itemId, candidates: command.candidates },
+        ...(command.seen ? { seen: command.seen } : {}),
+      };
+    case 'chooseCandidate':
+      return {
+        input: { itemId: command.itemId, candidateId: command.candidateId, rev: command.rev },
         ...(command.seen ? { seen: command.seen } : {}),
       };
     default:
@@ -1069,11 +1441,24 @@ export function previewedInput(
 function checkNeed(
   household: Household | undefined,
   need: NeedInterpretation,
+  /** いつにするかの候補がある（日と時刻は候補が持つ。欄にあっても落とす）。 */
+  withCandidates = false,
 ): { interpretation: Interpretation } | { status: 'invalid'; reason: string } {
   const invalid = (reason: string) => ({ status: 'invalid' as const, reason });
   if (!household) return invalid('householdMissing');
   if (need.forMemberId !== undefined && !household.members.some((m) => m.id === need.forMemberId)) {
     return invalid('needMemberUnknown');
+  }
+  if (need.shape === 'window' && withCandidates) {
+    const {
+      deadline: _deadline,
+      deadlineDayOnly: _dayOnly,
+      date: _date,
+      startTime: _start,
+      endTime: _end,
+      ...rest
+    } = need;
+    return { interpretation: rest };
   }
   if (need.shape === 'window') {
     if (!need.date || !need.startTime || !need.endTime) return invalid('needWindowMissing');
