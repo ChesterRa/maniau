@@ -183,6 +183,15 @@ export const CandidateState = z.object({
   decisionDeadline: DateTime.optional(),
   /** waysUndecided：やり方を選んでいない。noUsableWay：まだ使えると確かめられたやり方が無い。 */
   flags: z.array(z.enum(['waysUndecided', 'noUsableWay'])),
+  /**
+   * 答える人のうち家の人で、記録した手が離せない時間（家庭の unavailable）が、この候補の時間（半開）と重なる物。
+   * 家族にだけ見せる（相手の頁には出さない）。今の記録から毎回計算する（答え・数え・勧め・決めた時の控えは変えない。
+   * 本人が確かめた事でも、ほかの時間が空いている事でもない）。start・end は記録した手が離せない時間のまま（重なった
+   * 部分ではない）。人は名簿の順、同じ人は始まりの順。無いのは、重なる記録が無い。
+   */
+  unavailable: z
+    .array(z.object({ personId: Id, unavailableId: Id, start: DateTime, end: DateTime }))
+    .optional(),
 });
 export type CandidateState = z.infer<typeof CandidateState>;
 

@@ -10,7 +10,14 @@ import type { Household, Place } from '../schema/household';
 import type { HoursBasis, MapInputs, StoreMapEvidence } from '../schema/maps';
 import type { EpochMinutes } from '../time';
 import { localDateOf, weekdayOf, zonedToEpochMinutes } from '../time';
-import { activeAdultIds, type Slot, slotsBetweenDates, slotsOn } from './availability';
+import {
+  activeAdultIds,
+  type Slot,
+  slotsBetweenDates,
+  slotsOn,
+  unavailableDuring,
+  unavailableOn,
+} from './availability';
 
 export interface PurchaseOpportunity {
   memberId: string;
@@ -277,16 +284,26 @@ function placeAt(
     const end = start + duration;
     const delayedArrival = slot.end + walkFrom + walkTo + duration;
     if (delayedArrival > next.end) return undefined;
+    // 寄り道の間（駅から店へ・買う・家まで）に、その人の手が離せない時間があれば寄らない。
+    if (unavailableDuring(household, slot.memberId, atStation, delayedArrival)) return undefined;
     // 帰りが遅れる間、子を大人のいない家に残さない：他の大人が、その間ずっと家にいる時だけ寄る。
     if (!anotherAdultHome(household, slot, slot.end, delayedArrival)) return undefined;
     return { start, end, detour: { plannedArrival: slot.end, delayedArrival } };
   }
   if (slot.kind === 'away') {
     if (slot.placeId !== store.nearStationId) return undefined;
-    const start = slot.start + walkFrom;
-    const end = start + duration;
-    if (end + walkTo > slot.end) return undefined;
-    return { start, end };
+    // 同じ外出の中で、行き・買う・戻りが、その人の手が離せない時間と重ならない一番早い時を候補にする（手が離せない
+    // 時間が無ければ、今までどおり外出の始まり。一つの外出・店に一つ）。営業時間は、呼ぶ側がこの時で確かめる。
+    const need = walkFrom + duration + walkTo;
+    let leave = slot.start;
+    for (const busy of unavailableOn(household, slot.memberId, slot.date)) {
+      if (busy.end <= leave) continue;
+      if (leave + need <= busy.start) break;
+      leave = busy.end;
+    }
+    if (leave + need > slot.end) return undefined;
+    const start = leave + walkFrom;
+    return { start, end: start + duration };
   }
   return undefined;
 }
@@ -299,9 +316,12 @@ function anotherAdultHome(
 ): boolean {
   return activeAdultIds(household)
     .filter((id) => id !== slot.memberId)
-    .some((id) =>
-      slotsOn(household, id, slot.date).some(
-        (s) => s.kind === 'home' && s.start <= from && until <= s.end,
-      ),
+    .some(
+      (id) =>
+        slotsOn(household, id, slot.date).some(
+          (s) => s.kind === 'home' && s.start <= from && until <= s.end,
+        ) &&
+        // 家にいても、手が離せない時間は子を見られない。
+        !unavailableDuring(household, id, from, until),
     );
 }

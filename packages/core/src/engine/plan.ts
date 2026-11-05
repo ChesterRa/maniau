@@ -1372,6 +1372,26 @@ function needWhen(
         : wayStates.some((w) => w.usable)
           ? []
           : ['noUsableWay'];
+    // 答える家の人の、記録した手が離せない時間で、この候補の時間と重なる物（家族にだけ見せる事実。答えは変えない）。
+    const unavailable = people
+      .filter((p) => p.kind === 'member')
+      .flatMap((p) =>
+        (ctx.household.unavailable ?? [])
+          .filter((u) => u.memberId === p.id && u.date === c.date)
+          .map((u) => ({
+            id: u.id,
+            start: zonedToEpochMinutes(u.date, u.start, ctx.tz),
+            end: zonedToEpochMinutes(u.date, u.end, ctx.tz),
+          }))
+          .filter((u) => u.start < end && start < u.end)
+          .sort((a, b) => a.start - b.start)
+          .map((u) => ({
+            personId: p.id,
+            unavailableId: u.id,
+            start: ctx.fmt(u.start),
+            end: ctx.fmt(u.end),
+          })),
+      );
     return {
       id: c.id,
       rev: c.rev,
@@ -1382,6 +1402,7 @@ function needWhen(
       ways: wayStates,
       ...(latest === undefined ? {} : { decisionDeadline: latest }),
       flags,
+      ...(unavailable.length > 0 ? { unavailable } : {}),
     };
   });
   const decision = ctx.state.chosenCandidate.get(item.id);

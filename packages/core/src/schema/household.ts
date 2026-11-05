@@ -132,6 +132,21 @@ export const RoutineException = z.object({
 });
 export type RoutineException = z.infer<typeof RoutineException>;
 
+/**
+ * 手が離せない時間（家族が言った、大人のその日の時間。例：家で 9–10 時のオンライン会議）。その間、その人は子を
+ * 見守れず、作業も置かない。場所の区間（ふだんの週・その日だけの一日）とは別の事実で、区間は切らない（その日だけの
+ * 一日を外しても残り、逆も同じ）。半開 [start, end)、同じ日の中、分の精度。題や本文は持たない（何の用事かは
+ * 計算に使わず、記録しない）。
+ */
+export const Unavailable = z.object({
+  id: Id,
+  memberId: Id,
+  date: LocalDate,
+  start: LocalTime,
+  end: LocalTime,
+});
+export type Unavailable = z.infer<typeof Unavailable>;
+
 /** 締切の決まり。手配が要る日から逆算する。 */
 export const DeadlineRule = z.discriminatedUnion('type', [
   /** 例：祖母は3日前の 21:00 まで。 */
@@ -353,6 +368,8 @@ export const Household = z.object({
   routines: z.array(RoutineDay),
   /** その日だけの一日（ふだんの週より先に使う）。 */
   routineExceptions: z.array(RoutineException).default([]),
+  /** 手が離せない時間。無いのは、記録した物が無い（前からの記録に欄を足さない）。 */
+  unavailable: z.array(Unavailable).optional(),
   careOptions: z.array(CareOptionTemplate),
   /** 通用の「すること」のやり方（家族が確かめた物）。 */
   ways: z.array(Way).default([]),

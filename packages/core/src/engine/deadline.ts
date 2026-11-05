@@ -16,7 +16,7 @@ import {
   weekdayOf,
   zonedToEpochMinutes,
 } from '../time';
-import { activeAdultIds, type Slot, slotsBetweenDates } from './availability';
+import { activeAdultIds, freeSlotsBetweenDates, type Slot } from './availability';
 
 /** 決まりの締切を、手配が要る日から実際の時刻にする。 */
 export function ruleDeadline(
@@ -204,7 +204,8 @@ export function placeStep(
 ): PlacedStep | undefined {
   if (latestEnd <= now) return undefined;
   const tz = household.timeZone;
-  const free = slotsBetweenDates(
+  // 手が離せない時間には置かない（場所の区間はそのまま、使う時間から除く）。
+  const free = freeSlotsBetweenDates(
     household,
     memberId,
     localDateOf(now, tz),
@@ -242,12 +243,12 @@ export function optionDeadline(
   const adults = activeAdultIds(household);
   const fixed = template.steps.map((s) => s.assigneeId).filter((id) => id !== undefined);
   const members = [...new Set([...adults, ...fixed, ...(only === undefined ? [] : [only])])];
-  // 担当できる人ごとの区間（busy を除くか選べる。from より前には置かない）。
+  // 担当できる人ごとの区間（手が離せない時間はいつも除き、ほかの作業の busy を除くか選べる。from より前には置かない）。
   const slotsSince = (start: LocalDate, withBusy: boolean) =>
     new Map(
       members.map((id) => [
         id,
-        slotsBetweenDates(household, id, start, lastDate)
+        freeSlotsBetweenDates(household, id, start, lastDate)
           .map((slot) =>
             from === undefined ? slot : { ...slot, start: Math.max(slot.start, from) },
           )
@@ -296,7 +297,7 @@ export function optionDeadline(
     template.steps.some((step) => {
       const who = step.assigneeId !== undefined ? [step.assigneeId] : only ? [only] : adults;
       return !who.some((id) =>
-        slotsBetweenDates(household, id, firstDate, addDays(firstDate, 13)).some((slot) =>
+        freeSlotsBetweenDates(household, id, firstDate, addDays(firstDate, 13)).some((slot) =>
           usableIn(step, slot, household).some(
             (piece) => piece.end - piece.start >= step.durationMin,
           ),

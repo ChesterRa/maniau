@@ -267,6 +267,74 @@ export interface PlanChanges {
    * 前の選びは当てず、家族に選び直してもらう）。
    */
   rechoose: string[];
+  /**
+   * いつにするかの候補で、答える家の人の記録した手が離せない時間と、新しく重なる・重ならなくなる物（候補・人・
+   * 手が離せない時間ごと）。無いのは、変わらない。
+   */
+  overlaps?: OverlapChange[];
+}
+
+/** いつにするかの候補と、記録した手が離せない時間の重なりの変化。 */
+export interface OverlapChange {
+  requirementKey: string;
+  /** 「すること」の何を（家族の言葉・原文）。 */
+  what?: string;
+  candidateId: string;
+  candidate: { start: DateTime; end: DateTime };
+  personId: string;
+  unavailableId: string;
+  /** 記録した手が離せない時間（重なった部分ではない）。 */
+  busy: { start: DateTime; end: DateTime };
+  /** added：新しく重なる。removed：重ならなくなる（その「すること」と候補が、変えた後も残る時だけ）。 */
+  change: 'added' | 'removed';
+}
+
+/** 候補と手が離せない時間の重なりの一覧（生きている「すること」だけ）。 */
+function overlapsOf(plan: PlanResult): Map<string, Omit<OverlapChange, 'change'>> {
+  const out = new Map<string, Omit<OverlapChange, 'change'>>();
+  for (const r of plan.requirements) {
+    if (!r.live || !r.when) continue;
+    for (const c of r.when.candidates) {
+      for (const u of c.unavailable ?? []) {
+        const key = [r.key, c.id, c.start, c.end, u.personId, u.unavailableId, u.start, u.end].join(
+          '|',
+        );
+        out.set(key, {
+          requirementKey: r.key,
+          ...(r.what === undefined ? {} : { what: r.what }),
+          candidateId: c.id,
+          candidate: { start: c.start, end: c.end },
+          personId: u.personId,
+          unavailableId: u.unavailableId,
+          busy: { start: u.start, end: u.end },
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** 重なりの変化（新しく重なる物と、残る候補で重ならなくなる物）。 */
+function overlapChanges(before: PlanResult, after: PlanResult): OverlapChange[] {
+  const was = overlapsOf(before);
+  const now = overlapsOf(after);
+  const stays = new Set(
+    after.requirements.flatMap((r) =>
+      r.live && r.when ? r.when.candidates.map((c) => `${r.key}|${c.id}|${c.start}|${c.end}`) : [],
+    ),
+  );
+  return [
+    ...[...now]
+      .filter(([key]) => !was.has(key))
+      .map(([, o]) => ({ ...o, change: 'added' as const })),
+    ...[...was]
+      .filter(
+        ([key, o]) =>
+          !now.has(key) &&
+          stays.has(`${o.requirementKey}|${o.candidateId}|${o.candidate.start}|${o.candidate.end}`),
+      )
+      .map(([, o]) => ({ ...o, change: 'removed' as const })),
+  ];
 }
 
 /** 今の計画（before）と、変えた後の計画（after）を比べる。 */
@@ -478,6 +546,10 @@ export function planChanges(before: PlanResult, after: PlanResult): PlanChanges 
     recommendations,
     conflicts: newConflicts(before, after),
     rechoose: waysChanged(after).filter((key) => !waysChanged(before).includes(key)),
+    ...(() => {
+      const overlaps = overlapChanges(before, after);
+      return overlaps.length > 0 ? { overlaps } : {};
+    })(),
   };
 }
 

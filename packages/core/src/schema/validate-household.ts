@@ -72,6 +72,29 @@ export function validateHousehold(household: Household): HouseholdIssue[] {
     dated.add(key);
   }
 
+  // 手が離せない時間：ID は一意、人は家の大人、始まりは終わりより前、同じ人の同じ日の物は重ならない。
+  const adults = new Set(household.members.filter((m) => m.kind === 'adult').map((m) => m.id));
+  const unavailableIds = new Set<string>();
+  const unavailable = household.unavailable ?? [];
+  for (const [i, u] of unavailable.entries()) {
+    const at = `unavailable.${i}`;
+    if (unavailableIds.has(u.id)) issues.push({ path: at, problem: 'duplicateId', detail: u.id });
+    unavailableIds.add(u.id);
+    if (!adults.has(u.memberId))
+      issues.push({ path: `${at}.memberId`, problem: 'unknownRef', detail: u.memberId });
+    if (u.start >= u.end)
+      issues.push({ path: at, problem: 'badSegment', detail: `${u.start}–${u.end}` });
+    const clash = unavailable.find(
+      (v, j) =>
+        j < i &&
+        v.memberId === u.memberId &&
+        v.date === u.date &&
+        v.start < u.end &&
+        u.start < v.end,
+    );
+    if (clash) issues.push({ path: at, problem: 'overlap', detail: `${clash.id}` });
+  }
+
   for (const [i, o] of household.careOptions.entries()) {
     const base = `careOptions.${i}`;
     ref(`${base}.providerId`, o.providerId, anyIds);
