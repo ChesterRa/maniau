@@ -90,7 +90,7 @@
     "decide": {
       "label": "To decide",
       "title": "{{date}}: {{what}}",
-      "body": "What about {{child}}? To go with “{{option}}”, decide by about {{deadline}} (estimate).",
+      "body": "For {{child}}: to go with “{{option}}”, decide by about {{deadline}} (estimate).",
       "action": "Decide",
       "conditional": "Needed only if the notice's condition holds (not settled yet).",
       "conditionalWhen": "Needed {{when}} (not settled yet).",
@@ -145,7 +145,7 @@
       "fixedPast": "The written time has passed. If it's done, tap Done.",
       "cover": "You would cover this whole time (no other tasks are placed then).",
       "whereMaps": "{{place}} · {{walk}} min walk from the station ({{back}} min back)",
-      "usualStore": "Your usual store (change it in “Around us” under “Family”)"
+      "usualStore": "Your usual store (change it under “Around us” in Family)."
     },
     "backup": {
       "label": "Just in case",
@@ -289,7 +289,7 @@
       "unknownItem": "(an item not found)",
       "flagged": "Parts of this reading may not match the original text, or may have been missed. Check the date and times against the original text carefully.",
       "unshown": "Part of this reading (its condition, an answer, or what it replaces) can’t be shown here in a way you can tell apart, so it can’t be confirmed. If it is needed, remove it with “Misread” and add it with “Add something to do”.",
-      "body": "This was read by the model, so it stays out of the plan until your family checks it (no tasks or messages are made). The bold text is what the reading is based on; check the rest of the notice too for anything that changes the date, time, or conditions.",
+      "body": "Compare the reading with the original, including dates and conditions. Bold text shows the source. This reading stays out of the plan until you confirm.",
       "wholeNotice_one": "Show the whole notice ({{count}} more sentence)",
       "wholeNotice_other": "Show the whole notice ({{count}} more sentences)",
       "brief": "Show only the sentences it is based on and their neighbors",
@@ -356,21 +356,21 @@
     "eyebrow": "{{date}} {{what}}",
     "title": "What about {{child}}?",
     "context": "{{names}} are working that day.",
-    "source": "See when and why in the original text",
+    "source": "See the original text",
     "by": "By about {{deadline}} (estimate)",
     "byWho": "By about {{deadline}} (estimate; if {{name}} does it)",
     "daysLeft_one": "{{count}} day left",
     "daysLeft_other": "{{count}} days left",
     "expired": "Too late to choose",
     "unknownDeadline": "Deadline not known yet",
-    "noSlot": "This option includes a step your usual schedule has no time for (so no deadline can be given)",
+    "noSlot": "A step does not fit your usual schedule, so its decision deadline is unknown.",
     "person": "{{name}}",
     "recommended": "Suggested",
     "current": "In progress",
     "backup": "Backup",
     "because": {
       "onlyOption": "This is the only option known to still be in time",
-      "lowerCost": "The lightest load overall when time off, asking others, cost and extra tasks are added up with rough weights",
+      "lowerCost": "The lowest estimated combined load for time off, requests, cost and extra work.",
       "moreTime": "Of the options with the same estimated burden, it leaves the most time to decide"
     },
     "then": {
@@ -396,7 +396,7 @@
       "releasedCheckYou": "“{{what}}”, which you took on, will drop out of the plan (please check whether it is still needed)"
     },
     "go": "Choose this option",
-    "reversible": "You can change this later. If you do, Maniau shows what needs cancelling or asking again as tasks (your family does the contacting).",
+    "reversible": "You can change your choice later. Any cancellations or new requests appear as tasks; your family contacts people.",
     "conflicted": "We couldn't find times for the tasks of {{options}} that don't overlap another task the same person is doing, so they have no time yet. Review the options, who does them, or the times.",
     "split": "From the times on record, we can’t confirm an adult to watch {{child}} during {{times}} on this day. This arrangement is for {{main}} only (the message to send asks about that time only). Please check together what to do about the other times.",
     "replyBy": "If you hear back by the evening of {{night}}, you can still switch to “{{fallback}}” if they say no",
@@ -412,9 +412,9 @@
     "previewRetry": "Load again",
     "noRecommendation": {
       "stopped": "One of these ways has been stopped, so we don’t suggest one. Your family chooses.",
-      "hours": "One of these ways uses a place whose opening hours aren’t confirmed, so we don’t suggest one (we haven’t checked it can be done in time).",
-      "cost": "Some costs aren’t known, so we don’t suggest one (we don’t treat an unknown cost as zero).",
-      "preparation": "Some options need something done beforehand (such as registering in advance) that hasn’t been confirmed, so we don’t recommend one. You can enter whether it’s done under “Around us” in Family.",
+      "hours": "Some options use places whose available hours have not been checked, so we do not suggest one.",
+      "cost": "Some trade-offs are unknown, so we do not suggest one.",
+      "preparation": "Some options need preparation that is not confirmed, so we do not suggest one. Record it under “Around us” in Family.",
       "cover": "Every option has some time we can’t confirm anyone would look after, even if everyone agreed, so we don’t suggest one. You can still choose.",
       "split": "The times we can’t confirm an adult for are split, and this arrangement is for only one of them, so we don’t suggest one. You can still choose."
     },
@@ -612,7 +612,7 @@
   },
   "input": {
     "label": "Add a notice",
-    "help": "Paste a notice from school or an activity, or speak it (your keyboard’s microphone works too, if it has one). Anything that can be planned becomes decisions and deadlines. What each sentence became is shown next to the original.",
+    "help": "Paste or speak a notice from school or an activity. You can also use your keyboard’s microphone, if it has one.",
     "sender": "From",
     "senders": {
       "school": "School",
@@ -626,7 +626,7 @@
     "placeholder": "e.g. Monday 12/7 is a normal school day. The presentation is postponed to Tuesday 12/8.",
     "photo": "Transcribe a photo or PDF",
     "transcribing": "Transcribing (about 10 seconds)…",
-    "photoPrivacy": "Photos and PDFs are sent to Anthropic's Claude API to estimate their size and to be transcribed. This app doesn't keep them. Try one that shows no names or places.",
+    "photoPrivacy": "Photos and PDFs are sent to Anthropic’s Claude API to check size and transcribe them. The app does not keep photos. Try one that identifies no people or places.",
     "photoAlt": "The photo being transcribed",
     "pdfOpen": "Open the PDF: {{name}}",
     "pdfNote": "Transcribed from the PDF. Open the PDF to compare, fix anything that differs, then press \"Read it\".",
@@ -643,7 +643,7 @@
       "uncertain": "No answer came back. Press \"Send again\" (if it was already transcribed, it won't be read again; nothing was recorded).",
       "failed": "It couldn't be transcribed. Press \"Send again\", retake the photo, or paste the text."
     },
-    "privacy": "What you enter is sent to Anthropic's Claude API to be read (to understand changes, the items already recorded in this demo, including what family members said, and open questions are sent too). Use made-up text, or remove anything that identifies a person or place (names, school names, addresses). In this demo the text is kept only in the server's memory, and demos left unused for more than 12 hours are deleted periodically.",
+    "privacy": "Use fictional text or remove details identifying people and places. Your text, this demo’s recorded items (including family statements), and open questions go to Anthropic’s Claude API. Text is kept in server memory; demos unused for over 12 hours are periodically deleted.",
     "submit": "Read it",
     "reading": "Reading (about 30 seconds)…",
     "limit": "No readings left. For this demo, use \"Restart\" for a new demo. The server-wide limit resets the next day (UTC).",
@@ -652,7 +652,7 @@
     "failed": "It couldn't be read. Please check the text and try again.",
     "clock": "Words like “tomorrow” are read against the demo clock ({{now}}).",
     "stale": "While reading, items read earlier changed (corrected, confirmed, etc.). Please press \"Read it\" again. Your text is still here.",
-    "privacyTrial": "This is a trial household. Enter made-up text only (don't enter real notices yet). What you enter is sent to Anthropic's Claude API to be read (to understand changes, the items already recorded in this household, including what family members said, and open questions are sent too; household settings are not sent; any names written in the text are sent as well). The text you read is kept in this household's records.",
+    "privacyTrial": "This is a trial household. Use fictional text only. Your text, recorded items (including family statements), and open questions go to Anthropic’s Claude API. Names in the text are included; household settings are not sent. Read text stays in this household’s records.",
     "limitTrial": "Can't read right now (the text is too long, or the limit was reached; the limit resets at 9:00 Japan time).",
     "lost": "We can't tell whether your earlier reading finished (the server may have stopped partway). Check the plan and the notice list; if it isn't there, press \"Read it\" again (it will be a new reading).",
     "testOnly": "Reading with Claude isn't available for this household (trial households only).",
@@ -673,7 +673,7 @@
     "cancel": "Cancel",
     "which": "Which one do you mean? The one you tap is recorded.",
     "none": "None of these",
-    "whichUnknown": "We couldn't tell which one you mean. Please say it again with the date or the person.",
+    "whichUnknown": "We could not tell which one. Add the date or person and try again.",
     "lookAlike": "Some matches look the same, so they aren't offered. Please say it again with the date, time, or person.",
     "blocked": {
       "otherTasks": "There are other tasks, so a quick update doesn't record this (to avoid recording the wrong one). On Today, find the task's card and record it there.",
@@ -743,7 +743,7 @@
       "target": "The request to {{name}}",
       "target_dated": "The request to {{name}} (for {{date}})",
       "compute": "Calculate as if they said no",
-      "none": "No request is waiting for a reply right now. Only requests waiting for a reply can be calculated this way."
+      "none": "We could not find a request awaiting reply, so we cannot calculate what happens if someone says no."
     },
     "recorded": "Recorded.",
     "changed": "This changed after it was shown, so nothing was recorded. Check the current screen and send your update again.",

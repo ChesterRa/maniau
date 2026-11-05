@@ -94,6 +94,11 @@ describe('お知らせの文を入れる', () => {
     await step(() => root.render(<SourcesScreen ctx={ctx} />));
     expect(host.textContent).toContain('お知らせを入れる');
     expect(host.textContent).not.toMatch(/\binput\.[a-z]/);
+    // 入力を送る前に、架空・匿名の範囲と、一緒に送る事項・問いを分かるようにする。
+    expect(host.textContent).toContain('架空の文か、人や場所が分からない文');
+    expect(host.textContent).toContain('このデモの記録済みの事項（家族の発言を含む）・未定の問い');
+    expect(host.textContent).toContain('Anthropic の Claude API に送ります');
+    expect(host.textContent).toContain('サーバーのメモリ');
     // 空のうちは押せない。
     expect(button()?.disabled).toBe(true);
     const area = host.querySelector('textarea') as HTMLTextAreaElement;
@@ -608,7 +613,7 @@ describe('写真・PDF から書き起こす', () => {
     };
     await step(() => root.render(<SourcesScreen ctx={withPhoto} />));
     expect(host.textContent).toContain('写真・PDF から書き起こす');
-    expect(host.textContent).toContain('このアプリは写真を残しません');
+    expect(host.textContent).toContain('アプリは写真を残しません');
     await choose(pdf());
     expect(photos).toEqual([
       { mediaType: 'application/pdf', data: 'JVBERg==', operationId: expect.any(String) },

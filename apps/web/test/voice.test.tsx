@@ -328,6 +328,6 @@ describe('お知らせの欄', () => {
     const { ctx } = readCtx();
     await step(() => root.render(<SourcesScreen ctx={ctx} />));
     expect(button('話す')).toBeUndefined();
-    expect(host.textContent).toContain('キーボードにマイクがあれば、それも使えます');
+    expect(host.textContent).toContain('キーボードにマイクがあれば使えます');
   });
 });

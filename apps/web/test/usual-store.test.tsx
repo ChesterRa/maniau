@@ -65,9 +65,9 @@ const closedA = (h: Household): Household => ({
 describe('いつもの店の札', () => {
   it('いつもの店に置いた買い物の札に「いつもの店」と書く（日英）', () => {
     const ja = text(renderToStaticMarkup(<TodayScreen ctx={ctxFor('asked', 'a', 'ja')} />));
-    expect(ja).toContain('いつもの店です（「うち」の「周りの資源」で替えられます）');
+    expect(ja).toContain('いつもの店です（「うち」→「周りの資源」で変更）');
     const en = text(renderToStaticMarkup(<TodayScreen ctx={ctxFor('asked', 'a', 'en')} />));
-    expect(en).toContain('Your usual store (change it in “Around us” under “Family”)');
+    expect(en).toContain('Your usual store (change it under “Around us” in Family)');
   });
 
   it('いつもの店に寄れる時が無ければ、ほかの店に移さず、いつもの店の名前と訳を書く（日英）', () => {

@@ -19,8 +19,11 @@ describe('決める画面の札', () => {
     const shown = text(renderToStaticMarkup(<DecideScreen ctx={ctx} arrangementKey={care} />));
     expect(shown).toContain('おすすめ');
     expect(shown).toContain(ctx.t(`decide.because.${arrangement?.recommendedReason}`));
+    // おすすめは、費用だけでなく複数の負担を合わせた目安。
+    expect(shown).toContain('休み・頼み事・費用・作業を合わせた負担');
+    expect(shown).toContain('目安');
     expect(shown).toContain('選べる手が消えるまで');
-    expect(shown).toContain('選んだ後も、替えられます');
+    expect(shown).toContain('後から選び直せます');
     // 押すとその場で選ぶので、選べる手ごとに、押すと進めると書く（決め時の過ぎた手・選んだ手には書かない）。
     const choosable = (arrangement?.options ?? []).filter(
       (o) => !o.expired && o.key !== arrangement?.chosenOptionKey,
@@ -34,7 +37,7 @@ describe('決める画面の札', () => {
     const shown = text(renderToStaticMarkup(<DecideScreen ctx={ctx} arrangementKey={care} />));
     expect(shown).toContain('Suggested');
     expect(shown).toContain('Until each choice disappears');
-    expect(shown).toContain('You can change this later');
+    expect(shown).toContain('You can change your choice later');
     expect(shown).toContain('Choose this option');
   });
 

@@ -215,7 +215,7 @@ describe('ひとこと', () => {
     expect(shown).toContain('学童の申込書を書く（12/7（月））を済みにする');
     expect(shown).toContain('どれでもない');
     expect(render(ctx, { kind: 'clarify', reason: 'ambiguous', proposals: [] })).toContain(
-      'どれのことか決められませんでした',
+      'どの件か分かりませんでした',
     );
   });
 
@@ -594,7 +594,8 @@ describe('ひとこと', () => {
     // 延期の後：祖母と学童の頼み事は、要らなくなって取り消しを伝える物。
     const ctx = await ctxOf('postponed', 'b');
     const none = render(ctx, { kind: 'whatIf', requestIds: ['r-grandma', 'r-gakudo', 'r-none'] });
-    expect(none).toContain('今、返事を待っている頼み事が見つかりませんでした。');
+    expect(none).toContain('返事待ちの頼み事が見つからず');
+    expect(none).toContain('計算できません');
     expect(none).not.toContain('仮に計算する');
     const unclear = render(ctx, { kind: 'unsupported', reason: 'replyOrWhatIf' });
     expect(unclear).toContain('本当の返事か、仮の話か分かりませんでした。');

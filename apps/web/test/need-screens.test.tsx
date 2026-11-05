@@ -356,10 +356,10 @@ describe('通用の「すること」の画面', () => {
       wayIds: ['way-apply-online', 'way-apply-counter'],
     });
     for (const [lang, noSlot, expired] of [
-      ['ja', 'この手には、ふだんの予定に置ける時間が無い手順があります', '決め時を過ぎました'],
+      ['ja', 'ふだんの予定に置けない手順があり、決め時は未定です', '決め時を過ぎました'],
       [
         'en',
-        'This option includes a step your usual schedule has no time for',
+        'A step does not fit your usual schedule, so its decision deadline is unknown',
         'Too late to choose',
       ],
     ] as const) {
@@ -627,7 +627,8 @@ describe('通用の「すること」の画面', () => {
     // 元の文（文ごとに要素を分けるので、ここでは文ごとに見る）。
     expect(ja).toContain('12月12日（土）13:00〜14:00に地域交流会を行います。');
     expect(ja).toContain('各家庭から大人1名、ご参加ください。');
-    expect(ja).toContain('家族が確かめるまで計画に入れません');
+    expect(ja).toContain('読み取りを元の文と比べ');
+    expect(ja).toContain('確認するまでは計画に入りません');
     const labels = [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map(([, label]) => label);
     expect(labels.filter((label) => label === '合っている')).toHaveLength(1);
     expect(labels.filter((label) => label === '直す')).toHaveLength(2);
