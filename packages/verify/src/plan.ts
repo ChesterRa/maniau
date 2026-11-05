@@ -15,6 +15,8 @@ import { checkEscort } from './escort';
 import { type FactState, historicalItem } from './facts';
 import { checkFamilyQuestions } from './family-question';
 import { doneContentMatches, type History, otherAnswerPossible, sameBasis } from './history';
+import type { NeedWhenWindow } from './need-when';
+import { type NeedWindows, needWindows, timedNeedItem } from './need-window';
 import { checkNoSlot } from './no-slot';
 import type { Collector } from './report';
 import {
@@ -266,12 +268,13 @@ function ruleDeadlinePast(
   facts: FactState,
   history: History,
   report: Collector,
+  windows: NeedWindows,
 ): boolean | 'unknown' {
   if (!history.complete) return 'unknown';
   const requirement = plan.requirements.find((entry) => entry.key === arrangement.requirementKey);
   const id = requirement?.basis.itemIds.length === 1 ? requirement.basis.itemIds[0] : undefined;
   if (!id || facts.staleItems.has(id)) return 'unknown';
-  const item = facts.items.get(id);
+  const item = timedNeedItem(facts.items.get(id), windows);
   if (!item) return 'unknown';
   const activity = facts.active.get(id);
   if (activity !== true) {
@@ -329,6 +332,7 @@ function checkStep(
   plan: PlanResult,
   facts: FactState,
   report: Collector,
+  windows: NeedWindows,
 ): void {
   if (task.commitment === 'done' && task.end && instantMinute(task.end) < instantMinute(plan.now)) {
     if (task.step)
@@ -371,7 +375,10 @@ function checkStep(
   const cover = way && 'cover' in step && step.cover === true && step.external === undefined;
   if (way && Boolean(task.cover) !== Boolean(cover))
     report.violation('need_cover_marker_mismatch', task.key, '受け持ちの印が家庭の手順と違う。');
-  const stated = arrangement?.kind === 'need' ? needItem(arrangement, plan, facts) : undefined;
+  const stated =
+    arrangement?.kind === 'need'
+      ? timedNeedItem(needItem(arrangement, plan, facts), windows)
+      : undefined;
   if (cover) {
     const window = statedWindow(stated);
     if (!window) {
@@ -704,6 +711,7 @@ function checkReasons(
   history: History,
   report: Collector,
   timeZone: string,
+  windows: NeedWindows,
 ): void {
   if (arrangement.status !== 'decidable' && arrangement.reasons.length === 0) {
     report.violation('reason_missing', arrangement.key, '判断できない理由がない。');
@@ -830,7 +838,16 @@ function checkReasons(
         (option) =>
           option.deadlineCertainty === 'undetermined' &&
           isPastDecision(option, plan) !== true &&
-          ruleDeadlinePast(option, arrangement, household, plan, facts, history, report) !== true &&
+          ruleDeadlinePast(
+            option,
+            arrangement,
+            household,
+            plan,
+            facts,
+            history,
+            report,
+            windows,
+          ) !== true &&
           !(
             history.complete &&
             optionFailure(option, arrangement, plan, history, timeZone)?.code === 'turnedDown'
@@ -857,7 +874,9 @@ export function checkPlan(
   facts: FactState,
   history: History,
   report: Collector,
+  whenWindows: ReadonlyMap<string, NeedWhenWindow>,
 ): void {
+  const windows = needWindows(history.events, plan, whenWindows);
   const requirements = indexUnique(plan.requirements, (entry) => entry.key, '要件', report);
   indexUnique(household.careOptions, (entry) => entry.id, '取れる手', report);
   const arrangements = indexUnique(plan.arrangements, (entry) => entry.key, '手配', report);
@@ -1210,7 +1229,7 @@ export function checkPlan(
     if (!arrangement.live) continue;
     if (arrangement.kind === 'need') {
       const item = needItem(arrangement, plan, facts);
-      const window = statedWindow(item);
+      const window = statedWindow(timedNeedItem(item, windows));
       if (!item?.interpretation.shape) {
         report.undetermined(
           'need_shape_unverified',
@@ -1314,7 +1333,7 @@ export function checkPlan(
     if (instantMinute(arrangement.end) < instantMinute(arrangement.start)) {
       report.violation('arrangement_time_invalid', arrangement.key, '手配の終わりが始まりより前。');
     }
-    checkReasons(arrangement, plan, household, facts, history, report, household.timeZone);
+    checkReasons(arrangement, plan, household, facts, history, report, household.timeZone, windows);
     for (const option of arrangement.options) {
       if (option.arrangementKey !== arrangement.key)
         report.violation('option_arrangement_mismatch', option.key, '案が別の手配を指している。');
@@ -1377,7 +1396,7 @@ export function checkPlan(
       const past = isPastDecision(option, plan);
       const rulePast =
         past === 'unknown'
-          ? ruleDeadlinePast(option, arrangement, household, plan, facts, history, report)
+          ? ruleDeadlinePast(option, arrangement, household, plan, facts, history, report, windows)
           : past;
       if (rulePast !== 'unknown' && option.expired !== rulePast)
         report.violation('expired_state_mismatch', option.key, '決め時の経過と計画の状態が違う。');
@@ -1386,7 +1405,7 @@ export function checkPlan(
           report.violation('option_task_missing', option.key, '案が存在しない作業を指している。');
       if ((careTemplate || way?.deadline) && option.decisionDeadline) {
         const date = way
-          ? needDate(needItem(arrangement, plan, facts), household.timeZone)
+          ? needDate(timedNeedItem(needItem(arrangement, plan, facts), windows), household.timeZone)
           : undefined;
         const deadline = careTemplate
           ? optionDeadline(household, arrangement, careTemplate, report)
@@ -1831,7 +1850,7 @@ export function checkPlan(
       report,
       task.commitment === 'done' || Boolean(task.cancels),
     );
-    checkStep(task, household, plan, facts, report);
+    checkStep(task, household, plan, facts, report, windows);
     if (task.live && !task.cancels && task.basis.optionKey && task.basis.arrangementKey) {
       const arrangement = arrangements.get(task.basis.arrangementKey);
       const active =

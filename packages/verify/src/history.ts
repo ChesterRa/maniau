@@ -76,6 +76,7 @@ export function needContent(item: Item, timeZone: string): unknown[] {
     value.deadlineDayOnly,
     value.place,
     value.forMemberId,
+    value.holdNeeded,
   ];
 }
 
@@ -200,6 +201,7 @@ export function checkHistory(
   const requests = new Map<string, SentRequest>();
   const seenRequests = new Set<string>();
   const selections = new Map<string, Selection>();
+  const candidateChoices = new Map<string, { candidateId: string; rev: number }>();
   const wayChoices = new Map<string, Extract<DomainEvent, { type: 'needWaysSet' }>>();
   const excluded = new Set<string>();
   let householdAtTime: Household | undefined;
@@ -261,6 +263,11 @@ export function checkHistory(
       event.type === 'escortStated' ||
       event.type === 'itemsStated' ||
       event.type === 'needWaysSet' ||
+      event.type === 'needCandidatesSet' ||
+      event.type === 'needPeopleSet' ||
+      event.type === 'answerLinkIssued' ||
+      event.type === 'answerLinkRevoked' ||
+      event.type === 'candidateChosen' ||
       event.type === 'sourceWithdrawn' ||
       event.type === 'transcriptionCorrected' ||
       event.type === 'requestRecordCorrected'
@@ -349,7 +356,17 @@ export function checkHistory(
       }
       wayChoices.set(event.itemId, event);
     }
-    if (event.type === 'optionChosen') {
+    if (event.type === 'candidateChosen') {
+      const previous = candidateChoices.get(event.itemId);
+      if (previous && (previous.candidateId !== event.candidateId || previous.rev !== event.rev)) {
+        const selection = selections.get(`arr:need:${event.itemId}`);
+        if (selection) {
+          selection.primary = undefined;
+          selection.backups.clear();
+        }
+      }
+      candidateChoices.set(event.itemId, { candidateId: event.candidateId, rev: event.rev });
+    } else if (event.type === 'optionChosen') {
       if (event.actorId === 'system')
         report.violation('system_chose_option', event.id, '家族が選ぶ案を仕組みが選んでいる。');
       const oldSelection = selections.get(event.arrangementKey);

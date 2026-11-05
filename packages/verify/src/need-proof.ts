@@ -47,6 +47,7 @@ export function aboutMatches(
     deadlineDayOnly: value.deadlineDayOnly,
     place: value.place,
     forMemberId: value.forMemberId,
+    holdNeeded: value.holdNeeded,
     condition: 'true',
   };
   return sameValue(record.need, expected) && sameValue(record.ways, ways);

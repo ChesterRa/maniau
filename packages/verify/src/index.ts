@@ -4,6 +4,7 @@ import { checkHistory, checkRequestNeed } from './history';
 import { checkNeedConfirmation } from './need-confirmation';
 import { checkNeedCoverage, checkNeedSelections } from './need-coverage';
 import { checkNeedPotentialCoverage } from './need-potential';
+import { checkNeedWhen } from './need-when';
 import { checkPlan } from './plan';
 import { checkPreparations } from './preparations';
 import { checkProposals } from './proposal';
@@ -81,17 +82,18 @@ export function verifyPlan(input: VerificationInput): VerificationReport {
     );
   }
   const facts = collectFacts(history.events, report);
+  const whenWindows = checkNeedWhen(household.data, plan.data, facts, history, report);
   checkExceptionTransitions(household.data, report);
   checkNeedConfirmation(plan.data, facts, history, report);
   checkReleased(household.data, plan.data, facts, history, report);
   checkProposals(plan.data, history, report, household.data, facts);
   checkRequestNeed(plan.data, history, facts, report, household.data.timeZone);
-  checkPlan(household.data, plan.data, facts, history, report);
-  checkPreparations(household.data, plan.data, facts, history, report);
+  checkPlan(household.data, plan.data, facts, history, report, whenWindows);
+  checkPreparations(household.data, plan.data, facts, history, report, whenWindows);
   checkStorePreferences(household.data, plan.data, facts, history, report);
   checkNeedSelections(household.data, plan.data, facts, history, report);
-  checkNeedCoverage(household.data, plan.data, facts, history, report);
-  checkNeedPotentialCoverage(household.data, plan.data, facts, history, report);
+  checkNeedCoverage(household.data, plan.data, facts, history, report, whenWindows);
+  checkNeedPotentialCoverage(household.data, plan.data, facts, history, report, whenWindows);
   checkSchedule(household.data, plan.data, history, report);
   if (facts.items.size > 0) {
     report.undetermined(

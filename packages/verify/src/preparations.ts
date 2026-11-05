@@ -2,6 +2,8 @@
 import type { Household, Item, OptionPlan, PlanResult, Preparation } from '@maniau/core';
 import type { FactState } from './facts';
 import type { History } from './history';
+import type { NeedWhenWindow } from './need-when';
+import { needWindows, timedNeedItem } from './need-window';
 import type { Collector } from './report';
 import { dateFromIndex, dateIndex, instantMinute, localMinute } from './time';
 
@@ -45,7 +47,9 @@ export function checkPreparations(
   facts: FactState,
   history: History,
   report: Collector,
+  whenWindows: ReadonlyMap<string, NeedWhenWindow>,
 ): void {
+  const windows = needWindows(history.events, plan, whenWindows);
   for (const arrangement of plan.arrangements) {
     if (arrangement.kind !== 'need' || !arrangement.live) continue;
     const relevant = arrangement.options.filter((option) => {
@@ -62,7 +66,8 @@ export function checkPreparations(
     const requirement = plan.requirements.find((entry) => entry.key === arrangement.requirementKey);
     const id = requirement?.basis.itemIds.length === 1 ? requirement.basis.itemIds[0] : undefined;
     const item = id ? facts.items.get(id) : undefined;
-    const date = item?.kind === 'need' ? useDate(item, household.timeZone) : undefined;
+    const effective = timedNeedItem(item, windows);
+    const date = effective?.kind === 'need' ? useDate(effective, household.timeZone) : undefined;
     const trustworthy =
       history.complete &&
       id !== undefined &&

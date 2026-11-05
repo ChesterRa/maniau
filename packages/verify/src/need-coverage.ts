@@ -4,6 +4,8 @@ import { DateTime } from '@maniau/core';
 import { collectFacts, type FactState } from './facts';
 import { doneContentMatches, type History, needContent } from './history';
 import { aboutMatches, sameValue } from './need-proof';
+import type { NeedWhenWindow } from './need-when';
+import { needWindows } from './need-window';
 import { proposalMatches } from './proposal';
 import { Collector } from './report';
 import { type Interval, instantMinute, localMinute } from './time';
@@ -167,7 +169,9 @@ export function checkNeedCoverage(
   facts: FactState,
   history: History,
   report: Collector,
+  whenWindows: ReadonlyMap<string, NeedWhenWindow>,
 ): void {
+  const windows = needWindows(history.events, plan, whenWindows);
   const priorFacts = new Map<number, FactState>();
   const factsBefore = (seq: number): FactState | undefined => {
     const cached = priorFacts.get(seq);
@@ -202,6 +206,29 @@ export function checkNeedCoverage(
         );
       continue;
     }
+    const requirement = plan.requirements.find((entry) => entry.key === arrangement.requirementKey);
+    const itemId =
+      requirement?.basis.itemIds.length === 1 ? requirement.basis.itemIds[0] : undefined;
+    const item = itemId ? facts.items.get(itemId) : undefined;
+    // 家族が受け持ち不要と確認した窓は、受け持ちが無くても不足にならない。未確認・履歴欠けでは断定しない。
+    if (
+      history.needShapes.get(arrangement.key) === 'window' &&
+      history.complete &&
+      itemId &&
+      item?.kind === 'need' &&
+      facts.active.get(itemId) === true &&
+      !facts.staleItems.has(itemId) &&
+      ['stated', 'confirmed'].includes(facts.needConfirmation.get(itemId) ?? '') &&
+      item.interpretation.holdNeeded === false
+    ) {
+      if (reported.length > 0)
+        report.violation(
+          'need_coverage_shape_mismatch',
+          arrangement.key,
+          '受け持ちを要しない窓に不足時間を出している。',
+        );
+      continue;
+    }
     if (history.needShapes.get(arrangement.key) !== 'window' || !arrangement.inUseOptionKey) {
       if (reported.length > 0)
         report.undetermined(
@@ -211,10 +238,6 @@ export function checkNeedCoverage(
         );
       continue;
     }
-    const requirement = plan.requirements.find((entry) => entry.key === arrangement.requirementKey);
-    const itemId =
-      requirement?.basis.itemIds.length === 1 ? requirement.basis.itemIds[0] : undefined;
-    const item = itemId ? facts.items.get(itemId) : undefined;
     const option = arrangement.options.find((entry) => entry.key === arrangement.inUseOptionKey);
     const way = household.ways.find((entry) => entry.id === option?.templateId);
     const selection = history.selections.get(arrangement.key);
@@ -241,7 +264,21 @@ export function checkNeedCoverage(
       );
       continue;
     }
-    const whole = { start: instantMinute(arrangement.start), end: instantMinute(arrangement.end) };
+    const candidate = whenWindows.get(itemId);
+    if (windows.hasCandidates.has(itemId) && !candidate) {
+      report.undetermined(
+        'need_coverage_unverified',
+        arrangement.key,
+        '決めた候補の窓を事象から確かめられない。',
+      );
+      continue;
+    }
+    const whole = candidate
+      ? {
+          start: Date.parse(`${candidate.date}T${candidate.startTime}:00+09:00`) / 60_000,
+          end: Date.parse(`${candidate.date}T${candidate.endTime}:00+09:00`) / 60_000,
+        }
+      : { start: instantMinute(arrangement.start), end: instantMinute(arrangement.end) };
     // 一つのやり方にある外への依頼と受け持ちは、全てそろって初めて有効になる。
     const required = way.steps.flatMap((step) => [
       ...(step.cover && !step.external ? [`cover:${step.id}`] : []),

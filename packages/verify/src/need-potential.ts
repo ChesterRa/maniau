@@ -3,6 +3,8 @@
 import type { Household, OptionPlan, PlanResult, Way } from '@maniau/core';
 import type { FactState } from './facts';
 import type { History } from './history';
+import type { NeedWhenWindow } from './need-when';
+import { needWindows, timedNeedItem } from './need-window';
 import type { Collector } from './report';
 import { routinesOn } from './routine';
 import { type Interval, instantMinute } from './time';
@@ -146,7 +148,9 @@ export function checkNeedPotentialCoverage(
   facts: FactState,
   history: History,
   report: Collector,
+  whenWindows: ReadonlyMap<string, NeedWhenWindow>,
 ): void {
+  const windows = needWindows(history.events, plan, whenWindows);
   for (const arrangement of plan.arrangements) {
     if (!arrangement.live || arrangement.options.length === 0) continue;
     if (arrangement.kind !== 'need') {
@@ -186,9 +190,31 @@ export function checkNeedPotentialCoverage(
     const item = itemId ? facts.items.get(itemId) : undefined;
     const interpretation = item?.interpretation;
     const choice = history.needWays.get(arrangement.key);
-    const date = interpretation?.date;
-    const start = interpretation?.startTime;
-    const end = interpretation?.endTime;
+    // 家族が窓の受け持ちは不要だと明言した時、受け持つ手順の有無で不足を作らない。人数や場所の可否は別。
+    // 未確認の読み取りや不完全な履歴からは、不要だと断定しない。
+    if (
+      shape === 'window' &&
+      itemId &&
+      item?.kind === 'need' &&
+      facts.active.get(itemId) === true &&
+      !facts.staleItems.has(itemId) &&
+      ['stated', 'confirmed'].includes(facts.needConfirmation.get(itemId) ?? '') &&
+      interpretation?.holdNeeded === false
+    ) {
+      for (const option of arrangement.options) {
+        if (gapsOf(option).length > 0)
+          report.violation(
+            'need_potential_gap_unexpected',
+            option.key,
+            '受け持ちを要しない窓の案に、受け持てない時間を出している。',
+          );
+      }
+      continue;
+    }
+    const effective = timedNeedItem(item, windows)?.interpretation;
+    const date = effective?.date;
+    const start = effective?.startTime;
+    const end = effective?.endTime;
     if (
       shape !== 'window' ||
       !itemId ||

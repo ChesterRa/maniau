@@ -5,6 +5,8 @@ import type { Arrangement, Household as Family, PlanResult as Plan, Task } from 
 import { DateTime, DomainEvent, Household, PlanResult, toEpochMinutes } from '@maniau/core';
 import { collectFacts, type FactState } from './facts';
 import { checkHistory } from './history';
+import { checkNeedWhen } from './need-when';
+import { type NeedWindows, needWindows, timedNeedItem } from './need-window';
 import { needDeadline, statedWindow } from './plan';
 import { Collector, type VerificationReport } from './report';
 import { matchesArrangementDay, matchesArrangementWindow } from './time';
@@ -344,12 +346,13 @@ function notificationNeedShape(
   timeZone: string,
   key: string,
   out: Collector,
+  windows: NeedWindows,
 ): { valid: boolean; shape: 'by' | 'window' | undefined } {
   const requirement = plan.requirements.find((entry) => entry.key === arrangement.requirementKey);
   if (!requirement?.live || requirement.kind !== 'need' || requirement.unconfirmed)
     return { valid: false, shape: undefined };
   const id = requirement.basis.itemIds.length === 1 ? requirement.basis.itemIds[0] : undefined;
-  const item = id === undefined ? undefined : facts?.items.get(id);
+  const item = timedNeedItem(id === undefined ? undefined : facts?.items.get(id), windows);
   const confirmation = id === undefined ? undefined : facts?.needConfirmation.get(id);
   if (
     confirmation === 'pending' ||
@@ -411,6 +414,7 @@ function checkSubject(
   events: readonly DomainEvent[],
   facts: FactState | undefined,
   out: Collector,
+  windows: NeedWindows,
 ): undefined {
   const { subject, titleKey, toMemberId: member } = intent;
   const wrong = (): undefined => {
@@ -654,7 +658,15 @@ function checkSubject(
       (titleKey === 'notify.needGaps' && decision !== 'gaps')
     )
       return wrong();
-    const evidence = notificationNeedShape(arrangement, plan, facts, timeZone, intent.key, out);
+    const evidence = notificationNeedShape(
+      arrangement,
+      plan,
+      facts,
+      timeZone,
+      intent.key,
+      out,
+      windows,
+    );
     if (!evidence.valid) return wrong();
     if (titleKey === 'notify.needGaps' && evidence.shape === 'by') return wrong();
     if (evidence.shape === undefined) {
@@ -703,7 +715,15 @@ function checkSubject(
         needDecision(arrangement, household) !== 'choose'
       )
         return wrong();
-      const evidence = notificationNeedShape(arrangement, plan, facts, timeZone, intent.key, out);
+      const evidence = notificationNeedShape(
+        arrangement,
+        plan,
+        facts,
+        timeZone,
+        intent.key,
+        out,
+        windows,
+      );
       if (!evidence.valid) return wrong();
     } else if (
       arrangement.kind !== 'childCare' ||
@@ -816,6 +836,12 @@ export function verifyNotifications(input: NotificationVerificationInput): Verif
   )
     ? collectFacts(events, new Collector())
     : undefined;
+  const whenCheck = new Collector();
+  const checkedWindows =
+    needHistory && readingFacts
+      ? checkNeedWhen(household.data, plan.data, readingFacts, needHistory, whenCheck)
+      : new Map();
+  const windows = needWindows(events, plan.data, checkedWindows);
   const keys = new Set<string>();
   const now = toEpochMinutes(plan.data.now);
   for (const value of input.intents) {
@@ -850,6 +876,7 @@ export function verifyNotifications(input: NotificationVerificationInput): Verif
       events,
       readingFacts,
       out,
+      windows,
     );
     checkTiming(intent, plan.data, events, out);
     out.undetermined(
