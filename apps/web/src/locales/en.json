@@ -1377,9 +1377,8 @@
       "demo": "Source: a made-up rule for the demo (not a real page)",
       "family": "Source: entered by your family",
       "noDate": "no date",
-      "quote": "“{{quote}}”",
-      "webQuoted": "Source page: {{title}} (read on {{when}}; the quote was in the page text)",
-      "webUnchecked": "Source page: {{title}} (read on {{when}}; the quote was not checked against the page text)",
+      "webQuoted": "Source page: {{title}} (read on {{when}}; the code checked that the sentence Claude cited is in the page text, not that it supports the summary)",
+      "webUnchecked": "Source page: {{title}} (read on {{when}}; the sentence Claude cited was not checked against the page text)",
       "open": "Open the page"
     },
     "applies": {
@@ -1435,20 +1434,21 @@
       "again": "Ask Claude to look again now (about a minute)",
       "intro": "Claude searches the web for places near home that can look after your children or lend a hand (sick-child care, temporary childcare, family support) and reads their pages. Only what your family decides to add goes into your household information.",
       "working": "Looking… (when Claude looks now, it takes about a minute)",
-      "recordedAt": "What Claude found around {{area}} on {{when}}, saved for this demo (the quotes were checked then).",
+      "recordedAt": "What Claude found around {{area}} on {{when}}, saved for this demo (the check was done then; the page text isn’t kept).",
       "liveAt": "What Claude found around {{area}} on {{when}}.",
-      "checkedNote": "Shown here are only places whose quote appears in the text of a page Claude read (compared after normalizing character width and spaces). That checks the words are on the page — not that the page is official or still correct. Please check the link. Claude’s summaries are in Japanese (the survey asks Claude in Japanese); quotes are in the page’s own words.",
+      "checkedNote": "Shown here are only places where the sentence Claude cited appears in the text of a page Claude read (the code compares after normalizing character width and spaces). Sentences taken from the page as quotes aren’t shown or kept here. Each summary is one sentence written by Claude and may contain the page’s words or sentences (a summary that is a page sentence, or that contains a cited sentence, is left out when that sentence is 8 or more normalized characters). That checks the words are on the page — not that the page is official or still correct. Please check the link. Claude’s summaries are in Japanese (the survey asks Claude in Japanese).",
       "dropped": "{{count}} more are not shown because they couldn’t be checked ({{reasons}}).",
       "reason": {
         "notRead": "{{count}} whose page text couldn’t be read",
-        "quoteNotFound": "{{count}} whose quote wasn’t in the page text",
+        "quoteNotFound": "{{count}} whose cited sentence wasn’t in the page text",
+        "copied": "{{count}} whose summary was a page sentence or contained the cited sentence",
         "kind": "{{count}} of a kind we didn’t ask for"
       },
       "none": "No candidates could be checked.",
       "summary": "Claude’s summary: {{text}}",
       "registration": {
-        "required": "Claude’s reading: you must register in advance before using it (page says: “{{quote}}”). Only the words on the page were checked, not their meaning.",
-        "notRequired": "Claude’s reading: no advance registration needed (page says: “{{quote}}”). Only the words on the page were checked, not their meaning.",
+        "required": "Claude’s reading: you must register in advance before using it. Only the presence of the cited sentence on the page was checked, not its meaning. Please open the page to check.",
+        "notRequired": "Claude’s reading: no advance registration needed. Only the presence of the cited sentence on the page was checked, not its meaning. Please open the page to check.",
         "choose": "Advance registration",
         "choice": {
           "yes": "Needed (I checked)",
@@ -1456,9 +1456,8 @@
           "unsure": "Not sure yet"
         },
         "same": "Same registration as {{name}} ({{state}})",
-        "notRead": "In Claude’s reading, the page says nothing about advance registration (that doesn’t mean none is needed)."
+        "notRead": "This result can’t confirm whether advance registration is needed (it may still be needed). Please check the page."
       },
-      "lead": "The page says “{{quote}}” (what the number of days refers to hasn’t been checked, so it isn’t used as a deadline).",
       "use": "How your family treats it",
       "ways": "Ways that need this registration first (this only adds the prerequisite — who you ask and where you go stay the same)",
       "add": "Add as a candidate for us",

@@ -26,8 +26,8 @@ All screens show the fictional demo family.
 
 ### 1. Around us: kept by your family and Claude together
 
-- **Claude looks around:** With “Look around us”, Claude uses web search to find sick-child care, temporary childcare and family support in the home's area (ward and station level), reads the pages, and suggests candidates. Only candidates whose quote appears in the text of a page Claude read in that response, after normalizing character width and whitespace, are shown (code checks this; matching words don't prove the reading is right).
-- **Your family decides:** For each candidate, your family decides whether to add it, how to treat it (usual, candidate, don't use), whether advance registration is needed, and for whom. Claude's reading is shown as a reading, next to the original sentence. Maniau never says that registration is done, that a place can be used, or that it has room.
+- **Claude looks around:** With “Look around us”, Claude uses web search to find sick-child care, temporary childcare and family support in the home's area (ward and station level), reads the pages, and suggests candidates. Only candidates whose cited sentence (a quote Claude gives as its basis) appears in the text of a page Claude read in that response, after normalizing character width and whitespace, are shown (code checks this; matching words don't prove that the sentence supports the summary or that the reading is right). Sentences taken from the page as quotes are used only for this check and are not shown or kept. Each summary is one sentence written by Claude and may contain the page's words or sentences; a summary that is a page sentence, or that contains a cited sentence, is left out when that sentence is 8 or more normalized characters. Your family opens the source page to check.
+- **Your family decides:** For each candidate, your family decides whether to add it, how to treat it (usual, candidate, don't use), whether advance registration is needed, and for whom. Claude's reading is shown as a reading, with a link to the source page. Maniau never says that registration is done, that a place can be used, or that it has room.
 - **Remembered, never silently replaced:** Shopping goes to the store your family picked for that item if there is one, and otherwise to a store your family marked usual, even if another store could be reached sooner. If there's no time to stop at that store, Maniau doesn't quietly move the errand elsewhere; it says why and lets your family choose. Looking around again never changes how your family treats a place.
 - **It changes the math:** Options with an advance step not confirmed as done, and options that use a place marked “Don't use”, are not recommended. A newly added place can be used by copying an existing way (the old place's hours, cost and deadlines are not copied).
 
@@ -50,7 +50,7 @@ The model reads, looks around, infers unstated preparations, and explains. Date 
 | | Claude (inferred) | Code (guaranteed parts) |
 |---|---|---|
 | Notices | Reads text, photos and PDFs into events, belongings, deadlines, conditions and changes | Checks that quotes appear in the original text and that dates match the month and day written. Inferences stay out of the plan until the family confirms them |
-| Around us | Searches the web, reads pages, and suggests candidates with a reading on advance registration | Checks that quotes appear in the text of pages read. Nothing enters household information until the family adds it, and the family's treatment of a place is never changed |
+| Around us | Searches the web, reads pages, and suggests candidates with a reading on advance registration | Checks that the sentence Claude cites appears in the text of pages read (quotes aren't shown or kept). Nothing enters household information until the family adds it, and the family's treatment of a place is never changed |
 | Quick updates | Turns a short message into something to record, a what-if, or a one-off day | Fills in a date only when it matches the date code works out from the wording. Records only when the family taps |
 | Deadlines and placement | — | Working back from deadlines, fitting tasks into the usual week, stores, hours and walking times, overlaps, usual stores |
 | Notifications | — | Whether something can't wait, and the independent verifier's gate |
@@ -62,7 +62,7 @@ The model reads, looks around, infers unstated preparations, and explains. Date 
 flowchart TB
   subgraph sgClaude["Claude (inferred)"]
     notice["Notice text, photos, PDFs"] --> facts["Typed items (with source text and quotes)"]
-    around["Web pages about the area"] --> cands["Candidates (with quotes from pages read)"]
+    around["Web pages about the area"] --> cands["Candidates (with source pages)"]
     said["Quick updates from the family"] --> drafts["Things to record, what-ifs"]
   end
   subgraph sgFamily["Family"]
@@ -104,7 +104,7 @@ The demo doesn't send notifications. Instead, on Today, the demo bar at the top 
 
 **See what's around us:** tap “Family” at the bottom, then go to “Around us”.
 
-- “Look around us” shows what Claude found when it searched the real web once, on 2026-11-05, around the demo home (Toyosu, Koto ward), saved for the demo: for each candidate, the page it read, the quote, and its reading on advance registration. Adding a candidate with “Add as a candidate for us” shows what would change before saving, and you can then copy an existing way to use that place. “Ask Claude to look again now” works up to 3 times per demo and 30 times a day per server (on a server with a reading key).
+- “Look around us” shows what Claude found when it searched the real web once, on 2026-11-05, around the demo home (Toyosu, Koto ward), saved for the demo: for each candidate, a link to the page it read, Claude's summary, and its reading on advance registration (the page's words were not saved). Adding a candidate with “Add as a candidate for us” shows what would change before saving, and you can then copy an existing way to use that place. “Ask Claude to look again now” works up to 3 times per demo and 30 times a day per server (on a server with a reading key).
 - With “Edit”, you can mark each store as usual, candidate or don't use. In scene 2, setting the usual store (the clothing store near Toyosu Station) to candidate shows, before you save, that the shirt errand moves to the other (made-up) store.
 
 To have Claude read a notice, tap “Snap” at the bottom, then “Insert a sample notice (fictional)”, then “Read it” (on a server with a reading key).

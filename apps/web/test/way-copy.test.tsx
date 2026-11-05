@@ -25,7 +25,6 @@ const PLACE = {
 const SOURCE = {
   kind: 'webPage' as const,
   url: 'https://example.invalid/sick-care',
-  quote: '利用には、事前の利用登録が必要です。',
   fetchedAt: '2026-11-05T09:58+09:00',
   quoteFound: true,
 };

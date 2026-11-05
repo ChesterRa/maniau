@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// 「周りを調べる」（02-foundation §3.5）：調べた候補を、出典の頁・引用・Claude の読みと一緒に見せ、家族が扱い・登録・
+// 「周りを調べる」（02-foundation §3.5）：調べた候補を、出典の頁（リンク）・Claude の読みと一緒に見せ（頁の文は出さない）、家族が扱い・登録・
 // だれの分・前提にするやり方を選んで「この家の候補にする」と、保存の前の確かめに渡す（何も書かない）。登録が要るかは
 // Claude の読みで、家族が選ぶ。資源は場所に結んで入れ、前提にするやり方の頼む先は替えない。この所に頼むやり方は、
 // 入れた後に、今のやり方を写して作る（やり方の表へ）。候補は架空の物（example.invalid）。
@@ -32,7 +32,6 @@ const CANDIDATE: SurveyCandidate = {
           kind: 'webPage',
           url: 'https://example.invalid/sick-care',
           title: 'みなと橋病児保育室のご案内（架空）',
-          quote: '家庭で保育できないときにお預かりします。',
           fetchedAt: '2026-11-05T09:58+09:00',
           quoteFound: true,
         },
@@ -40,7 +39,7 @@ const CANDIDATE: SurveyCandidate = {
     ],
     use: 'candidate',
   },
-  registration: { required: true, quote: '利用には、事前の利用登録が必要です。' },
+  registration: { required: true },
   preparation: {
     id: 'prep-res-aaaaaaaaaaaa',
     name: 'みなと橋病児保育室（架空）の事前の登録',
@@ -48,14 +47,12 @@ const CANDIDATE: SurveyCandidate = {
     source: {
       kind: 'webPage',
       url: 'https://example.invalid/sick-care',
-      quote: '利用には、事前の利用登録が必要です。',
       fetchedAt: '2026-11-05T09:58+09:00',
       quoteFound: true,
     },
     appliesTo: { kind: 'unknown' },
     state: 'unknown',
   },
-  leadDays: { days: 3, quote: '登録は利用の3日前までに済ませてください。' },
 };
 
 const SHOWN: SurveyShown = {
@@ -155,12 +152,16 @@ describe('周りを調べる', () => {
     expect(text).toContain('みなと橋病児保育室（架空）');
     expect(text).toContain('Claude のまとめ：病気の子を、保護者が仕事で見られない時に預かる。');
     expect(text).toContain(
-      '出典の頁：みなと橋病児保育室のご案内（架空）（11/5（木） に読んだ頁。引用は頁の本文にあった）',
+      '出典の頁：みなと橋病児保育室のご案内（架空）（11/5（木） に読んだ頁。Claude が根拠に挙げた文が頁の本文にあることを、コードが照らしました。その文がまとめを支えるかは確かめていません）',
     );
     expect(text).toContain(
-      'Claude の読み：使う前に事前の登録が要る（頁の文：「利用には、事前の利用登録が必要です。」）',
+      'Claude の読み：使う前に事前の登録が要る。根拠に挙げた文が頁にあることだけを照らし、意味は確かめていません。頁を開いて確かめてください。',
     );
-    expect(text).toContain('何の日数かは確かめていないので、期限にはしません');
+    // 頁の文は出さない（照らした結果と、頁へのリンクだけ）。日数も出さない。
+    expect(text).toContain('引用として抜き出した文はここに出さず、残しません');
+    expect(text).toContain('頁の言葉や文を含むことがあります');
+    expect(text).not.toContain('「利用には');
+    expect(text).not.toContain('日数');
     expect(text).toContain(
       'ほかに 1 件は、確かめられなかったので出していません（頁の本文を読めなかった 1 件）',
     );

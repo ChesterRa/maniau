@@ -264,15 +264,15 @@ export const Way = z.object({
 export type Way = z.infer<typeof Way>;
 
 /**
- * 調べた事の出典。ウェブの頁なら、URL・頁の題・短い引用と、頁を読んだ時刻、引用が読んだ頁の本文に文字のとおりに
- * あったか（コードが確かめた）。頁が公式かは、コードでは確かめない（家族がリンク先で確かめる）。
+ * 調べた事の出典。ウェブの頁なら、URL・頁の題と、頁を読んだ時刻、Claude が根拠に挙げた文（引用）が読んだ頁の本文に
+ * 文字のとおりにあったか（コードが照らした結果）。引用（頁から抜き出した文）は持たない（照らすためにだけ使う。2026-11-05）。前の形の
+ * 記録に引用があっても、読む時に落とす。頁が公式かは、コードでは確かめない（家族がリンク先で確かめる）。
  */
 export const ResourceSource = z.object({
   /** webPage：調べて読んだウェブの頁。family：家族が言った。demo：デモのために作った架空の決まり（本当の頁ではない）。 */
   kind: z.enum(['webPage', 'family', 'demo']),
   url: z.string().url().optional(),
   title: z.string().optional(),
-  quote: z.string().optional(),
   fetchedAt: DateTime.optional(),
   quoteFound: z.boolean().optional(),
 });

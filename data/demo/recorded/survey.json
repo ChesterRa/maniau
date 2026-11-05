@@ -17,7 +17,6 @@
               "kind": "webPage",
               "url": "https://www.city.koto.lg.jp/280307/kodomo/kosodate/service/20788.html",
               "title": "病児・病後児保育｜江東区",
-              "quote": "「病気」又は「病気の回復期」等により、普段通っている保育施設での集団保育が難しい時期に、区が委託する実施施設（病児・病後児対応型施設、病後児対応型施設）で一時的にお子様をお預かりする事業です。",
               "fetchedAt": "2026-11-05T01:10+09:00",
               "quoteFound": true
             }
@@ -26,8 +25,7 @@
         "use": "candidate"
       },
       "registration": {
-        "required": true,
-        "quote": "病児・病後児保育室をご利用いただくには、区役所へ事前の登録が必要です。"
+        "required": true
       },
       "preparation": {
         "id": "prep-res-075e6ca146c4",
@@ -37,7 +35,6 @@
           "kind": "webPage",
           "url": "https://www.city.koto.lg.jp/280307/kodomo/kosodate/service/20788.html",
           "title": "病児・病後児保育｜江東区",
-          "quote": "病児・病後児保育室をご利用いただくには、区役所へ事前の登録が必要です。",
           "fetchedAt": "2026-11-05T01:10+09:00",
           "quoteFound": true
         },
@@ -61,7 +58,6 @@
               "kind": "webPage",
               "url": "https://www.city.koto.lg.jp/280307/kodomo/kosodate/service/20788.html",
               "title": "病児・病後児保育｜江東区",
-              "quote": "「病気」又は「病気の回復期」等により、普段通っている保育施設での集団保育が難しい時期に、区が委託する実施施設（病児・病後児対応型施設、病後児対応型施設）で一時的にお子様をお預かりする事業です。",
               "fetchedAt": "2026-11-05T01:10+09:00",
               "quoteFound": true
             }
@@ -70,8 +66,7 @@
         "use": "candidate"
       },
       "registration": {
-        "required": true,
-        "quote": "病児・病後児保育室をご利用いただくには、区役所へ事前の登録が必要です。"
+        "required": true
       },
       "preparation": {
         "id": "prep-res-9804d7cdc589",
@@ -81,7 +76,6 @@
           "kind": "webPage",
           "url": "https://www.city.koto.lg.jp/280307/kodomo/kosodate/service/20788.html",
           "title": "病児・病後児保育｜江東区",
-          "quote": "病児・病後児保育室をご利用いただくには、区役所へ事前の登録が必要です。",
           "fetchedAt": "2026-11-05T01:10+09:00",
           "quoteFound": true
         },
@@ -105,7 +99,6 @@
               "kind": "webPage",
               "url": "https://www.megumi.ed.jp/toyosu/rearing/temporary/",
               "title": "一時保育 – 豊洲めぐみこども園 – 江東区豊洲にある幼稚園保育園連携型認定こども園",
-              "quote": "保護者の通院・リフレッシュ等で、一時的にご家庭でお子さんをみることができない場合、健康で集団保育が可能な未就学児を保育することです。",
               "fetchedAt": "2026-11-05T01:10+09:00",
               "quoteFound": true
             }
@@ -128,7 +121,6 @@
               "kind": "webPage",
               "url": "https://www.city.koto.lg.jp/280307/kodomo/kosodate/service/ichijihoiku/5924.html",
               "title": "非定型一時保育（子育てサポート一時保育）｜江東区",
-              "quote": "在宅で育児をしている保護者が、通院、通学、短期就労、自宅での看護等の理由でお子さんの保育ができない場合に、認可保育所の一時保育室で、一時的にお預かりする制度です。",
               "fetchedAt": "2026-11-05T01:10+09:00",
               "quoteFound": true
             }
@@ -151,7 +143,6 @@
               "kind": "webPage",
               "url": "https://www.city.koto.lg.jp/282011/kodomo/kosodate/service/ichijihoiku/25665.html",
               "title": "リフレッシュひととき保育｜江東区",
-              "quote": "生後6ヶ月～就学前までの幼稚園・保育園等に入所していない江東区内在住の乳幼児",
               "fetchedAt": "2026-10-30T22:05+09:00",
               "quoteFound": true
             }
@@ -160,8 +151,7 @@
         "use": "candidate"
       },
       "registration": {
-        "required": true,
-        "quote": "利用には事前に登録が必要です。個別に説明と面接を行いますので、時間に余裕を持ってお越しください。"
+        "required": true
       },
       "preparation": {
         "id": "prep-res-053c4f0c14cd",
@@ -171,7 +161,6 @@
           "kind": "webPage",
           "url": "https://www.city.koto.lg.jp/282011/kodomo/kosodate/service/ichijihoiku/25665.html",
           "title": "リフレッシュひととき保育｜江東区",
-          "quote": "利用には事前に登録が必要です。個別に説明と面接を行いますので、時間に余裕を持ってお越しください。",
           "fetchedAt": "2026-10-30T22:05+09:00",
           "quoteFound": true
         },
@@ -195,7 +184,6 @@
               "kind": "webPage",
               "url": "https://koto-shakyo.or.jp/familyc/",
               "title": "ファミリー・サポート・センター ｜ 江東区社会福祉協議会",
-              "quote": "区内で育児の手助けを必要とする方（利用会員）と育児の手助けができる方（協力会員：有償ボランティア）を結びつけ、会員同士の信頼関係に基づく援助活動を通じて、子育て家庭を支援します。",
               "fetchedAt": "2026-11-05T01:10+09:00",
               "quoteFound": true
             }
@@ -204,8 +192,7 @@
         "use": "candidate"
       },
       "registration": {
-        "required": true,
-        "quote": "利用や活動を行うには、事前登録が必要です。"
+        "required": true
       },
       "preparation": {
         "id": "prep-res-e27e6d48d8ca",
@@ -215,7 +202,6 @@
           "kind": "webPage",
           "url": "https://koto-shakyo.or.jp/familyc/",
           "title": "ファミリー・サポート・センター ｜ 江東区社会福祉協議会",
-          "quote": "利用や活動を行うには、事前登録が必要です。",
           "fetchedAt": "2026-11-05T01:10+09:00",
           "quoteFound": true
         },

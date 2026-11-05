@@ -26,7 +26,8 @@ const toggle = (on: boolean) =>
   `min-h-11 rounded-xl border-[1.5px] px-3 font-bold ${on ? 'border-accent bg-accent text-white' : 'border-btn-line bg-white'}`;
 
 /**
- * 出典の一行：ウェブの頁（題・読んだ日・引用が頁の本文にあったか。公式かは言わない）、家族の言葉、デモの架空の決まり。
+ * 出典の一行：ウェブの頁（題・読んだ日・Claude が根拠に挙げた文が頁の本文にあったか。頁の文は出さない。公式かは
+ * 言わない）、家族の言葉、デモの架空の決まり。
  */
 function sourceLine(ctx: Ctx, source: ResourceSource): string {
   if (source.kind === 'demo') return ctx.t('resources.source.demo');
@@ -170,9 +171,6 @@ export function ResourcesCard({ ctx }: { ctx: Ctx }) {
       <div key={p.id} className="flex flex-col gap-1 rounded-xl bg-paper px-3 py-2.5">
         <Text>{ctx.t('resources.preparation.title', { name: p.name })}</Text>
         {p.source && <Text quiet>{sourceLine(ctx, p.source)}</Text>}
-        {p.source?.quote && (
-          <Text quiet>{ctx.t('resources.source.quote', { quote: p.source.quote })}</Text>
-        )}
         {editing ? (
           <AppliesChoice
             ctx={ctx}
@@ -264,9 +262,6 @@ export function ResourcesCard({ ctx }: { ctx: Ctx }) {
         <div key={`${note.text}-${note.source.url ?? note.source.kind}`} className="flex flex-col">
           <Text>{note.text}</Text>
           <Text quiet>{sourceLine(ctx, note.source)}</Text>
-          {note.source.quote && (
-            <Text quiet>{ctx.t('resources.source.quote', { quote: note.source.quote })}</Text>
-          )}
           <SourceLink ctx={ctx} source={note.source} />
         </div>
       ))}
@@ -556,7 +551,7 @@ function SurveyPanel({
   const choiceOf = (id: string) => choices[id] ?? firstChoice;
   const choose = (id: string, update: Partial<CandidateChoice>) =>
     setChoices((all) => ({ ...all, [id]: { ...(all[id] ?? firstChoice), ...update } }));
-  const reasons = (['notRead', 'quoteNotFound', 'kind'] as const)
+  const reasons = (['notRead', 'quoteNotFound', 'copied', 'kind'] as const)
     .map((reason) => ({
       reason,
       count: shown?.dropped.filter((d) => d.reason === reason).length ?? 0,
@@ -580,9 +575,6 @@ function SurveyPanel({
           <>
             <Text>{ctx.t('resources.survey.summary', { text: note.text })}</Text>
             <Text quiet>{sourceLine(ctx, note.source)}</Text>
-            {note.source.quote && (
-              <Text quiet>{ctx.t('resources.source.quote', { quote: note.source.quote })}</Text>
-            )}
             <SourceLink ctx={ctx} source={note.source} />
           </>
         )}
@@ -592,14 +584,10 @@ function SurveyPanel({
               c.registration.required
                 ? 'resources.survey.registration.required'
                 : 'resources.survey.registration.notRequired',
-              { quote: c.registration.quote },
             )}
           </Text>
         )}
         {!c.registration && <Text quiet>{ctx.t('resources.survey.registration.notRead')}</Text>}
-        {c.leadDays && (
-          <Text quiet>{ctx.t('resources.survey.lead', { quote: c.leadDays.quote })}</Text>
-        )}
         {!added && open !== c.id ? (
           <Row>
             <Button kind="secondary" onClick={() => setOpen(c.id)}>

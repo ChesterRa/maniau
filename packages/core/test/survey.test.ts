@@ -1,5 +1,6 @@
-// 周りの調べの確かめ（02-foundation §3.5）：候補にするのは、同じ応答で本文を読んだ頁にあった引用の物だけ。事前の
-// 登録と日数は Claude の読みとして添え、引用が本文にあっても、意味は家族が確かめる（コードは決めない）。
+// 周りの調べの確かめ（02-foundation §3.5）：候補にするのは、同じ応答で本文を読んだ頁にあった引用の物だけ。引用は照らす
+// だけで候補に残さず、頁の文を写したまとめも出さない。事前の登録は Claude の読みとして添え、意味は家族が頁で確かめる
+// （コードは決めない）。日数は、頁の文を見せないので出さない。
 // 頁と候補は、どれも架空の物（example.invalid）。
 
 import { describe, expect, it } from 'vitest';
@@ -50,7 +51,7 @@ describe('引用が頁の本文にあるか', () => {
 });
 
 describe('調べた候補の確かめ', () => {
-  it('本文を読んだ頁に引用がある候補だけを、出典つきの資源と、登録の読み・前提の案・日数にする', () => {
+  it('本文を読んだ頁に引用がある候補だけを、出典つきの資源と、登録の読み・前提の案にする（頁の文と日数は残さない）', () => {
     const { candidates, dropped } = checkSurvey(
       { candidates: [candidate()] },
       [page],
@@ -79,20 +80,27 @@ describe('調べた候補の確かめ', () => {
         },
       ],
     });
-    expect(c?.registration).toEqual({
-      required: true,
-      quote: '利用には、事前の利用登録が必要です。',
-    });
+    expect(c?.registration).toEqual({ required: true });
     // 前提の案は、だれの分か・済んだかを分からないとする（家族が確かめる）。
     expect(c?.preparation).toMatchObject({
       resourceId: c?.id,
       appliesTo: { kind: 'unknown' },
       state: 'unknown',
-      source: { kind: 'webPage', quote: '利用には、事前の利用登録が必要です。', quoteFound: true },
+      source: { kind: 'webPage', quoteFound: true },
     });
     expect(c?.preparation).not.toHaveProperty('lead');
-    // 日数は見せるだけ（前提の lead に入れない）。
-    expect(c?.leadDays).toEqual({ days: 3, quote: '登録は利用の3日前までに済ませてください。' });
+    // 日数は出さない（頁の文を見せないので、数字だけでは何の数か確かめられない）。前提の lead にも入れない。
+    expect(c).not.toHaveProperty('leadDays');
+    // 頁の文（引用）は照らすだけで、候補のどこにも残さない（見せる物・記録・家に入る物）。
+    const shown = JSON.stringify(c);
+    for (const quote of [
+      '家庭で保育できないときにお預かりします。',
+      '利用には、事前の利用登録が必要です。',
+      '登録は利用の3日前までに済ませてください。',
+    ]) {
+      expect(shown).not.toContain(quote);
+    }
+    expect(shown).not.toContain('"quote"');
   });
 
   it('本文を読んでいない・PDF・引用が無い・頼んでいない種類の物は候補にせず、訳を返す', () => {
@@ -120,7 +128,7 @@ describe('調べた候補の確かめ', () => {
     ]);
   });
 
-  it('登録の引用が本文に無ければ、登録の読みも前提の案も付けない。日数は引用に同じ数字がある時だけ', () => {
+  it('登録の引用が本文に無ければ、登録の読みも前提の案も付けない', () => {
     const [c] = checkSurvey(
       {
         candidates: [
@@ -165,14 +173,54 @@ describe('調べた候補の確かめ', () => {
       idOf,
       AT,
     ).candidates;
-    // 読みと原文をそのまま渡す（画面は Claude の読みと書き、家族が「要る・要らない・分からない」を選ぶ）。
-    expect(c?.registration).toEqual({
-      required: true,
-      quote: '事前登録は不要です。当日に申し込めます。',
-    });
+    // 読みをそのまま渡す（画面は Claude の読みと書き、家族が頁を開いて「要る・要らない・分からない」を選ぶ）。頁の文は渡さない。
+    expect(c?.registration).toEqual({ required: true });
     expect(c?.preparation?.state).toBe('unknown');
     // 頁を読んだ時刻が応答に無ければ、この調べの時刻。
     expect(c?.resource.notes[0]?.source.fetchedAt).toBe(AT);
+  });
+
+  it('まとめが頁の文の写し（頁の本文にまとめの文がある）なら、候補にせず、訳を返す', () => {
+    const { candidates, dropped } = checkSurvey(
+      {
+        candidates: [
+          candidate({
+            name: '写し（架空）',
+            summary: '家庭で保育できないときにお預かりします。',
+          }),
+        ],
+      },
+      [page],
+      KINDS,
+      idOf,
+      AT,
+    );
+    expect(candidates).toEqual([]);
+    expect(dropped.map((d) => [d.name, d.reason])).toEqual([['写し（架空）', 'copied']]);
+    // 根拠に挙げた文に言葉を足しただけのまとめも、候補にしない。
+    const added = checkSurvey(
+      {
+        candidates: [
+          candidate({
+            name: '足し（架空）',
+            summary: '家庭で保育できないときにお預かりします。区の事業です。',
+          }),
+        ],
+      },
+      [page],
+      KINDS,
+      idOf,
+      AT,
+    );
+    expect(added.dropped.map((d) => d.reason)).toEqual(['copied']);
+    // 登録・日数の引用を含むまとめも同じ（どの引用も、根拠に挙げた文）。
+    for (const summary of [
+      '利用には、事前の利用登録が必要です。区の事業です。',
+      '登録は利用の3日前までに済ませてください。区の事業です。',
+    ]) {
+      const other = checkSurvey({ candidates: [candidate({ summary })] }, [page], KINDS, idOf, AT);
+      expect(other.dropped.map((d) => d.reason)).toEqual(['copied']);
+    }
   });
 
   it('同じ頁・同じ名前は一つ。前の物が外れても、後の物が確かめを通れば候補にし、外した訳を消す', () => {

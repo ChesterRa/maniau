@@ -2,15 +2,21 @@
 // コードが確かめて、家族に見せる候補（資源と、要れば前もっての前提の案）にする。家の情報には書かない（家族が入れる）。
 //
 // 確かめ方：
-// - 候補にするのは、同じ応答で頁の本文（text/plain）を読み、候補の引用がその本文に文字のとおりにある物だけ（全角・
-//   半角と空白をそろえて比べる）。読んでいない・PDF・読めなかった頁、引用が本文に無い物、頼んでいない種類の物は、
-//   候補にせず、外した訳だけを返す。
-// - 引用が本文にあることは、その文が頁にあることしか示さない（意味を読み違えていないこと、頁が公式であることは
-//   示さない）。事前の登録が要るか・何日前かは、Claude の読みとして原文と一緒に見せ、家族が確かめる。
+// - 候補にするのは、同じ応答で頁の本文（text/plain）を読み、候補の引用（Claude が根拠に挙げた文）がその本文に文字の
+//   とおりにある物だけ（全角・半角と空白をそろえて比べる）。読んでいない・PDF・読めなかった頁、引用が本文に無い物、頼んで
+//   いない種類の物は、候補にせず、外した訳だけを返す。
+// - 引用（頁から抜き出した文）は、照らすためにだけ使う。照らした後の候補（見せる物・記録する物・家に入る物）には残さない
+//   （引用として抜き出した第三者の頁の文を、画面に出したり持ったりしない。2026-11-05 の判断）。家族は、出典のリンクを
+//   開いて確かめる。
+// - まとめ（Claude の一文）が、頁の本文にそのままある物（頁の文の写し）と、根拠に挙げた文（まとめ・登録・日数の引用の
+//   どれか）を含む物は、その文がそろえて 8 字以上なら、候補にしない（抜き出した文を、まとめとして出さないため）。まとめが頁のほかの言葉や文を含む
+//   ことまでは止めない（止めたとは言わない）。
+// - 引用が本文にあることは、Claude が根拠として挙げた文が頁にあることしか示さない（その文がまとめを支えること、意味を
+//   読み違えていないこと、頁が公式であることは示さない）。事前の登録が要るかは、Claude の読みとして見せ、家族が頁で
+//   確かめる。
 // - 事前の登録が要るという読みは、その引用も本文にある時だけ、前もっての前提の案（だれの分か分からない・済んだか
 //   分からない）を添える。家に入るのは、家族が「要る」と確かめた時だけ。
-// - 日数は、引用が本文にあり、引用に同じ数字がある時だけ見せる。何の日数かは確かめていないので、前提の lead には
-//   入れない（期限にしない）。
+// - 日数（何日前までか）は、候補に入れない。頁の文を見せないので、数字だけでは何の数かを家族が確かめられない。
 import { z } from 'zod';
 import { Id, Preparation, Resource, type ResourceSource } from '../schema/household';
 import { DateTime } from '../time';
@@ -49,26 +55,24 @@ export interface FetchedPage {
 /** 家族に見せる候補（家の情報には、家族が入れた時だけ入る）。 */
 export const SurveyCandidate = z.object({
   id: Id,
-  /** 資源の案（扱いは「候補」。分かった事は Claude の一文と、頁の本文にあった引用）。 */
+  /** 資源の案（扱いは「候補」。分かった事は Claude の一文と、出典の頁。引用の欄は持たない）。 */
   resource: Resource,
-  /** Claude の読み：事前の登録が要るか（引用が本文にある時だけ。意味は家族が確かめる）。 */
-  registration: z.object({ required: z.boolean(), quote: z.string().min(1) }).optional(),
+  /** Claude の読み：事前の登録が要るか（その引用が本文にある時だけ。意味は家族が頁で確かめる）。 */
+  registration: z.object({ required: z.boolean() }).optional(),
   /** 要ると読んだ時の、前もっての前提の案（家族が「要る」と確かめた時だけ家に入る）。 */
   preparation: Preparation.optional(),
-  /** 頁に書かれた日数（引用が本文にあり、引用に同じ数字がある時だけ。何の日数かは確かめていない。期限にしない）。 */
-  leadDays: z.object({ days: z.number().int().positive(), quote: z.string().min(1) }).optional(),
 });
 export type SurveyCandidate = z.infer<typeof SurveyCandidate>;
 
 /**
  * 候補にしなかった物と、その訳（家族には訳ごとの数を見せる）。notRead：頁の本文を読んでいない（読んでいない・PDF・
- * 読めなかった）。quoteNotFound：引用が頁の本文に無い。kind：頼んでいない種類。同じ頁・同じ名前の重なりは、同じ
- * 候補なので数えない。
+ * 読めなかった）。quoteNotFound：引用が頁の本文に無い。copied：まとめが頁の文の写し。kind：頼んでいない種類。同じ頁・
+ * 同じ名前の重なりは、同じ候補なので数えない。
  */
 export const SurveyDropped = z.object({
   url: z.string(),
   name: z.string(),
-  reason: z.enum(['notRead', 'quoteNotFound', 'kind']),
+  reason: z.enum(['notRead', 'quoteNotFound', 'copied', 'kind']),
 });
 export type SurveyDropped = z.infer<typeof SurveyDropped>;
 
@@ -79,7 +83,7 @@ export interface SurveyChecked {
 
 /**
  * 家族に見せる調べの結果。area は調べた地域、at は調べた時刻。recorded は、前に調べて記録した物（引用の確かめも、
- * その時にした。頁の本文は持たない）。
+ * その時にした。頁の本文も引用も持たない）。
  */
 export const SurveyShown = z.object({
   area: z.string().min(1),
@@ -169,29 +173,33 @@ export function checkSurvey(
       drop('quoteNotFound');
       continue;
     }
+    // まとめが頁の文そのもの（頁の本文にまとめの文がある）か、根拠に挙げた文（まとめ・登録・日数の、どの引用でも）を
+    // 含むなら、抜き出した文を出すことになるので候補にしない。
+    const summary = folded(c.summary);
+    const cited = [c.quote, c.registration?.quote, c.leadDays?.quote].flatMap((q) =>
+      q && folded(q).length >= MIN_QUOTE ? [folded(q)] : [],
+    );
+    if (quoteOnPage(c.summary, page) || cited.some((q) => summary.includes(q))) {
+      drop('copied');
+      continue;
+    }
     const title = c.title ?? page.title;
-    const source = (quote: string): ResourceSource => ({
+    // 引用は照らすだけで、出典には入れない（quoteFound は、照らして本文にあったという結果）。
+    const source: ResourceSource = {
       kind: 'webPage',
       url: c.url,
       ...(title ? { title } : {}),
-      quote,
       fetchedAt: page.retrievedAt ?? now,
       quoteFound: true,
-    });
+    };
     const registration =
       c.registration && quoteOnPage(c.registration.quote, page) ? c.registration : undefined;
-    const lead =
-      c.leadDays &&
-      quoteOnPage(c.leadDays.quote, page) &&
-      new RegExp(`(?<!\\d)${c.leadDays.days}(?!\\d)`).test(c.leadDays.quote.normalize('NFKC'))
-        ? c.leadDays
-        : undefined;
     const resource: Resource = {
       id,
       kind: c.kind,
       name: c.name,
       ...(c.area ? { area: c.area } : {}),
-      notes: [{ text: c.summary, source: source(c.quote) }],
+      notes: [{ text: c.summary, source }],
       use: 'candidate',
     };
     accepted.add(id);
@@ -199,22 +207,19 @@ export function checkSurvey(
     candidates.push({
       id,
       resource,
-      ...(registration
-        ? { registration: { required: registration.required, quote: registration.quote } }
-        : {}),
+      ...(registration ? { registration: { required: registration.required } } : {}),
       ...(registration?.required
         ? {
             preparation: {
               id: `prep-${id}`,
               name: `${c.name}の事前の登録`,
               resourceId: id,
-              source: source(registration.quote),
+              source,
               appliesTo: { kind: 'unknown' },
               state: 'unknown',
             },
           }
         : {}),
-      ...(lead ? { leadDays: { days: lead.days, quote: lead.quote } } : {}),
     });
   }
   return { candidates, dropped: [...dropped.values()] };

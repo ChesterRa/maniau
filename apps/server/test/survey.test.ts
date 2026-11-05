@@ -26,6 +26,13 @@ const PAGE_TEXT = [
   '利用には、事前の利用登録が必要です。登録は利用の３日前までに済ませてください。',
 ].join('\n');
 
+/** 架空の頁の文のうち、モデルが引用として返す物（照らすだけで、答えにも家にも残さない）。 */
+const QUOTES = [
+  '家庭で保育できないときにお預かりします。',
+  '利用には、事前の利用登録が必要です。',
+  '登録は利用の3日前までに済ませてください。',
+];
+
 const ANSWER = {
   candidates: [
     {
@@ -293,6 +300,10 @@ describe('デモの家庭で、周りを調べる', () => {
         reason: 'notRead',
       },
     ]);
+    // 頁の文（引用）は照らすだけで、答えに出さない（候補・登録の読み・前提の案・日数のどれにも）。
+    const answer = JSON.stringify(done);
+    for (const quote of QUOTES) expect(answer).not.toContain(quote);
+    expect(answer).not.toContain('"quote"');
   });
 
   it('同じ操作 ID は調べ直さずに同じ結果。一つのデモで 3 回、サーバー全体で一日の数まで。家族の大人でなければ断る', async () => {
@@ -427,6 +438,23 @@ describe('デモの家庭で、周りを調べる', () => {
       resourceIds: ['res-sick-care'],
     });
     expect(sickCare?.steps.map((s) => s.external?.to)).toEqual(['sick-care']);
+    // 家に入った資源と前提にも、頁の文は入らない。
+    const kept = JSON.stringify(after);
+    for (const quote of QUOTES) expect(kept).not.toContain(quote);
+    // 資源の出典に頁の文を足して送っても、家には残らない（出典の形に引用の欄が無い）。
+    await save({
+      ...after,
+      resources: after.resources.map((r) =>
+        r.id === found.id
+          ? {
+              ...r,
+              notes: r.notes.map((n) => ({ ...n, source: { ...n.source, quote: QUOTES[0] } })),
+            }
+          : r,
+      ),
+    } as Household);
+    const resent = JSON.stringify(await household());
+    for (const quote of QUOTES) expect(resent).not.toContain(quote);
   });
 
   it('調べた所を使う新しいやり方：計画の頼む先がその所になり、登録を「陽菜の分・済んだ」と確かめれば印が消える。前のやり方は替わらない', async () => {
