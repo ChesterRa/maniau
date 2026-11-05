@@ -1046,8 +1046,8 @@
       "conflict": "Ways that would clash with other tasks: {{options}}",
       "issues_one": "The check found {{count}} new problem.",
       "issues_other": "The check found {{count}} new problems.",
-      "unverified_one": "{{count}} point couldn't be checked (part of the calculation is incomplete).",
-      "unverified_other": "{{count}} points couldn't be checked (part of the calculation is incomplete).",
+      "unverified_one": "{{count}} point couldn't be checked.",
+      "unverified_other": "{{count}} points couldn't be checked.",
       "unverifiedRoute": "The route to a place hasn’t been checked (times are estimates).",
       "rechoose": "“{{what}}”: a way it uses changed, so its ways need to be chosen again.",
       "preparation": {
