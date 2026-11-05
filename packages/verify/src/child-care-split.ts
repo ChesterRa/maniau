@@ -39,6 +39,7 @@ export function checkSplitCareClaims(
   history: History,
   report: Collector,
 ): void {
+  const unavailable = household.unavailable ?? [];
   const validBasis = (requirement: Requirement): boolean => {
     if (!history.complete || requirement.basis.itemIds.length !== 1) return false;
     const id = requirement.basis.itemIds[0];
@@ -74,7 +75,7 @@ export function checkSplitCareClaims(
         );
       continue;
     }
-    const model = modeledCareGaps(household, requirement.date);
+    const model = modeledCareGaps(household, requirement.date, unavailable);
     if (!validBasis(requirement)) {
       if (splits.length || model.gaps.length >= 2)
         report.undetermined(
@@ -158,7 +159,7 @@ export function checkSplitCareClaims(
       )
     )
       continue;
-    const model = modeledCareGaps(household, requirement.date);
+    const model = modeledCareGaps(household, requirement.date, unavailable);
     if (!model.complete || model.gaps.length < 2) continue;
     if (!validBasis(requirement) || requirement.conditional)
       report.undetermined(

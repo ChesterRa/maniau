@@ -1,6 +1,7 @@
 // 窓型の案が、必要な約束が全てそろっても、今の情報では受け持てると示せない時間を独立に確かめる。
 // まだ引き受けていない・返事待ちという今の状態は、潜在的な受け持ちとは分ける。
 import type { Household, OptionPlan, PlanResult, Way } from '@maniau/core';
+import { recordedBusyTimeEvidence } from './busy-time-evidence';
 import type { FactState } from './facts';
 import type { History } from './history';
 import type { NeedWhenWindow } from './need-when';
@@ -124,6 +125,22 @@ function familyPlacement(
     );
     if (!routineFits) {
       unplaced = true; // 日程だけで置けないと分かる（例外の日は routinesOn が先に使う）。
+      continue;
+    }
+    const unavailable = household.unavailable ?? [];
+    const busy = recordedBusyTimeEvidence(
+      unavailable,
+      assigned,
+      whole.start,
+      whole.end,
+      household.timeZone,
+    );
+    if (busy.conflicts.length > 0) {
+      unplaced = true; // 決まった人の明示の占用と、受け持つ窓が重なる。
+      continue;
+    }
+    if (busy.incomplete) {
+      unknown = true;
       continue;
     }
     if (!task.start && !task.end) {

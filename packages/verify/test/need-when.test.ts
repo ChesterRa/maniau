@@ -1,8 +1,11 @@
 // 候補・答え・人数・決定の版を事象から独立に検証する。求解器の関数を使わない。
-import { Household } from '@maniau/core';
+import { DomainEvent, Household } from '@maniau/core';
 import { describe, expect, it } from 'vitest';
 import { verifyPlan } from '../src';
-import { independentAvailability } from '../src/need-when';
+import { collectFacts } from '../src/facts';
+import { checkHistory } from '../src/history';
+import { checkNeedWhen, independentAvailability } from '../src/need-when';
+import { Collector } from '../src/report';
 import { arrangement, event, household, option, plan, requirement } from './fixtures';
 
 const at = '2026-11-30T10:00+09:00';
@@ -249,6 +252,50 @@ function wayCase() {
 }
 
 describe('候補と答えの独立な検証', () => {
+  it('候補と名簿を事象からたどり、家に記録された占用との重なりを照らす', () => {
+    const busy = [{ id: 'u1', memberId: 'a', date: '2026-12-19', start: '14:00', end: '15:30' }];
+    const checkBusy = (
+      shown?: { personId: string; unavailableId: string; start: string; end: string }[],
+    ) => {
+      const family = { ...household(), unavailable: busy } as Household;
+      const events = initialEvents().map((entry) => DomainEvent.parse(entry));
+      const value = plan({
+        throughSeq: events.at(-1)?.seq ?? 0,
+        requirements: [
+          requirement({
+            kind: 'need',
+            what: '架空の用件',
+            basis: { itemIds: ['item-1'] },
+            when: initialWhen(),
+          }),
+        ],
+      });
+      const when = value.requirements[0]?.when;
+      const c2 = when?.candidates.find((c) => c.id === 'c2');
+      if (!c2) throw new Error('候補が無い');
+      if (shown !== undefined) Object.assign(c2, { unavailable: shown });
+      const report = new Collector();
+      const history = checkHistory(family, value, events, report);
+      const facts = collectFacts(history.events, report);
+      checkNeedWhen(family, value, facts, history, report);
+      return report.issues.filter((issue) => issue.code.startsWith('need_when_unavailable'));
+    };
+    const one = {
+      personId: 'a',
+      unavailableId: 'u1',
+      start: '2026-12-19T14:00+09:00',
+      end: '2026-12-19T15:30+09:00',
+    };
+    const correct = [one];
+    expect(checkBusy(correct)).toEqual([]);
+    expect(checkBusy()).toContainEqual(
+      expect.objectContaining({ kind: 'violation', code: 'need_when_unavailable_mismatch' }),
+    );
+    expect(checkBusy([{ ...one, end: '2026-12-19T15:00+09:00' }])).toContainEqual(
+      expect.objectContaining({ kind: 'violation', code: 'need_when_unavailable_mismatch' }),
+    );
+  });
+
   it('少人数の全割当を列挙した別 oracle と、成立と左右する人が合う', () => {
     let cases = 0;
     for (let n = 0; n <= 5; n += 1) {

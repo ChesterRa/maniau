@@ -1,4 +1,5 @@
 import type { Household, Place, PlanResult, RoutineSegment, Task } from '@maniau/core';
+import { recordedBusyTimeEvidence } from './busy-time-evidence';
 import { checkDetour } from './detour';
 import type { History } from './history';
 import { storeMapEvidence } from './map-evidence';
@@ -433,6 +434,29 @@ export function checkSchedule(
         ),
       },
     };
+    // 済んだ作業に今の記録を遡って当てない。まだ必要な作業は、前後の移動を含めて明示の占用と照らす。
+    const unavailable = household.unavailable ?? [];
+    if (task.commitment !== 'done' && unavailable.length > 0) {
+      const evidence = recordedBusyTimeEvidence(
+        unavailable,
+        task.assigneeId,
+        scheduled.occupied.start,
+        scheduled.occupied.end,
+        household.timeZone,
+      );
+      if (evidence.conflicts.length > 0)
+        report.violation(
+          'task_unavailable',
+          task.key,
+          '作業や移動が記録した手が離せない時間と重なる。',
+        );
+      if (evidence.incomplete)
+        report.undetermined(
+          'task_unavailable_unverified',
+          task.key,
+          '手が離せない時間を照らせない。',
+        );
+    }
     if (task.commitment === 'done' && end < instantMinute(plan.now)) {
       report.undetermined(
         'historical_routine_unverified',

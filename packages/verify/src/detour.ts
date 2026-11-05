@@ -1,4 +1,5 @@
 import type { Household, PlanResult, RoutineSegment, Task } from '@maniau/core';
+import { recordedBusyTimeEvidence } from './busy-time-evidence';
 import type { History } from './history';
 import { storeMapEvidence } from './map-evidence';
 import { proposalMatches } from './proposal';
@@ -40,6 +41,8 @@ function checkOtherAdult(
   const startLocal = localMinute(planned, household.timeZone);
   const endLocal = localMinute(delayed, household.timeZone);
   let uncertain = false;
+  let explicitlyUnavailable = false;
+  const busyRecords = household.unavailable ?? [];
   for (const adult of household.members.filter(
     (member) => member.kind === 'adult' && member.active && member.id !== task.assigneeId,
   )) {
@@ -68,6 +71,21 @@ function checkOtherAdult(
           ),
       );
       if (!knownAway) uncertain = true;
+      continue;
+    }
+    const busy = recordedBusyTimeEvidence(
+      busyRecords,
+      adult.id,
+      planned,
+      delayed,
+      household.timeZone,
+    );
+    if (busy.conflicts.length > 0) {
+      explicitlyUnavailable = true;
+      continue;
+    }
+    if (busy.incomplete) {
+      uncertain = true;
       continue;
     }
     let unavailable = false;
@@ -112,6 +130,12 @@ function checkOtherAdult(
       'detour_other_adult_unverified',
       task.key,
       '他の大人が遅れた到家まで家にいるか、作業の場所から確かめられない。',
+    );
+  } else if (explicitlyUnavailable) {
+    report.violation(
+      'detour_other_adult_unavailable',
+      task.key,
+      '遅れた到家まで見守れる別の大人を、記録した時間から確認できない。',
     );
   } else {
     report.violation(

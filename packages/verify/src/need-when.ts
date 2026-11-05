@@ -5,6 +5,7 @@ import type { History } from './history';
 import { aboutMatches, sameValue } from './need-proof';
 import type { Collector } from './report';
 import { instantMinute } from './time';
+import { checkCandidateUnavailable, fixedFamilyCoverBusy } from './unavailable-evidence';
 
 type Candidate = Extract<DomainEvent, { type: 'needCandidatesSet' }>['candidates'][number];
 type Person = Extract<DomainEvent, { type: 'needPeopleSet' }>['people'][number];
@@ -694,6 +695,12 @@ export function checkNeedWhen(
       facts.active.get(itemId) === true &&
       !facts.staleItems.has(itemId)
     ) {
+      if (requirement.when.candidates.some((candidate) => candidate.unavailable !== undefined))
+        report.violation(
+          'need_when_unavailable_mismatch',
+          requirement.key,
+          '名簿が無いのに相手の手が離せない時間を出している。',
+        );
       if (
         requirement.when.recommended ||
         requirement.when.people.length > 0 ||
@@ -820,6 +827,67 @@ export function checkNeedWhen(
     for (const candidate of e.candidates) {
       const actual = when.candidates.find((c) => c.id === candidate.id);
       if (!actual) continue;
+      const unavailable = household.unavailable ?? [];
+      const shown = actual.unavailable;
+      if (unavailable.length > 0 || shown !== undefined) {
+        const result = checkCandidateUnavailable(
+          household,
+          e.people,
+          candidate,
+          unavailable,
+          shown,
+        );
+        if (result === 'mismatch')
+          report.violation(
+            'need_when_unavailable_mismatch',
+            candidate.id,
+            '候補と手が離せない時間の重なりが家庭の記録と違う。',
+          );
+        else if (result === 'undetermined')
+          report.undetermined(
+            'need_when_unavailable_unverified',
+            candidate.id,
+            '名簿または手が離せない時間を照らせない。',
+          );
+      }
+      // 候補の窓の受け持ちで担当が固定され、明示の占用が重なる場合だけ、使えるという表示を独立に断る。
+      // やり方の選びが今の内容の物と照らせなければ、推量しない（その検査は別に未判定を残す）。
+      if (unavailable.length > 0 && item.interpretation.holdNeeded !== false) {
+        const selection = history.events.findLast(
+          (event) => event.type === 'needWaysSet' && event.itemId === itemId,
+        );
+        const selected = selection?.type === 'needWaysSet' ? selection.wayIds : [];
+        const selectedWays = selected.flatMap((id) => {
+          const way = household.ways.find((entry) => entry.id === id);
+          return way ? [way] : [];
+        });
+        const matches =
+          selection?.type === 'needWaysSet' &&
+          selectedWays.length === selected.length &&
+          aboutMatches(selection.about, item, selectedWays) === true;
+        if (matches) {
+          for (const displayed of actual.ways) {
+            const way = selectedWays.find((entry) => entry.id === displayed.wayId);
+            if (!way) continue;
+            const cover = fixedFamilyCoverBusy(way, candidate, unavailable);
+            if (
+              cover === 'blocked' &&
+              (displayed.usable || !displayed.reasons.includes('coverGaps'))
+            )
+              report.violation(
+                'need_when_busy_way_mismatch',
+                candidate.id,
+                '受け持つ人の記録と候補の窓が重なるのに、受け持ちの不足が無い。',
+              );
+            else if (cover === 'undetermined')
+              report.undetermined(
+                'need_when_busy_way_unverified',
+                candidate.id,
+                '受け持つ人の手が離せない時間を照らせない。',
+              );
+          }
+        }
+      }
       const start = Date.parse(`${candidate.date}T${candidate.startTime}:00+09:00`) / 60_000;
       const end = Date.parse(`${candidate.date}T${candidate.endTime}:00+09:00`) / 60_000;
       if (

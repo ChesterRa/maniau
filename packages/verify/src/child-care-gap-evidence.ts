@@ -2,6 +2,7 @@
 import type { Household } from '@maniau/core';
 import { routinesOn } from './routine';
 import { type Interval, timeOfDay } from './time';
+import type { RecordedUnavailable } from './unavailable-evidence';
 
 /** 記録から製品が計算する空き。実際に大人がいないという証明ではない。 */
 export interface ModeledCareGaps {
@@ -63,11 +64,35 @@ function add(output: Interval[], start: number, end: number): void {
 
 /**
  * 区間の端で一日を区切って照らす。一日の記録がある大人は、区間の外を従来どおり家とする。
- * 一日が無い大人は不明。家と扱う人がおらず、記録上見られない人が一人以上いる時を空きとする。
+ * 一日が無い大人は不明。明示の「手が離せない」は、その日の記録が無い人にも重ねるが、不明を家とはしない。
+ * 家と扱う人がおらず、記録上見られない人が一人以上いる時を空きとする。
  */
-export function modeledCareGaps(household: Household, date: string): ModeledCareGaps {
+export function modeledCareGaps(
+  household: Household,
+  date: string,
+  unavailable: readonly RecordedUnavailable[] = [],
+): ModeledCareGaps {
   const adults = household.members.filter((member) => member.kind === 'adult' && member.active);
-  const records = adults.map((adult) => readSegments(household, adult.id, date));
+  const records = adults.map((adult) => {
+    const routine = readSegments(household, adult.id, date);
+    let complete = routine.complete;
+    const busy: Interval[] = [];
+    for (const row of unavailable) {
+      if (row.memberId !== adult.id || row.date !== date) continue;
+      if (
+        !/^([01]\d|2[0-3]):[0-5]\d$/.test(row.start) ||
+        !/^([01]\d|2[0-3]):[0-5]\d$/.test(row.end)
+      ) {
+        complete = false;
+        continue;
+      }
+      const start = timeOfDay(row.start);
+      const end = timeOfDay(row.end);
+      if (start >= end) complete = false;
+      else busy.push({ start, end });
+    }
+    return { ...routine, complete, busy };
+  });
   const complete =
     adults.length > 0 &&
     new Set(adults.map((adult) => adult.id)).size === adults.length &&
@@ -76,7 +101,9 @@ export function modeledCareGaps(household: Household, date: string): ModeledCare
     ...new Set([
       0,
       24 * 60,
-      ...records.flatMap((record) => record.segments.flatMap((s) => [s.start, s.end])),
+      ...records.flatMap((record) =>
+        [...record.segments, ...record.busy].flatMap((s) => [s.start, s.end]),
+      ),
     ]),
   ].sort((a, b) => a - b);
   const gaps: Interval[] = [];
@@ -85,6 +112,7 @@ export function modeledCareGaps(household: Household, date: string): ModeledCare
     const end = points[i + 1];
     if (start === undefined || end === undefined || start >= end) continue;
     const states = records.map((record) => {
+      if (record.busy.some((entry) => entry.start <= start && entry.end >= end)) return 'cannot';
       if (!record.hasDay) return 'unknown';
       return record.segments.some(
         (segment) => segment.away && segment.start <= start && segment.end >= end,

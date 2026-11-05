@@ -1,7 +1,11 @@
 // 窓の案の潜在的な不足を、事項・やり方・事象から独立に検査する。求解器は使わない。
-import { Household } from '@maniau/core';
+import { DomainEvent, Household } from '@maniau/core';
 import { describe, expect, it } from 'vitest';
 import { verifyPlan } from '../src';
+import { collectFacts } from '../src/facts';
+import { checkHistory } from '../src/history';
+import { checkNeedPotentialCoverage } from '../src/need-potential';
+import { Collector } from '../src/report';
 import { arrangement, event, household, option, plan, requirement, task } from './fixtures';
 
 const DATE = '2026-12-07';
@@ -182,6 +186,27 @@ function codes(input: Case) {
 }
 
 describe('窓の案が潜在的に受け持てると示せない時間', () => {
+  it('受け持つ人が決まっていて窓に占用があれば、窓全体の印を求める', () => {
+    const checkBusy = (gaps: Case['gaps'], start: string, end: string) => {
+      const sample = materials({ fixedAssignee: true, scheduled: true, gaps });
+      const family = {
+        ...sample.household,
+        unavailable: [{ id: 'u1', memberId: 'a', date: DATE, start, end }],
+      } as Household;
+      const report = new Collector();
+      const events = sample.events.map((entry) => DomainEvent.parse(entry));
+      const history = checkHistory(family, sample.plan, events, report);
+      const facts = collectFacts(history.events, report);
+      checkNeedPotentialCoverage(family, sample.plan, facts, history, report, new Map());
+      return report.issues.filter((issue) => issue.code.startsWith('need_potential_'));
+    };
+    expect(checkBusy(FULL, '08:30', '09:00')).toEqual([]);
+    expect(checkBusy(undefined, '08:30', '09:00')).toContainEqual(
+      expect.objectContaining({ kind: 'violation', code: 'need_potential_gap_mismatch' }),
+    );
+    expect(checkBusy(undefined, '10:00', '11:00')).toEqual([]);
+  });
+
   it('受け持つ手順が無ければ全窓が不足し、案を見せても勧めない', () => {
     expect(issues({ cover: 'none', gaps: FULL })).toEqual([]);
     expect(codes({ cover: 'none', gaps: FULL, recommended: true })).toContain(
