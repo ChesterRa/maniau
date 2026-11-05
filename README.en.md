@@ -2,9 +2,11 @@
 
 [日本語](README.md)
 
-**A planning app for working parents that does the scheduling math from what's around your home**
+**An AI that connects the resources around you with your arrangements, so people can decide, take things on, and adapt to change while they still have a choice. It starts with dual-income families raising children.**
 
-Your family and Claude keep a shared list of what's around your home. From nursery and school notices and your everyday week, Maniau works out in code what to decide, by when, and who does it, and follows each task until someone in the family takes it on.
+Some arrangements have a last moment, well before the day itself, when an option can still be chosen (its decision deadline). When several people share the work, there is also the gap between asking someone and their taking it on, waiting for replies, and tidying up after plans change. In Maniau, Claude reads scattered information and looks around the neighborhood when asked, code works out the decision deadlines and what each choice would set in motion, and a verifier written separately from the planner checks the plan. People make the choices.
+
+The idea isn't limited to childcare. The first area is the arrangements of dual-income families raising children, built and checked with fictional family scenarios. Your family and Claude keep a shared list of what's around your home. From nursery and school notices and your everyday week, Maniau works out in code what to decide, by when, and who does it, and follows each task until someone in the family takes it on.
 
 **Live demo: https://maniauserver-production.up.railway.app** (no sign-up; it runs on a fictional family. See the [tour of the demo](#tour-of-the-demo) below.)
 
@@ -148,6 +150,7 @@ Next:
 - Regular re-checks of what's around us (for now, Maniau looks again only when the family taps).
 - Using the family's usual places for recommending ways too (such as a usual sick-child care room).
 - More kinds of places to look for (now sick-child care, temporary childcare and family support), and looking around for family households.
+- Whether this extends to similar arrangements outside childcare (choices with deadlines, and favors asked of others). We'll study each area's people, resources, deadlines and exceptions, and try it, before deciding (today's data model and screens assume a household).
 
 What Maniau can't do yet, and what hasn't been checked, is listed in [Details and limitations](docs/scope.en.md#current-scope-and-limitations).
 
