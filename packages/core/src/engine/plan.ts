@@ -466,7 +466,9 @@ export function planFromState(state: EngineState, now?: DateTime, maps?: MapInpu
   // 通用の「すること」は、子の居場所と買い物の作業を置いた後に（同じ人の時間を重ねない）。
   const needBusy = new Map<string, Busy[]>();
   addBusy(needBusy, tasks);
-  for (const entry of needs) planNeed(ctx, entry, needBusy, { requirements, arrangements, tasks });
+  for (const entry of needs) {
+    planNeed(ctx, entry, needBusy, { requirements, arrangements, tasks }, items);
+  }
   const requests = externalRequests(ctx, tasks, arrangements, items);
   // 提出物の作業は、ほかの作業と依頼がそろった後に置く（持った人の、選んだ案のほかの作業と重ならない
   // ように）。提出物は外の相手が無いので、依頼には影響しない。
@@ -918,7 +920,8 @@ function waysSelectedNow(ctx: Context, arrangementKey: string): ReadonlySet<stri
  * やり方の案。準備の手順（受け持ち以外）は、子の居場所の取れる手と同じ置き方（careOption：手順の逆算、手順ごとの
  * 締切、ほかの作業を避ける、担当、済み、返事待ち）で、鎖の最後は窓の始まり（window）か締切（by）。やり方に締切が
  * あり、それより早ければ、やり方の締切。受け持ちの手順は、窓の時刻に置く（その人のほかの作業と重なる時は時刻を
- * 置かない）。準備の手順が無いやり方の決め時は、窓の始まりか締切。
+ * 置かない）。準備の手順が無いやり方の決め時は、窓の始まりか締切。conflicted は、準備の手順を、与えたふさがりを
+ * 避けて置けなかった（時刻を置いていない。careOption と同じ）。
  */
 function wayOption(
   ctx: Context,
@@ -930,7 +933,7 @@ function wayOption(
   live: boolean,
   tasks: Task[],
   busy: ReadonlyMap<string, readonly Busy[]>,
-): OptionPlan {
+): { option: OptionPlan; conflicted: boolean } {
   const optionKey = keys.option(arrangementKey, way.id);
   const limit = frame.shape === 'window' ? frame.start : frame.by;
   const needRule: DeadlineRule = { type: 'onTheDay', at: ctx.fmt(limit).slice(11, 16) };
@@ -945,7 +948,7 @@ function wayOption(
   const prep: StepTemplate[] = way.steps
     .filter((s) => !familyCover(s))
     .map(({ name: _name, cover: _cover, ...s }) => ({ ...s, titleKey: 'task.wayStep' }));
-  const option: OptionPlan =
+  const prepared =
     prep.length > 0
       ? careOption(
           ctx,
@@ -966,19 +969,23 @@ function wayOption(
           busy,
           (step) => ({ what: names.get(step.id) ?? '' }),
           about,
-        ).option
+        )
       : {
-          key: optionKey,
-          arrangementKey,
-          templateId: way.id,
-          titleKey: 'option.way',
-          decisionDeadline: ctx.fmt(limit),
-          deadlineCertainty: 'estimate',
-          expired: limit < ctx.now,
-          cost: way.cost,
-          taskKeys: [],
+          option: {
+            key: optionKey,
+            arrangementKey,
+            templateId: way.id,
+            titleKey: 'option.way',
+            decisionDeadline: ctx.fmt(limit),
+            deadlineCertainty: 'estimate' as const,
+            expired: limit < ctx.now,
+            cost: way.cost,
+            taskKeys: [],
+          },
+          conflicted: false,
         };
-  if (frame.shape !== 'window') return option;
+  const { option, conflicted } = prepared;
+  if (frame.shape !== 'window') return { option, conflicted };
   // このやり方の作業（前の手順と、先に置いた受け持ち）も、同じ人の時間として避ける（受け持ちどうしを重ねない）。
   const mine = new Map<string, Busy[]>([...busy].map(([who, used]) => [who, [...used]]));
   addBusy(
@@ -1035,7 +1042,12 @@ function wayOption(
     );
     option.taskKeys.push(key);
   }
-  return option;
+  return { option, conflicted };
+}
+
+/** ふさがりの写し（置き方を試す間、元のふさがりを変えない）。 */
+function copyBusy(busy: ReadonlyMap<string, readonly Busy[]>): Map<string, Busy[]> {
+  return new Map([...busy].map(([who, used]) => [who, [...used]]));
 }
 
 /**
@@ -1048,6 +1060,7 @@ function planNeed(
   entry: LiveItem,
   busy: Map<string, Busy[]>,
   out: { requirements: Requirement[]; arrangements: Arrangement[]; tasks: Task[] },
+  items: readonly LiveItem[],
 ): void {
   const { item, rootId, live, conditional } = entry;
   const requirementKey = keys.needRequirement(rootId);
@@ -1091,10 +1104,11 @@ function planNeed(
   });
   if (!frame) return;
   const { ways, stale } = chosenWays(ctx, item);
-  const own: Task[] = [];
   const stoppedIds = new Set(ctx.household.stoppedWayIds ?? []);
-  const options = ways.map((way) => {
-    const option = wayOption(
+  const keyOf = (way: Way) => keys.option(arrangementKey, way.id);
+  const place = (way: Way, around: ReadonlyMap<string, readonly Busy[]>): PlacedChain => {
+    const tasks: Task[] = [];
+    const { option, conflicted } = wayOption(
       ctx,
       way,
       frame,
@@ -1102,69 +1116,128 @@ function planNeed(
       requirementKey,
       item,
       live,
-      own,
-      busy,
+      tasks,
+      around,
     );
-    // やり方の前提（事前の登録など）のうち、使う日・だれのために満たされていない物を印にする（勧めない）。
-    const gaps = preparationGaps(ctx.household, way, frame.date, item.interpretation.forMemberId);
-    // やり方が使う資源のうち、家族が「使わない」とした物（勧める候補にしない）。
-    const unused = unusedResources(ctx.household, way);
-    // 窓の「すること」で、約束が全部そろっても受け持てると示せない時間（勧める候補にしない）。やり方の形から分かる
-    // 物に加え、受け持つ人の決まった家族の受け持ちを、今の計算では窓に置けない時（ふだんの予定やほかの作業との
-    // 重なりなど）は、窓の全部（覆ったかの計算は、時刻に置いた受け持ちしか数えない）。受け持つ人がまだ決まって
-    // いない物は数えない（まだ分からない。選ぶ時に決まる）。
-    const unplaced = own.some(
-      (t) =>
-        t.basis.optionKey === option.key &&
-        t.cover === true &&
-        t.assigneeId !== undefined &&
-        t.start === undefined,
-    );
-    const holes =
-      frame.shape !== 'window'
-        ? []
-        : unplaced
-          ? [{ start: frame.start, end: frame.end }]
-          : coverGaps(ctx, way, { start: frame.start, end: frame.end }, item.interpretation.place);
-    return {
-      ...option,
-      ...(stoppedIds.has(way.id) ? { stopped: true as const } : {}),
-      ...(gaps.length > 0 ? { needsPreparation: gaps } : {}),
-      ...(unused.length > 0 ? { unusedResources: unused } : {}),
-      ...(holes.length > 0
-        ? { coverGaps: holes.map((g) => ({ start: ctx.fmt(g.start), end: ctx.fmt(g.end) })) }
-        : {}),
-    };
-  });
-  addBusy(busy, own);
-  out.tasks.push(...own);
-  const base: Arrangement = {
-    key: arrangementKey,
-    requirementKey,
-    kind: 'need',
-    needShape: frame.shape,
-    // 締切の形の始まりは計算した時刻（締切を過ぎたら締切。始まりを終わりの後にしない）。
-    start: ctx.fmt(frame.shape === 'window' ? frame.start : Math.min(ctx.now, frame.by)),
-    end: ctx.fmt(frame.shape === 'window' ? frame.end : frame.by),
-    status: ways.length === 0 ? 'undetermined' : 'decidable',
-    options,
-    backupOptionKeys: backupsOffered(ctx, arrangementKey, options),
-    reasons:
-      ways.length === 0 ? [{ code: 'inputMissing', refs: [stale ? 'waysChanged' : 'ways'] }] : [],
-    live,
-    ...(conditional ? { conditional } : {}),
-    ...chosen(ctx, arrangementKey, options),
+    return { option, tasks, conflicted };
   };
-  if (ways.length === 0) {
-    out.arrangements.push(base);
-    return;
-  }
-  const placed = withStatus(ctx, base, own);
-  out.arrangements.push(
-    frame.shape === 'window'
-      ? withCoverage(ctx, placed, own, ways, item.interpretation.place)
-      : placed,
-  );
+  // 家族が進める本命・予備（子の居場所の placeCare と同じ見方）。進める案の前もってする手順は、どれも実際にする
+  // ので、同じ人の時間で重ならないように一つずつ置き、置いた分を、進める案どうしのふさがりに足す（置く順は
+  // bestOrder で選び、今ある置き方の中で、引き受けた時刻から動く作業が少ない順を選ぶ。前の時刻を保つとは限らない）。
+  // 置けない時は時刻を置かず、手配の理由に timeConflict を出す（careOption と conflictReasons）。窓の間の受け持ち
+  // （cover）は、進める案どうしのふさがりに足さない（今までと同じ。本命と予備の受け持ちが同じ人・同じ窓に重なる時の
+  // 扱いは、別に決める）。本命が決まって、もう進めない予備（idle）は、進める案に入れない（子の居場所の idleBackups と
+  // 同じ見方で、一度置いた結果から決めて置き直す）。比べるだけの案と、もう進めない予備は、今までどおり、ほかの用事の
+  // ふさがりだけを避けて置く（進める案の作業も、互いも、ふさがない。選ばれると、進める案として置き直す）。
+  const primaryKey = ctx.state.primary.get(arrangementKey);
+  const backupKeys = ctx.state.backups.get(arrangementKey) ?? new Set<string>();
+  const prepOnly = (tasks: readonly Task[]) => tasks.filter((t) => t.cover !== true);
+  const build = (idle: ReadonlySet<string>): NeedPlaced => {
+    const advancing = [
+      ...ways.filter((way) => keyOf(way) === primaryKey),
+      ...ways.filter(
+        (way) => keyOf(way) !== primaryKey && backupKeys.has(keyOf(way)) && !idle.has(keyOf(way)),
+      ),
+    ];
+    const joint = bestOrder(
+      advancing,
+      (order) => {
+        const around = copyBusy(busy);
+        const result = new Map<string, PlacedChain>();
+        for (const way of order) {
+          const chain = place(way, around);
+          addBusy(around, prepOnly(chain.tasks));
+          result.set(chain.option.key, chain);
+        }
+        return result;
+      },
+      (result) => chainScore([...result.values()]),
+      // 重なりも、引き受けた時刻からの動きも無ければ、本命が先の決まった順のままにする。
+      (result) =>
+        [...result.values()].every((c) => !c.conflicted && c.tasks.every((t) => !t.reconfirm)),
+    ).result;
+    const chains = ways.map((way) => joint.get(keyOf(way)) ?? place(way, busy));
+    const own = chains.flatMap((chain) => chain.tasks);
+    const options = chains.map(({ option }, index) => {
+      const way = ways[index];
+      if (!way) throw new Error('やり方と案の数が合わない');
+      // やり方の前提（事前の登録など）のうち、使う日・だれのために満たされていない物を印にする（勧めない）。
+      const gaps = preparationGaps(ctx.household, way, frame.date, item.interpretation.forMemberId);
+      // やり方が使う資源のうち、家族が「使わない」とした物（勧める候補にしない）。
+      const unused = unusedResources(ctx.household, way);
+      // 窓の「すること」で、約束が全部そろっても受け持てると示せない時間（勧める候補にしない）。やり方の形から分かる
+      // 物に加え、受け持つ人の決まった家族の受け持ちを、今の計算では窓に置けない時（ふだんの予定やほかの作業との
+      // 重なりなど）は、窓の全部（覆ったかの計算は、時刻に置いた受け持ちしか数えない）。受け持つ人がまだ決まって
+      // いない物は数えない（まだ分からない。選ぶ時に決まる）。
+      const unplaced = own.some(
+        (t) =>
+          t.basis.optionKey === option.key &&
+          t.cover === true &&
+          t.assigneeId !== undefined &&
+          t.start === undefined,
+      );
+      const holes =
+        frame.shape !== 'window'
+          ? []
+          : unplaced
+            ? [{ start: frame.start, end: frame.end }]
+            : coverGaps(
+                ctx,
+                way,
+                { start: frame.start, end: frame.end },
+                item.interpretation.place,
+              );
+      return {
+        ...option,
+        ...(stoppedIds.has(way.id) ? { stopped: true as const } : {}),
+        ...(gaps.length > 0 ? { needsPreparation: gaps } : {}),
+        ...(unused.length > 0 ? { unusedResources: unused } : {}),
+        ...(holes.length > 0
+          ? { coverGaps: holes.map((g) => ({ start: ctx.fmt(g.start), end: ctx.fmt(g.end) })) }
+          : {}),
+      };
+    });
+    const base: Arrangement = {
+      key: arrangementKey,
+      requirementKey,
+      kind: 'need',
+      needShape: frame.shape,
+      // 締切の形の始まりは計算した時刻（締切を過ぎたら締切。始まりを終わりの後にしない）。
+      start: ctx.fmt(frame.shape === 'window' ? frame.start : Math.min(ctx.now, frame.by)),
+      end: ctx.fmt(frame.shape === 'window' ? frame.end : frame.by),
+      status: ways.length === 0 ? 'undetermined' : 'decidable',
+      options,
+      backupOptionKeys: backupsOffered(ctx, arrangementKey, options),
+      reasons:
+        ways.length === 0
+          ? [{ code: 'inputMissing', refs: [stale ? 'waysChanged' : 'ways'] }]
+          : conflictReasons(joint, arrangementKey),
+      live,
+      ...(conditional ? { conditional } : {}),
+      ...chosen(ctx, arrangementKey, options),
+    };
+    if (ways.length === 0) return { arrangement: base, tasks: own };
+    const placed = withStatus(ctx, base, own);
+    return {
+      arrangement:
+        frame.shape === 'window'
+          ? withCoverage(ctx, placed, own, ways, item.interpretation.place)
+          : placed,
+      tasks: own,
+    };
+  };
+  let result = build(new Set());
+  const idle = idleOptionKeys(ctx, [result.arrangement], result.tasks, items);
+  if (idle.size > 0) result = build(idle);
+  addBusy(busy, result.tasks);
+  out.tasks.push(...result.tasks);
+  out.arrangements.push(result.arrangement);
+}
+
+/** 通用の「すること」の、置いた手配とその作業。 */
+interface NeedPlaced {
+  arrangement: Arrangement;
+  tasks: Task[];
 }
 
 /** 家族が窓の間受け持つ手順（外の相手に頼む手順でない受け持ち）。 */
@@ -1304,9 +1377,28 @@ function idleBackups(
   items: readonly LiveItem[],
 ): Set<string> {
   const placed = [...care.values()];
-  const arrangements = placed.flatMap((p) => p.arrangements);
-  const tasks = placed.flatMap((p) => p.tasks);
-  const view = { arrangements, requests: externalRequests(ctx, tasks, arrangements, items) };
+  return idleOptionKeys(
+    ctx,
+    placed.flatMap((p) => p.arrangements),
+    placed.flatMap((p) => p.tasks),
+    items,
+  );
+}
+
+/**
+ * 置いた手配の予備のうち、もう進めない物（作業のどれも isActiveTask でない）。子の居場所と通用の「すること」の
+ * 両方で、同じ決まりで見る（依頼と手配の状態は、一度置いた結果から作る）。
+ */
+function idleOptionKeys(
+  ctx: Context,
+  arrangements: readonly Arrangement[],
+  tasks: readonly Task[],
+  items: readonly LiveItem[],
+): Set<string> {
+  const view = {
+    arrangements: [...arrangements],
+    requests: externalRequests(ctx, tasks, arrangements, items),
+  };
   const idle = new Set<string>();
   for (const arrangement of arrangements) {
     for (const optionKey of arrangement.backupOptionKeys) {
