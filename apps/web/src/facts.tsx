@@ -16,7 +16,7 @@ import {
 } from '@maniau/core';
 import { useState } from 'react';
 import { ConditionLine, type Ctx, day, nameOf, timeOnly } from './screens';
-import { Button, Card, Header, Label, Main, Row, Text, Title } from './ui';
+import { Button, Card, Header, Label, Main, MoreLink, Row, Text, Title } from './ui';
 import { Shown, useHouseholdSave } from './ways';
 
 const field = 'min-h-11 rounded-xl border border-line bg-card px-2 text-base';
@@ -51,6 +51,10 @@ export function FactsCard({
   const times = list(
     (requirement.unsure ?? []).map((s) => `${timeOnly(ctx, s.start)}–${timeOnly(ctx, s.end)}`),
   );
+  // なぜその日に見る人が要るか（読み取りの言葉のまま、見出しのように。一文で言い切らない：条件しだいの物は、次の
+  // 一行が条件を書く）と、元の文へ戻る入口（元の文が手元にある時だけ）。
+  const item = ctx.items.find((l) => requirement.basis.itemIds.includes(l.item.id))?.item;
+  const source = item && ctx.sources.get(item.sourceId);
   return (
     <Card>
       <Label tone="warn">{ctx.t('card.facts.label')}</Label>
@@ -60,6 +64,7 @@ export function FactsCard({
           child: nameOf(ctx.household, childOf(requirement)),
         })}
       </Title>
+      {requirement.what && <Text>{ctx.t('card.facts.why', { what: requirement.what })}</Text>}
       <ConditionLine
         ctx={ctx}
         basis={{ itemIds: requirement.basis.itemIds, requirementKey: requirement.key }}
@@ -69,6 +74,17 @@ export function FactsCard({
           ? ctx.t('card.facts.wholeDay', { who })
           : ctx.t('card.facts.times', { who, times })}
       </Text>
+      {item && source && (
+        <MoreLink
+          onClick={() =>
+            ctx.go({ name: 'sources', sourceId: item.sourceId, highlight: item.sentenceIds })
+          }
+        >
+          {source.title
+            ? ctx.t('card.question.sourceTitled', { title: source.title })
+            : ctx.t('card.question.source')}
+        </MoreLink>
+      )}
       <Button onClick={() => ctx.go({ name: 'facts', key: requirement.key })}>
         {ctx.t('card.facts.action')}
       </Button>

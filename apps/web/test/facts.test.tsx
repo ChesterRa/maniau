@@ -157,6 +157,40 @@ describe('聞く札', () => {
     expect(went).toEqual([{ name: 'facts', key: factsCard().requirement.key }]);
   });
 
+  it('なぜその日に見る人が要るかを読み取りの言葉で見出しのように書き、元の文へ戻れる（日英。元の文が手元に無ければ入口を出さない）', async () => {
+    const item = {
+      id: 'n1:i6',
+      sourceId: 'n1',
+      sentenceIds: ['n1#9'],
+      kind: 'dayChange',
+      written: '5日(土)に行った場合、12月7日(月)は振替休業日です。',
+    };
+    const sources = new Map([['n1', { id: 'n1', title: '学習発表会のお知らせ' }]]);
+    for (const lang of ['ja', 'en'] as const) {
+      const { ctx, went } = probe(lang);
+      const shown = { ...ctx, items: [{ item }], sources } as unknown as Ctx;
+      await step(() => root.render(<FactsCard ctx={shown} card={factsCard()} />));
+      expect(text()).toContain(lang === 'ja' ? '理由：振替休業日' : 'Why: 振替休業日');
+      await press(
+        lang === 'ja'
+          ? '「学習発表会のお知らせ」の文を見る'
+          : 'See the original: 学習発表会のお知らせ',
+      );
+      expect(went).toEqual([{ name: 'sources', sourceId: 'n1', highlight: ['n1#9'] }]);
+    }
+    const { ctx } = probe();
+    await step(() => root.render(<FactsCard ctx={ctx} card={factsCard()} />));
+    expect(text()).toContain('理由：振替休業日');
+    // 条件しだいの日を、確かな事として一文で言わない（条件は次の行が書く）。
+    expect(text()).not.toContain('12/7（月）は振替休業日');
+    expect(text()).not.toContain('の文を見る');
+    // 読み取りはあっても、元の文が手元に無ければ入口を出さない（開いても何も無い所へ連れて行かない）。
+    const noSource = { ...ctx, items: [{ item }], sources: new Map() } as unknown as Ctx;
+    await step(() => root.render(<FactsCard ctx={noSource} card={factsCard()} />));
+    expect(text()).not.toContain('元の文を見る');
+    expect(text()).not.toContain('の文を見る');
+  });
+
   it('英語でも同じ物を出す', async () => {
     const { ctx } = probe('en');
     await step(() => root.render(<FactsCard ctx={ctx} card={factsCard()} />));
