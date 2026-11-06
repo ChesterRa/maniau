@@ -2,13 +2,9 @@
 
 [日本語](README.md)
 
-**An AI that connects the resources around you with your arrangements, so people can decide, take things on, and adapt to change while they still have a choice. It starts with dual-income families raising children.**
+**An AI that reads nursery and school notices, knows the resources around your home, works out what has to be decided, by whom and by when to be ready in time, and follows each task until someone in the family takes it on. Built for dual-income families raising children. The family makes the choices and sends the messages.**
 
-Some arrangements have a last moment, well before the day itself, when an option can still be chosen (its decision deadline). When several people share the work, there is also the gap between asking someone and their taking it on, waiting for replies, and tidying up after plans change. In Maniau, Claude reads scattered information and looks around the neighborhood when asked, code works out the decision deadlines and what each choice would set in motion, and a verifier written separately from the planner checks the plan. People make the choices.
-
-The idea isn't limited to childcare. The first area is the arrangements of dual-income families raising children, built and checked with fictional family scenarios. Your family and Claude keep a shared list of what's around your home. From nursery and school notices and your everyday week, Maniau works out in code what to decide, by when, and who does it, and follows each task until someone in the family takes it on.
-
-**Live demo: https://maniauserver-production.up.railway.app** (no sign-up; it runs on a fictional family. See the [tour of the demo](#tour-of-the-demo) below.)
+**Live demo: https://maniauserver-production.up.railway.app** (no sign-up; it runs on a fictional family. For a 3-minute look, press “View prepared scenes (for judges)” on the first screen, then switch “Scene” at the top from 11/25 to 11/29 to 12/4. Other ways to try it are in the [tour of the demo](#tour-of-the-demo). What this version covers is [here](#what-this-version-covers).)
 
 Built with Claude: Japan 2026 entry
 
@@ -18,11 +14,41 @@ Putting an event in a calendar leaves the real work undone: by when each decisio
 
 And the math only works if you know what's around your home. Does the sick-child care room need advance registration? Which shop on the way home sells the shirt, and until what time? Which store does the family usually use? Maniau keeps these places, “around us”, together with your family and Claude, and computes decision deadlines and next steps on top of them. The family makes the choices and contacts grandparents, after-school care and others. Maniau never chooses for the family or sends those messages on its behalf.
 
+## For example: two weeks of a fictional family
+
+What follows uses the prepared fictional scenes, and the notice readings were recorded earlier (nothing is sent to Claude when you open them).
+
+健太 and 彩 both work, and their child 陽菜 is in first grade.
+
+1. **Wed 11/25, a notice arrives.** It says 「5日(土)に行った場合、12月7日(月)は振替休業日です」 (translation: if the event is held on Sat the 5th, Mon Dec 7 is a make-up school holiday) and 「衣装として、白い長袖シャツを用意してください」 (please prepare a white long-sleeved shirt as a costume). Claude reads it, and Maniau shows that someone needs to look after 陽菜 from morning to evening on 12/7 (if the event is on the 5th) and that a shirt is needed. It keeps which sentence each item came from.
+2. **Compare decision deadlines.** For each option, Maniau shows the last moment it can still be chosen (its decision deadline): after-school care by the evening of Mon 11/30, 健太 or 彩 taking the day off by the evening of Wed 12/2, and asking おばあちゃん (grandma) by the night of Fri 12/4 (all estimates). It also shows what each choice would set in motion. The shirt becomes an errand for 健太 on the way home, at the store the family marked as usual.
+3. **Ask.** 彩 decides to ask おばあちゃん. Maniau drafts the message; 彩 sends it and records that it was sent.
+4. **Follow up.** Sun 11/29: still no reply. The after-school care deadline is the next day, so Maniau asks 彩 whether to hold after-school care as a backup too.
+5. **Clean up.** Fri 12/4: a postponement notice arrives. Care on 12/7 is no longer needed, and the people who asked おばあちゃん and applied to after-school care each get a task to tell them it's cancelled (with a draft message).
+
+The same mechanism can settle a date from candidate days and people's answers, like a club practice day (a fictional example).
+
+## How is this different from asking an AI to plan for you?
+
+- **It knows what's around your home.** Claude searches the web for sick-child care, temporary childcare and family support in your area and offers candidates, citing the pages it read. The family decides which to add, whether advance registration is needed, and which store is the usual one; Maniau remembers this and uses it in its calculations. It never changes the family's choices on its own.
+- **Code computes the deadlines.** Claude reads and researches; code works out dates, decision deadlines and when each task fits. You can trace “why by this day” back to the original sentence and the family's usual week.
+- **It follows commitments and changes.** Who took a task on, whether a reply came, and whom to tell what after plans change all stay in the plan.
+- **It checks before it notifies.** A verifier written separately from the planner checks the plan and the notifications, and holds notifications back if it finds a violation. Where it can't check something, it says so instead of calling it fine.
+
 | Compare decision deadlines | Around us | See what changes before saving |
 |---|---|---|
 | <img src="docs/images/decide.en.png" width="250" alt="Deciding child care for 陽菜: four choices left and which goes next, plus after-school care's estimated deadline and what you would start if you chose it"> | <img src="docs/images/around-us.en.png" width="250" alt="Around us: advance registration for a sick-child care room, and the usual store"> | <img src="docs/images/what-changes.en.png" width="250" alt="Setting the usual store to candidate shows, before saving, that the shirt errand moves to another store"> |
 
 All screens show the fictional demo family.
+
+## What this version covers
+
+- It is for families with one child.
+- The public demo and the names-only trial let you move the clock apart from the real date and time. Records are kept in server memory and are deleted after a period without use.
+- There is not yet a self-service way for a family to set up a long-term household and have both adults join it from their own phones. Family mode (identity checks, storage and notifications) is turned on by someone who sets it up, and it hasn't been checked in a real family's daily life; whether notifications reach a real iPhone hasn't been tested.
+- Places added from looking around can be used in household information and in ways to handle things to do, but they don't yet become child-care options (asking someone, after-school care, taking the day off).
+
+What works and what doesn't is described in [details and limitations](docs/scope.en.md#current-scope-and-limitations).
 
 ## Schools in Japan and working parents
 
@@ -122,7 +148,7 @@ flowchart TB
 6. Once the trial clock is at Dec 4, 17:52 or later (it already is if you followed step 5), press “Add the example’s follow-up: 学習発表会の延期について (made up)” in “Controls” (it uses a prepared reading; nothing is sent to Claude). Child care on Dec 7 in this example is no longer needed, so the person who recorded asking for it gets “No longer needed” under “To do now”. Press “See the message” to see the message telling them it is cancelled; after telling them, press “I told them”, and it goes away.
 7. Open the “Family” tab at the bottom and set where you live in “Around us”. Keep family details other than the address made up; the address can be a real one (if you’d rather not use your own home, a nearby station or public building works too). If the spot the map found is right, press “This spot is right”, then “Look around us” to have Claude look now (about a minute; up to 3 times per trial and 30 times per server process per day [UTC], on a server with a reading key). On a candidate, “Check the walk from home on the map” lets you pick the same place and then shows the walk from home (on a server with a map key).
 
-In the names-only trial, the household settings take nicknames for the adults and the child, the usual week, people you can ask and where you live, among other things (you can also add notices and things to do). To cover child care, you can add three kinds of ways: asking someone, a full day at after-school care, and an adult taking the day off (your family enters the deadlines, plus the program’s fee and hours for the day; time off by the hour can’t be added yet). A way that covers only part of the needed time (the program’s hours are shorter, or the adult taking the day off has busy time that day) shows the uncovered times and can’t be chosen. Stations and the way home for shopping cannot be added, so buying on the way home is shown with the sample family (it starts as a separate trial; what you have entered here does not carry over).
+In the names-only trial, the household settings take nicknames for the adults and the child, the usual week, people you can ask and where you live, among other things (you can also add notices and things to do). To cover child care, you can add three kinds of ways: asking someone, a full day at after-school care, and an adult taking the day off (your family enters the deadlines, plus the program’s fee and hours for the day; time off by the hour can’t be added yet). A way that covers only part of the needed time (the program’s hours are shorter, or the adult taking the day off has busy time that day) shows the uncovered times and can’t be chosen. A way that can no longer be used can be marked as unusable (add it again when it can be used). You can also choose the child's drop-off and pick-up rule for lessons and clubs (to, from). A thing to do can be added with just what, by when and who. “Find a day that works for everyone” on Today lets you offer candidate days, record answers and settle the day (before anyone is asked or takes it on, you can change the candidate days). Stations and the way home for shopping cannot be added, so buying on the way home is shown with the sample family (it starts as a separate trial; what you have entered here does not carry over).
 
 The trial clock is separate from the current date and time. The trial is kept in server memory and expires after a period of inactivity. Reading a made-up notice you write sends the text to Claude, on a server where reading is available.
 
@@ -191,10 +217,14 @@ Development centered on Claude Code, and we chose each feature for a purpose. Wh
 
 ## What's built and what's next
 
-Built: the three core ideas above; reading notices, photos and quick updates; things to do (what the family says, and attendance or applications a notice asks for) with a table of ways to handle them; choosing the day from candidate days and answers (per-person answer links work only in demo households); map-based errands; and family mode (identity checks with Cloudflare Access, Postgres storage, Web Push notifications; not yet checked on a real iPhone).
+Built: the three core ideas above; reading notices, photos and quick updates; things to do (what the family says, and attendance or applications a notice asks for) with a table of ways to handle them; choosing the day from candidate days and answers (started from Today, with candidate days editable before anyone is asked or takes it on; per-person answer links work only in demo households); a two-week Schedule (who has taken on each task, the reply recorded for each request, tasks without a set time, and links back to the original text); map-based errands; fixing a notice added by mistake or a misread date; asking again after a request's day or time changes (including asking to change the time on the same day); and family mode (identity checks with Cloudflare Access, Postgres storage, Web Push notifications; not yet checked on a real iPhone).
+
+This version is for families with one child (the names-only trial takes one child, and the sample family and prepared scenes have one child).
 
 Next:
 
+- Families with two or more children: the family confirms which child each notice is for, and child care, drop-offs and pick-ups, and things to bring are worked out for each child. This comes first after the hackathon.
+- Letting a family create its own household and both adults join from their own phones (family-mode households are set up by the operator for now).
 - After the hackathon: once the gate before real family data is met ([foundation design](docs/design/02-foundation.md) §13.1, step 2, including checks in the real environment and on an iPhone), the maker will first use family mode at home. Asking other families to try it comes after those results.
 - Regular re-checks of what's around us (for now, Maniau looks again only when the family taps).
 - Using the family's usual places for recommending ways too (such as a usual sick-child care room).
