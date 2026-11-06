@@ -423,6 +423,31 @@ describe('周りを調べる', () => {
     expect(text).toContain('Add as a candidate for us');
     await step(() => root.unmount());
   });
+
+  it('上限で断られた時は、この試用の分かサーバー全体の分かを言い切らず、両方の戻り方を言う', async () => {
+    // サーバーは、この試用の 3 回とサーバー全体の一日の回数を、同じ知らせ（上限）で断る。初めての試用でも、
+    // サーバー全体の分で断られることがある。試用の操作に無い「やり直す」も挙げない。
+    for (const [lang, label, serverWide, notSaid] of [
+      ['ja', '周りを調べる', 'サーバー全体の分は、翌日（UTC）に戻ります。', 'このデモで'],
+      ['en', 'Look around us', 'The server-wide limit resets the next day (UTC).', 'This demo has'],
+    ] as const) {
+      const { ctx } = withSurvey(lang);
+      const limited = {
+        ...ctx,
+        survey: { ...ctx.survey, recorded: false, run: async () => ({ status: 'limit' }) },
+      } as unknown as Ctx;
+      const host = document.createElement('div');
+      const root = createRoot(host);
+      await step(() => root.render(<ResourcesCard ctx={limited} />));
+      await click(host, label);
+      const text = host.textContent ?? '';
+      expect(text).toContain(serverWide);
+      expect(text).toContain(lang === 'ja' ? '新しく始めると戻ります' : 'start a new one');
+      expect(text).not.toContain(notSaid);
+      expect(text).not.toContain(i18n.getFixedT(lang)('demo.restart'));
+      await step(() => root.unmount());
+    }
+  });
 });
 
 describe('候補を入れた後の家', () => {
