@@ -245,8 +245,10 @@ describe('決める画面の札', () => {
       options.length,
     );
     expect(text(html)).toContain('計算しています');
-    // 選べない間は、押すと進めるとは書かない。
-    expect(text(html)).not.toContain('これに決める');
+    // 選ぶボタンは見せるが、読み終えるまではすべて押せない。
+    const actions = buttons.filter((b) => b.includes('aria-label=') && b.includes('これに決める'));
+    expect(actions.length).toBeGreaterThan(0);
+    expect(actions.every((b) => b.includes('disabled'))).toBe(true);
   });
 
   it('条件しだいの手配は、決める画面でもそう書く', () => {

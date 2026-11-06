@@ -3196,7 +3196,13 @@ export function OptionChooser({ ctx, arrangement }: { ctx: Ctx; arrangement: Arr
         const shown = previews?.get(option.key);
         // 「選んだら」を読める画面で、この手の分がまだ無い（読んでいる・読めなかった・出せなかった）。
         const waiting =
-          reading === 'off' || shown ? undefined : reading === 'ready' ? 'missing' : reading;
+          reading === 'off'
+            ? undefined
+            : reading !== 'ready'
+              ? reading
+              : shown?.seen
+                ? undefined
+                : 'missing';
         return (
           <OptionRow
             key={option.key}
@@ -3389,21 +3395,14 @@ function OptionRow({
     option.titleKey === 'option.askHelper' && !option.expired
       ? replyBy(ctx, arrangement, option.key)
       : undefined;
-  // 押すと、その場でこの手を選ぶ（見るだけの画面へは行かない）。押せる時は、そう書く。
-  const choosableNow = !(
-    option.expired ||
-    current ||
-    waiting !== undefined ||
-    (stopped && !backup)
-  );
+  // 札は見るだけにし、「選んだら」の後のボタンだけで選ぶ。読める画面では、読み終わるまで押せない。
+  const mayChoose = !(option.expired || current || (stopped && !backup));
+  const choosableNow = mayChoose && waiting === undefined;
   return (
-    <button
-      type="button"
-      onClick={onChoose}
-      disabled={!choosableNow}
-      className={`flex w-full items-center gap-2.5 rounded-[18px] border bg-white px-4 py-3.5 text-left disabled:opacity-55 ${recommended ? 'border-accent-line' : 'border-line'}`}
+    <div
+      className={`flex w-full flex-col gap-2.5 rounded-[18px] border bg-white px-4 py-3.5 text-left ${recommended ? 'border-accent-line' : 'border-line'}`}
     >
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+      <div className="flex min-w-0 flex-col gap-0.5">
         <span className="flex flex-wrap items-center gap-1.5">
           <span className="font-round text-xl leading-snug font-bold">
             {optionTitle(ctx, option)}
@@ -3413,9 +3412,12 @@ function OptionRow({
           {backup && <Badge>{ctx.t('decide.backup')}</Badge>}
         </span>
         {recommended && arrangement.recommendedReason && (
-          <span className="text-sm text-accent-dark">
-            {ctx.t(`decide.because.${arrangement.recommendedReason}`)}
-          </span>
+          <>
+            <span className="text-sm text-accent-dark">
+              {ctx.t(`decide.because.${arrangement.recommendedReason}`)}
+            </span>
+            <span className="text-sm text-sub">{ctx.t('decide.recommendationBasis')}</span>
+          </>
         )}
         {option.expired ? (
           <span className="text-[15px] font-bold text-sub">{ctx.t('decide.expired')}</span>
@@ -3497,14 +3499,19 @@ function OptionRow({
             {ctx.t(`decide.waiting.${waiting}`)}
           </span>
         )}
-        {choosableNow && (
-          <span className="mt-1 text-[15px] font-bold text-accent">{ctx.t('decide.go')}</span>
-        )}
-      </span>
-      <span className="text-sub">
-        <Icon path={ICON.chevron} size={22} />
-      </span>
-    </button>
+      </div>
+      {mayChoose && (
+        <button
+          type="button"
+          onClick={onChoose}
+          disabled={!choosableNow}
+          aria-label={ctx.t('decide.goNamed', { option: optionTitle(ctx, option) })}
+          className="flex min-h-[54px] w-full scroll-mb-28 items-center justify-center rounded-2xl bg-accent px-3.5 font-round text-lg font-bold text-white active:bg-accent-dark disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        >
+          {ctx.t('decide.go')}
+        </button>
+      )}
+    </div>
   );
 }
 

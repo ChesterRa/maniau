@@ -466,6 +466,7 @@
     "recommended": "Suggested",
     "current": "In progress",
     "backup": "Backup",
+    "recommendationBasis": "When comparing options, the app uses a fixed scale, not your family's preferences.",
     "because": {
       "onlyOption": "This is the only option known to still be in time",
       "lowerCost": "The lowest estimated combined load for time off, requests, cost and extra work.",
@@ -494,6 +495,7 @@
       "releasedCheckYou": "“{{what}}”, which you took on, will drop out of the plan (please check whether it is still needed)"
     },
     "go": "Go with this",
+    "goNamed": "{{option}}: Go with this",
     "reversible": "You can change your choice later. Any cancellations or new requests appear as tasks; your family contacts people.",
     "conflicted": "We couldn't find times for the tasks of {{options}} that don't overlap another task the same person is doing, so they have no time yet. Review the options, who does them, or the times.",
     "split": "From the times on record, we can’t confirm an adult to watch {{child}} during {{times}} on this day. This arrangement is for {{main}} only (the message to send asks about that time only). Please check together what to do about the other times.",
