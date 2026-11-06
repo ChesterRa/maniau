@@ -56,7 +56,10 @@ const weekdays = (memberId: string, out: string, back: string): RoutineDay[] =>
   }));
 
 /** 正式の操作で、必要な二人の日程と頼める人を入れ、手を選ぶ。送った記録は呼ぶ側が行う。 */
-async function ready(app: App): Promise<{ session: string; taskKey: string }> {
+async function ready(
+  app: App,
+  times = { a1Out: '08:00', a1Back: '19:00', a2Out: '08:30', a2Back: '18:00', start, end },
+): Promise<{ session: string; taskKey: string }> {
   const opened = await app.request('/api/demo/sessions', {
     method: 'POST',
     headers,
@@ -71,7 +74,10 @@ async function ready(app: App): Promise<{ session: string; taskKey: string }> {
   });
   expect(example.status).toBe(200);
   const first = await view(app, session);
-  const routines = [...weekdays('a1', '08:00', '19:00'), ...weekdays('a2', '08:30', '18:00')];
+  const routines = [
+    ...weekdays('a1', times.a1Out, times.a1Back),
+    ...weekdays('a2', times.a2Out, times.a2Back),
+  ];
   const withRoutines = await save(app, session, { ...first.household, routines });
   const household = withRoutines.household;
   const helper = { id: 'h-sato', kind: 'helper' as const, name: 'サトウさん', active: true };
@@ -82,7 +88,7 @@ async function ready(app: App): Promise<{ session: string; taskKey: string }> {
   });
   const arrangement = withHelper.plan.arrangements.find((entry) => entry.kind === 'childCare');
   if (!arrangement) throw new Error('子の居場所の手配が無い');
-  expect([arrangement.start, arrangement.end]).toEqual([start, end]);
+  expect([arrangement.start, arrangement.end]).toEqual([times.start, times.end]);
   const option = arrangement.options.find((entry) => entry.templateId === 'ask-sato');
   if (!option) throw new Error('頼める手が無い');
   const chosen = await command(app, session, {
@@ -109,7 +115,7 @@ const reminder = (v: View, memberId: string) => {
 };
 
 describe('空から始めた家庭の、返事待ちを追う道', () => {
-  it('窓の 26 時間前に送った本人だけに上げ、返事を記録すれば札と候補が消える', async () => {
+  it('窓の 26 時間前から送った本人だけに上げ、返事を記録すれば札と候補が消える', async () => {
     const app = createApp();
     const { session, taskKey } = await ready(app);
     let current = await command(app, session, {
@@ -164,7 +170,37 @@ describe('空から始めた家庭の、返事待ちを追う道', () => {
     expect(reminder(current, 'a1')).toBe(true);
   });
 
-  it('送った窓の変更を確かめ直す必要があれば、追う札も知らせも出さない', async () => {
+  it('依頼の窓が夜に始まる時、前日の同じ時計だけではまだ 26 時間前とは限らない', async () => {
+    const app = createApp();
+    const nightStart = '2026-12-07T21:45+09:00';
+    const nightEnd = '2026-12-07T22:20+09:00';
+    const { session, taskKey } = await ready(app, {
+      a1Out: '21:40',
+      a1Back: '22:25',
+      a2Out: '21:45',
+      a2Back: '22:20',
+      start: nightStart,
+      end: nightEnd,
+    });
+    await command(app, session, {
+      type: 'recordSent',
+      taskKey,
+      requestId: 'evening-request',
+      window: { start: nightStart, end: nightEnd },
+    });
+    let current = await command(app, session, {
+      type: 'advanceClock',
+      to: '2026-12-06T19:31+09:00',
+    });
+    expect(mainKinds(current)).not.toContain('noReply');
+    current = await command(app, session, {
+      type: 'advanceClock',
+      to: '2026-12-06T19:45+09:00',
+    });
+    expect(mainKinds(current)).toContain('noReply');
+  });
+
+  it('送った窓の変更で確かめ直す間は追わず、元に戻れば同じ依頼を追う', async () => {
     const app = createApp();
     const { session, taskKey } = await ready(app);
     await command(app, session, {
@@ -184,6 +220,16 @@ describe('空から始めた家庭の、返事待ちを追う道', () => {
     });
     expect(mainKinds(changed)).not.toContain('noReply');
     expect(reminder(changed, 'a1')).toBe(false);
+    const restored = await save(app, session, beforeEdit.household);
+    expect(restored.plan.requests.find((r) => r.requestId === 'check-request')).toMatchObject({
+      live: true,
+      state: 'awaitingReply',
+    });
+    expect(
+      restored.plan.requests.find((r) => r.requestId === 'check-request')?.needsCheck,
+    ).not.toBe(true);
+    expect(mainKinds(restored)).toContain('noReply');
+    expect(reminder(restored, 'a1')).toBe(true);
   });
 
   it('予備が確保できていれば、もとの依頼に追う札も知らせも出さない', async () => {
