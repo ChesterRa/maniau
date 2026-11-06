@@ -22,6 +22,7 @@ import {
   BACKUP_LEAD_MIN,
   choosable,
   mustChooseAgain,
+  NOREPLY_LEAD_MIN,
   needStep,
   type TodayCard,
   todayCards,
@@ -49,6 +50,7 @@ export type NotificationTitle =
   | 'notify.cancel'
   | 'notify.check'
   | 'notify.backup'
+  | 'notify.noReply'
   | 'notify.decide'
   | 'notify.proposal'
   | 'notify.changed'
@@ -96,6 +98,7 @@ export const NOTIFICATION_TEXT: Record<
     'notify.cancel': 'もう要らない頼み事があります。相手に取り消しを伝えてください。',
     'notify.check': '頼み事が、まだ要るか確かめてください。',
     'notify.backup': '返事を待つ間に、予備の案を押さえるか決める時が近づいています。',
+    'notify.noReply': '返事がまだ記録されていない頼み事があります。日が近づいています。',
     'notify.decide': '決めることがあります。決め時が近づいています。',
     'notify.proposal': 'おねがいが届いています。引き受けられるか確かめてください。',
     'notify.changed': '引き受けたことの中身が変わりました。確かめてください。',
@@ -114,6 +117,7 @@ export const NOTIFICATION_TEXT: Record<
     'notify.cancel': 'A request is no longer needed. Please let them know.',
     'notify.check': 'Please check whether a request is still needed.',
     'notify.backup': "While you wait for a reply, it's nearly time to decide on a backup.",
+    'notify.noReply': 'A request still has no reply recorded, and its day is coming up.',
     'notify.decide': 'Something needs deciding. The decision deadline is coming up.',
     'notify.proposal': "There's a request for you. Can you take it on?",
     'notify.changed': 'Something you took on has changed. Please check it.',
@@ -264,6 +268,23 @@ function intentOf(
         kind: 'decisionApproaching',
         titleKey: 'notify.backup',
         ...(option.decisionDeadline ? { until: option.decisionDeadline } : {}),
+      };
+    }
+    case 'noReply': {
+      // 返事待ちを今やることに上げた時に一度（札が出るのは、頼んだ時間の始まりの NOREPLY_LEAD_MIN 前から）。その時
+      // 以降に送った頼み事（遅く頼んだ物）は、送った本人が動いたばかりなので、いつ計算し直しても知らせない（札は出す）。
+      // 頼んだ時間が始まったら送らない（その後は画面で足りる）。
+      const { request } = card;
+      const window = request.window;
+      if (!window) return undefined;
+      const from = toEpochMinutes(window.start) - NOREPLY_LEAD_MIN;
+      if (toEpochMinutes(request.sentAt) >= from) return undefined;
+      return {
+        key: `noReply:${request.requestId}`,
+        subject: { type: 'request', id: request.requestId },
+        kind: 'decisionApproaching',
+        titleKey: 'notify.noReply',
+        until: window.start,
       };
     }
     case 'decide': {

@@ -16,6 +16,7 @@ const kinds: Record<NotificationTitle, NotificationIntent['kind']> = {
   'notify.cancel': 'cancellation',
   'notify.check': 'question',
   'notify.backup': 'decisionApproaching',
+  'notify.noReply': 'decisionApproaching',
   'notify.decide': 'decisionApproaching',
   'notify.proposal': 'assignment',
   'notify.changed': 'assignment',

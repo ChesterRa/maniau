@@ -16,6 +16,7 @@ type Title =
   | 'notify.cancel'
   | 'notify.check'
   | 'notify.backup'
+  | 'notify.noReply'
   | 'notify.decide'
   | 'notify.proposal'
   | 'notify.changed'
@@ -47,6 +48,7 @@ const titles: Record<Title, string> = {
   'notify.cancel': 'cancellation',
   'notify.check': 'question',
   'notify.backup': 'decisionApproaching',
+  'notify.noReply': 'decisionApproaching',
   'notify.decide': 'decisionApproaching',
   'notify.proposal': 'assignment',
   'notify.changed': 'assignment',
@@ -139,6 +141,10 @@ function expectedKey(intent: Intent): string | undefined {
     case 'notify.check':
       if (subject.type !== 'request') return undefined;
       base = `${titleKey === 'notify.cancel' ? 'cancel' : 'check'}:${subject.id}`;
+      break;
+    case 'notify.noReply':
+      if (subject.type !== 'request' || subject.optionId || subject.requestId) return undefined;
+      base = `noReply:${subject.id}`;
       break;
     case 'notify.proposal':
     case 'notify.changed':
@@ -266,9 +272,13 @@ function checkTiming(
     return;
   }
   if (
-    ['notify.decide', 'notify.backup', 'notify.question', 'notify.unowned'].includes(
-      intent.titleKey,
-    ) &&
+    [
+      'notify.decide',
+      'notify.backup',
+      'notify.noReply',
+      'notify.question',
+      'notify.unowned',
+    ].includes(intent.titleKey) &&
     !inWindow(
       intent.titleKey === 'notify.unowned' ? (intent.actBy ?? intent.until) : intent.until,
     ) &&
@@ -403,6 +413,56 @@ function notificationNeedShape(
   return { valid: true, shape };
 }
 
+/**
+ * 子の居場所の手配に、確保できた予備があるか：予備の案の作業（足した物を除く）が全部済み、外の相手に頼む作業は、
+ * その日の分の確かめの要らない「はい」がある。日の分からない頼み事は確保と数えない。
+ */
+function backupSecured(plan: Plan, arrangement: Arrangement, timeZone: string): boolean {
+  return arrangement.backupOptionKeys.some((key) => {
+    const option = arrangement.options.find((o) => o.key === key);
+    const steps = (option?.taskKeys ?? [])
+      .map((taskKey) => plan.tasks.find((t) => t.key === taskKey))
+      .filter((t): t is Task => t !== undefined && !t.extra);
+    return (
+      steps.length > 0 &&
+      steps.every(
+        (t) =>
+          t.live &&
+          t.commitment === 'done' &&
+          (t.external === undefined ||
+            plan.requests.some(
+              (r) =>
+                r.taskKey === t.key &&
+                r.live &&
+                r.needsCheck !== true &&
+                r.state === 'confirmed' &&
+                matchesArrangementDay(r.window, arrangement, timeZone) === true,
+            )),
+      )
+    );
+  });
+}
+
+/**
+ * 返事を待つ手配で、まだ押さえていない次の手の一番早い決め時が 26 時間以内か（その間は、予備を押さえるかの札が
+ * 同じ返事を追う）。
+ */
+function backupDue(plan: Plan, arrangement: Arrangement): boolean {
+  if (arrangement.status !== 'dependsOnReply') return false;
+  const deadlines = arrangement.options
+    .filter(
+      (o) =>
+        !o.expired &&
+        o.decisionDeadline !== undefined &&
+        o.key !== arrangement.chosenOptionKey &&
+        !arrangement.backupOptionKeys.includes(o.key),
+    )
+    .map((o) => toEpochMinutes(o.decisionDeadline as string));
+  if (deadlines.length === 0) return false;
+  const left = Math.min(...deadlines) - toEpochMinutes(plan.now);
+  return left > 0 && left <= 26 * 60;
+}
+
 /** 出典のある札が、その人の今の計画に本当にあるかを、知らせの生成関数を使わずに照らす。 */
 function checkSubject(
   intent: Intent,
@@ -490,6 +550,39 @@ function checkSubject(
     )
       return wrong();
     checkTime(intent, request.window?.end, request.window?.start, out);
+    return;
+  }
+  if (titleKey === 'notify.noReply') {
+    if (subject.type !== 'request' || subject.optionId || subject.requestId) return wrong();
+    const request = plan.requests.find((r) => r.requestId === subject.id);
+    if (
+      !request?.live ||
+      request.needsCheck === true ||
+      request.state !== 'awaitingReply' ||
+      request.sentBy !== member ||
+      !request.window
+    )
+      return wrong();
+    const arrangement = plan.arrangements.find((a) => a.key === request.basis.arrangementKey);
+    if (
+      !arrangement?.live ||
+      arrangement.kind !== 'childCare' ||
+      arrangement.status !== 'dependsOnReply' ||
+      request.basis.optionKey === undefined ||
+      arrangement.inUseOptionKey !== request.basis.optionKey ||
+      matchesArrangementDay(request.window, arrangement, timeZone) !== true ||
+      backupSecured(plan, arrangement, timeZone) ||
+      backupDue(plan, arrangement)
+    )
+      return wrong();
+    checkTime(intent, request.window.start, undefined, out);
+    // 上げ始める時（窓の始まりの 26 時間前）以降に送った頼み事は、送った本人が動いたばかりなので知らせない。
+    if (toEpochMinutes(request.sentAt) >= toEpochMinutes(request.window.start) - 26 * 60)
+      out.violation(
+        'notification_wrong_time',
+        intent.key,
+        '遅く頼んだ頼み事の返事を知らせている。',
+      );
     return;
   }
   if (titleKey === 'notify.proposal' || titleKey === 'notify.changed') {
@@ -895,6 +988,7 @@ const safeText: Record<'ja' | 'en', Record<Title | 'notify.app' | 'notify.many',
     'notify.cancel': 'もう要らない頼み事があります。相手に取り消しを伝えてください。',
     'notify.check': '頼み事が、まだ要るか確かめてください。',
     'notify.backup': '返事を待つ間に、予備の案を押さえるか決める時が近づいています。',
+    'notify.noReply': '返事がまだ記録されていない頼み事があります。日が近づいています。',
     'notify.decide': '決めることがあります。決め時が近づいています。',
     'notify.proposal': 'おねがいが届いています。引き受けられるか確かめてください。',
     'notify.changed': '引き受けたことの中身が変わりました。確かめてください。',
@@ -913,6 +1007,7 @@ const safeText: Record<'ja' | 'en', Record<Title | 'notify.app' | 'notify.many',
     'notify.cancel': 'A request is no longer needed. Please let them know.',
     'notify.check': 'Please check whether a request is still needed.',
     'notify.backup': "While you wait for a reply, it's nearly time to decide on a backup.",
+    'notify.noReply': 'A request still has no reply recorded, and its day is coming up.',
     'notify.decide': 'Something needs deciding. The decision deadline is coming up.',
     'notify.proposal': "There's a request for you. Can you take it on?",
     'notify.changed': 'Something you took on has changed. Please check it.',

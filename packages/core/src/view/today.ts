@@ -28,6 +28,13 @@ export type TodayCard =
   | { kind: 'check'; request: ExternalRequest }
   /** 本命の返事待ちのまま、次の案の決め時が近い：予備を押さえるか（頼んだ本人に）。 */
   | { kind: 'backup'; arrangement: Arrangement; option: OptionPlan; waitingFor: ExternalRequest }
+  /**
+   * 子の居場所の手配が待っている返事（自分が送った、今使う手の頼み事）が、頼んだ時間（送った時の控えの窓）の始まりの
+   * NOREPLY_LEAD_MIN 前になっても記録されていない。返事待ちの行を、今やることに上げる（同じ頼み事を二度並べない）。
+   * 予備の札が出ている間と、確保できた予備がある間は上げない。頼んだ時間が終わるまで。返事が来ていないとは言わない
+   * （記録されていないだけ）。
+   */
+  | { kind: 'noReply'; arrangement: Arrangement; request: ExternalRequest }
   /** 選ぶ事（まだ選んでいない、または選んだ案が使えなくなった）。 */
   | {
       kind: 'decide';
@@ -105,6 +112,12 @@ export const BACKUP_LEAD_MIN = 26 * 60;
  */
 export const NEED_LEAD_MIN = 26 * 60;
 
+/**
+ * 子の居場所の返事待ちを、今やることに上げ始める時：頼んだ時間の始まりのこの時間前から（「すること」の NEED_LEAD_MIN と
+ * 同じ幅。返事を待つだけで、間際まで「決めることは無い」と見せない）。返事の期限ではない（相手の都合を前もって決め
+ * ない。頼む締切「○日前 21:00」は頼み始める期限で、返事を求める時ではない）。
+ */
+export const NOREPLY_LEAD_MIN = NEED_LEAD_MIN;
 /** その作業が、家族が選んだ（または勧められた買い物の）案の物か。比べるための候補の作業は出さない。 */
 export function isActiveTask(
   plan: Pick<PlanResult, 'arrangements' | 'requests'>,
@@ -329,6 +342,32 @@ export function securedBackup(plan: PlanResult, arrangement: Arrangement): Optio
   return undefined;
 }
 
+/**
+ * 返事待ちを今やることに上げるか（noReply の札。予備の札との重なりは呼ぶ側で除く）。子の居場所の手配が、この頼み事の
+ * 返事を待っている時（今使う手の、その日の分）に、送った本人に。生きていて、確かめの要らない返事待ちで、送った時の
+ * 控えの窓がある物だけ。確保できた予備があれば上げない（断られても移れる）。今が窓の始まりの NOREPLY_LEAD_MIN 前から、
+ * 窓の終わりの前まで。上げるなら、その手配を返す。
+ */
+export function noReplyArrangement(
+  plan: PlanResult,
+  request: ExternalRequest,
+  memberId: string,
+): Arrangement | undefined {
+  if (!request.live || request.needsCheck === true || request.state !== 'awaitingReply') return;
+  if (request.sentBy !== memberId || request.window === undefined) return;
+  const arrangement = plan.arrangements.find((a) => a.key === request.basis.arrangementKey);
+  if (!arrangement?.live || arrangement.kind !== 'childCare') return;
+  if (arrangement.status !== 'dependsOnReply') return;
+  const awaited = arrangement.reasons.some(
+    (r) => r.code === 'awaitingReply' && r.refs.includes(request.requestId),
+  );
+  if (!awaited || securedBackup(plan, arrangement)) return;
+  const now = toEpochMinutes(plan.now);
+  const start = toEpochMinutes(request.window.start);
+  if (now < start - NOREPLY_LEAD_MIN || now >= toEpochMinutes(request.window.end)) return;
+  return arrangement;
+}
+
 export function todayCards(
   plan: PlanResult,
   memberId: string,
@@ -531,10 +570,27 @@ export function todayCards(
     }
   }
 
+  // 返事待ちを今やることに上げる物。予備の札が出ている手配は、そちらが同じ返事を追うので上げない。
+  const backupFor = new Set(
+    backup.flatMap((card) => (card.kind === 'backup' ? [card.arrangement.key] : [])),
+  );
+  const noReply: TodayCard[] = [];
+  const raised = new Set<string>();
+  for (const request of plan.requests) {
+    const arrangement = noReplyArrangement(plan, request, memberId);
+    if (!arrangement || backupFor.has(arrangement.key)) continue;
+    noReply.push({ kind: 'noReply', arrangement, request });
+    raised.add(request.requestId);
+  }
+
   const waiting: TodayCard[] = plan.requests
     .filter(
       (r) =>
-        r.live && r.needsCheck !== true && r.state === 'awaitingReply' && r.sentBy === memberId,
+        r.live &&
+        r.needsCheck !== true &&
+        r.state === 'awaitingReply' &&
+        r.sentBy === memberId &&
+        !raised.has(r.requestId),
     )
     .map((request) => ({ kind: 'waiting', request }));
 
@@ -574,6 +630,7 @@ export function todayCards(
       ...cancel,
       ...check,
       ...backup,
+      ...noReply,
       ...facts,
       ...decide,
       ...need,

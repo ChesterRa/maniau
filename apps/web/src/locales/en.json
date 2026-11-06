@@ -242,6 +242,12 @@
       "body": "Something it relied on has changed (the notice changed or was deleted). You decide whether to cancel.",
       "action": "See details"
     },
+    "noReply": {
+      "label": "Reply not recorded",
+      "title": "Check on {{to}}’s reply",
+      "body": "No reply has been recorded for the request you sent on {{sent}}.",
+      "next": "If they’ve replied, record it below. If not, check with them, or see your next step under “What if they say no?”."
+    },
     "change": {
       "label": "What changed",
       "untitled": "Notice",
@@ -412,6 +418,7 @@
     "careRecordedNoChild": "Request record: child care · {{when}}",
     "careRecordedNoTime": "Request record: care for {{child}} (the requested time is not in the record)",
     "careRecordedNoChildOrTime": "Request record: child care (the requested time is not in the record)",
+    "windowPassed": "The requested time has passed. No reply has been recorded.",
     "backupReady": "If they say no, you can move to the backup “{{option}}” (its steps are done).",
     "backupReadyAccepted": "If they say no, you can move to the backup “{{option}}” (its steps are done and it was accepted).",
     "backupExtra": "Same-day preparations appear when the backup is used.",

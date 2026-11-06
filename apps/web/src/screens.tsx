@@ -1231,6 +1231,7 @@ function cardKey(card: TodayCard): string {
       return `${card.kind}:${card.question.key}`;
     case 'check':
     case 'waiting':
+    case 'noReply':
       return `${card.kind}:${card.request.requestId}`;
     case 'bring':
     case 'needCheck':
@@ -1268,6 +1269,8 @@ function CardView({ ctx, card }: { ctx: Ctx; card: TodayCard }) {
       );
     case 'check':
       return <CheckCard ctx={ctx} request={card.request} />;
+    case 'noReply':
+      return <NoReplyCard ctx={ctx} request={card.request} />;
     case 'stuck':
       return <StuckCard ctx={ctx} card={card} />;
     case 'need':
@@ -2655,59 +2658,141 @@ function BackupReady({ ctx, option }: { ctx: Ctx; option: OptionPlan }) {
   );
 }
 
+/**
+ * 返事待ちの頼み事の、記録した時の中身（見守りの依頼は子と控えの時間、条件、確保できた予備か断られても間に合う返事
+ * の期限、通用の「すること」の控え）と、頼んだ時間が過ぎた事。頼んだことの行と、今やることに上げた札で同じ物を出す。
+ */
+function RequestDetails({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
+  // 断られた時に移れる手：確保できた予備があればそれを（きょうの札と同じ判定）、無ければ、断られても間に合う
+  // 返事の期限（決める画面・頼む文と同じ。時計が進めば、次の手に替わる）。子の居場所の手配だけ：通用の「すること」
+  // の手は、家族が使わないとした資源・済んでいない前提・受け持ちの時間を別に確かめるので、間に合うとは書かない。
+  const found =
+    request.state === 'awaitingReply'
+      ? arrangementOf(ctx, request.basis.arrangementKey)
+      : undefined;
+  const arrangement = found?.kind === 'childCare' ? found : undefined;
+  const secured = arrangement ? securedBackup(ctx.plan, arrangement) : undefined;
+  const replyIn =
+    arrangement && !secured ? replyBy(ctx, arrangement, request.basis.optionKey) : undefined;
+  // 見守りの依頼は、依頼の子と送った時の控えの時間で見分ける。現在の手配の時間では補わない。
+  const careRequest = arrangement !== undefined || request.childId !== undefined;
+  const child = ctx.household.members.find(
+    (member) => member.kind === 'child' && member.id === request.childId,
+  )?.name;
+  const when = requestWhen(ctx, request);
+  const careDetail = careRequest
+    ? when
+      ? child
+        ? ctx.t('quiet.careRecorded', { child, when })
+        : ctx.t('quiet.careRecordedNoChild', { when })
+      : child
+        ? ctx.t('quiet.careRecordedNoTime', { child })
+        : ctx.t('quiet.careRecordedNoChildOrTime')
+    : undefined;
+  const condition =
+    careRequest && request.conditional ? conditionOf(ctx, request.basis) : undefined;
+  const careCondition =
+    careRequest && request.conditional
+      ? condition?.when
+        ? ctx.t('card.decide.conditionalWhen', { when: condition.when })
+        : ctx.t('card.decide.conditional')
+      : undefined;
+  // 控えの頼んだ時間が終わっても返事が無い：過ぎた事と、記録が無い事だけを言う（後から記録はできる。来なかったとは
+  // 言わない）。
+  const passed =
+    request.state === 'awaitingReply' &&
+    request.window !== undefined &&
+    toEpochMinutes(ctx.now) >= toEpochMinutes(request.window.end);
+  return (
+    <>
+      {careDetail && <span className="text-sm text-sub">{careDetail}</span>}
+      {careCondition && <span className="text-sm text-sub">{careCondition}</span>}
+      {passed && <span className="text-sm text-sub">{ctx.t('quiet.windowPassed')}</span>}
+      {secured && <BackupReady ctx={ctx} option={secured} />}
+      {replyIn && (
+        <span className="text-sm text-sub">
+          {replyIn.evening
+            ? ctx.t('decide.replyBy', {
+                night: day(ctx, replyIn.evening),
+                fallback: optionTitle(ctx, replyIn.fallback),
+              })
+            : ctx.t('decide.replySoon', {
+                deadline: dayTime(ctx, replyIn.deadline),
+                fallback: optionTitle(ctx, replyIn.fallback),
+              })}
+        </span>
+      )}
+      {/* 通用の「すること」の「はい」は、控えの時間を覆う証拠になる。何に「はい」を記録するかを、記録した時の
+          控えで見せる（相手が読んだ文は、家族が直せるので確かめていない）。 */}
+      {isNeedArrangementKey(request.basis.arrangementKey) &&
+        askedLines(ctx, request).map((line) => (
+          <span key={line} className="text-sm text-sub">
+            {line}
+          </span>
+        ))}
+    </>
+  );
+}
+
+/** 返事を記録する押しボタン（OK だった・断られた）と、「断られたら？」、押し間違いの訂正。 */
+function ReplyActions({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
+  // 記録できたら、きょうの上に何を記録したかだけを一行で出す（その後にどの札が出るかは、頼んだ時間や手の
+  // 残りしだいなので言わない）。
+  const reply = (value: 'yes' | 'no') =>
+    void ctx
+      .send({ type: 'recordReply', requestId: request.requestId, reply: value })
+      .then((result) => {
+        if (succeeded(result)) {
+          ctx.go({ name: 'today', done: value === 'yes' ? 'replyYes' : 'replyNo' });
+        }
+      });
+  // 「送った」を押し間違えた時だけ、押した本人が、返事の前に無かった事にできる（§5.6）。
+  const mistaken =
+    request.sentBy === ctx.me.id && request.state === 'awaitingReply'
+      ? () => void ctx.send({ type: 'correctSentRecord', requestId: request.requestId })
+      : undefined;
+  return (
+    <>
+      <Row>
+        <Button kind="secondary" className="min-h-11 text-base" onClick={() => reply('yes')}>
+          {ctx.t('quiet.replyYes')}
+        </Button>
+        <Button kind="secondary" className="min-h-11 text-base" onClick={() => reply('no')}>
+          {ctx.t('quiet.replyNo')}
+        </Button>
+      </Row>
+      {/* 「断られたら？」：断られたと仮に置いて、同じ計算で何が変わるかを見る（何も記録しない）。 */}
+      {request.state === 'awaitingReply' && (
+        <MoreLink onClick={() => ctx.go({ name: 'whatIf', requestId: request.requestId })}>
+          {ctx.t('whatIf.link')}
+        </MoreLink>
+      )}
+      {mistaken && <MoreLink onClick={mistaken}>{ctx.t('quiet.notSent')}</MoreLink>}
+    </>
+  );
+}
+
+/**
+ * 返事待ちを今やることに上げた札：頼んだ時間の始まりが近い（26 時間を切った）のに、返事が記録されていない。返事が
+ * 来ていないとは言わない（記録されていないだけ）。中身と押す物は、頼んだことの行と同じ。
+ */
+function NoReplyCard({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
+  return (
+    <Card tone="accent">
+      <Label tone="warn">{ctx.t('card.noReply.label')}</Label>
+      <Title>{ctx.t('card.noReply.title', { to: nameOf(ctx.household, request.to) })}</Title>
+      <Text>{ctx.t('card.noReply.body', { sent: day(ctx, request.sentAt) })}</Text>
+      <RequestDetails ctx={ctx} request={request} />
+      <Text quiet>{ctx.t('card.noReply.next')}</Text>
+      <ReplyActions ctx={ctx} request={request} />
+    </Card>
+  );
+}
+
 function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolean }) {
   const border = last ? '' : 'border-b border-line';
   if (card.kind === 'waiting') {
     const { request } = card;
-    // 記録できたら、きょうの上に何を記録したかだけを一行で出す（その後にどの札が出るかは、頼んだ時間や手の
-    // 残りしだいなので言わない）。
-    const reply = (value: 'yes' | 'no') =>
-      void ctx
-        .send({ type: 'recordReply', requestId: request.requestId, reply: value })
-        .then((result) => {
-          if (succeeded(result)) {
-            ctx.go({ name: 'today', done: value === 'yes' ? 'replyYes' : 'replyNo' });
-          }
-        });
-    // 「送った」を押し間違えた時だけ、押した本人が、返事の前に無かった事にできる（§5.6）。
-    const mistaken =
-      request.sentBy === ctx.me.id && request.state === 'awaitingReply'
-        ? () => void ctx.send({ type: 'correctSentRecord', requestId: request.requestId })
-        : undefined;
-    // 断られた時に移れる手：確保できた予備があればそれを（きょうの札と同じ判定）、無ければ、断られても間に合う
-    // 返事の期限（決める画面・頼む文と同じ。時計が進めば、次の手に替わる）。子の居場所の手配だけ：通用の「すること」
-    // の手は、家族が使わないとした資源・済んでいない前提・受け持ちの時間を別に確かめるので、間に合うとは書かない。
-    const found =
-      request.state === 'awaitingReply'
-        ? arrangementOf(ctx, request.basis.arrangementKey)
-        : undefined;
-    const arrangement = found?.kind === 'childCare' ? found : undefined;
-    const secured = arrangement ? securedBackup(ctx.plan, arrangement) : undefined;
-    const replyIn =
-      arrangement && !secured ? replyBy(ctx, arrangement, request.basis.optionKey) : undefined;
-    // 見守りの依頼は、依頼の子と送った時の控えの時間で見分ける。現在の手配の時間では補わない。
-    const careRequest = arrangement !== undefined || request.childId !== undefined;
-    const child = ctx.household.members.find(
-      (member) => member.kind === 'child' && member.id === request.childId,
-    )?.name;
-    const when = requestWhen(ctx, request);
-    const careDetail = careRequest
-      ? when
-        ? child
-          ? ctx.t('quiet.careRecorded', { child, when })
-          : ctx.t('quiet.careRecordedNoChild', { when })
-        : child
-          ? ctx.t('quiet.careRecordedNoTime', { child })
-          : ctx.t('quiet.careRecordedNoChildOrTime')
-      : undefined;
-    const condition =
-      careRequest && request.conditional ? conditionOf(ctx, request.basis) : undefined;
-    const careCondition =
-      careRequest && request.conditional
-        ? condition?.when
-          ? ctx.t('card.decide.conditionalWhen', { when: condition.when })
-          : ctx.t('card.decide.conditional')
-        : undefined;
     return (
       <div className={`flex flex-col gap-2 py-2.5 ${border}`}>
         <span className="flex items-center gap-2">
@@ -2719,45 +2804,8 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
             sent: day(ctx, request.sentAt),
           })}
         </span>
-        {careDetail && <span className="text-sm text-sub">{careDetail}</span>}
-        {careCondition && <span className="text-sm text-sub">{careCondition}</span>}
-        {secured && <BackupReady ctx={ctx} option={secured} />}
-        {replyIn && (
-          <span className="text-sm text-sub">
-            {replyIn.evening
-              ? ctx.t('decide.replyBy', {
-                  night: day(ctx, replyIn.evening),
-                  fallback: optionTitle(ctx, replyIn.fallback),
-                })
-              : ctx.t('decide.replySoon', {
-                  deadline: dayTime(ctx, replyIn.deadline),
-                  fallback: optionTitle(ctx, replyIn.fallback),
-                })}
-          </span>
-        )}
-        {/* 通用の「すること」の「はい」は、控えの時間を覆う証拠になる。何に「はい」を記録するかを、記録した時の
-            控えで見せる（相手が読んだ文は、家族が直せるので確かめていない）。 */}
-        {isNeedArrangementKey(request.basis.arrangementKey) &&
-          askedLines(ctx, request).map((line) => (
-            <span key={line} className="text-sm text-sub">
-              {line}
-            </span>
-          ))}
-        <Row>
-          <Button kind="secondary" className="min-h-11 text-base" onClick={() => reply('yes')}>
-            {ctx.t('quiet.replyYes')}
-          </Button>
-          <Button kind="secondary" className="min-h-11 text-base" onClick={() => reply('no')}>
-            {ctx.t('quiet.replyNo')}
-          </Button>
-        </Row>
-        {/* 「断られたら？」：断られたと仮に置いて、同じ計算で何が変わるかを見る（何も記録しない）。 */}
-        {request.state === 'awaitingReply' && (
-          <MoreLink onClick={() => ctx.go({ name: 'whatIf', requestId: request.requestId })}>
-            {ctx.t('whatIf.link')}
-          </MoreLink>
-        )}
-        {mistaken && <MoreLink onClick={mistaken}>{ctx.t('quiet.notSent')}</MoreLink>}
+        <RequestDetails ctx={ctx} request={request} />
+        <ReplyActions ctx={ctx} request={request} />
       </div>
     );
   }
