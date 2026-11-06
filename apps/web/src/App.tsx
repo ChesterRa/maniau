@@ -700,7 +700,7 @@ function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {
     case 'when':
       return <WhenScreen ctx={ctx} requirementKey={route.key} />;
     case 'stateNeed':
-      return <StateNeedScreen ctx={ctx} />;
+      return <StateNeedScreen ctx={ctx} {...(route.byAnswers ? { byAnswers: true } : {})} />;
     case 'addThing':
       return <AddThingScreen ctx={ctx} />;
     case 'needFix':

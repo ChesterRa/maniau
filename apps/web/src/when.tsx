@@ -2,7 +2,14 @@
 // たぶん・食い違い・まだの人を足した最大）、答えの条件、答えで変わりうる人（家族だけに見せる）、候補ごとのやり方と
 // 決め時、勧め、決める。
 // 相手の名簿と一人ずつのリンク、家族が聞いた答えの記録。計算はサーバー（見る口と命令）。保存は見た物と同じ時だけ。
-import { type NeedWhen, needStep, type Requirement, type SaveablePreview } from '@maniau/core';
+import {
+  localTimeOf,
+  type NeedWhen,
+  needStep,
+  type Requirement,
+  type SaveablePreview,
+  toEpochMinutes,
+} from '@maniau/core';
 import { useEffect, useRef, useState } from 'react';
 import { formatDay, formatDayTime, formatTime } from './format';
 import { NeedActions, PreviewBlock, usePreviewSave } from './need';
@@ -176,6 +183,15 @@ export function WhenScreen({ ctx, requirementKey }: { ctx: Ctx; requirementKey: 
           when={when}
           itemId={itemId}
         />
+        {/* 頼んだ・引き受けた後は、日を替えられない（when.chosen.inUse で言う）。候補も直させない。 */}
+        {!when.inUse && (
+          <CandidatesEditor
+            key={when.candidates.map((c) => `${c.id}:${c.rev}`).join(',')}
+            ctx={ctx}
+            when={when}
+            itemId={itemId}
+          />
+        )}
         <Links ctx={ctx} when={when} itemId={itemId} />
         {item && <NeedActions key={item.id} ctx={ctx} item={item} />}
       </Main>
@@ -633,6 +649,184 @@ const refusedKey = (reason: string) =>
   ].includes(reason)
     ? reason
     : 'other';
+
+/**
+ * 候補の日を直す（足す・時間を直す・外す。2〜8）。前からある候補は id を付けて全部を送り、サーバーが時間の変わった
+ * 候補の代を進める（前の代への答えは当てない。外した候補の id は使い回さない）。保存の前に、計画で変わることと、画面に
+ * ある答えと決めた日から確かに言えること（数えなくなる答え・外れる決めた日・まだ答えの無い足した候補）を見せる。
+ * 頼んだ・引き受けた後は出さない（日を替えられない）。答えるリンクは今のまま使え、今の候補が出る。
+ */
+function CandidatesEditor({ ctx, when, itemId }: { ctx: Ctx; when: NeedWhen; itemId: string }) {
+  const timeOf = (at: string) => localTimeOf(toEpochMinutes(at), ctx.tz);
+  const current = () =>
+    when.candidates.map((c, key) => ({
+      key,
+      id: c.id as string | undefined,
+      date: c.date,
+      from: timeOf(c.start),
+      to: timeOf(c.end),
+    }));
+  const [open, setOpen] = useState(false);
+  const [slots, setSlots] = useState(current);
+  const flow = usePreviewSave(ctx);
+  if (!open) {
+    return <MoreLink onClick={() => setOpen(true)}>{ctx.t('when.candidates.edit')}</MoreLink>;
+  }
+  const filled =
+    slots.length >= 2 &&
+    slots.length <= 8 &&
+    slots.every((s) => s.date !== '' && s.from !== '' && s.to !== '');
+  const command: SaveablePreview | undefined = filled
+    ? {
+        type: 'setNeedCandidates',
+        itemId,
+        candidates: slots.map((s) => ({
+          ...(s.id ? { id: s.id } : {}),
+          date: s.date,
+          startTime: s.from,
+          endTime: s.to,
+        })),
+      }
+    : undefined;
+  const shown = command && flow.shownFor(command);
+  const refused = command && flow.refusedFor(command);
+  // 見た時のサーバーの記録が、この画面の計画より新しい（開いた後に答えや候補が変わった）時は、下の書き添えが古い
+  // 答えから数えた物になるので、出さずに画面を更新してもらう（保存も出さない）。
+  const stale = shown !== undefined && shown.throughSeq !== ctx.plan.throughSeq;
+  // 画面にある答えと決めた日から、この直しで確かに変わること。
+  const notes: string[] = [];
+  for (const c of when.candidates) {
+    const next = slots.find((s) => s.id === c.id);
+    const moved =
+      next !== undefined &&
+      (next.date !== c.date || next.from !== timeOf(c.start) || next.to !== timeOf(c.end));
+    if (next && !moved) continue;
+    const answered = when.answers.filter((a) => a.candidateId === c.id).length;
+    if (answered > 0) {
+      notes.push(
+        ctx.t(next ? 'when.candidates.answersReset' : 'when.candidates.answersRemoved', {
+          slot: slot(ctx, c),
+          count: answered,
+        }),
+      );
+    }
+    if (when.chosen?.candidateId === c.id && when.chosen.rev === c.rev) {
+      notes.push(ctx.t('when.candidates.chosenLost', { slot: slot(ctx, c) }));
+    }
+  }
+  const added = slots.filter((s) => s.id === undefined).length;
+  if (added > 0) notes.push(ctx.t('when.candidates.added', { count: added }));
+  const set = (key: number, change: Partial<{ date: string; from: string; to: string }>) =>
+    setSlots((list) => list.map((x) => (x.key === key ? { ...x, ...change } : x)));
+  const save = async () => {
+    if (command && (await flow.save(command))) setOpen(false);
+  };
+  return (
+    <Card>
+      <Label tone="sub">{ctx.t('when.candidates.label')}</Label>
+      <Text quiet>{ctx.t('when.candidates.note')}</Text>
+      {slots.map((s, index) => (
+        <div key={s.key} className="flex flex-wrap items-end gap-2">
+          <label className="flex flex-col gap-1">
+            <span className="text-sm text-sub">
+              {ctx.t('when.candidates.candidate', { n: index + 1 })}
+            </span>
+            <input
+              type="date"
+              className={input}
+              value={s.date}
+              onChange={(e) => set(s.key, { date: e.target.value })}
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-sm text-sub">{ctx.t('when.candidates.from')}</span>
+            <input
+              type="time"
+              className={input}
+              value={s.from}
+              onChange={(e) => set(s.key, { from: e.target.value })}
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-sm text-sub">{ctx.t('when.candidates.to')}</span>
+            <input
+              type="time"
+              className={input}
+              value={s.to}
+              onChange={(e) => set(s.key, { to: e.target.value })}
+            />
+          </label>
+          {slots.length > 2 && (
+            <MoreLink onClick={() => setSlots((list) => list.filter((x) => x.key !== s.key))}>
+              {ctx.t('when.candidates.remove')}
+            </MoreLink>
+          )}
+        </div>
+      ))}
+      {slots.length < 8 && (
+        <MoreLink
+          onClick={() =>
+            setSlots((list) => [
+              ...list,
+              {
+                key: Math.max(...list.map((x) => x.key)) + 1,
+                id: undefined,
+                date: list.at(-1)?.date ?? '',
+                from: list.at(-1)?.from ?? '',
+                to: list.at(-1)?.to ?? '',
+              },
+            ])
+          }
+        >
+          {ctx.t('when.candidates.add')}
+        </MoreLink>
+      )}
+      {stale ? (
+        <div className="flex flex-col gap-2" role="status">
+          <Text>{ctx.t('when.candidates.stale')}</Text>
+          {ctx.refresh && (
+            <Button kind="secondary" onClick={ctx.refresh}>
+              {ctx.t('when.candidates.refresh')}
+            </Button>
+          )}
+        </div>
+      ) : (
+        <PreviewBlock
+          ctx={ctx}
+          {...(shown ? { preview: shown } : {})}
+          {...(refused ? { refused } : {})}
+          notes={notes}
+        />
+      )}
+      <Row>
+        {shown && !stale ? (
+          <Button onClick={() => void save()} disabled={flow.busy}>
+            {ctx.t('when.candidates.save')}
+          </Button>
+        ) : (
+          <Button
+            kind="secondary"
+            onClick={() => command && void flow.look(command)}
+            disabled={flow.busy || !command || !ctx.previewChange}
+          >
+            {ctx.t('when.candidates.look')}
+          </Button>
+        )}
+        {/* やめる時は、直しかけた欄を今の候補に戻す。 */}
+        <Button
+          kind="secondary"
+          onClick={() => {
+            setSlots(current());
+            setOpen(false);
+          }}
+          disabled={flow.busy}
+        >
+          {ctx.t('when.candidates.cancel')}
+        </Button>
+      </Row>
+    </Card>
+  );
+}
 
 /** 一人ずつの答えるリンク：出す・出し直す・止める。鍵は出した時に一度だけ見せる（写せるようにする）。 */
 function Links({ ctx, when, itemId }: { ctx: Ctx; when: NeedWhen; itemId: string }) {

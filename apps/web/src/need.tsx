@@ -258,6 +258,9 @@ export function AddThingScreen({ ctx }: { ctx: Ctx }) {
             </Button>
           )}
         </Row>
+        <MoreLink onClick={() => ctx.go({ name: 'stateNeed', byAnswers: true })}>
+          {ctx.t('need.thing.byAnswers')}
+        </MoreLink>
         <MoreLink onClick={() => ctx.go({ name: 'stateNeed' })}>
           {ctx.t('need.thing.detailed')}
         </MoreLink>
@@ -272,7 +275,14 @@ export function AddThingScreen({ ctx }: { ctx: Ctx }) {
  * 家族が言ったことを、原文のまま書き、計算に使う欄（何を・形・日・時間か締切・だれのため）を家族が埋める。欄は
  * 推し量らない（書かれていない時刻を作らない。日だけの締切は、その日の終わりまで）。保存の前に、変わることを見る。
  */
-export function StateNeedScreen({ ctx }: { ctx: Ctx }) {
+export function StateNeedScreen({
+  ctx,
+  byAnswers: startByAnswers = false,
+}: {
+  ctx: Ctx;
+  /** 日を相手の答えで決める形（窓・候補あり）で開く（「みんなの都合を聞いて日を決める」の入口から）。 */
+  byAnswers?: boolean;
+}) {
   const [text, setText] = useState('');
   const [what, setWhat] = useState('');
   const [shape, setShape] = useState<'window' | 'by'>('window');
@@ -282,7 +292,7 @@ export function StateNeedScreen({ ctx }: { ctx: Ctx }) {
   const [byTime, setByTime] = useState('');
   const [forId, setForId] = useState('');
   // 窓の形で、日を相手の答えで決める時の候補（2〜8）と、窓の間ずっとだれかが受け持つ必要があるか。
-  const [byAnswers, setByAnswers] = useState(false);
+  const [byAnswers, setByAnswers] = useState(startByAnswers);
   const [slots, setSlots] = useState(() =>
     [0, 1].map((n) => ({ key: n, date: localDate(ctx.now, ctx.tz), from: '', to: '' })),
   );

@@ -156,7 +156,8 @@
       "acceptance": "{{to}} accepted it",
       "approval": "{{to}} approved it"
     },
-    "agreedBackup": "Held as a backup"
+    "agreedBackup": "Held as a backup",
+    "decideDay": "Find a day that works for everyone"
   },
   "card": {
     "decide": {
@@ -1298,12 +1299,13 @@
       "who": "Who does it",
       "missing": "Enter what to do and by when.",
       "save": "Add",
-      "detailed": "If someone is needed at set times, or the day depends on others’ answers, add the details",
+      "detailed": "If someone is needed at set times, add the details",
       "wayName": "Do it ourselves",
       "stepName": "Get it done",
       "newWay": "Adds the way “{{name}}” to your ways (you can change it in “Our family”).",
       "where": "“{{kind}}”",
-      "assumed": "Things added here are treated as taking {{min}} minutes during {{where}} time in your usual week (we haven’t checked that this works), and we look for a time before the deadline. If none fits, we say so. For things done at a set place, such as a ward office or a shop, or that take longer, add the details instead."
+      "assumed": "Things added here are treated as taking {{min}} minutes during {{where}} time in your usual week (we haven’t checked that this works), and we look for a time before the deadline. If none fits, we say so. For things done at a set place, such as a ward office or a shop, or that take longer, add the details instead.",
+      "byAnswers": "If the day depends on others’ answers, offer candidate days"
     },
     "fix": {
       "title": "Fix the reading",
@@ -1318,7 +1320,7 @@
       "conditionNotePlanned": "The condition and answers can’t be changed here. If they are wrong, mark this as not needed and use “Add something to do”.",
       "changedPreview": "The plan changed after you looked. Please check what this changes again.",
       "savePlanned": "Save",
-      "candidateTime": "The day and time come from the candidates in “Choosing the day”, so they can’t be changed here. To change the candidate days, mark this item not needed and add it again.",
+      "candidateTime": "The day and time come from the candidates in “Choosing the day”, so they can’t be changed here. Use “Change the candidate days” on that screen (after someone has asked or accepted, mark this item not needed and add it again).",
       "answersReset_one": "The {{count}} answer so far was for the old details and will stop counting (ask again).",
       "answersReset_other": "The {{count}} answers so far were for the old details and will stop counting (ask again).",
       "chosenReset": "The chosen day will no longer be used (ask again, then choose again).",
@@ -1337,7 +1339,7 @@
       "candidatesNeedWindow": "Candidate days work only for the “someone is needed at this time” shape.",
       "candidateDuplicate": "Two candidates have the same day and time.",
       "candidateUnknown": "The candidates changed. Please reopen this screen.",
-      "candidateNeedTimeLocked": "For an item with candidate days, the day and time can’t be changed here. To change them, mark this item not needed and add it again.",
+      "candidateNeedTimeLocked": "For an item with candidate days, the day and time can’t be changed here. Use “Change the candidate days” on the “Choosing the day” screen (after someone has asked or accepted, mark this item not needed and add it again).",
       "candidateChanged": "The candidates changed. Please choose again from the current ones.",
       "decisionInUse": "Someone has already asked or accepted, so the chosen day and details can’t change. To change them, mark this item not needed and add it again.",
       "thingPast": "That date and time has already passed. Change the date or time.",
@@ -2030,6 +2032,25 @@
       "linksDemoOnly": "Links can be made only in demo households.",
       "tooManyLinks": "This demo has made the most links it can.",
       "other": "This could not be saved as it is."
+    },
+    "candidates": {
+      "edit": "Change the candidate days (add, change times, remove)",
+      "label": "Candidate days",
+      "note": "Keep 2–8 candidates. People need to answer any candidate you add or whose time you change (earlier answers to a changed candidate no longer count). Answer links keep working and show the updated candidates.",
+      "candidate": "Candidate {{n}}",
+      "from": "From",
+      "to": "To",
+      "remove": "Remove this candidate",
+      "add": "Add a candidate day",
+      "answersReset": "{{slot}}: the time changes, so earlier answers to this candidate ({{count}}) no longer count.",
+      "answersRemoved": "{{slot}}: this candidate is removed, so its answers ({{count}}) no longer count.",
+      "chosenLost": "The chosen day ({{slot}}) changes or is removed, so the choice is cleared. Choose the day again after saving.",
+      "added": "No one has answered the added candidates ({{count}}) yet.",
+      "look": "See what this changes",
+      "save": "Save candidate days",
+      "cancel": "Cancel",
+      "stale": "The household’s records changed after you opened this screen. Refresh, then look again.",
+      "refresh": "Refresh"
     }
   },
   "answerPage": {

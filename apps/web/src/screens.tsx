@@ -112,8 +112,8 @@ export type Route =
   | { name: 'need'; key: string }
   /** いつにするかの候補のある「すること」（要件の key）。 */
   | { name: 'when'; key: string }
-  /** 家族の言明で「すること」を足す。 */
-  | { name: 'stateNeed' }
+  /** 家族の言明で「すること」を足す（byAnswers：日を相手の答えで決める形で開く）。 */
+  | { name: 'stateNeed'; byAnswers?: true }
   | { name: 'addThing' }
   /** モデルが読んだ「すること」の読み取りを、家族が直す（事項の ID）。 */
   | { name: 'needFix'; itemId: string }
@@ -1157,7 +1157,14 @@ export function TodayScreen({ ctx, done }: { ctx: Ctx; done?: TodayDone }) {
           <SayCard ctx={ctx} hear={ctx.hear} confirm={ctx.confirm} />
         )}
         {!fresh && ctx.previewChange && (
-          <MoreLink onClick={() => ctx.go({ name: 'addThing' })}>{ctx.t('today.addNeed')}</MoreLink>
+          <>
+            <MoreLink onClick={() => ctx.go({ name: 'addThing' })}>
+              {ctx.t('today.addNeed')}
+            </MoreLink>
+            <MoreLink onClick={() => ctx.go({ name: 'stateNeed', byAnswers: true })}>
+              {ctx.t('today.decideDay')}
+            </MoreLink>
+          </>
         )}
         <NeedList ctx={ctx} />
       </Main>
@@ -1265,6 +1272,9 @@ function StartCard({ ctx }: { ctx: Ctx }) {
       {/* 手で足す道（お知らせを読むのではない。読み取りの鍵が無くても進める）。 */}
       <MoreLink onClick={() => ctx.go({ name: 'addThing' })}>
         {ctx.t('start.empty.manual')}
+      </MoreLink>
+      <MoreLink onClick={() => ctx.go({ name: 'stateNeed', byAnswers: true })}>
+        {ctx.t('today.decideDay')}
       </MoreLink>
     </Card>
   );
