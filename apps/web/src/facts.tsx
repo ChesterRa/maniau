@@ -489,6 +489,9 @@ export function HelperAskCard({ ctx }: { ctx: Ctx }) {
           </Button>
         )}
       </Row>
+      {/* 名前だけの家族の試用で足せる手は、頼める人だけ。学童・休みを含めた比べは、見本の家族で見られる（入れる欄を
+          押し下げないよう、欄の後に置く）。 */}
+      {ctx.ownTrial && <Text quiet>{ctx.t('helperAsk.ownTrial')}</Text>}
     </Card>
   );
 }

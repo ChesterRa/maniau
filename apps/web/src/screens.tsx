@@ -211,6 +211,11 @@ export interface Ctx {
   trialInput?: true;
   /** 空から始めた試用（見本の家族・名前だけの家族）：入れてよいのは架空の内容だけ（デモの場面より狭い）。 */
   fictional?: true;
+  /**
+   * 名前だけの家族から始めた試用：駅・帰り道・学童や休みの手は入れられない。それを使う計算は見本の家族で見られる
+   * ことを示す（見本の家族は別の試用として始まり、今の記録は移らない）。
+   */
+  ownTrial?: true;
   /** 空から始めた試用だけ：例のお知らせ（架空。前に用意した読み取りで足す。Claude に送らない）。 */
   example?: { title: string; add: () => Promise<boolean> };
   confirm?: (proposalId: string, operationId: string) => Promise<ConfirmResult>;
@@ -1600,6 +1605,15 @@ export function StuckCard({
   };
   const usual = storesOf('usualStoreUnavailable');
   const notUsed = storesOf('storeNotUsed');
+  // 買う時を置けず、過ぎた最後の機会も示せない（エンジンは「決められない」とする。間に合わないとは言わない。
+  // 決められない理由は、計算が示していないので書かない）。
+  const undecided =
+    purchase &&
+    !noStore &&
+    !unconfirmed &&
+    usual === undefined &&
+    notUsed === undefined &&
+    arrangement.status !== 'infeasible';
   // 子の居場所で、見守れる大人を確かめられない時間が分かれる日は、全部の時間と、この手配の分を書く。
   const split = purchase ? undefined : splitLine(ctx, arrangement);
   // 子の居場所で、取れる手がまだ一つも無い（空から始めた家庭）：間に合わないのではなく、手を足せば選べる。
@@ -1618,7 +1632,9 @@ export function StuckCard({
                   ? 'card.stuck.usualLabel'
                   : notUsed !== undefined
                     ? 'card.stuck.notUsedLabel'
-                    : 'card.stuck.label',
+                    : undecided
+                      ? 'card.stuck.undecidedLabel'
+                      : 'card.stuck.label',
         )}
       </Label>
       <Title>
@@ -1648,7 +1664,9 @@ export function StuckCard({
                     ? 'card.stuck.usual'
                     : notUsed !== undefined
                       ? 'card.stuck.notUsed'
-                      : 'card.stuck.purchase',
+                      : undecided
+                        ? 'card.stuck.undecided'
+                        : 'card.stuck.purchase',
               {
                 date: due(ctx, date, requirement?.basis.itemIds ?? []),
                 stores: usual ?? notUsed ?? '',
@@ -1661,6 +1679,9 @@ export function StuckCard({
               })
             : ctx.t('card.stuck.childCare', { child: childLabel(ctx, arrangement.childId) })}
       </Text>
+      {/* 名前だけの家族の試用では、駅や帰り道を入れられない（試用でできる事。この札の理由とは言わない）。帰り道の
+          店で買う時の計算は、見本の家族で見られる。 */}
+      {undecided && ctx.ownTrial && <Text quiet>{ctx.t('card.stuck.ownTrial')}</Text>}
       {split && <Text>{ctx.t('card.decide.split', split)}</Text>}
       {purchase && unknownId && requirement && (
         <Row>

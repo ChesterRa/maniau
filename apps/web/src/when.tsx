@@ -2,7 +2,7 @@
 // たぶん・食い違い・まだの人を足した最大）、答えの条件、答えで変わりうる人（家族だけに見せる）、候補ごとのやり方と
 // 決め時、勧め、決める。
 // 相手の名簿と一人ずつのリンク、家族が聞いた答えの記録。計算はサーバー（見る口と命令）。保存は見た物と同じ時だけ。
-import type { NeedWhen, Requirement, SaveablePreview } from '@maniau/core';
+import { type NeedWhen, needStep, type Requirement, type SaveablePreview } from '@maniau/core';
 import { useEffect, useRef, useState } from 'react';
 import { formatDay, formatDayTime, formatTime } from './format';
 import { NeedActions, PreviewBlock, usePreviewSave } from './need';
@@ -134,6 +134,10 @@ export function WhenScreen({ ctx, requirementKey }: { ctx: Ctx; requirementKey: 
               </Text>
             )}
             {when.inUse && <Text quiet>{ctx.t('when.chosen.inUse')}</Text>}
+            {/* 日を決めても、その日のやり方をまだ選んでいなければ、手配は済んでいない（次にすることを言う）。 */}
+            {arrangement && !when.chosen.stale && needStep(arrangement) === 'ways' && (
+              <Text>{ctx.t('when.chosen.next')}</Text>
+            )}
             {arrangement && (
               <MoreLink onClick={() => ctx.go({ name: 'need', key: arrangement.key })}>
                 {ctx.t('when.chosen.open')}

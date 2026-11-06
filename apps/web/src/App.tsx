@@ -140,6 +140,8 @@ function Body(props: {
   trial?: boolean;
   /** 空から始めた試用（架空の内容だけ）。 */
   fictional?: boolean;
+  /** 名前だけの家族から始めた試用（見本の家族で見られる物を示す）。 */
+  ownTrial?: boolean;
   lang: UiLanguage;
   route: Route;
   onRoute: (route: Route) => void;
@@ -189,6 +191,7 @@ function Body(props: {
             : {}),
           ...(props.trial ? { trialInput: true as const } : {}),
           ...(props.fictional ? { fictional: true as const } : {}),
+          ...(props.ownTrial ? { ownTrial: true as const } : {}),
           ...(props.example ? { example: props.example } : {}),
           preview: live.preview,
           previewHousehold: live.previewHousehold,
@@ -403,6 +406,7 @@ function DemoApp() {
         onRoute={setRoute}
         onRestart={session.trial ? leave : () => begin({ stage })}
         fictional={session.trial !== undefined}
+        ownTrial={session.trial === 'own'}
         {...(session.trial && session.example
           ? { example: { title: session.example.title, add: demo.addExample } }
           : {})}

@@ -1,5 +1,6 @@
 // いつにするかの候補の画面：デモの段 when・club を、サーバーと同じ見せる物から組んで描く（日英の文言、表の数と印、
 // 決め手の人、勧め、決め時、きょうの一行）。
+import { Arrangement } from '@maniau/core';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { TodayScreen } from '../src/screens';
@@ -49,6 +50,54 @@ describe('いつにするかの画面（デモの段）', () => {
     expect(shown).toContain('勧められる日はありません');
     expect(shown).toContain('地区センターの体育室を予約する：使えます。決め時 12/9（水） 16:50');
     expect(shown).toContain('エンドウさん（たぶん）：午前だけなら');
+  });
+
+  it('日を決めても、この「すること」のやり方を選んでいなければ、次にすることを書く（日英）', () => {
+    for (const lang of ['ja', 'en'] as const) {
+      const { ctx, key } = whenKey('when', 'b', lang);
+      // 決めた日があり、この手配のやり方がまだ無い（名前だけの家族で日を決めた時と同じ形）を、見せる物の上で作る。
+      // 段 when では日をまだ決めていないので、手配も無い（決めると、その日の手配ができる）。
+      const plan = structuredClone(ctx.plan);
+      const requirement = plan.requirements.find((r) => r.key === key);
+      const candidate = requirement?.when?.candidates[0];
+      if (!requirement?.when || !candidate) throw new Error('候補が無い');
+      const arrangement = Arrangement.parse({
+        key: `arr:need:${key}`,
+        requirementKey: key,
+        kind: 'need',
+        start: candidate.start,
+        end: candidate.end,
+        status: 'undetermined',
+        options: [],
+        reasons: [{ code: 'inputMissing', refs: ['ways'] }],
+        live: true,
+        needShape: 'window',
+      });
+      plan.arrangements.push(arrangement);
+      requirement.when.chosen = {
+        candidateId: candidate.id,
+        rev: candidate.rev,
+        stale: false,
+        changes: [],
+      };
+      const shownFor = (status: 'undetermined' | 'decidable', stale = false) => {
+        arrangement.status = status;
+        arrangement.reasons =
+          status === 'undetermined' ? [{ code: 'inputMissing', refs: ['ways'] }] : [];
+        if (requirement.when?.chosen) requirement.when.chosen.stale = stale;
+        return text(
+          renderToStaticMarkup(<WhenScreen ctx={{ ...ctx, plan }} requirementKey={key} />),
+        );
+      };
+      const next =
+        lang === 'ja'
+          ? '次は、この日の手配を開いて、やり方（だれが・どうするか）を足すか選びます。'
+          : 'Next, open this day’s arrangement and add or choose a way (who does what).';
+      expect(shownFor('undetermined')).toContain(next);
+      // やり方を選んだ後と、決めた根拠が変わって決め直す時は書かない。
+      expect(shownFor('decidable')).not.toContain(next);
+      expect(shownFor('undetermined', true)).not.toContain(next);
+    }
   });
 
   it('when：一つだけの日を勧め、きょうに「答えを集めています」の一行を出す', () => {

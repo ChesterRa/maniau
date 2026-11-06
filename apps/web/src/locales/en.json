@@ -294,6 +294,9 @@
       "usual": "It’s needed by {{date}}, but no time to stop at your usual store ({{stores}}) was found. We won’t move it to another store until your family chooses one. To buy it elsewhere, change your stores in “Around us” under “Family”. If you get it another way, tap \"Got it\".",
       "notUsedLabel": "Only stores you don’t use",
       "notUsed": "It’s needed by {{date}}, but the only stores that sell it are ones your family marked “Don’t use” ({{stores}}). To buy it there, change that in “Around us” under “Family”. If you get it another way, tap \"Got it\".",
+      "undecidedLabel": "Can’t plan when to buy yet",
+      "undecided": "It’s needed by {{date}}, but no time to stop at a store could be planned from the household information entered so far. This doesn’t mean it’s too late. If you get it another way, tap \"Got it\".",
+      "ownTrial": "You can’t enter stations or routes in this trial. To see when to buy on the way home, try the sample family (start it from “Back to start (end this trial)” under “Controls”; this trial ends and what you’ve entered won’t carry over).",
       "addHelper": "Add someone you can ask",
       "noOptionsLabel": "No ways to arrange yet",
       "noOptions": "Someone needs to watch {{child}} on {{when}}. Add someone you can ask, and you can choose to ask them."
@@ -579,7 +582,8 @@
     "look": "See what this changes",
     "add": "Add {{name}}",
     "added": "Added {{name}}. You can choose them above.",
-    "refused": "Couldn’t add them. Check the nickname (it can’t match someone already added)."
+    "refused": "Couldn’t add them. Check the nickname (it can’t match someone already added).",
+    "ownTrial": "In this trial, the only childcare way you can add is asking someone. To compare ways including after-school care and time off, try the sample family (via “Back to start (end this trial)” under “Controls”; what you’ve entered won’t carry over)."
   },
   "ask": {
     "title": "Message to send",
@@ -1718,7 +1722,8 @@
         "answers": "the answers"
       },
       "inUse": "Someone has already asked or accepted, so the day can’t change. To change it, mark this item not needed and add it again.",
-      "open": "See the arrangement for this day"
+      "open": "See the arrangement for this day",
+      "next": "Next, open this day’s arrangement and add or choose a way (who does what)."
     },
     "table": {
       "label": "Candidate days and answers",
@@ -1765,7 +1770,7 @@
     },
     "note": "{{name}} (maybe): {{notes}}",
     "ways": {
-      "undecided": "No way is chosen yet. Choose one to work out this day’s deadline.",
+      "undecided": "No way is chosen yet.",
       "usable": "{{way}}: usable. Decide by {{deadline}}",
       "unusable": "{{way}}: not yet confirmed usable on this day ({{reasons}})",
       "costUnknown": " (some costs are unknown)",
