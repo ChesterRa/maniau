@@ -184,6 +184,34 @@ describe('一言の「すること」を足す', () => {
     expect(went).toEqual([{ name: 'stateNeed' }]);
   });
 
+  it('開いた後に家の記録が変わっていたら（見た時の番号が新しい）、古い書き添えも保存も出さず、更新すると今のやり方で書いて足せる', async () => {
+    const { ctx, sent } = materials(() => ({ preview: { ...shown('T-3'), throughSeq: 8 } }), {
+      hasWay: true,
+    });
+    await step(() => root.render(<AddThingScreen ctx={ctx} />));
+    const { what } = fields();
+    await step(() => enter(what, '学童の書類を出す'));
+    await step(() => button('この変更で変わることを見る')?.click());
+    expect(host.textContent).toContain(ctx.t('household.preview.stale'));
+    expect(button('足す')).toBeUndefined();
+    // 更新した画面：ほかの大人が、やり方の時間を 60 分に直していた。
+    const step0 = SELF.steps[0];
+    if (!step0) throw new Error('手順が無い');
+    const fresh = {
+      ...ctx,
+      household: { ...ctx.household, ways: [{ ...SELF, steps: [{ ...step0, durationMin: 60 }] }] },
+      plan: { ...ctx.plan, throughSeq: 8 },
+    } as Ctx;
+    await step(() => root.render(<AddThingScreen ctx={fresh} />));
+    expect(host.textContent).not.toContain(ctx.t('household.preview.stale'));
+    expect(host.textContent).toContain('家または仕事の時間に 60 分で');
+    await step(() => button('足す')?.click());
+    expect(sent.at(-1)).toMatchObject({
+      type: 'addThing',
+      seen: { throughSeq: 8, changes: 'T-3' },
+    });
+  });
+
   it('自分たちで済ませるやり方が直されていて使えない時は、そう書き、詳しい表へ案内する', async () => {
     const { ctx } = materials(() => ({ refused: 'selfWayChanged' }), { hasWay: true });
     await step(() => root.render(<AddThingScreen ctx={ctx} />));

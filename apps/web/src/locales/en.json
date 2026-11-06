@@ -1159,6 +1159,8 @@
     "preview": {
       "label": "What this change would do",
       "none": "The plan doesn't change.",
+      "stale": "The household’s records changed after you opened this screen. Refresh, then look again.",
+      "refresh": "Refresh",
       "aWay": "a way",
       "escort": "Lessons drop-off/pick-up for {{name}} will be set to “{{rule}}”.",
       "unusable": "“{{name}}” will be marked as unusable. It can’t be newly chosen, and even if it’s already chosen it isn’t called secured. Requests you already sent aren’t withdrawn; a card asks whether they’re still needed. To use it again, add it as a new way.",
@@ -2077,9 +2079,7 @@
       "added": "No one has answered the added candidates ({{count}}) yet.",
       "look": "See what this changes",
       "save": "Save candidate days",
-      "cancel": "Cancel",
-      "stale": "The household’s records changed after you opened this screen. Refresh, then look again.",
-      "refresh": "Refresh"
+      "cancel": "Cancel"
     }
   },
   "answerPage": {

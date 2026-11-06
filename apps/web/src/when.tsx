@@ -12,7 +12,7 @@ import {
 } from '@maniau/core';
 import { useEffect, useRef, useState } from 'react';
 import { formatDay, formatDayTime, formatTime } from './format';
-import { NeedActions, PreviewBlock, usePreviewSave } from './need';
+import { NeedActions, PreviewBlock, StalePreview, usePreviewSave } from './need';
 import { type Ctx, Missing, nameOf } from './screens';
 import { Button, Card, Header, Label, Main, MoreLink, Row, Text, Title } from './ui';
 
@@ -782,14 +782,7 @@ function CandidatesEditor({ ctx, when, itemId }: { ctx: Ctx; when: NeedWhen; ite
         </MoreLink>
       )}
       {stale ? (
-        <div className="flex flex-col gap-2" role="status">
-          <Text>{ctx.t('when.candidates.stale')}</Text>
-          {ctx.refresh && (
-            <Button kind="secondary" onClick={ctx.refresh}>
-              {ctx.t('when.candidates.refresh')}
-            </Button>
-          )}
-        </div>
+        <StalePreview ctx={ctx} />
       ) : (
         <PreviewBlock
           ctx={ctx}

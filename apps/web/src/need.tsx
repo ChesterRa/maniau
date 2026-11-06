@@ -131,6 +131,24 @@ export function PreviewBlock(props: {
   );
 }
 
+/**
+ * 見た時のサーバーの記録が、この画面の計画より新しい時（開いた後に家族の記録が増えた）。画面の今の状態から書き添える
+ * 物（数えなくなる答えなど）が古いかもしれないので、書き添えと保存の代わりに出し、画面を更新してから見直してもらう
+ * （何が変わったかは推さない）。
+ */
+export function StalePreview({ ctx }: { ctx: Ctx }) {
+  return (
+    <div className="flex flex-col gap-2" role="status">
+      <Text>{ctx.t('household.preview.stale')}</Text>
+      {ctx.refresh && (
+        <Button kind="secondary" onClick={ctx.refresh}>
+          {ctx.t('household.preview.refresh')}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 // ── 一言で足す ──────────────────────────────
 
 /**
@@ -162,6 +180,9 @@ export function AddThingScreen({ ctx }: { ctx: Ctx }) {
     : undefined;
   const shown = command && flow.shownFor(command);
   const refused = command && flow.refusedFor(command);
+  // 書き添え（やり方を足すか、かかる時間とする所）は画面の家の情報から書くので、見た時の記録がそれより新しい時は、
+  // 書き添えも保存も出さず、画面を更新してから見直してもらう。
+  const stale = shown !== undefined && shown.throughSeq !== ctx.plan.throughSeq;
   const save = async () => {
     if (command && (await flow.save(command))) ctx.go({ name: 'today' });
   };
@@ -238,14 +259,18 @@ export function AddThingScreen({ ctx }: { ctx: Ctx }) {
         </Card>
         <Text quiet>{assumed}</Text>
         {!filled && <Text quiet>{ctx.t('need.thing.missing')}</Text>}
-        <PreviewBlock
-          ctx={ctx}
-          {...(shown ? { preview: shown } : {})}
-          {...(refused ? { refused } : {})}
-          notes={notes}
-        />
+        {stale ? (
+          <StalePreview ctx={ctx} />
+        ) : (
+          <PreviewBlock
+            ctx={ctx}
+            {...(shown ? { preview: shown } : {})}
+            {...(refused ? { refused } : {})}
+            notes={notes}
+          />
+        )}
         <Row>
-          {shown ? (
+          {shown && !stale ? (
             <Button onClick={() => void save()} disabled={flow.busy}>
               {ctx.t('need.thing.save')}
             </Button>
@@ -929,6 +954,10 @@ export function NeedFixScreen({ ctx, itemId }: { ctx: Ctx; itemId: string }) {
   };
   const shown = command && !awaiting ? flow.shownFor(command) : undefined;
   const refused = command && !awaiting ? flow.refusedFor(command) : undefined;
+  // 候補のある物の書き添え（数えなくなる答え・決めた日）は画面の計画から数えるので、見た時の記録がそれより新しい時は、
+  // 書き添えも保存も出さず、画面を更新してから見直してもらう。
+  const stale =
+    byAnswers !== undefined && shown !== undefined && shown.throughSeq !== ctx.plan.throughSeq;
   // 候補のある物を直すと、サーバーは全部の候補の代を進める：今の答えは数えなくなり、決めた日は使わなくなる。選んだ
   // やり方も、中身が変わるので選び直しになる（どれも、決める前は計画の差の表に出ないので、今の状態から言う）。
   const resets = byAnswers?.when
@@ -1083,14 +1112,18 @@ export function NeedFixScreen({ ctx, itemId }: { ctx: Ctx; itemId: string }) {
             </Row>
           ) : (
             <>
-              <PreviewBlock
-                ctx={ctx}
-                notes={resets}
-                {...(shown ? { preview: shown } : {})}
-                {...(refused ? { refused } : {})}
-              />
+              {stale ? (
+                <StalePreview ctx={ctx} />
+              ) : (
+                <PreviewBlock
+                  ctx={ctx}
+                  notes={resets}
+                  {...(shown ? { preview: shown } : {})}
+                  {...(refused ? { refused } : {})}
+                />
+              )}
               <Row>
-                {shown ? (
+                {shown && !stale ? (
                   <Button onClick={() => void save()} disabled={flow.busy}>
                     {ctx.t('need.fix.savePlanned')}
                   </Button>

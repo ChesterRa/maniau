@@ -12,7 +12,7 @@ import { previewChange } from '../../server/src/preview';
 import { memoryStore } from '../../server/src/store';
 import { viewFor } from '../../server/src/views';
 import i18n from '../src/i18n';
-import { StateNeedScreen } from '../src/need';
+import { NeedFixScreen, StateNeedScreen } from '../src/need';
 import { type Ctx, type Route, TodayScreen } from '../src/screens';
 import { WhenScreen } from '../src/when';
 import { demoData } from './ctx';
@@ -295,14 +295,14 @@ describe('候補の日を直す：ほかの人の答えと行き違う時', () =
     expect(await answer()).toMatchObject({ status: 'ok' });
     await step(() => buttonOf(c.t('when.candidates.look'))?.click());
     let text = host.textContent ?? '';
-    expect(text).toContain(c.t('when.candidates.stale'));
+    expect(text).toContain(c.t('household.preview.stale'));
     expect(text).not.toContain(answersNote(count));
     expect(buttonOf(c.t('when.candidates.save'))).toBeUndefined();
     // 画面を更新する（新しい計画で描き直す。直しかけた欄と見た物は残る）と、今の答えで数えて保存できる。
     const fresh = await h.ctx();
     await step(() => root.render(<WhenScreen ctx={fresh} requirementKey={key} />));
     text = host.textContent ?? '';
-    expect(text).not.toContain(c.t('when.candidates.stale'));
+    expect(text).not.toContain(c.t('household.preview.stale'));
     expect(text).toContain(answersNote(count + 1));
     await step(() => buttonOf(c.t('when.candidates.save'))?.click());
     expect(h.sent.at(-1)).toMatchObject({ type: 'setNeedCandidates' });
@@ -324,5 +324,48 @@ describe('候補の日を直す：ほかの人の答えと行き違う時', () =
     // 見た物は捨て、もう一度見てもらう（保存は出さない）。
     expect(buttonOf(c.t('when.candidates.save'))).toBeUndefined();
     expect(buttonOf(c.t('when.candidates.look'))).toBeDefined();
+  });
+});
+
+describe('候補のある「すること」の直す画面：ほかの人の答えと行き違う時', () => {
+  it('開いた後・見る前に答えが届いたら、古い数えの書き添えも保存も出さず、更新すると今の答えで数えて保存できる', async () => {
+    const h = household();
+    const { key, itemId, when } = await h.whenOf();
+    const count = when.answers.length;
+    const person = when.people.find(
+      (p) => !when.answers.some((a) => a.candidateId === 'c2' && a.personId === p.id),
+    );
+    if (!person) throw new Error('12/13 に答えていない人がいない');
+    const c = await h.ctx();
+    await step(() => root.render(<NeedFixScreen ctx={c} itemId={itemId} />));
+    const what = [...host.querySelectorAll('label')]
+      .find((l) => l.querySelector('span')?.textContent === c.t('need.add.what'))
+      ?.querySelector('input');
+    if (!what) throw new Error('「何を」の欄が無い');
+    await step(() => enter(what, `${what.value}（直した）`));
+    expect(
+      await h.run('a', {
+        type: 'recordAvailability',
+        itemId,
+        candidateId: 'c2',
+        rev: 1,
+        personId: person.id,
+        answer: 'yes',
+      }),
+    ).toMatchObject({ status: 'ok' });
+    await step(() => buttonOf(c.t('need.look'))?.click());
+    let text = host.textContent ?? '';
+    expect(text).toContain(c.t('household.preview.stale'));
+    expect(text).not.toContain(c.t('need.fix.answersReset', { count }));
+    expect(buttonOf(c.t('need.fix.savePlanned'))).toBeUndefined();
+    // 画面を更新する（新しい計画で描き直す。直しかけた欄と見た物は残る）と、今の答えの数で書き添えて保存できる。
+    const fresh = await h.ctx();
+    await step(() => root.render(<NeedFixScreen ctx={fresh} itemId={itemId} />));
+    text = host.textContent ?? '';
+    expect(text).not.toContain(c.t('household.preview.stale'));
+    expect(text).toContain(c.t('need.fix.answersReset', { count: count + 1 }));
+    await step(() => buttonOf(c.t('need.fix.savePlanned'))?.click());
+    expect(h.sent.at(-1)).toMatchObject({ type: 'correctItem', itemId });
+    expect(h.routes.at(-1)).toEqual({ name: 'when', key });
   });
 });
