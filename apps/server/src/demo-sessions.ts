@@ -215,6 +215,31 @@ export type HomeAddressOutcome =
    */
   | { status: 'forbidden' | 'notOwn' | 'detail' | 'noArea' | 'limit' | 'stale' };
 
+/** 一つの試用で、調べた候補を地図で探せる数。 */
+export const MAX_SURVEY_PLACES_PER_SESSION = 20;
+/** 調べた候補を探す、家からの半径（m。Google には寄せるだけ）と、見せる数。 */
+const SURVEY_PLACE_RADIUS_M = 3000;
+const SURVEY_PLACE_SHOW = 3;
+
+/**
+ * 調べた候補を、確かめた家の場所の近くで地図に探した所（Google の名前・住所・徒歩は見せるだけで、取っておかない）。
+ * 住所の無い所は、家族が出典の所在地と比べようがないので返さない。
+ */
+export interface SurveyPlace {
+  placeId: string;
+  name: string;
+  address: string;
+  /** 名前・住所と一緒に見せなければならない、データの提供者。 */
+  attributions?: PlaceAttribution[];
+  /** 家からの徒歩（分、切り上げ）。道が引けなければ無し。 */
+  walkMin?: number;
+}
+
+export type SurveyPlacesOutcome =
+  | { status: 'ok'; places: SurveyPlace[] }
+  /** 知らない候補・家の場所の地図の確かめが無い（地図の無いサーバーも）・数を使い切った・地図の失敗・大人でない。 */
+  | { status: 'gone' | 'noHome' | 'limit' | 'failed' | 'forbidden' };
+
 export type HomeConfirmOutcome =
   | { status: 'ok'; view: View }
   /** 大人でない・名前だけの試用でない・候補が無い（入れ直した・もう確かめた・知らない候補）。 */
@@ -386,6 +411,8 @@ interface Session {
   homeSeq: number;
   /** 地図で見つけた家の場所の候補（place ID と、その時の地域の欄）。入れ直すと消える。 */
   homeCandidate?: { id: string; placeId: string; area: string };
+  /** このデモで、調べた候補を地図で探した数。 */
+  surveyPlaces: number;
   /** このデモで Claude にいま周りを調べてもらった（もらおうとした）数と、操作ごとの控え。 */
   surveys: number;
   surveyOperations: Map<string, SurveyOperation>;
@@ -586,6 +613,7 @@ export function demoSessions(
       storeSearches: 0,
       homeAddresses: 0,
       homeSeq: 0,
+      surveyPlaces: 0,
       surveys: 0,
       surveyOperations: new Map(),
       surveyed: new Map(),
@@ -1153,6 +1181,60 @@ export function demoSessions(
       if (written === 'invalid') return { status: 'gone' };
       session.homeCandidate = undefined;
       return { status: 'ok', view: written };
+    },
+    /**
+     * 調べた候補（このデモで見せた物）を、確かめた家の場所の近くで地図に探し、家からの徒歩を添えて返す（見せるだけ
+     * で、取っておかない）。名前で探すので、同じ名前の別の所（分院など）のこともある：どれが同じ所かは家族が選び、
+     * 画面は選んだ所の徒歩だけを出す。家の場所の地図の確かめが無ければ noHome。
+     */
+    async surveyPlaces(
+      id: string,
+      memberId: string,
+      candidateId: string,
+    ): Promise<SurveyPlacesOutcome | undefined> {
+      const session = touch(id);
+      if (!session) return undefined;
+      const candidate = session.surveyed.get(candidateId);
+      if (!candidate) return { status: 'gone' };
+      const household = await store.withHousehold(id, (log) => foldEvents(log.events()).household);
+      if (!isAdult(household, memberId)) return { status: 'forbidden' };
+      const client = deps.maps;
+      const home = household?.places.find((p) => p.kind === 'home')?.googlePlaceId;
+      if (!client || !home) return { status: 'noHome' };
+      if (session.surveyPlaces >= MAX_SURVEY_PLACES_PER_SESSION) return { status: 'limit' };
+      session.surveyPlaces += 1;
+      try {
+        const at = await client.place(home, { summary: true });
+        if (!at.location) return { status: 'failed' };
+        const found = (
+          await client.searchText(
+            candidate.resource.name,
+            at.location,
+            SURVEY_PLACE_RADIUS_M,
+            SURVEY_PLACE_SHOW,
+          )
+        ).filter((f): f is typeof f & { address: string } => f.id !== home && !!f.address);
+        if (found.length === 0) return { status: 'ok', places: [] };
+        const walk = await client.walkMatrix(
+          [home],
+          found.map((f) => f.id),
+        );
+        return {
+          status: 'ok',
+          places: found.map((f) => {
+            const seconds = walk.get(`${home}>${f.id}`);
+            return {
+              placeId: f.id,
+              name: f.name,
+              address: f.address,
+              ...(f.attributions ? { attributions: f.attributions } : {}),
+              ...(seconds === undefined ? {} : { walkMin: Math.ceil(seconds / 60) }),
+            };
+          }),
+        };
+      } catch {
+        return { status: 'failed' };
+      }
     },
     /** 段から新しいデモの家庭を作る。 */
     create(stage: DemoStageId): string {

@@ -679,6 +679,34 @@ export function createApp(
         return c.json({ error: 'readingFailed', reason: done.reason }, 502);
     }
   });
+  // 調べた候補を、確かめた家の場所の近くで地図に探し、家からの徒歩を添えて返す（見せるだけ。どれが同じ所かは家族が
+  // 選ぶ）。Google の名前・住所・徒歩は、この応答で見せるだけで、取っておかない。
+  app.post('/api/demo/sessions/:sid/survey/places', async (c) => {
+    const body = z
+      .object({ memberId: z.string().min(1), candidateId: z.string().min(1).max(100) })
+      .safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badPlaces' }, 400);
+    const done = await sessions.surveyPlaces(
+      c.req.param('sid'),
+      body.data.memberId,
+      body.data.candidateId,
+    );
+    if (!done) return c.json({ error: 'unknownSession' }, 404);
+    switch (done.status) {
+      case 'ok':
+        return c.json({ places: done.places });
+      case 'forbidden':
+        return c.json({ error: 'notAnAdult' }, 403);
+      case 'gone':
+        return c.json({ error: 'candidateGone' }, 409);
+      case 'noHome':
+        return c.json({ error: 'noHome' }, 409);
+      case 'limit':
+        return c.json({ error: 'placesLimit' }, 429);
+      case 'failed':
+        return c.json({ error: 'mapsFailed' }, 502);
+    }
+  });
   // 名前だけの試用で、家の場所を入れる。地域の欄（都道府県・市区町村・町名）だけを家に入れ、番地の欄は地域の欄と
   // 合わせて地図の照会にだけ使う（残さない・ログに書かない）。地図で見つけた所は候補で、家族が確かめた時だけ入れる。
   app.post('/api/demo/sessions/:sid/home-address', async (c) => {

@@ -60,6 +60,7 @@ import {
   type SendResult,
   type ShownProposal,
   type StoreSearchResult,
+  type SurveyPlacesResult,
   type SurveyRunResult,
   type WalkView,
   type WayIdeasRequest,
@@ -258,6 +259,8 @@ export interface Ctx {
     run: (live: boolean, operationId: string) => Promise<SurveyRunResult>;
     recorded: boolean;
     live: boolean;
+    /** 調べた候補を、確かめた家の場所の近くで地図に探す（地図のあるデモだけ）。 */
+    places?: (candidateId: string) => Promise<SurveyPlacesResult>;
   };
   go: (route: Route) => void;
 }

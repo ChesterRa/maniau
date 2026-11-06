@@ -136,6 +136,20 @@ export type HomeSetResult =
   | { status: 'ok'; candidate?: HomeCandidate }
   | { status: 'detail' | 'noArea' | 'limit' | 'stale' | 'failed' };
 
+/** 調べた候補を、確かめた家の場所の近くで地図に探した所（Google の名前・住所・徒歩は見せるだけ。残さない）。 */
+export interface SurveyPlace {
+  placeId: string;
+  name: string;
+  address: string;
+  attributions?: PlaceAttribution[];
+  /** 家からの徒歩（分）。道が引けなければ無し。 */
+  walkMin?: number;
+}
+
+export type SurveyPlacesResult =
+  | { status: 'ok'; places: SurveyPlace[] }
+  | { status: 'noHome' | 'limit' | 'gone' | 'failed' };
+
 /** 周りの調べの結果（何も書かない。家族が候補を確かめて家の情報に入れる）。 */
 export type SurveyRunResult =
   | { status: 'ok'; survey: SurveyShown }
@@ -973,6 +987,34 @@ export function useServerView(where: Where | undefined) {
     [kind, sessionId, memberId],
   );
 
+  /** 調べた候補を、確かめた家の場所の近くで地図に探す（見せるだけ。どれが同じ所かは家族が選ぶ）。デモだけ。 */
+  const surveyPlaces = useCallback(
+    async (candidateId: string): Promise<SurveyPlacesResult> => {
+      if (kind !== 'demo' || !sessionId || !memberId) return { status: 'failed' };
+      try {
+        const response = await fetch(`/api/demo/sessions/${sessionId}/survey/places`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ memberId, candidateId }),
+          signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+        });
+        const body = (await response.json()) as { places?: SurveyPlace[]; error?: string };
+        if (response.ok && body.places) return { status: 'ok', places: body.places };
+        if (body.error === 'unknownSession') {
+          setNotice('expired');
+          return { status: 'failed' };
+        }
+        if (body.error === 'noHome') return { status: 'noHome' };
+        if (body.error === 'placesLimit') return { status: 'limit' };
+        if (body.error === 'candidateGone') return { status: 'gone' };
+        return { status: 'failed' };
+      } catch {
+        return { status: 'failed' };
+      }
+    },
+    [kind, sessionId, memberId],
+  );
+
   /** 家庭の駅の近くで、家族が押した言葉の店を探す（言葉はそのまま Google に送る）。 */
   const searchStores = useCallback(
     async (query: string, stationId: string): Promise<StoreSearchResult> => {
@@ -1071,6 +1113,7 @@ export function useServerView(where: Where | undefined) {
     storeKinds,
     searchStores,
     survey,
+    surveyPlaces,
     /** 届いたか分からない操作を、同じ家庭・同じ大人・同じ ID・同じ代で送り直す。 */
     retry: async (): Promise<void> => {
       const operation = pending.current;

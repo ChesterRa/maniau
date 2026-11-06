@@ -13,7 +13,7 @@ import type {
 } from '@maniau/core';
 import { checkHomeArea, surveyPreparation } from '@maniau/core';
 import { useState } from 'react';
-import { type HomeCandidate, operationId } from './family';
+import { type HomeCandidate, operationId, type SurveyPlace } from './family';
 import { type Ctx, day, nameOf } from './screens';
 import { Button, Card, Label, Row, Text, Title } from './ui';
 import { Shown, useHouseholdSave } from './ways';
@@ -689,6 +689,124 @@ function HomePanel({ ctx, home }: { ctx: Ctx; home: NonNullable<Ctx['home']> }) 
   );
 }
 
+type PlacesState =
+  | 'idle'
+  | 'working'
+  | 'shown'
+  | 'none'
+  | 'notSame'
+  | 'limit'
+  | 'failed'
+  | 'noHome'
+  | 'gone';
+
+/**
+ * 調べた候補を、確かめた家の場所の近くで地図に探す。名前で探すので、同じ名前の別の所（分院など）のこともある：家族が
+ * 出典の頁の所在地と比べて同じ所を選んでから、家からの徒歩を見せる（選ぶ前は徒歩を出さない）。Google の名前・住所・
+ * 徒歩は見せるだけで、残さない。
+ */
+function PlacesBlock({
+  ctx,
+  candidateId,
+  find,
+}: {
+  ctx: Ctx;
+  candidateId: string;
+  find: (candidateId: string) => ReturnType<NonNullable<NonNullable<Ctx['survey']>['places']>>;
+}) {
+  const [state, setState] = useState<PlacesState>('idle');
+  const [places, setPlaces] = useState<SurveyPlace[]>([]);
+  const [picked, setPicked] = useState<SurveyPlace>();
+  const look = async () => {
+    setState('working');
+    setPicked(undefined);
+    const result = await find(candidateId);
+    if (result.status !== 'ok') {
+      setState(result.status);
+      return;
+    }
+    // 住所の無い所は、出典の所在地と比べようがないので選ばせない（サーバーも返さない）。
+    const checkable = result.places.filter((p) => p.address);
+    setPlaces(checkable);
+    setState(checkable.length === 0 ? 'none' : 'shown');
+  };
+  const credit = (shown: SurveyPlace[]) =>
+    ctx.t('resources.survey.places.credit', {
+      providers: [
+        'Google',
+        ...new Set(shown.flatMap((p) => (p.attributions ?? []).map((a) => a.provider))),
+      ].join(ctx.t('list.separator')),
+    });
+  return (
+    <div className="flex flex-col gap-1.5">
+      {(state === 'idle' || state === 'failed') && (
+        <Row>
+          <Button kind="secondary" onClick={() => void look()}>
+            {ctx.t('resources.survey.places.look')}
+          </Button>
+        </Row>
+      )}
+      {state === 'working' && <Text>{ctx.t('resources.survey.places.working')}</Text>}
+      {state === 'shown' && !picked && (
+        <>
+          <Text quiet>{ctx.t('resources.survey.places.pick')}</Text>
+          {places.map((p) => (
+            <div key={p.placeId} className="flex flex-col gap-1">
+              <Text>
+                {ctx.t('resources.survey.places.item', { name: p.name, address: p.address })}
+              </Text>
+              <Row>
+                <Button kind="secondary" onClick={() => setPicked(p)}>
+                  {ctx.t('resources.survey.places.same')}
+                </Button>
+              </Row>
+            </div>
+          ))}
+          <Row>
+            <Button kind="secondary" onClick={() => setState('notSame')}>
+              {ctx.t('resources.survey.places.noneSame')}
+            </Button>
+          </Row>
+          <Text quiet>{credit(places)}</Text>
+        </>
+      )}
+      {state === 'shown' && picked && (
+        <>
+          <Text>
+            {picked.walkMin === undefined
+              ? ctx.t('resources.survey.places.noWalk', { name: picked.name })
+              : ctx.t('resources.survey.places.walk', { min: picked.walkMin, name: picked.name })}
+          </Text>
+          <Text quiet>
+            {ctx.t('resources.survey.places.picked', {
+              name: picked.name,
+              address: picked.address,
+            })}
+          </Text>
+          <Text quiet>{credit([picked])}</Text>
+        </>
+      )}
+      {state !== 'idle' && state !== 'working' && state !== 'shown' && (
+        <Text>{ctx.t(`resources.survey.places.${state}`)}</Text>
+      )}
+      {/* 選び違えた時は、出した所から選び直す（地図に聞き直さない。何も残さない）。 */}
+      {((state === 'shown' && picked) || state === 'notSame') && (
+        <Row>
+          <Button
+            kind="secondary"
+            onClick={() => {
+              setPicked(undefined);
+              setState('shown');
+            }}
+          >
+            {ctx.t('resources.survey.places.repick')}
+          </Button>
+        </Row>
+      )}
+    </div>
+  );
+}
+
 type SurveyState = 'idle' | 'working' | 'limit' | 'busy' | 'noRecord' | 'noArea' | 'failed';
 
 /**
@@ -728,6 +846,8 @@ function SurveyPanel({
     }
   };
   const household = ctx.household;
+  // 家の場所を地図で確かめていれば、候補ごとに家からの徒歩を地図で調べられる。
+  const homePlaced = household.places.some((p) => p.kind === 'home' && p.googlePlaceId);
   const ways = household.ways.filter((w) => !household.stoppedWayIds?.includes(w.id));
   const choiceOf = (id: string) => choices[id] ?? firstChoice;
   const choose = (id: string, update: Partial<CandidateChoice>) =>
@@ -769,6 +889,9 @@ function SurveyPanel({
           </Text>
         )}
         {!c.registration && <Text quiet>{ctx.t('resources.survey.registration.notRead')}</Text>}
+        {survey.places && homePlaced && (
+          <PlacesBlock ctx={ctx} candidateId={c.id} find={survey.places} />
+        )}
         {!added && open !== c.id ? (
           <Row>
             <Button kind="secondary" onClick={() => setOpen(c.id)}>
@@ -993,6 +1116,9 @@ function SurveyPanel({
               : ctx.t('resources.survey.found', { count: shown.candidates.length })}
           </Text>
           <Text quiet>{ctx.t('resources.survey.checkedNote')}</Text>
+          {own && survey.places && !homePlaced && shown.candidates.length > 0 && (
+            <Text quiet>{ctx.t('resources.survey.places.hint')}</Text>
+          )}
           <details className="text-sm text-sub">
             <summary className="min-h-9 cursor-pointer leading-relaxed">
               {ctx.t('resources.survey.checkedHowLabel')}

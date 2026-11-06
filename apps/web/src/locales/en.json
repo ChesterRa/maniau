@@ -1731,7 +1731,27 @@
       },
       "ownNoArea": "Set where you live above, and Claude can look around that area.",
       "ownUnavailable": "This server can’t ask Claude to look around right now.",
-      "otherArea": "These results are for a different area from where you live now ({{area}}). Look again to check the current one."
+      "otherArea": "These results are for a different area from where you live now ({{area}}). Look again to check the current one.",
+      "places": {
+        "look": "Check the walk from home on the map",
+        "working": "Searching the map…",
+        "pick": "We searched the map near your home using the candidate’s name. Other facilities, and other places with the same name (such as a branch), also come up; compare with the address on the source page and pick the same place.",
+        "item": "{{name}} ({{address}})",
+        "same": "This is the same place",
+        "noneSame": "None of these",
+        "walk": "About {{min}} min on foot from home (to “{{name}}”, the one you picked on the map).",
+        "noWalk": "The map couldn’t find a walking route from home to “{{name}}”.",
+        "picked": "Picked: {{name}} ({{address}})",
+        "repick": "Pick again",
+        "credit": "Map data: {{providers}}. Checked on the map just now; this trial doesn’t keep it.",
+        "none": "The map search returned no place with an address you could check.",
+        "notSame": "No match, so no route is shown.",
+        "limit": "This trial has used all its map searches for candidates (20).",
+        "failed": "Couldn’t search the map. Please try again in a moment.",
+        "noHome": "Confirm your home on the map first.",
+        "gone": "Look around again to search for this candidate.",
+        "hint": "Confirm your home on the map above, and you can check the walking time from home for each candidate."
+      }
     },
     "stores": {
       "hint": "You can also mark your stores ({{names}}) as usual or not used with “Edit”. If you have a usual store, shopping goes there (even if another store is on the way sooner).",

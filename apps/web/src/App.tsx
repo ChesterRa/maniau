@@ -188,6 +188,7 @@ function Body(props: {
                   run: live.survey,
                   recorded: props.hasRecordedSurvey === true,
                   live: props.canSurvey === true,
+                  ...(props.canSearchStores ? { places: live.surveyPlaces } : {}),
                 },
               }
             : {}),
