@@ -258,7 +258,8 @@
       "cancel": "No longer need it",
       "keepNote": "The original request stays. It does not secure a new arrangement.",
       "unknownCare": "The record does not identify the child or the requested time. Check what you asked the person.",
-      "failed": "Things may have changed, or the choice could not be saved. Check the current details and choose again."
+      "failed": "Things may have changed, or the choice could not be saved. Check the current details and choose again.",
+      "stillChosen": "This option is still selected. On the decision screen, choose another option or drop this one."
     },
     "noReply": {
       "label": "Reply not recorded",
@@ -666,6 +667,7 @@
     "gone": "This task is no longer active in the plan. If you already sent the message below, press “Record that I sent it”. If you haven't sent it, go back without sending it.",
     "changed": "This request has changed. The message below is the one you saw before. If you already sent it, press “Record that I sent it”. If you haven't sent it, go back without sending it.",
     "recordUncertain": "We couldn't confirm whether it was recorded. If you already sent it, check directly with the recipient too.",
+    "assignmentChanged": "The assignment record changed, so this screen can't record that you sent it. If you already sent it, check directly with the current assignee and the recipient.",
     "draft": "Draft",
     "share": "Share via LINE etc.",
     "copy": "Copy",
@@ -1325,6 +1327,8 @@
       "candidateChanged": "The candidates changed. Please choose again from the current ones.",
       "decisionInUse": "Someone has already asked or accepted, so the chosen day and details can’t change. To change them, mark this item not needed and add it again.",
       "thingPast": "That date and time has already passed. Change the date or time.",
+      "dateWeekdayMismatch": "The date does not match the weekday that was read. Check the date and weekday in the original notice.",
+      "legacyRequestUnclear": "An earlier request is missing its recorded details, so the date cannot be corrected. Check the actual request with the recipient too.",
       "selfWayChanged": "The do-it-ourselves way has been changed (it now has someone to ask, a place, a set person or similar), so it can’t be used here. Add the details instead, or change that way in “Our family”."
     }
   },
@@ -2063,7 +2067,11 @@
       "read": "Date read: {{date}}",
       "missing": "No date was read.",
       "inactive": "This item is not currently in the plan because its condition is not met.",
-      "unconfirmed": "The new reading has not been checked yet.",
+      "unconfirmed": "This content has not been checked yet.",
+      "legacy": "An earlier request is missing its recorded details, so this date cannot be corrected here. Check the actual request with the recipient too.",
+      "weekdayMismatch": "The date does not match the weekday that was read. Check the date and weekday in the original notice.",
+      "weekdayHelp": "If the weekday was read incorrectly, select that reason under “Remove this notice from the plan”, add it again and check the reading. Reading it again also uses a reading.",
+      "weekdayHelpUnavailable": "If the weekday was read incorrectly, this server cannot read the notice again. Please check the original in another way.",
       "link": "The same notice also uses {{date}} in the condition, choices or an answer for “{{label}}”. It may or may not be the same date.",
       "unknownCondition": "an unnamed condition",
       "linkHelp": "Changing this date alone could leave the old date in the condition, choices or answer, so it cannot be saved here. If the reading is wrong, select that reason under “Remove this notice from the plan”, add the notice again, and check what was read. Reading it again also uses a reading.",

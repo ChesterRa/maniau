@@ -1450,7 +1450,7 @@ function ReleasedCard({ ctx, released }: { ctx: Ctx; released: Released }) {
 /** 送った後に根拠が分からなくなった・替わった依頼。取り消しとも続けるとも決めず、頼んだ本人に確かめてもらう。 */
 function CheckCard({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<string>();
   const arrangement = ctx.plan.arrangements.find(
     (a) =>
       a.live &&
@@ -1468,8 +1468,19 @@ function CheckCard({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
       ? arrangement.options.find((o) => o.key === request.basis.optionKey)
       : undefined;
   const unusable = option?.unusable === true;
+  const sameDay =
+    !request.window ||
+    !arrangement ||
+    localDateOf(toEpochMinutes(arrangement.start), ctx.tz) ===
+      localDateOf(toEpochMinutes(request.window.start), ctx.tz);
+  const selectedHere =
+    sameDay &&
+    arrangement &&
+    option &&
+    (arrangement.chosenOptionKey === option.key ||
+      arrangement.backupOptionKeys.includes(option.key));
   const role =
-    unusable && arrangement && option
+    unusable && sameDay && arrangement && option
       ? arrangement.chosenOptionKey === option.key
         ? 'primary'
         : arrangement.backupOptionKeys.includes(option.key)
@@ -1488,14 +1499,18 @@ function CheckCard({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
       seen: { throughSeq: ctx.plan.throughSeq },
     });
     setBusy(false);
-    setFailed(!succeeded(result));
+    setFailed(
+      succeeded(result) ? undefined : 'reason' in result ? (result.reason ?? 'other') : 'other',
+    );
   };
   const drop = async () => {
     if (!arrangement || !option || !role) return;
     setBusy(true);
     const result = await ctx.send(dropOptionCommand(ctx, arrangement.key, option.key));
     setBusy(false);
-    setFailed(!succeeded(result));
+    setFailed(
+      succeeded(result) ? undefined : 'reason' in result ? (result.reason ?? 'other') : 'other',
+    );
   };
   return (
     <Card>
@@ -1513,7 +1528,11 @@ function CheckCard({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
       <RequestDetails ctx={ctx} request={request} />
       {!arrangement && !unknownCare && <Text quiet>{ctx.t('card.check.keepNote')}</Text>}
       {unknownCare && <Text quiet>{ctx.t('card.check.unknownCare')}</Text>}
-      {failed && <Text>{ctx.t('card.check.failed')}</Text>}
+      {failed && (
+        <Text>
+          {ctx.t(failed === 'optionStillChosen' ? 'card.check.stillChosen' : 'card.check.failed')}
+        </Text>
+      )}
       <Row>
         {arrangement && (
           <Button onClick={() => ctx.go(decideRoute(arrangement))}>
@@ -1530,7 +1549,7 @@ function CheckCard({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
             {ctx.t('card.check.keep')}
           </Button>
         )}
-        {!role && (
+        {!selectedHere && !role && (
           <Button kind="secondary" disabled={busy} onClick={() => void decide('cancel')}>
             {ctx.t('card.check.cancel')}
           </Button>
@@ -3782,7 +3801,7 @@ function DraftActions({ ctx, draft }: { ctx: Ctx; draft: string }) {
 
 export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
   const task = ctx.plan.tasks.find((t) => t.key === taskKey);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<string>();
   // 外のアプリに移っている間に作業が消えても、表示していた文と命令をこの画面の間だけ持つ。
   // 実際には送っていない文を、ここから新しく送らせない。
   const last = useRef<{
@@ -3831,7 +3850,7 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
     const sent = async () => {
       const result = await ctx.send(before.command);
       if (succeeded(result)) ctx.go({ name: 'today', done: 'sent' });
-      else setFailed(true);
+      else setFailed('reason' in result ? (result.reason ?? 'other') : 'other');
     };
     return (
       <>
@@ -3842,15 +3861,25 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
         />
         <Main>
           <Card tone="warn">
-            <Text>{ctx.t(changed ? 'ask.changed' : 'ask.gone')}</Text>
+            <Text>
+              {ctx.t(
+                failed === 'assignmentChanged'
+                  ? 'ask.assignmentChanged'
+                  : changed
+                    ? 'ask.changed'
+                    : 'ask.gone',
+              )}
+            </Text>
           </Card>
           <Card>
             <p className="whitespace-pre-line text-base leading-relaxed">{before.draft}</p>
           </Card>
-          {failed && <Text>{ctx.t('ask.recordUncertain')}</Text>}
-          <Button kind="secondary" onClick={() => void sent()}>
-            {ctx.t('ask.sent')}
-          </Button>
+          {failed && failed !== 'assignmentChanged' && <Text>{ctx.t('ask.recordUncertain')}</Text>}
+          {failed !== 'assignmentChanged' && (
+            <Button kind="secondary" onClick={() => void sent()}>
+              {ctx.t('ask.sent')}
+            </Button>
+          )}
         </Main>
       </>
     );
@@ -3868,7 +3897,7 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
       last.current?.taskKey === taskKey ? last.current.command : sentCommand(ctx, task),
     );
     if (succeeded(result)) ctx.go({ name: 'today', done: 'sent' });
-    else setFailed(true);
+    else setFailed('reason' in result ? (result.reason ?? 'other') : 'other');
   };
   // 返事が無いまま、次に選べる手の決め時が近づくと、きょうにその手を出す（予備を押さえるか）。次の手が無い・予備を
   // もう押さえてある時は、起きない事なので書かない。
@@ -3904,20 +3933,28 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
             <Text>{ctx.t('card.decide.split', split)}</Text>
           </Card>
         )}
-        <DraftActions ctx={ctx} draft={draft} />
+        {failed !== 'assignmentChanged' && <DraftActions ctx={ctx} draft={draft} />}
         {failed && (
           <Card tone="warn">
-            <Text>{ctx.t('ask.recordUncertain')}</Text>
+            <Text>
+              {ctx.t(
+                failed === 'assignmentChanged' ? 'ask.assignmentChanged' : 'ask.recordUncertain',
+              )}
+            </Text>
           </Card>
         )}
-        <Button kind="secondary" onClick={() => void sent()}>
-          {ctx.t('ask.sent')}
-        </Button>
-        <Card tone="plain" className="bg-paper">
-          <Label tone="accent">{ctx.t('ask.nextLabel')}</Label>
-          <Text>{ctx.t('ask.next1')}</Text>
-          {nextLater && <Text>{ctx.t('ask.next2')}</Text>}
-        </Card>
+        {failed !== 'assignmentChanged' && (
+          <>
+            <Button kind="secondary" onClick={() => void sent()}>
+              {ctx.t('ask.sent')}
+            </Button>
+            <Card tone="plain" className="bg-paper">
+              <Label tone="accent">{ctx.t('ask.nextLabel')}</Label>
+              <Text>{ctx.t('ask.next1')}</Text>
+              {nextLater && <Text>{ctx.t('ask.next2')}</Text>}
+            </Card>
+          </>
+        )}
       </Main>
     </>
   );

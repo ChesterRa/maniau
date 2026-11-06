@@ -62,12 +62,12 @@ test('元の文と見比べて日付を直し、前の日に送った依頼は�
   await edits.locator('summary').click();
   const day = edits.locator('div.rounded-xl').filter({ hasText: '5日(土)に行った場合、12月7日(月)は振替休業日です。' });
   await expect(day).toHaveCount(1);
-  await day.getByLabel('正しい日付').fill('2026-12-08');
+  await day.getByLabel('正しい日付').fill('2026-12-14');
   await day.getByRole('button', { name: '変わることを見る' }).click();
   await day.getByRole('button', { name: 'この日付で記録する' }).click();
   await expect.poll(async () => (await read()).items.find(
     (entry: { item: { id: string } }) => entry.item.id === 'n1:i6',
-  )?.item.interpretation.date).toBe('2026-12-08');
+  )?.item.interpretation.date).toBe('2026-12-14');
   const after = await read();
   expect(after.plan.requests.find((item: { requestId: string }) => item.requestId === 'r-grandma'))
     .toMatchObject({ live: true, needsCheck: true });

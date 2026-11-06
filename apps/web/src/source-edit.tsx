@@ -1,5 +1,11 @@
 // お知らせの原文と読み取った日を見比べて直す。保存の前にはサーバーの計算で変わる事を見る。
-import { type Item, isValidLocalDate, type SaveablePreview, type Source } from '@maniau/core';
+import {
+  type Item,
+  isValidLocalDate,
+  type SaveablePreview,
+  type Source,
+  weekdayOf,
+} from '@maniau/core';
 import { useState } from 'react';
 import { formatDay } from './format';
 import { PreviewBlock, usePreviewSave } from './need';
@@ -32,8 +38,15 @@ function DateEdit({
   const shown = flow.shownFor(command);
   const refused = flow.refusedFor(command);
   const linked = links.length > 0 && date !== item.interpretation.date;
+  const wrongWeekday =
+    isValidLocalDate(date) &&
+    item.interpretation.writtenWeekday !== undefined &&
+    weekdayOf(date) !== item.interpretation.writtenWeekday;
   const valid =
-    isValidLocalDate(date) && (date !== item.interpretation.date || !trusted) && !linked;
+    isValidLocalDate(date) &&
+    (date !== item.interpretation.date || !trusted) &&
+    !linked &&
+    !wrongWeekday;
   return (
     <div className="flex flex-col gap-2 rounded-xl bg-paper px-3 py-3">
       <Text>{item.written}</Text>
@@ -46,6 +59,16 @@ function DateEdit({
       </Text>
       {!live && <Text quiet>{ctx.t('sourceFix.date.inactive')}</Text>}
       {!trusted && <Text>{ctx.t('sourceFix.date.unconfirmed')}</Text>}
+      {wrongWeekday && (
+        <div role="status">
+          <Text>{ctx.t('sourceFix.date.weekdayMismatch')}</Text>
+          <Text>
+            {ctx.t(
+              ctx.read ? 'sourceFix.date.weekdayHelp' : 'sourceFix.date.weekdayHelpUnavailable',
+            )}
+          </Text>
+        </div>
+      )}
       {linked && (
         <div className="flex flex-col gap-1" role="status">
           {links.map((link, index) => (
@@ -70,7 +93,9 @@ function DateEdit({
           onChange={(e) => setDate(e.target.value)}
         />
       </label>
-      {refused === 'dateLinkedCondition' ? (
+      {refused === 'legacyRequestUnclear' ? (
+        <Text>{ctx.t('sourceFix.date.legacy')}</Text>
+      ) : refused === 'dateLinkedCondition' ? (
         <div className="flex flex-col gap-2" role="status">
           <Text>{ctx.t('sourceFix.date.changed')}</Text>
           {ctx.refresh && (

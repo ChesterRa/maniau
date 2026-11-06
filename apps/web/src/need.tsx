@@ -54,6 +54,8 @@ function refusedKey(reason: string): string {
     'decisionInUse',
     'thingPast',
     'selfWayChanged',
+    'dateWeekdayMismatch',
+    'legacyRequestUnclear',
   ].includes(reason)
     ? reason
     : 'other';

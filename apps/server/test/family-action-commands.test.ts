@@ -274,7 +274,7 @@ describe('うちの番の言明を命令で動かす', () => {
     const fixed = await h.run('a', NOW, {
       type: 'correctItem',
       itemId: 'n3:d2',
-      interpretation: { date: '2026-12-21' },
+      interpretation: { date: '2026-12-27' },
     });
     expect(fixed.status).toBe('ok');
     expect((await h.plan(NOW)).tasks.some((t) => t.key === OTHER)).toBe(false);

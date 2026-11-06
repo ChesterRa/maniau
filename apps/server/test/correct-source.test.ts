@@ -6,7 +6,7 @@ import {
   proposalSnapshot,
   todayCards,
 } from '@maniau/core';
-import { computePlan, keys } from '@maniau/core/engine';
+import { computePlan, keys, requestSnapshot } from '@maniau/core/engine';
 import { verifyPlan } from '@maniau/verify';
 import { describe, expect, it } from 'vitest';
 import { runCommand } from '../src/commands';
@@ -178,6 +178,119 @@ async function sendingFromOldScreen() {
 }
 
 describe('加え間違えたお知らせ', () => {
+  it('同じ手が今も本命の時、依頼だけを不要にせず決める画面で見直す', async () => {
+    const h = setup();
+    expect(
+      await h.run('b', { type: 'recordReply', requestId: 'r-grandma', reply: 'yes' }),
+    ).toMatchObject({ status: 'ok' });
+    const before = await h.events();
+    const set = before.findLast((event) => event.type === 'householdSet');
+    if (set?.type !== 'householdSet') throw Error('家庭が無い');
+    const household = structuredClone(set.household);
+    const monday = household.routines.find(
+      (routine) => routine.memberId === 'a' && routine.weekday === 1,
+    );
+    const home = monday?.segments.find(
+      (segment) => segment.kind === 'home' && segment.start === '18:15',
+    );
+    const commute = monday?.segments.find(
+      (segment) => segment.kind === 'commute' && segment.end === '18:15',
+    );
+    if (!home || !commute) throw Error('帰りの予定が無い');
+    home.start = '19:30';
+    commute.end = '19:30';
+    const change = { type: 'updateHousehold', household } as const;
+    const preview = previewChange(before, { memberId: 'a', now }, change);
+    if ('status' in preview) throw Error(`予定の直しを見られない: ${preview.reason}`);
+    expect(
+      await h.run('a', {
+        ...change,
+        seen: { throughSeq: preview.throughSeq, changes: preview.seen },
+      }),
+    ).toMatchObject({ status: 'ok' });
+    const current = await h.plan();
+    expect(current.requests.find((request) => request.requestId === 'r-grandma')).toMatchObject({
+      live: true,
+      needsCheck: true,
+    });
+    const events = await h.events();
+    expect(
+      await h.run('b', {
+        type: 'resolveRequestCheck',
+        requestId: 'r-grandma',
+        decision: 'cancel',
+        seen: { throughSeq: current.throughSeq },
+      }),
+    ).toMatchObject({ status: 'conflict', reason: 'optionStillChosen' });
+    expect(await h.events()).toEqual(events);
+  });
+
+  it('日付の直しと担当替えの後、前の担当の画面から依頼を記録しない', async () => {
+    const { h, task, sent } = await sendingFromOldScreen();
+    const correction: PreviewCommand = {
+      type: 'correctItem',
+      itemId: 'n1:i6',
+      interpretation: { date: '2026-12-14' },
+    };
+    const preview = previewChange(await h.events(), { memberId: 'b', now }, correction);
+    if ('status' in preview) throw Error('日付の直しを見られない');
+    expect(
+      await h.run('b', {
+        ...correction,
+        seen: { throughSeq: preview.throughSeq, changes: preview.seen },
+      }),
+    ).toMatchObject({ status: 'ok' });
+    expect(
+      await h.run('b', { type: 'proposeAssignment', taskKey: task.key, assigneeId: 'b' }),
+    ).toMatchObject({ status: 'ok' });
+    const events = await h.events();
+    expect(await h.run('a', sent)).toMatchObject({
+      status: 'conflict',
+      reason: 'assignmentChanged',
+    });
+    expect(await h.events()).toEqual(events);
+  });
+
+  it('別の人が条件に答えても、実際に送った前の条件を控えに残す', async () => {
+    const { h, task, sent } = await sendingFromOldScreen();
+    const original = requestSnapshot(await h.events(), now, task.key);
+    expect(
+      await h.run('b', { type: 'answer', unknownId: 'n1:u1', value: '2026-12-05' }),
+    ).toMatchObject({ status: 'ok' });
+    expect(await h.run('a', sent)).toMatchObject({ status: 'ok' });
+    const event = (await h.events()).findLast((entry) => entry.type === 'externalRequestSent');
+    expect(event?.type === 'externalRequestSent' && event.snapshot).toEqual(original);
+  });
+
+  it.each(['window', 'childId'] as const)(
+    '旧い子の依頼で %s の控えが足りない時、お知らせを外す前に別に確かめてもらう',
+    async (missing) => {
+      const initial = demoEvents('chase').map((event) => {
+        if (
+          event.type !== 'externalRequestSent' ||
+          event.requestId !== 'r-grandma' ||
+          !event.snapshot
+        )
+          return event;
+        const snapshot = { ...event.snapshot };
+        delete snapshot[missing];
+        return { ...event, snapshot };
+      });
+      expect(previewChange(initial, { memberId: 'b', now }, mistaken)).toMatchObject({
+        status: 'invalid',
+        reason: 'legacyRequestUnclear',
+      });
+      const store = memoryStore(new Map([['demo', initial]]));
+      expect(
+        await runCommand(
+          store,
+          'demo',
+          { memberId: 'b', operationId: `partial-${missing}`, now, demo: true },
+          mistaken,
+        ),
+      ).toMatchObject({ status: 'invalid', reason: 'legacyRequestUnclear' });
+    },
+  );
   it('家族が外す前の画面から実際に送った依頼は、後でも記録して確認できる', async () => {
     const { h, sent, discard } = await sendingFromOldScreen();
     expect(await discard()).toMatchObject({ status: 'ok' });
@@ -261,6 +374,10 @@ describe('加え間違えたお知らせ', () => {
     expect(
       await h.run('a', { ...sent, shown: { ...sent.shown, throughSeq: 999999 } }),
     ).toMatchObject({ status: 'conflict', reason: 'taskGone' });
+    expect(await h.run('a', { ...sent, shown: { ...sent.shown, throughSeq: 0 } })).toMatchObject({
+      status: 'conflict',
+      reason: 'taskGone',
+    });
     expect(
       await h.run('a', { ...sent, shown: { ...sent.shown, at: '2026-12-01T21:00+09:00' } }),
     ).toMatchObject({ status: 'conflict', reason: 'taskGone' });

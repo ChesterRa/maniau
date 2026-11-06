@@ -42,6 +42,7 @@ import {
   toEpochMinutes,
   validateHousehold,
   type Way,
+  weekdayOf,
   zonedToEpochMinutes,
 } from '@maniau/core';
 import {
@@ -702,7 +703,7 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         if (!shown) return { status: 'conflict', reason: 'taskGone' };
         const before = events.filter((event) => event.seq <= shown.throughSeq);
         const previous = foldEvents(before);
-        if (previous.lastSeq !== shown.throughSeq)
+        if (!previous.household || previous.lastSeq !== shown.throughSeq)
           return { status: 'conflict', reason: 'taskGone' };
         const oldPlan = planFromState(previous, shown.at, context.maps);
         const oldTask = oldPlan.tasks.find((entry) => entry.key === command.taskKey);
@@ -719,11 +720,14 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
             .map((item) => item.sourceId),
         );
         const after = events.filter((event) => event.seq > shown.throughSeq);
+        // 答えは依頼の根拠以外にもまたがり得るため、どの問いへの答えかは限定しない。控えが変わっていれば、
+        // 当時の控えを送った事実として残し、今も要るかは別に確かめる。
         const changed = after.some(
           (event) =>
             ((event.type === 'sourceExcluded' || event.type === 'sourceWithdrawn') &&
               sources.has(event.sourceId)) ||
-            (event.type === 'itemCorrected' && oldTask.basis.itemIds.includes(event.itemId)),
+            (event.type === 'itemCorrected' && oldTask.basis.itemIds.includes(event.itemId)) ||
+            event.type === 'answered',
         );
         const refusedLater = after.some(
           (event) =>
@@ -734,7 +738,12 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         );
         // 削除した中身を、過去の画面から復活させない。
         const purged = [...sources].some((id) => state.purgedSources.get(id) === 'all');
-        // 用件の控えが同じでも、本人が後から辞退した・原文が削除された時は、古い画面で送信を記録しない。
+        const reassigned = after.some(
+          (event) => event.type === 'assignmentProposed' && event.taskKey === command.taskKey,
+        );
+        // 用件の控えが同じでも、担当が更新された後や、本人が後から辞退した・原文が削除された時は、
+        // 古い画面で送信を記録しない。担当の更新は、実際に送った時の連絡先を画面に示せるよう別に返す。
+        if (reassigned) return { status: 'conflict', reason: 'assignmentChanged' };
         if (refusedLater || purged) return { status: 'conflict', reason: 'taskGone' };
         const oldSnapshot = requestSnapshot(before, shown.at, oldTask.key);
         if (!sameJson(snapshot, oldSnapshot)) {
@@ -820,6 +829,28 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         return { status: 'conflict', reason: 'requestChanged' };
       const original = state.requests.get(request.requestId);
       if (!original?.snapshot) return { status: 'invalid', reason: 'legacyRequestUnclear' };
+      if (command.decision === 'cancel') {
+        const { arrangementKey, optionKey } = original.snapshot.basis;
+        const arrangement = plan.arrangements.find(
+          (entry) => entry.live && entry.key === arrangementKey,
+        );
+        const sameDay =
+          !original.snapshot.window ||
+          !state.household ||
+          localDateOf(toEpochMinutes(original.snapshot.window.start), state.household.timeZone) ===
+            localDateOf(
+              toEpochMinutes(arrangement?.start ?? original.snapshot.window.start),
+              state.household.timeZone,
+            );
+        if (
+          arrangement &&
+          optionKey &&
+          sameDay &&
+          (arrangement.chosenOptionKey === optionKey ||
+            arrangement.backupOptionKeys.includes(optionKey))
+        )
+          return { status: 'conflict', reason: 'optionStillChosen' };
+      }
       if (command.decision === 'keep') {
         const snapshot = original.snapshot;
         const household = state.household;
@@ -907,6 +938,33 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       }
       if (Object.keys(command.interpretation).length === 0) {
         return { status: 'invalid', reason: 'nothingToCorrect' };
+      }
+      // 子と元の日が分からない旧い依頼を、日を直しただけで現実に取り消された物にしない。
+      // 控え自体の無い依頼は、どの事項に結ぶかも分からないので同じく断る。
+      if (
+        command.interpretation.date !== undefined &&
+        command.interpretation.date !== item.interpretation.date &&
+        [...state.requests.values()].some(
+          (request) =>
+            (request.state === 'awaitingReply' || request.state === 'confirmed') &&
+            (request.snapshot === undefined ||
+              (request.snapshot.basis.itemIds.includes(item.id) &&
+                request.snapshot.basis.arrangementKey?.startsWith('arr:childCare:') &&
+                (!request.snapshot.childId || !request.snapshot.window))),
+        )
+      )
+        return { status: 'invalid', reason: 'legacyRequestUnclear' };
+      if (
+        command.interpretation.date !== undefined ||
+        command.interpretation.writtenWeekday !== undefined
+      ) {
+        const corrected = applyCorrection(item.interpretation, command.interpretation);
+        if (
+          corrected.date &&
+          corrected.writtenWeekday !== undefined &&
+          weekdayOf(corrected.date) !== corrected.writtenWeekday
+        )
+          return { status: 'invalid', reason: 'dateWeekdayMismatch' };
       }
       if (
         item.kind !== 'need' &&
@@ -1095,8 +1153,10 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       if (
         [...state.requests.values()].some(
           (request) =>
-            request.snapshot === undefined &&
-            (request.state === 'awaitingReply' || request.state === 'confirmed'),
+            (request.state === 'awaitingReply' || request.state === 'confirmed') &&
+            (request.snapshot === undefined ||
+              (request.snapshot.basis.arrangementKey?.startsWith('arr:childCare:') &&
+                (!request.snapshot.childId || !request.snapshot.window))),
         )
       )
         return { status: 'invalid', reason: 'legacyRequestUnclear' };

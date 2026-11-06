@@ -1559,6 +1559,52 @@ export function checkRequestNeed(
         request.requestId,
         '元の依頼を独立に残すための本人の確認が無いか、確認した根拠が替わった。',
       );
+    // 事項の日を家族が直しただけでは、元の日に送った子の居場所の依頼が現実に取り消されたとは言えない。
+    // 控えと現在の採用中の読み取り、その後の家族の直しを事象から照らす（送信の記録が直しより後に届く場合もある）。
+    const originalDay = sent?.snapshot?.window
+      ? localMinute(instantMinute(sent.snapshot.window.start), timeZone).date
+      : undefined;
+    const correctedDateUncertain =
+      sent?.snapshot?.childId !== undefined &&
+      sent.snapshot.window !== undefined &&
+      basis.arrangementKey?.startsWith('arr:childCare:') === true &&
+      history.complete &&
+      optionNeeded !== false &&
+      !superseded &&
+      ['awaitingReply', 'confirmed'].includes(sent.state) &&
+      basis.itemIds.some((id) => {
+        const item = facts.items.get(id);
+        const resolved = historicalItem(facts, id);
+        const date = item?.interpretation.date;
+        if (
+          !item ||
+          !date ||
+          resolved.itemId !== id ||
+          resolved.active === false ||
+          facts.staleItems.has(id) ||
+          date === originalDay
+        )
+          return false;
+        const reading = facts.sourceReadingSeq.get(item.sourceId) ?? 0;
+        return history.events.some(
+          (event) =>
+            event.type === 'itemCorrected' &&
+            event.itemId === id &&
+            event.interpretation.date === date &&
+            event.seq > reading,
+        );
+      });
+    if (
+      correctedDateUncertain &&
+      !explicitlyCancelled &&
+      !(request.standalone && validStandalone) &&
+      (!request.live || !request.needsCheck || cancellations.length > 0)
+    )
+      report.violation(
+        'corrected_date_request_unchecked',
+        request.requestId,
+        '日を直す前に送った依頼を、まだ要るか本人が確かめずに扱っている。',
+      );
     // 加え間違えた出典から送った依頼は、家族がその案を外したのでなければ、現実の取消しとも継続とも決めない。
     // 控えの事項と事象を、計画エンジンと別にたどる。実際に送った後、その古い画面から記録した時は、
     // 加え間違いの記録が「送った」の事象より先にあることもある。

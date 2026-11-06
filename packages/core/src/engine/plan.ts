@@ -3322,6 +3322,35 @@ function requestStanding(
   const arrangement =
     basis.arrangementKey === undefined ? undefined : arrangements.get(basis.arrangementKey);
   const { unclear, changed, conditional } = requestDoubt(ctx, items, snapshot, arrangement);
+  // 家族が読んだ日を直しただけでは、既に外へ伝えた旧日の頼み事が現実に不要になったとは言えない。
+  // 新しい日に手配が無い場合も、本人が確かめるまで残す。控えに日がある子の居場所に限り、今の有効な直しと
+  // 控えの日が違う時だけ見る（実際の取消し・家族による案の取り下げは従来どおり）。
+  const oldDay = snapshot.window
+    ? localDateOf(toEpochMinutes(snapshot.window.start), ctx.tz)
+    : undefined;
+  const correctedDay =
+    snapshot.childId !== undefined &&
+    basis.arrangementKey?.startsWith('arr:childCare:') === true &&
+    oldDay !== undefined &&
+    basis.itemIds.some((id) => {
+      const fate = itemFate(ctx.state, id);
+      if (fate.status !== 'current' || fate.item.id !== id || items.get(id)?.live === false)
+        return false;
+      const bound = ctx.state.needCorrections.get(id);
+      const corrected = ctx.state.verdictReading.has(id)
+        ? bound && bound.reading === ctx.state.verdictReading.get(id)
+          ? bound.interpretation.date
+          : undefined
+        : ctx.state.corrections.get(id)?.date;
+      return (
+        typeof corrected === 'string' &&
+        corrected === fate.item.interpretation.date &&
+        corrected !== oldDay
+      );
+    });
+  if (correctedDay && !arrangement?.live && !superseded && !decidedAgainst(ctx, basis, sentSeq)) {
+    return { live: true, needsCheck: true, conditional };
+  }
   if (arrangement) {
     const live =
       arrangement.live &&

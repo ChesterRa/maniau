@@ -162,6 +162,38 @@ function enter(element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectEleme
 }
 
 describe('「すること」の操作', () => {
+  it.each([
+    ['dateWeekdayMismatch', 'ja'],
+    ['dateWeekdayMismatch', 'en'],
+    ['legacyRequestUnclear', 'ja'],
+    ['legacyRequestUnclear', 'en'],
+  ] as const)('日付の直しが %s で断られた時は理由を示す (%s)', async (reason, lang) => {
+    const { ctx: base } = materials(() => ({ refused: reason }));
+    const ctx = {
+      ...base,
+      lang,
+      t: i18n.getFixedT(lang),
+      items: base.items.map((entry) => ({
+        ...entry,
+        item: {
+          ...entry.item,
+          interpretation: {
+            what: '倉庫の鍵を返す',
+            shape: 'window',
+            date: '2026-11-28',
+            startTime: '13:00',
+            endTime: '15:00',
+          },
+        },
+      })),
+    } as unknown as Ctx;
+    await step(() => root.render(<NeedFixScreen ctx={ctx} itemId={ITEM} />));
+    const date = host.querySelector<HTMLInputElement>('input[type=date]');
+    if (!date) throw Error('日付欄が無い');
+    await step(() => enter(date, '2026-12-08'));
+    await step(() => button(ctx.t('need.look'))?.click());
+    expect(host.textContent).toContain(ctx.t(`need.refused.${reason}`));
+  });
   it('やり方を選んで見てから保存する：家庭の並びで送り、見た物の要約を付ける。見た後に選びを替えたら保存させない', async () => {
     const { ctx, looked, sent } = materials(() => ({ preview: shown('S-1') }));
     await step(() => root.render(<NeedScreen ctx={ctx} arrangementKey={ARRANGEMENT} />));

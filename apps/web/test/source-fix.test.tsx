@@ -121,6 +121,51 @@ function enter(input: HTMLInputElement, value: string) {
 
 describe('お知らせの直し', () => {
   it.each(['ja', 'en'] as const)(
+    '送った画面の後で担当の記録が更新された時、記録できない理由と次の連絡先を示す (%s)',
+    async (lang) => {
+      const { ctx: base } = context(lang);
+      const key = 'arr:childCare:n1:i1:c';
+      const optionKey = `opt:${key}:opt-grandma`;
+      const task = {
+        key: `task:${optionKey}:ask`,
+        live: true,
+        titleKey: 'task.helper.ask',
+        titleParams: {},
+        assigneeId: 'b',
+        basis: { itemIds: ['n1:i1'], arrangementKey: key, optionKey },
+        external: { to: 'g', kind: 'reply' },
+      } as Ctx['plan']['tasks'][number];
+      const arrangement = {
+        key,
+        kind: 'childCare',
+        live: true,
+        childId: 'c',
+        start: '2026-12-07T08:10+09:00',
+        end: '2026-12-07T18:15+09:00',
+        chosenOptionKey: optionKey,
+        backupOptionKeys: [],
+        reasons: [],
+        options: [{ key: optionKey, templateId: 'opt-grandma', taskKeys: [task.key] }],
+      } as Ctx['plan']['arrangements'][number];
+      const ctx: Ctx = {
+        ...base,
+        plan: { ...base.plan, tasks: [task], arrangements: [arrangement] },
+        send: async () => ({ status: 'conflict', reason: 'assignmentChanged' }),
+      };
+      await step(() => root.render(<AskScreen ctx={ctx} taskKey={task.key} />));
+      await step(() => button(ctx.t('ask.sent'))?.click());
+      expect(host.textContent).toContain(ctx.t('ask.assignmentChanged'));
+      expect(button(ctx.t('ask.sent'))).toBeUndefined();
+      expect(button(ctx.t('ask.copy'))).toBeUndefined();
+      const stale: Ctx = { ...ctx, plan: { ...ctx.plan, tasks: [] } };
+      await step(() => root.render(<AskScreen ctx={stale} taskKey={task.key} />));
+      expect(host.textContent).toContain(ctx.t('ask.assignmentChanged'));
+      expect(host.textContent).not.toContain(ctx.t('ask.gone'));
+      expect(button(ctx.t('ask.sent'))).toBeUndefined();
+    },
+  );
+
+  it.each(['ja', 'en'] as const)(
     '画面を開いたまま記録を断られた時も、送った相手に直接確かめるよう伝える (%s)',
     async (lang) => {
       const { ctx: base } = context(lang);
@@ -318,6 +363,50 @@ describe('お知らせの直し', () => {
     ]);
   });
 
+  it.each(['ja', 'en'] as const)(
+    '読み取った曜日と違う日付では、原文を確かめる説明を出して記録を進めない (%s)',
+    async (lang) => {
+      const { ctx: base, looked } = context(lang);
+      const ctx = {
+        ...base,
+        items: base.items.map((entry) => ({
+          ...entry,
+          item: {
+            ...entry.item,
+            interpretation: { ...entry.item.interpretation, writtenWeekday: 1 },
+          },
+        })),
+      };
+      await step(() => root.render(<SourcesScreen ctx={ctx} sourceId="n1" />));
+      const input = host.querySelector<HTMLInputElement>('input[type=date]');
+      if (!input) throw Error('日付欄が無い');
+      await step(() => enter(input, '2026-12-08'));
+      expect(host.textContent).toContain(ctx.t('sourceFix.date.weekdayMismatch'));
+      expect(button(ctx.t('sourceFix.look'))?.disabled).toBe(true);
+      expect(looked).toEqual([]);
+      await step(() => enter(input, '2026-12-14'));
+      expect(button(ctx.t('sourceFix.look'))?.disabled).toBe(false);
+    },
+  );
+
+  it.each(['ja', 'en'] as const)(
+    '以前の依頼の控えが足りず日付を直せない時は、相手への確認を案内する (%s)',
+    async (lang) => {
+      const { ctx: base } = context(lang);
+      const ctx: Ctx = {
+        ...base,
+        previewChange: async () => ({ refused: 'legacyRequestUnclear' }),
+      };
+      await step(() => root.render(<SourcesScreen ctx={ctx} sourceId="n1" />));
+      const input = host.querySelector<HTMLInputElement>('input[type=date]');
+      if (!input) throw Error('日付欄が無い');
+      await step(() => enter(input, '2026-12-14'));
+      await step(() => button(ctx.t('sourceFix.look'))?.click());
+      expect(host.textContent).toContain(ctx.t('sourceFix.date.legacy'));
+      expect(button(ctx.t('sourceFix.date.save'))).toBeUndefined();
+    },
+  );
+
   it('読み取りの誤りは入れ間違いと分け、影響を見てから外す', async () => {
     const { ctx, looked, sent } = context();
     await step(() => root.render(<SourcesScreen ctx={ctx} sourceId="n1" />));
@@ -481,6 +570,116 @@ describe('お知らせの直し', () => {
       await step(() => button(label)?.click());
       expect(sent).toEqual([
         { type: 'resolveRequestCheck', requestId: 'r1', decision: 'keep', seen: { throughSeq: 7 } },
+      ]);
+    },
+  );
+
+  it.each(['ja', 'en'] as const)(
+    '依頼の手が選ばれているため断られたら、決める画面を案内する (%s)',
+    async (lang) => {
+      const { ctx: base } = context(lang);
+      const request = {
+        requestId: 'r1',
+        taskKey: 'task1',
+        to: 'g',
+        kind: 'reply',
+        sentBy: 'b',
+        sentAt: '2026-11-25T20:00+09:00',
+        state: 'confirmed',
+        live: true,
+        needsCheck: true,
+        childId: 'c',
+        window: { start: '2026-12-07T08:10+09:00', end: '2026-12-07T18:15+09:00' },
+        basis: { itemIds: ['n1:i1'], arrangementKey: 'arr:childCare:n1:i1:c' },
+      };
+      const ctx = {
+        ...base,
+        plan: { ...base.plan, requests: [request] as Ctx['plan']['requests'] },
+        today: { ...base.today, main: [{ kind: 'check', request }] as Ctx['today']['main'] },
+        send: async () => ({ status: 'conflict' as const, reason: 'optionStillChosen' }),
+      };
+      await step(() => root.render(<TodayScreen ctx={ctx} />));
+      await step(() => button(ctx.t('card.check.cancel'))?.click());
+      expect(host.textContent).toContain(ctx.t('card.check.stillChosen'));
+    },
+  );
+
+  it.each(['ja', 'en'] as const)(
+    '同じ日の選択中の手は決める画面に戻し、別の日の旧依頼は本人が外せる (%s)',
+    async (lang) => {
+      const { ctx, sent } = context(lang);
+      const key = 'arr:childCare:n1:i1:c';
+      const optionKey = `opt:${key}:opt-grandma`;
+      const request = {
+        requestId: 'r1',
+        taskKey: 'task1',
+        to: 'g',
+        kind: 'reply',
+        sentBy: 'b',
+        sentAt: '2026-11-25T20:00+09:00',
+        state: 'confirmed',
+        live: true,
+        needsCheck: true,
+        childId: 'c',
+        window: { start: '2026-12-07T08:10+09:00', end: '2026-12-07T18:15+09:00' },
+        basis: { itemIds: ['n1:i1'], arrangementKey: key, optionKey },
+      };
+      const option = { key: optionKey, templateId: 'opt-grandma', taskKeys: [] };
+      const arrangement = {
+        key,
+        kind: 'childCare',
+        live: true,
+        childId: 'c',
+        start: '2026-12-07T08:10+09:00',
+        end: '2026-12-07T19:15+09:00',
+        chosenOptionKey: optionKey,
+        backupOptionKeys: [],
+        reasons: [],
+        options: [option],
+      };
+      ctx.plan.requests = [request] as Ctx['plan']['requests'];
+      ctx.plan.arrangements = [arrangement] as Ctx['plan']['arrangements'];
+      ctx.today.main = [{ kind: 'check', request }] as Ctx['today']['main'];
+      await step(() => root.render(<TodayScreen ctx={ctx} />));
+      expect(button(ctx.t('card.check.action'))).toBeDefined();
+      expect(button(ctx.t('card.check.cancel'))).toBeUndefined();
+      const unusable = { ...option, unusable: true };
+      const nowUnusable = { ...arrangement, options: [unusable] };
+      await step(() =>
+        root.render(
+          <TodayScreen
+            ctx={{
+              ...ctx,
+              plan: { ...ctx.plan, arrangements: [nowUnusable] as Ctx['plan']['arrangements'] },
+            }}
+          />,
+        ),
+      );
+      expect(button(ctx.t('card.unowned.dropPrimary'))).toBeDefined();
+      const oldDay = {
+        ...nowUnusable,
+        start: '2026-12-14T08:10+09:00',
+        end: '2026-12-14T19:15+09:00',
+      };
+      await step(() =>
+        root.render(
+          <TodayScreen
+            ctx={{
+              ...ctx,
+              plan: { ...ctx.plan, arrangements: [oldDay] as Ctx['plan']['arrangements'] },
+            }}
+          />,
+        ),
+      );
+      expect(button(ctx.t('card.unowned.dropPrimary'))).toBeUndefined();
+      await step(() => button(ctx.t('card.check.cancel'))?.click());
+      expect(sent).toEqual([
+        {
+          type: 'resolveRequestCheck',
+          requestId: 'r1',
+          decision: 'cancel',
+          seen: { throughSeq: 7 },
+        },
       ]);
     },
   );
