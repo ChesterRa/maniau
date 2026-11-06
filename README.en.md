@@ -45,7 +45,7 @@ When a Saturday school event turns the following weekday into a make-up school h
 
 ### 3. Taken on and cleaned up: watched by a verifier
 
-- Each task is proposed to one adult and shown as waiting to be taken on until that person accepts. Requests keep “awaiting a reply” separate from “confirmed”.
+- Each task is proposed to one adult and shown as waiting to be taken on until that person accepts. Requests keep “awaiting a reply” separate from “confirmed”. If a child-care request still has no reply recorded 26 hours before the requested time, it moves to the requester’s “To do now” as a prompt to check (not when a backup is already secured, for example).
 - When a postponement or cancellation arrives, preparations no longer needed are removed, and cancellation messages for people already asked are drafted (the family sends them).
 - Notifications go out only when something can't wait. A verifier written separately from the planning engine checks the plan and stops notifications when it finds a violation.
 
@@ -117,6 +117,7 @@ flowchart TB
 2. Add the example notice with “Try an example”. It uses a prepared reading; nothing is sent to Claude for this example. **Example summary (written for this demo):** A Dec 5 school event may move to Dec 8. If held on Dec 5, Dec 7 is a school holiday. A white long-sleeved shirt is needed.
 3. When asked about child care, enter what you know, see what changes, and then save. You can leave times you do not know as unknown.
 4. Add a person to ask and a deadline, choose a way, and review the message. Your family sends the message. After sending, press “Record that I sent it”; Today then shows the request under “Waiting on others”. Your family also records the reply, for example with “They said OK”.
+5. Without recording a reply, open “Controls” and use “+1 day” and “+1 hour” to move the clock into the 26 hours before the requested time starts. The person who sent the request gets a card under “To do now” to check on the reply, and this trial’s notification list shows it too. It goes away when you press “They said OK”.
 
 The trial clock is separate from the current date and time. The trial is kept in server memory and expires after a period of inactivity. Reading a made-up notice you write sends the text to Claude, on a server where reading is available.
 
