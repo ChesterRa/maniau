@@ -6,6 +6,7 @@ import type {
   DeadlineRule,
   Household,
   HouseholdPreview,
+  Member,
   Place,
   RoutineSegment,
 } from '@maniau/core';
@@ -26,7 +27,7 @@ import {
 import { Button, Card, Header, Label, Main, Row, Text, Title } from './ui';
 import { WaysCard } from './ways';
 
-type Mode = 'week' | 'places' | 'ways';
+type Mode = 'people' | 'week' | 'places' | 'ways';
 const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 const EDITABLE_KINDS = ['home', 'work', 'pickup', 'away'] as const;
 const input =
@@ -52,6 +53,22 @@ function UnusableToggle(props: {
     </Row>
   );
 }
+
+/** 子の習い事の送り迎えの決まり（行き＝送る・帰り＝迎える）の選び肢。決めていない（無い）は、選び肢に入れない。 */
+const ESCORT_RULES = {
+  toFrom: { to: true, from: true },
+  toNoFrom: { to: true, from: false },
+  noFrom: { to: false, from: true },
+  noNoFrom: { to: false, from: false },
+} as const;
+type EscortRule = Member['clubEscort'];
+const escortKey = (rule: NonNullable<EscortRule>) =>
+  `${rule.to ? 'to' : 'no'}${rule.from ? 'From' : 'NoFrom'}` as keyof typeof ESCORT_RULES;
+const sameEscort = (a: EscortRule, b: EscortRule) =>
+  a === undefined || b === undefined ? a === b : a.to === b.to && a.from === b.from;
+/** 子の決まりの言葉（決めていなければ、そう書く）。 */
+const escortText = (ctx: Ctx, rule: EscortRule) =>
+  ctx.t(`household.people.escortRule.${rule ? escortKey(rule) : 'unset'}`);
 
 /** 時刻の欄の値が、分までの時刻か。 */
 const clockOk = (value: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
@@ -337,6 +354,17 @@ export function householdPreviewLines(
       );
     }
   }
+  // 子の習い事の送り迎えの決まりを替えた（決まりそのものを書く。作業の増減と引き受けは、ほかの行が書く）。
+  for (const child of (after?.members ?? []).filter((m) => m.kind === 'child' && m.active)) {
+    const was = ctx.household.members.find((m) => m.id === child.id)?.clubEscort;
+    if (sameEscort(was, child.clubEscort)) continue;
+    lines.push(
+      ctx.t('household.preview.escort', {
+        name: child.name,
+        rule: escortText(ctx, child.clubEscort),
+      }),
+    );
+  }
   // 新しく使えないとした手（手の名前と、送った頼み事は取り消さないこと・また使う時は新しく足すこと）。見てもらえない
   // 時間の変化の行は、この手には出さない（同じことを二度書かない）。
   const before = new Set(ctx.household.unusableCareOptionIds ?? []);
@@ -583,6 +611,7 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
   const [weekday, setWeekday] = useState<number>(1);
   const household = draft ?? ctx.household;
   const people = household.members.filter((m) => m.active);
+  const children = people.filter((m) => m.kind === 'child');
   const withRoutines = people.filter((m) => household.routines.some((d) => d.memberId === m.id));
   const editor = memberId ?? withRoutines[0]?.id;
 
@@ -642,20 +671,57 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
 
         <Card>
           <Label tone="sub">{ctx.t('household.people.label')}</Label>
-          {people.map((m) => (
-            <Text key={m.id}>
-              {ctx.t(`household.people.kind.${m.kind}`, { name: m.name })}
-              {m.grade ? ctx.t('household.people.grade', { grade: m.grade }) : ''}
-              {m.clubEscort
-                ? ctx.t('household.people.escort', {
-                    rule: ctx.t(
-                      `household.people.escortRule.${m.clubEscort.to ? 'to' : 'no'}${m.clubEscort.from ? 'From' : 'NoFrom'}`,
-                    ),
-                  })
-                : ''}
-            </Text>
-          ))}
+          {mode !== 'people' &&
+            people.map((m) => (
+              <Text key={m.id}>
+                {ctx.t(`household.people.kind.${m.kind}`, { name: m.name })}
+                {m.grade ? ctx.t('household.people.grade', { grade: m.grade }) : ''}
+                {m.kind === 'child'
+                  ? ctx.t('household.people.escort', { rule: escortText(ctx, m.clubEscort) })
+                  : ''}
+              </Text>
+            ))}
+          {/* 子ごとの習い事の送り迎えの決まり。決めていない子は、どれも選ばれていない（要らないとは決めない）。 */}
+          {mode === 'people' && (
+            <>
+              <Text quiet>{ctx.t('household.people.escortHelp')}</Text>
+              {children.length > 1 && <Text>{ctx.t('household.people.escortManyChildren')}</Text>}
+              {children.map((child) => (
+                <fieldset key={child.id} className="flex flex-col gap-1">
+                  <legend className="font-bold">
+                    {ctx.t('household.people.escortFor', { name: child.name })}
+                  </legend>
+                  {child.clubEscort === undefined && (
+                    <Text quiet>{ctx.t('household.people.escortUnsetNow')}</Text>
+                  )}
+                  {(Object.keys(ESCORT_RULES) as (keyof typeof ESCORT_RULES)[]).map((key) => (
+                    <label key={key} className="flex min-h-11 items-center gap-2">
+                      <input
+                        type="radio"
+                        name={`escort-${child.id}`}
+                        checked={sameEscort(child.clubEscort, ESCORT_RULES[key])}
+                        onChange={() =>
+                          change((h) => {
+                            const member = h.members.find((m) => m.id === child.id);
+                            if (member) member.clubEscort = { ...ESCORT_RULES[key] };
+                          })
+                        }
+                      />
+                      {ctx.t(`household.people.escortRule.${key}`)}
+                    </label>
+                  ))}
+                </fieldset>
+              ))}
+            </>
+          )}
           <Text quiet>{ctx.t('household.people.used')}</Text>
+          {mode === undefined && children.length > 0 && (
+            <Row>
+              <Button kind="secondary" onClick={() => edit('people')}>
+                {ctx.t('household.edit')}
+              </Button>
+            </Row>
+          )}
         </Card>
 
         <Card>

@@ -1640,6 +1640,10 @@ function checkHouseholdEdit(
     if (!edited || edited.kind !== member.kind || edited.active !== member.active) {
       return invalid('membersLocked');
     }
+    // 習い事の送り迎えの決まりは、子の物だけ直せる（大人・手伝いの人には意味が無い）。
+    if (edited.kind !== 'child' && !sameJson(edited.clubEscort, member.clubEscort)) {
+      return invalid('membersLocked');
+    }
   }
   // 足せる成員は、手伝いの人（やり方の外の相手。ログインしない）だけ：名前と呼び方・外に出す文の言葉。
   const memberIds = new Set(current.members.map((m) => m.id));

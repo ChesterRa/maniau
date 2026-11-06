@@ -1016,6 +1016,10 @@
     "people": {
       "label": "People",
       "used": "Used to decide whom to propose tasks to and whom to notify.",
+      "escortHelp": "For events in notices from lessons and clubs, choose for each child whether an adult takes them there (drop-off) and brings them back (pick-up). Maniau makes drop-off and pick-up tasks around the event only for what you choose (it doesn’t guess at ones that aren’t written). For an event where you already decided for that one time (for example, “not needed this time”), that decision is used instead.",
+      "escortManyChildren": "In a household with two or more children, Maniau can’t yet tell which child a lesson notice is for, so it doesn’t make drop-off/pick-up tasks yet (the rules you choose are kept).",
+      "escortFor": "Lessons drop-off/pick-up for {{name}}",
+      "escortUnsetNow": "Not decided yet. Until you choose, no drop-off/pick-up tasks are made.",
       "kind": {
         "adult": "{{name}} (adult)",
         "child": "{{name}} (child)",
@@ -1027,7 +1031,8 @@
         "toFrom": "both ways",
         "toNoFrom": "drop-off only",
         "noFrom": "pick-up only",
-        "noNoFrom": "not needed"
+        "noNoFrom": "not needed",
+        "unset": "not decided yet (no drop-off/pick-up tasks)"
       }
     },
     "week": {
@@ -1099,6 +1104,7 @@
       "label": "What this change would do",
       "none": "The plan doesn't change.",
       "aWay": "a way",
+      "escort": "Lessons drop-off/pick-up for {{name}} will be set to “{{rule}}”.",
       "unusable": "“{{name}}” will be marked as unusable. It can’t be newly chosen, and even if it’s already chosen it isn’t called secured. Requests you already sent aren’t withdrawn; a card asks whether they’re still needed. To use it again, add it as a new way.",
       "cover": {
         "lost": "{{name}} will no longer cover {{gaps}} (it can’t be newly chosen, and if it’s already chosen it isn’t called secured).",

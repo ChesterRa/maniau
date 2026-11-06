@@ -265,6 +265,72 @@ describe('うちのこと', () => {
     expect(toggle('学童に預ける', '使えないにするのをやめる')).toBeUndefined();
   });
 
+  it('子の習い事の送り迎えを決める。決めていない子は何も選ばれず、選ぶと保存の前に変わることに書く', async () => {
+    const preview: HouseholdPreview = {
+      changes: emptyChanges,
+      issues: [],
+      unverified: [],
+      seen: 'e1',
+      throughSeq: 9,
+    };
+    const { ctx, looked } = ctxWith({ preview });
+    // 決まりの無い子（前からの家庭の形）。
+    const unset: Ctx = {
+      ...ctx,
+      household: {
+        ...household,
+        members: household.members.map((m) => {
+          if (m.kind !== 'child') return m;
+          const { clubEscort: _, ...rest } = m;
+          return rest;
+        }),
+      },
+    };
+    await step(() => root.render(<HouseholdScreen ctx={unset} />));
+    expect(host.textContent).toContain(
+      '陽菜（子ども）・小1・習い事の送り迎え：まだ決めていません（送り迎えの作業は作りません）',
+    );
+    await step(() => editIn('人')?.click());
+    const radios = () => [...host.querySelectorAll<HTMLInputElement>('input[name^="escort-"]')];
+    expect(radios()).toHaveLength(4);
+    // 決めていない子に、「要らない」などを前もって選ばない。
+    expect(radios().some((r) => r.checked)).toBe(false);
+    expect(host.textContent).toContain(
+      'まだ決めていません。選ぶまで、送り迎えの作業は作りません。',
+    );
+    expect(host.textContent).not.toContain('子が二人以上の家では');
+    const pick = (label: string) =>
+      [...host.querySelectorAll('label')]
+        .find((l) => l.textContent === label)
+        ?.querySelector('input');
+    await step(() => pick('帰りだけ要る')?.click());
+    expect(radios().filter((r) => r.checked)).toHaveLength(1);
+    await step(() => button('変わることを見る')?.click());
+    expect(looked[0]?.members.find((m) => m.kind === 'child')?.clubEscort).toEqual({
+      to: false,
+      from: true,
+    });
+    expect(host.textContent).toContain('陽菜の習い事の送り迎えを「帰りだけ要る」にします。');
+    expect(button('この内容で保存')).toBeDefined();
+  });
+
+  it('子が二人以上の家では、送り迎えの作業はまだ作らないと書く', async () => {
+    const { ctx } = ctxWith(undefined);
+    const two: Ctx = {
+      ...ctx,
+      household: {
+        ...household,
+        members: [...household.members, { id: 'c2', kind: 'child', name: '湊', active: true }],
+      },
+    };
+    await step(() => root.render(<HouseholdScreen ctx={two} />));
+    await step(() => editIn('人')?.click());
+    expect(host.textContent).toContain(
+      '子が二人以上の家では、どの子の習い事のお知らせか分からないので、送り迎えの作業はまだ作りません（決めた決まりは残ります）。',
+    );
+    expect(host.querySelectorAll('fieldset')).toHaveLength(2);
+  });
+
   it('学童の手の見てもらえる時間を直せる。逆さまの時間は直さず、そう言う', async () => {
     const preview: HouseholdPreview = {
       changes: emptyChanges,
