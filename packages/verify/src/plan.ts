@@ -894,6 +894,16 @@ export function checkPlan(
     report,
   );
   for (const requirement of plan.requirements) {
+    if (
+      requirement.live &&
+      requirement.basis.itemIds.some((id) => facts.correctionRereadPending.has(id))
+    ) {
+      report.violation(
+        'correction_reread_unconfirmed',
+        requirement.key,
+        '直した後に読み直した事項を、家族が確かめる前に要件にしている。',
+      );
+    }
     if (requirement.live && requirement.kind === 'need') {
       for (const id of requirement.basis.itemIds) {
         const item = facts.items.get(id);

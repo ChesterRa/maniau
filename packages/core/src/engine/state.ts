@@ -23,7 +23,7 @@ import {
   type Source,
   type Unknown,
 } from '../schema/source';
-import { type DateTime, formatDateTime, toEpochMinutes } from '../time';
+import { type DateTime, formatDateTime, localDateOf, toEpochMinutes } from '../time';
 
 export interface RequestRecord {
   requestId: string;
@@ -35,6 +35,8 @@ export interface RequestRecord {
   state: ExternalRequestState;
   /** 送った時の控え。古い事象には無い（02-foundation §5.6）。 */
   snapshot?: RequestSnapshot;
+  /** 送った本人が確かめた時の根拠の版。返事とは別に持つ。 */
+  checked?: { decision: 'keep' | 'cancel'; basisVersion: string; seq: number };
 }
 
 /**
@@ -152,6 +154,10 @@ export interface EngineState {
   sourceChangedSeq: Map<string, number>;
   /** 家族が取り下げた出典。 */
   withdrawnSources: Set<string>;
+  /** 通知の入れ間違い・読み取りの誤りとして外した出典。現実の取消しの証拠にはしない。 */
+  excludedSources: Set<string>;
+  /** 外した理由（家族の言明。後から別の理由に書き替えない）。 */
+  sourceExclusionReasons: Map<string, 'misfiled' | 'misread'>;
   /**
    * 家族が書いた出典（事項が家族の言明 itemsStated の物）。モデルの読み取りで置き換えず、書き起こしも直さない
    * （家族の言葉を、ほかの物にしない）。
@@ -265,6 +271,8 @@ export function emptyState(): EngineState {
     escorts: new Map(),
     sourceChangedSeq: new Map(),
     withdrawnSources: new Set(),
+    excludedSources: new Set(),
+    sourceExclusionReasons: new Map(),
     statedSources: new Set(),
     needWays: new Map(),
     needCandidates: new Map(),
@@ -305,6 +313,7 @@ function touchedSources(state: EngineState, event: DomainEvent): string[] {
     case 'itemsStated':
       return [event.sourceId];
     case 'sourceWithdrawn':
+    case 'sourceExcluded':
     case 'sourceContentPurged':
     case 'transcriptionCorrected':
       return [event.sourceId];
@@ -349,8 +358,10 @@ const FAMILY_ONLY = new Set<DomainEvent['type']>([
   'answerLinkRevoked',
   'candidateChosen',
   'sourceWithdrawn',
+  'sourceExcluded',
   'transcriptionCorrected',
   'requestRecordCorrected',
+  'requestCheckResolved',
 ]);
 
 function apply(state: EngineState, event: DomainEvent): void {
@@ -632,15 +643,27 @@ function apply(state: EngineState, event: DomainEvent): void {
         return;
       }
       // 読み取りの「すること」への言明は、その時に採っていた読み取りに結ぶ（読み直しの後に当てない）。
-      const read = readNeedOf(state, event.itemId);
+      const bound =
+        (event.type === 'itemCorrected' && event.readingBound === true) ||
+        state.verdictReading.has(event.itemId);
+      const read = bound ? readItemOf(state, event.itemId) : readNeedOf(state, event.itemId);
+      if (event.type === 'itemCorrected' && event.readingBound && !read) {
+        state.rejected.push({ seq: event.seq, reason: '直しに結ぶ読み取りが無い' });
+        return;
+      }
       if (read !== undefined) {
+        const previousBound = state.verdictReading.has(event.itemId);
         state.verdictReading.set(event.itemId, read.reading);
         if (event.type === 'itemCorrected') {
           const before = state.needCorrections.get(event.itemId);
           state.needCorrections.set(event.itemId, {
             reading: read.reading,
             interpretation: {
-              ...(before?.reading === read.reading ? before.interpretation : {}),
+              ...(before?.reading === read.reading
+                ? before.interpretation
+                : !previousBound
+                  ? state.corrections.get(event.itemId)
+                  : {}),
               ...event.interpretation,
             },
           });
@@ -678,11 +701,18 @@ function apply(state: EngineState, event: DomainEvent): void {
       });
       return;
     case 'sourceWithdrawn':
+    case 'sourceExcluded':
       if (!state.sources.has(event.sourceId)) {
         state.rejected.push({ seq: event.seq, reason: '届いていない出典の取り下げ' });
         return;
       }
+      // 一度取り下げた出典の理由を、後から別の理由に書き替えない。
+      if (state.withdrawnSources.has(event.sourceId)) return;
       state.withdrawnSources.add(event.sourceId);
+      if (event.type === 'sourceExcluded') {
+        state.excludedSources.add(event.sourceId);
+        state.sourceExclusionReasons.set(event.sourceId, event.reason);
+      }
       return;
     case 'sourceContentPurged':
       if (event.actorId !== 'system' || !state.sources.has(event.sourceId)) {
@@ -800,6 +830,19 @@ function apply(state: EngineState, event: DomainEvent): void {
       }
       return;
     }
+    case 'requestCheckResolved': {
+      const request = state.requests.get(event.requestId);
+      if (!request || request.sentBy !== event.actorId || !request.snapshot) {
+        state.rejected.push({ seq: event.seq, reason: '送った本人の控えのある依頼ではない' });
+        return;
+      }
+      request.checked = {
+        decision: event.decision,
+        basisVersion: requestBasisVersion(state, request.snapshot),
+        seq: event.seq,
+      };
+      return;
+    }
     case 'cancellationSent': {
       const request = state.requests.get(event.requestId);
       if (request) request.state = 'cancelled';
@@ -887,6 +930,16 @@ function readNeedOf(state: EngineState, itemId: string): { reading: string } | u
   return undefined;
 }
 
+/** 家族が見た、モデルによる現在の事項（種類を問わない）。 */
+function readItemOf(state: EngineState, itemId: string): { reading: string } | undefined {
+  for (const [sourceId, extraction] of state.extractions) {
+    const item = extraction.items.find((entry) => entry.id === itemId);
+    if (item && !state.statedSources.has(sourceId))
+      return { reading: readingSignature(state, item) };
+  }
+  return undefined;
+}
+
 /** 条件の式の節点と、そこに出る未定の値（見つからない節点の先は無い。深さは限る）。 */
 function conditionRefs(rootId: string, nodes: ReadonlyMap<string, ConditionNode>) {
   const nodeIds = new Set<string>();
@@ -901,6 +954,106 @@ function conditionRefs(rootId: string, nodes: ReadonlyMap<string, ConditionNode>
   };
   walk(rootId, 0);
   return { nodeIds, unknownIds };
+}
+
+/**
+ * 日付を直す時、同じお知らせの条件・選択肢・答えに、今の日付と同じ値があるか。
+ * 一致は関係の証拠ではない。関係を勝手に付け替えず、家族に原文と一緒に見せるためだけに使う。
+ */
+export function dateConditionLinks(
+  state: EngineState,
+  item: Item,
+): { label?: string; value: string }[] {
+  const value = item.interpretation.date;
+  const reading = state.extractions.get(item.sourceId);
+  if (!value || !reading) return [];
+  const unknowns = new Map(
+    [...state.extractions.values()]
+      .flatMap((entry) => entry.unknowns)
+      .map((unknown) => [unknown.id, unknown]),
+  );
+  const ids = new Set(
+    reading.conditions.flatMap((node) =>
+      node.kind === 'eq' && node.value === value ? [node.unknownId] : [],
+    ),
+  );
+  for (const unknown of reading.unknowns) {
+    if (
+      unknown.values.includes(value) ||
+      state.answers.some((answer) => answer.unknownId === unknown.id && answer.value === value)
+    )
+      ids.add(unknown.id);
+  }
+  return [...ids].sort().map((id) => {
+    const label = unknowns.get(id)?.label;
+    return { ...(label ? { label } : {}), value };
+  });
+}
+
+/**
+ * 手配の無い依頼を「まだ要る」と確かめた時、どの根拠についての判断かを、出典ごとの事象番号で覚える。
+ * 依頼の事項、その条件と値、それらに作用する事項の出典をたどる。文や個人名は版に含めない。
+ * 後から関係する出典が現れた時や、その出典の内容・答えが替わった時は版が変わる。
+ */
+export function requestBasisVersion(state: EngineState, snapshot: RequestSnapshot): string {
+  const readings = [...state.extractions.entries()];
+  const nodes = new Map(
+    readings.flatMap(([, reading]) => reading.conditions).map((n) => [n.id, n]),
+  );
+  const itemIds = new Set(snapshot.basis.itemIds);
+  // 同じ子の日に別のお知らせから再び居場所の手配が生じたら、前の「要るまま」は当てない。
+  // 家庭の時区で書いた控えの窓の日と、読み取った休みの日を比べる（今は子の居場所の控えだけ）。
+  if (snapshot.childId && snapshot.window && state.household) {
+    const day = localDateOf(toEpochMinutes(snapshot.window.start), state.household.timeZone);
+    for (const [, reading] of readings) {
+      for (const raw of reading.items) {
+        const item = familyItem(state, raw);
+        if (
+          item.kind === 'dayChange' &&
+          item.interpretation.dayType === 'noSchool' &&
+          item.interpretation.date === day
+        )
+          itemIds.add(item.id);
+      }
+    }
+  }
+  const unknownIds = new Set<string>();
+  const nodeIds = new Set<string>();
+  let changed = true;
+  while (changed) {
+    const before = itemIds.size + unknownIds.size + nodeIds.size;
+    for (const [, reading] of readings) {
+      for (const item of reading.items) {
+        const affects = item.effects.some((effect) =>
+          effect.type === 'resolveUnknown'
+            ? unknownIds.has(effect.unknownId)
+            : itemIds.has(effect.itemId),
+        );
+        if (!itemIds.has(item.id) && !affects) continue;
+        itemIds.add(item.id);
+        if (item.conditionNodeId) {
+          const refs = conditionRefs(item.conditionNodeId, nodes);
+          for (const id of refs.nodeIds) nodeIds.add(id);
+          for (const id of refs.unknownIds) unknownIds.add(id);
+        }
+        for (const effect of item.effects) {
+          if (effect.type === 'resolveUnknown') unknownIds.add(effect.unknownId);
+          else itemIds.add(effect.itemId);
+        }
+      }
+    }
+    changed = before !== itemIds.size + unknownIds.size + nodeIds.size;
+  }
+  const sources = readings
+    .filter(
+      ([, reading]) =>
+        reading.items.some((item) => itemIds.has(item.id)) ||
+        reading.unknowns.some((unknown) => unknownIds.has(unknown.id)) ||
+        reading.conditions.some((node) => nodeIds.has(node.id)),
+    )
+    .map(([sourceId]) => [sourceId, state.sourceChangedSeq.get(sourceId) ?? 0] as const)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify(sources);
 }
 
 /**
@@ -962,9 +1115,9 @@ function verdictOf(state: EngineState, item: Item): 'confirmed' | 'dismissed' | 
  */
 export function awaitingConfirmation(state: EngineState, item: Item): boolean {
   return (
-    item.kind === 'need' &&
     !state.statedSources.has(item.sourceId) &&
-    verdictOf(state, item) === undefined
+    verdictOf(state, item) === undefined &&
+    (item.kind === 'need' || state.verdictReading.has(item.id))
   );
 }
 
@@ -1445,7 +1598,12 @@ export function itemFate(
     seen.add(current);
     current = graph.replacedBy.get(current) ?? current;
   }
-  if (graph.cancelled.has(current)) return { status: 'cancelled' };
+  if (graph.cancelled.has(current)) {
+    const original = graph.byId.get(current);
+    // 加え間違いでは、その事項が現実に取り消されたとは言えない。既に送った頼み事は確かめてもらう。
+    if (original && state.excludedSources.has(original.sourceId)) return { status: 'vanished' };
+    return { status: 'cancelled' };
+  }
   const item = graph.byId.get(current);
   if (item) return { status: 'current', item };
   return { status: 'vanished' };

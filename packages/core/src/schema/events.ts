@@ -178,6 +178,13 @@ export const DomainEvent = z.discriminatedUnion('type', [
   z.object({ ...envelope, type: z.literal('householdSet'), household: Household }),
   /** おたよりが届いた。原文は、敏感な材料として分けた保管場所に置くこともある（§2）。 */
   z.object({ ...envelope, type: z.literal('noticeReceived'), source: Source }),
+  /** 誤って加えた出典を計画から外す。現実の予定が取り消されたとは言わない。 */
+  z.object({
+    ...envelope,
+    type: z.literal('sourceExcluded'),
+    sourceId: Id,
+    reason: z.enum(['misfiled', 'misread']),
+  }),
   /**
    * モデルの出力。再生の時にモデルを呼ばないために残す。
    * call が extract の時、output はコードの検査を通った Extraction（source.ts）である。
@@ -281,6 +288,13 @@ export const DomainEvent = z.discriminatedUnion('type', [
     type: z.literal('cancellationSent'),
     requestId: Id,
   }),
+  /** 送った本人が、確かめの要る依頼を続けるか、要らないと決めた。連絡は別に記録する。 */
+  z.object({
+    ...envelope,
+    type: z.literal('requestCheckResolved'),
+    requestId: Id,
+    decision: z.enum(['keep', 'cancel']),
+  }),
   /**
    * 知らせを、送り出しの事業者が受け付けた（仕組み＝system だけが書く。02-foundation §5.7）。
    * 本人に届いた・読んだ証拠ではない。失敗・結果不明は運用の表に残し、この事象にしない。
@@ -330,6 +344,8 @@ export const DomainEvent = z.discriminatedUnion('type', [
     ...envelope,
     type: z.literal('itemCorrected'),
     itemId: Id,
+    /** 新しい読み取りへの直しは、その時の読み取りに結ぶ。無いのは前の形。 */
+    readingBound: z.literal(true).optional(),
     interpretation: CorrectedInterpretation.refine((value) => Object.keys(value).length > 0, {
       message: '直す欄が無い',
     }),

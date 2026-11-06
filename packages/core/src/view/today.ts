@@ -622,7 +622,7 @@ export function todayCards(
       (r) =>
         r.live &&
         r.needsCheck !== true &&
-        r.state === 'awaitingReply' &&
+        (r.state === 'awaitingReply' || (r.standalone === true && r.state === 'confirmed')) &&
         r.sentBy === memberId &&
         !raised.has(r.requestId),
     )

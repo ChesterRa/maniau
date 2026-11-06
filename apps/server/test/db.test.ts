@@ -2,7 +2,7 @@
 // 事象になる、事象の行に名前・文・値を残さない、命令の結果と事象がメモリの置き場所と同じ、中身が
 // 消えていれば計画を作らない。並んだ書き込みは PGlite では試せない（接続が一つ）。本物の Postgres で
 // 別に確かめる（§11）。
-import { type Command, DomainEvent, proposalSnapshot } from '@maniau/core';
+import { type Command, DomainEvent, type PreviewCommand, proposalSnapshot } from '@maniau/core';
 import { computePlan } from '@maniau/core/engine';
 import { and, eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
@@ -11,6 +11,7 @@ import { dehydrate, PayloadCorrupt, PayloadGone, rehydrate } from '../src/db/dry
 import { events as eventRows, households, members, operations, payloads } from '../src/db/schema';
 import { postgresStore, setupHousehold } from '../src/db/store';
 import { DEMO_STAGES, demoEvents } from '../src/demo';
+import { previewChange } from '../src/preview';
 import { memoryStore, type Store } from '../src/store';
 import { bodyOf, database, H, seeded } from './pg';
 
@@ -38,6 +39,7 @@ function otherKinds(): DomainEvent[] {
     ],
     ['b', { type: 'cancellationSent', requestId: 'r-1' }],
     ['b', { type: 'requestRecordCorrected', requestId: 'r-1' }],
+    ['b', { type: 'requestCheckResolved', requestId: 'r-1', decision: 'keep' }],
     [
       'system',
       {
@@ -52,6 +54,7 @@ function otherKinds(): DomainEvent[] {
       },
     ],
     ['b', { type: 'itemConfirmed', itemId: 'i1' }],
+    ['b', { type: 'sourceExcluded', sourceId: 'n1', reason: 'misread' }],
     // うちの番かの言明は、言った時の用件と対象を持つ（名前の入りうる文なので、事象の行には置かない）。
     [
       'b',
@@ -353,7 +356,7 @@ describe('Postgres の置き場所', () => {
     const marker = '架空の秘密の印';
     const run = (operationId: string, command: Command) =>
       runCommand(store, H, { memberId: 'b', operationId, now: NOW, demo: false }, command);
-    const correct: Command = {
+    const correction: PreviewCommand = {
       type: 'correctItem',
       itemId: 'n1:i5',
       interpretation: { what: marker },
@@ -369,6 +372,16 @@ describe('Postgres の置き場所', () => {
         })
       ).status,
     ).toBe('ok');
+    const shown = await previewChange(
+      await store.withHousehold(H, (log) => [...log.events()]),
+      { memberId: 'b', now: NOW },
+      correction,
+    );
+    if ('status' in shown) throw new Error(`直す内容を見られない: ${shown.reason}`);
+    const correct: Command = {
+      ...correction,
+      seen: { throughSeq: shown.throughSeq, changes: shown.seen },
+    };
     expect((await run('op-1', correct)).status).toBe('ok');
     // 要約で、同じ中身の送り直しと、違う中身の使い回しを見分ける。
     expect((await run('op-1', correct)).status).toBe('noop');

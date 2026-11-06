@@ -7,6 +7,7 @@ import { computePlan } from '@maniau/core/engine';
 import { describe, expect, it } from 'vitest';
 import { runCommand } from '../src/commands';
 import { demoEvents } from '../src/demo';
+import { previewChange } from '../src/preview';
 import { memoryStore } from '../src/store';
 import { viewFor } from '../src/views';
 
@@ -104,13 +105,23 @@ async function setup() {
     );
   });
   let sequence = 0;
-  const run = (memberId: string, now: string, command: Parameters<typeof runCommand>[3]) =>
-    runCommand(
+  const run = async (memberId: string, now: string, command: Parameters<typeof runCommand>[3]) => {
+    if (command.type === 'correctItem' && !command.seen) {
+      const shown = previewChange(
+        await store.withHousehold('demo', (log) => [...log.events()]),
+        { memberId, now },
+        command,
+      );
+      if ('status' in shown) return shown;
+      command = { ...command, seen: { throughSeq: shown.throughSeq, changes: shown.seen } };
+    }
+    return runCommand(
       store,
       'demo',
       { memberId, now, operationId: `family-${++sequence}`, demo: true },
       command,
     );
+  };
   const plan = async (now: string) =>
     computePlan(await store.withHousehold('demo', (log) => [...log.events()]), now);
   const view = async (memberId: string, now: string) =>

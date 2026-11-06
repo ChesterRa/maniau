@@ -73,6 +73,7 @@ import {
   itemFate,
   needWaysBasis,
   type RequestRecord,
+  requestBasisVersion,
   retiredUnknowns,
 } from './state';
 import {
@@ -326,14 +327,16 @@ export function liveItems(state: EngineState): LiveItem[] {
     const truth = item.conditionNodeId
       ? evaluateCondition(item.conditionNodeId, nodes, assignment)
       : true;
+    // 一度家族が直した読み取りを読み直したら、同じ ID でも新しい日を確かめてもらう。
+    const rereadNeedsCheck = item.kind !== 'need' && awaitingConfirmation(state, item);
     return {
       item,
       rootId,
       rootSourceId,
       live: truth !== false,
-      conditional: doubted || truth === 'unknown',
-      doubted,
-      trusted: item.evidence === 'stated' || item.evidence === 'confirmed',
+      conditional: doubted || rereadNeedsCheck || truth === 'unknown',
+      doubted: doubted || rereadNeedsCheck,
+      trusted: (item.evidence === 'stated' || item.evidence === 'confirmed') && !rereadNeedsCheck,
     };
   });
   // 当番がうちの番かは、同じお知らせのほかの行も見て決める（当番表の、うちの行）。ほかの家の番と言う根拠には、
@@ -540,7 +543,10 @@ function definitelyGone(
   state: EngineState,
   basis: { itemIds: readonly string[]; sourceIds: readonly string[]; seq: number },
 ): boolean {
-  if (basis.sourceIds.some((id) => state.withdrawnSources.has(id))) return true;
+  if (
+    basis.sourceIds.some((id) => state.withdrawnSources.has(id) && !state.excludedSources.has(id))
+  )
+    return true;
   if (rereadSince(state, basis)) return false;
   // 根拠の事項が今も残るのに作業が無くなった（読み直しで同じ ID が別の種類になった、家の決まりや子の数が
   // 変わった等）時は、要らなくなったとは言えない（同じ ID は同じ事項の証拠ではない。§4.1）。
@@ -580,15 +586,18 @@ function releasedTasks(
         ? [...ctx.state.purgedSources.values()].includes('all')
         : basis.sourceIds.some((id) => ctx.state.purgedSources.get(id) === 'all');
     // 生きていない作業も、引き受けた後に根拠を読み直していれば、同じ事項の条件が外れたとは言えない。
-    const reason: Released['reason'] = current
-      ? current.live
-        ? 'inactive'
-        : basis !== undefined && rereadSince(ctx.state, basis)
-          ? 'unconfirmed'
-          : 'notLive'
-      : !purged && basis !== undefined && definitelyGone(ctx.state, basis)
-        ? 'gone'
-        : 'unconfirmed';
+    const misfiled = basis?.sourceIds.some((id) => ctx.state.excludedSources.has(id)) === true;
+    const reason: Released['reason'] = misfiled
+      ? 'unconfirmed'
+      : current
+        ? current.live
+          ? 'inactive'
+          : basis !== undefined && rereadSince(ctx.state, basis)
+            ? 'unconfirmed'
+            : 'notLive'
+        : !purged && basis !== undefined && definitelyGone(ctx.state, basis)
+          ? 'gone'
+          : 'unconfirmed';
     const shown = purged ? undefined : ctx.state.shown.get(taskKey);
     const last = shown?.end ?? shown?.start;
     if (last !== undefined && toEpochMinutes(last) <= ctx.now) continue;
@@ -3437,7 +3446,7 @@ function externalRequests(
       arrangement?.kind === 'childCare' &&
       resent.has(request.taskKey) &&
       !requestForDay(request, arrangement, ctx.tz);
-    const { live, needsCheck, conditional } = requestStanding(
+    const standing = requestStanding(
       ctx,
       tasks,
       arrangementByKey,
@@ -3446,6 +3455,29 @@ function externalRequests(
       request.sentSeq,
       superseded,
     );
+    const relatedCare =
+      snapshot.childId !== undefined &&
+      snapshot.window !== undefined &&
+      arrangements.some(
+        (a) =>
+          a.live &&
+          a.kind === 'childCare' &&
+          a.childId === snapshot.childId &&
+          requestForDay(request, a, ctx.tz),
+      );
+    // 「要らない」はこの依頼についての家族の決定。まだ相手へ伝えたとは言わない。
+    // 「要るまま」は、元の手配が無く、同じ子・日の手配も無い間だけの控え。根拠が変われば見直す。
+    const checked = request.checked;
+    const standalone =
+      checked?.decision === 'keep' &&
+      checked.basisVersion === requestBasisVersion(ctx.state, snapshot) &&
+      standing.live &&
+      standing.needsCheck &&
+      !arrangement?.live &&
+      !relatedCare;
+    const live = checked?.decision === 'cancel' ? false : standing.live;
+    const needsCheck = checked?.decision === 'cancel' ? false : standing.needsCheck && !standalone;
+    const { conditional } = standing;
     // だれの分か：控えの子。控えに無い古い依頼は、同じキーの手配が今あれば、その手配の子（キーが子を決める）。
     const childId =
       snapshot.childId ?? (arrangement?.kind === 'childCare' ? arrangement.childId : undefined);
@@ -3463,6 +3495,7 @@ function externalRequests(
       ...(childId ? { childId } : {}),
       live,
       ...(needsCheck ? { needsCheck } : {}),
+      ...(standalone ? { standalone: true as const } : {}),
       ...(conditional ? { conditional } : {}),
     });
   }

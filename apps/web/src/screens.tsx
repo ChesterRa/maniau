@@ -79,6 +79,7 @@ import type { UiLanguage } from './i18n';
 import { Attributions, GoogleMapsMark, TermsLink, WalkMap } from './maps';
 import { SayMemberDay } from './member-day';
 import { type NotUploadable, toUploadable, type Uploadable } from './photo';
+import { SourceEdits } from './source-edit';
 import { StoreSearch } from './stores';
 import {
   Button,
@@ -168,6 +169,8 @@ export interface Ctx {
     trusted: boolean;
     /** 条件しだいの時、一つの値で決まるなら、その条件。 */
     when?: ItemWhen;
+    /** 同じ日付が同じお知らせの条件か答えにもある（同じ事かは分からない）。 */
+    dateLinks?: { label?: string; value: string }[];
     /** 家の人の当番だけ：うちの番か（サーバーのエンジンが決めた物）。 */
     turn?: 'ours' | 'others' | 'unsure';
     /** turn が、家族の言明（「うちの番です」「うちの番ではない」）による。 */
@@ -190,6 +193,7 @@ export interface Ctx {
     unshown?: true;
   }[];
   sources: Map<string, Source>;
+  excludedSources?: ReadonlyMap<string, 'misfiled' | 'misread'>;
   readings: Reading[];
   me: Member;
   lang: UiLanguage;
@@ -717,6 +721,7 @@ export function sentCommand(ctx: Ctx, task: Task): Command {
     type: 'recordSent',
     taskKey: task.key,
     requestId: requestId(),
+    shown: { throughSeq: ctx.plan.throughSeq, at: ctx.now },
     ...(arrangement?.kind === 'childCare' ||
     (arrangement?.kind === 'need' && arrangement.needShape === 'window')
       ? { window: { start: arrangement.start, end: arrangement.end } }
@@ -991,7 +996,10 @@ export function TodayScreen({ ctx, done }: { ctx: Ctx; done?: TodayDone }) {
   // 空から始めた試用で、まだお知らせが一つも無い。最初の一手（お知らせを入れる）だけを出す（家族の家庭と
   // 用意した場面は、前のまま）。
   const fresh =
-    ctx.example !== undefined && ctx.sources.size === 0 && shown.length === 0 && !ctx.changes;
+    ctx.example !== undefined &&
+    [...ctx.sources.keys()].every((id) => ctx.excludedSources?.has(id)) &&
+    shown.length === 0 &&
+    !ctx.changes;
   // 日を決める事が残る「すること」（WhenList）も今やることに数える（決める物があるのに「無い」と言わない）。
   const now = shown.length > 0 || mine.length > 0 || openWhen(ctx).length > 0;
   return (
@@ -1103,7 +1111,13 @@ function SectionTitle({ children }: { children: ReactNode }) {
 function settledRequests(ctx: Ctx): ExternalRequest[] {
   const now = toEpochMinutes(ctx.now);
   return ctx.plan.requests.filter((request) => {
-    if (!request.live || request.needsCheck === true || request.state !== 'confirmed') return false;
+    if (
+      !request.live ||
+      request.needsCheck === true ||
+      request.standalone ||
+      request.state !== 'confirmed'
+    )
+      return false;
     const end =
       request.window?.end ??
       arrangementOf(ctx, request.basis.arrangementKey)?.end ??
@@ -1435,10 +1449,24 @@ function ReleasedCard({ ctx, released }: { ctx: Ctx; released: Released }) {
 
 /** 送った後に根拠が分からなくなった・替わった依頼。取り消しとも続けるとも決めず、頼んだ本人に確かめてもらう。 */
 function CheckCard({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
-  const arrangement = arrangementOf(ctx, request.basis.arrangementKey);
-  const option = arrangement?.options.find((o) => o.key === request.basis.optionKey);
-  // 家族が使えないとした手の頼み事は、お知らせが変わったのではない（そうと書く）。その手を選んである間は、ここで
-  // やめられる（送った頼み事に取り消しを伝える作業が出る。ほかの本命・予備は替えない）。
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const arrangement = ctx.plan.arrangements.find(
+    (a) =>
+      a.live &&
+      (a.key === request.basis.arrangementKey ||
+        (a.kind === 'childCare' &&
+          request.childId !== undefined &&
+          a.childId === request.childId &&
+          request.window !== undefined &&
+          localDateOf(toEpochMinutes(a.start), ctx.tz) ===
+            localDateOf(toEpochMinutes(request.window.start), ctx.tz))),
+  );
+  // 別の日・別の手配を同じ子の日付で見つけた時は、その手配の手を勝手にやめない。
+  const option =
+    arrangement && arrangement.key === request.basis.arrangementKey
+      ? arrangement.options.find((o) => o.key === request.basis.optionKey)
+      : undefined;
   const unusable = option?.unusable === true;
   const role =
     unusable && arrangement && option
@@ -1448,6 +1476,27 @@ function CheckCard({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
           ? 'backup'
           : undefined
       : undefined;
+  const unknownCare =
+    request.basis.arrangementKey?.startsWith('arr:childCare:') &&
+    (!request.childId || !request.window);
+  const decide = async (decision: 'keep' | 'cancel') => {
+    setBusy(true);
+    const result = await ctx.send({
+      type: 'resolveRequestCheck',
+      requestId: request.requestId,
+      decision,
+      seen: { throughSeq: ctx.plan.throughSeq },
+    });
+    setBusy(false);
+    setFailed(!succeeded(result));
+  };
+  const drop = async () => {
+    if (!arrangement || !option || !role) return;
+    setBusy(true);
+    const result = await ctx.send(dropOptionCommand(ctx, arrangement.key, option.key));
+    setBusy(false);
+    setFailed(!succeeded(result));
+  };
   return (
     <Card>
       <Label tone="warn">{ctx.t('card.check.label')}</Label>
@@ -1461,6 +1510,10 @@ function CheckCard({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
               : 'card.check.body',
         )}
       </Text>
+      <RequestDetails ctx={ctx} request={request} />
+      {!arrangement && !unknownCare && <Text quiet>{ctx.t('card.check.keepNote')}</Text>}
+      {unknownCare && <Text quiet>{ctx.t('card.check.unknownCare')}</Text>}
+      {failed && <Text>{ctx.t('card.check.failed')}</Text>}
       <Row>
         {arrangement && (
           <Button onClick={() => ctx.go(decideRoute(arrangement))}>
@@ -1468,11 +1521,18 @@ function CheckCard({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
           </Button>
         )}
         {arrangement && option && role && (
-          <Button
-            kind="secondary"
-            onClick={() => void ctx.send(dropOptionCommand(ctx, arrangement.key, option.key))}
-          >
+          <Button kind="secondary" disabled={busy} onClick={() => void drop()}>
             {ctx.t(role === 'backup' ? 'card.unowned.dropBackup' : 'card.unowned.dropPrimary')}
+          </Button>
+        )}
+        {!arrangement && !unknownCare && (
+          <Button kind="secondary" disabled={busy} onClick={() => void decide('keep')}>
+            {ctx.t('card.check.keep')}
+          </Button>
+        )}
+        {!role && (
+          <Button kind="secondary" disabled={busy} onClick={() => void decide('cancel')}>
+            {ctx.t('card.check.cancel')}
           </Button>
         )}
       </Row>
@@ -2890,6 +2950,7 @@ function RequestDetails({ ctx, request }: { ctx: Ctx; request: ExternalRequest }
     toEpochMinutes(ctx.now) >= toEpochMinutes(request.window.end);
   return (
     <>
+      {request.standalone && <span className="text-sm text-sub">{ctx.t('quiet.standalone')}</span>}
       {careDetail && <span className="text-sm text-sub">{careDetail}</span>}
       {careCondition && <span className="text-sm text-sub">{careCondition}</span>}
       {passed && <span className="text-sm text-sub">{ctx.t('quiet.windowPassed')}</span>}
@@ -2947,7 +3008,7 @@ function ReplyActions({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) 
         </Button>
       </Row>
       {/* 「断られたら？」：断られたと仮に置いて、同じ計算で何が変わるかを見る（何も記録しない）。 */}
-      {request.state === 'awaitingReply' && (
+      {request.state === 'awaitingReply' && !request.standalone && (
         <MoreLink onClick={() => ctx.go({ name: 'whatIf', requestId: request.requestId })}>
           {ctx.t('whatIf.link')}
         </MoreLink>
@@ -2984,13 +3045,27 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
           <span className="text-accent">
             <Icon path={ICON.message} size={20} />
           </span>
-          {ctx.t('quiet.waiting', {
+          {ctx.t(request.state === 'confirmed' ? 'quiet.standaloneConfirmed' : 'quiet.waiting', {
             to: nameOf(ctx.household, request.to),
             sent: day(ctx, request.sentAt),
           })}
         </span>
         <RequestDetails ctx={ctx} request={request} />
         <ReplyActions ctx={ctx} request={request} />
+        {request.standalone && (
+          <MoreLink
+            onClick={() =>
+              void ctx.send({
+                type: 'resolveRequestCheck',
+                requestId: request.requestId,
+                decision: 'cancel',
+                seen: { throughSeq: ctx.plan.throughSeq },
+              })
+            }
+          >
+            {ctx.t('card.check.cancel')}
+          </MoreLink>
+        )}
       </div>
     );
   }
@@ -3707,17 +3782,93 @@ function DraftActions({ ctx, draft }: { ctx: Ctx; draft: string }) {
 
 export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
   const task = ctx.plan.tasks.find((t) => t.key === taskKey);
+  const [failed, setFailed] = useState(false);
+  // 外のアプリに移っている間に作業が消えても、表示していた文と命令をこの画面の間だけ持つ。
+  // 実際には送っていない文を、ここから新しく送らせない。
+  const last = useRef<{
+    taskKey: string;
+    title: string;
+    draft: string;
+    command: Command;
+    sourceIds: string[];
+    content: string;
+  }>(undefined);
+  const active = task?.live === true && isActiveTask(ctx.plan, task);
+  const content =
+    active && task
+      ? JSON.stringify([
+          askDraft(ctx, task),
+          task.external,
+          task.basis,
+          arrangementOf(ctx, task.basis.arrangementKey)?.start,
+          arrangementOf(ctx, task.basis.arrangementKey)?.end,
+        ])
+      : undefined;
+  if (active && task && last.current?.taskKey !== taskKey) {
+    const sourceIds = task.basis.itemIds.flatMap(
+      (id) => ctx.items.find((entry) => entry.item.id === id)?.item.sourceId ?? [],
+    );
+    last.current =
+      sourceIds.length > 0 && sourceIds.length === task.basis.itemIds.length
+        ? {
+            taskKey,
+            title: taskTitle(ctx, task),
+            draft: askDraft(ctx, task),
+            command: sentCommand(ctx, task),
+            sourceIds,
+            content: content ?? '',
+          }
+        : undefined;
+  }
+  const changed = active && last.current?.taskKey === taskKey && last.current.content !== content;
+  if (!active || changed) {
+    const before = last.current?.taskKey === taskKey ? last.current : undefined;
+    // 内容を削除した出典は、以前の画面にあっても再び出さない。
+    if (!before || before.sourceIds.some((id) => !ctx.sources.has(id))) {
+      last.current = undefined;
+      return <Missing ctx={ctx} />;
+    }
+    const sent = async () => {
+      const result = await ctx.send(before.command);
+      if (succeeded(result)) ctx.go({ name: 'today', done: 'sent' });
+      else setFailed(true);
+    };
+    return (
+      <>
+        <Header
+          back={{ label: ctx.t('nav.today'), onClick: () => ctx.go({ name: 'today' }) }}
+          eyebrow={before.title}
+          title={ctx.t('ask.title')}
+        />
+        <Main>
+          <Card tone="warn">
+            <Text>{ctx.t(changed ? 'ask.changed' : 'ask.gone')}</Text>
+          </Card>
+          <Card>
+            <p className="whitespace-pre-line text-base leading-relaxed">{before.draft}</p>
+          </Card>
+          {failed && <Text>{ctx.t('ask.recordUncertain')}</Text>}
+          <Button kind="secondary" onClick={() => void sent()}>
+            {ctx.t('ask.sent')}
+          </Button>
+        </Main>
+      </>
+    );
+  }
   if (!task) return <Missing ctx={ctx} />;
   const helper = helperOf(ctx, task);
   const draft = askDraft(ctx, task);
   // 見守れる大人を確かめられない時間が分かれる日は、頼む文がどの時間の分かと、ほかの時間を書く。
   const found = arrangementOf(ctx, task.basis.arrangementKey);
   const split = found?.kind === 'childCare' ? splitLine(ctx, found) : undefined;
-  // 送ったと記録する。控え（相手・根拠・条件・時間）は、サーバーが今の計画から作る。見せた文の頼む時間を
-  // 付ける（見せた後に日が直されていたら、サーバーが断る）。
+  // 送ったと記録する。画面の版・時刻と頼んだ時間を付け、サーバーが当時の控えを確かめる。
+  // 記録を確かめられない時は、外で送った可能性を見落とさないよう画面にも伝える。
   const sent = async () => {
-    const result = await ctx.send(sentCommand(ctx, task));
+    const result = await ctx.send(
+      last.current?.taskKey === taskKey ? last.current.command : sentCommand(ctx, task),
+    );
     if (succeeded(result)) ctx.go({ name: 'today', done: 'sent' });
+    else setFailed(true);
   };
   // 返事が無いまま、次に選べる手の決め時が近づくと、きょうにその手を出す（予備を押さえるか）。次の手が無い・予備を
   // もう押さえてある時は、起きない事なので書かない。
@@ -3754,6 +3905,11 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
           </Card>
         )}
         <DraftActions ctx={ctx} draft={draft} />
+        {failed && (
+          <Card tone="warn">
+            <Text>{ctx.t('ask.recordUncertain')}</Text>
+          </Card>
+        )}
         <Button kind="secondary" onClick={() => void sent()}>
           {ctx.t('ask.sent')}
         </Button>
@@ -4062,6 +4218,7 @@ export function SourcesScreen(props: { ctx: Ctx; sourceId?: string; highlight?: 
                       : ctx.t('sources.handWritten')}
                 </Text>
               )}
+              <SourceEdits ctx={ctx} source={source} />
             </Card>
           );
         })}

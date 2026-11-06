@@ -24,6 +24,8 @@ const ENVELOPE = new Set([
  */
 const KEEP: Record<DomainEvent['type'], readonly string[]> = {
   householdSet: [],
+  sourceExcluded: ['sourceId', 'reason'],
+  requestCheckResolved: ['requestId', 'decision'],
   noticeReceived: [
     'source.id',
     'source.version',

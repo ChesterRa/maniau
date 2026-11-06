@@ -6,6 +6,7 @@ import { expect, it } from 'vitest';
 import { runCommand } from '../src/commands';
 import { demoEvents } from '../src/demo';
 import { sendGate } from '../src/gate';
+import { previewChange } from '../src/preview';
 import { memoryStore } from '../src/store';
 
 it('買った後に無いと答えると作業を再開し、家庭の知らせを止めない', async () => {
@@ -16,6 +17,15 @@ it('買った後に無いと答えると作業を再開し、家庭の知らせ�
   const store = memoryStore(new Map([['demo', events]]));
   let n = 0;
   const run = async (memberId: string, command: Command) => {
+    if (command.type === 'correctItem') {
+      const shown = previewChange(
+        await store.withHousehold('demo', (log) => [...log.events()]),
+        { memberId, now },
+        command,
+      );
+      if ('status' in shown) throw new Error(`直す内容を見られない: ${shown.reason}`);
+      command = { ...command, seen: { throughSeq: shown.throughSeq, changes: shown.seen } };
+    }
     const result = await runCommand(
       store,
       'demo',

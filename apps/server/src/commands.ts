@@ -23,6 +23,7 @@ import {
   isNeedArrangementKey,
   LEAVE_MAX_BUSINESS_DAYS,
   leaveOption,
+  localDateOf,
   type MapInputs,
   type NeedInterpretation,
   type PlaceKind,
@@ -46,6 +47,7 @@ import {
 import {
   awaitingConfirmation,
   currentReadings,
+  dateConditionLinks,
   decisionBasis,
   type EngineState,
   familyQuestionBasis,
@@ -684,17 +686,71 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       };
     }
     case 'recordSent': {
-      // 送ったと記録するのは担当の本人だけ。控えは、今の事象からサーバーが作る（§5.6）。
-      const task = taskOf(command.taskKey);
-      if (!task?.external) return { status: 'conflict', reason: 'taskGone' };
+      // 送ったと記録するのは担当の本人だけ。控えはサーバーが作る（§5.6）。
+      let task = taskOf(command.taskKey);
+      let snapshot = task?.external ? requestSnapshot(events, context.now, task.key) : undefined;
+      const shown = command.shown;
+      if (
+        shown &&
+        (shown.throughSeq > plan.throughSeq ||
+          toEpochMinutes(shown.at) > toEpochMinutes(context.now))
+      )
+        return { status: 'conflict', reason: 'taskGone' };
+      if (!snapshot || (shown && shown.throughSeq < plan.throughSeq)) {
+        // 外で送った直後に、もう一人が出典を外した・取り下げた・日を直した場合もある。画面の版と時刻から
+        // 当時の計画を作り直し、本人に出ていた作業だけを当時の控えで記録する。今の相手や日を推して埋めない。
+        if (!shown) return { status: 'conflict', reason: 'taskGone' };
+        const before = events.filter((event) => event.seq <= shown.throughSeq);
+        const previous = foldEvents(before);
+        if (previous.lastSeq !== shown.throughSeq)
+          return { status: 'conflict', reason: 'taskGone' };
+        const oldPlan = planFromState(previous, shown.at, context.maps);
+        const oldTask = oldPlan.tasks.find((entry) => entry.key === command.taskKey);
+        if (
+          !oldTask?.live ||
+          !oldTask.external ||
+          oldTask.assigneeId !== me ||
+          !isActiveTask(oldPlan, oldTask)
+        )
+          return { status: 'conflict', reason: 'taskGone' };
+        const sources = new Set(
+          itemsOf(previous)
+            .filter((item) => oldTask.basis.itemIds.includes(item.id))
+            .map((item) => item.sourceId),
+        );
+        const after = events.filter((event) => event.seq > shown.throughSeq);
+        const changed = after.some(
+          (event) =>
+            ((event.type === 'sourceExcluded' || event.type === 'sourceWithdrawn') &&
+              sources.has(event.sourceId)) ||
+            (event.type === 'itemCorrected' && oldTask.basis.itemIds.includes(event.itemId)),
+        );
+        const refusedLater = after.some(
+          (event) =>
+            event.type === 'commitmentChanged' &&
+            event.taskKey === command.taskKey &&
+            event.actorId === me &&
+            (event.action === 'decline' || event.action === 'withdraw'),
+        );
+        // 削除した中身を、過去の画面から復活させない。
+        const purged = [...sources].some((id) => state.purgedSources.get(id) === 'all');
+        // 用件の控えが同じでも、本人が後から辞退した・原文が削除された時は、古い画面で送信を記録しない。
+        if (refusedLater || purged) return { status: 'conflict', reason: 'taskGone' };
+        const oldSnapshot = requestSnapshot(before, shown.at, oldTask.key);
+        if (!sameJson(snapshot, oldSnapshot)) {
+          if (!changed)
+            return { status: 'conflict', reason: snapshot ? 'proposalChanged' : 'taskGone' };
+          task = oldTask;
+          snapshot = oldSnapshot;
+        }
+      }
+      if (!task?.external || !snapshot) return { status: 'conflict', reason: 'taskGone' };
       if (task.assigneeId !== me) return { status: 'forbidden', reason: 'notTheAssignee' };
       // 依頼の ID は、押し間違いを直して消した物も含めて、二度使わない。
       if (state.sentRequestIds.has(command.requestId)) {
         return { status: 'invalid', reason: 'requestIdTaken' };
       }
-      const snapshot = requestSnapshot(events, context.now, task.key);
-      // 頼む時間のある依頼（子の居場所）は、画面で見せた頼む時間が今の控えと同じ時だけ受ける（見せた後に日や
-      // 時間が直されていたら、記録せず見せ直す。古い画面の「送った」で、新しい日を送ったことにしない）。
+      // 頼む時間のある依頼は、画面で見せた頼む時間と控えが同じ時だけ受ける。
       if (snapshot.window) {
         if (!command.window) return { status: 'invalid', reason: 'windowRequired' };
         if (
@@ -749,6 +805,58 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         ],
       };
     }
+    case 'resolveRequestCheck': {
+      const request = requestOf(command.requestId);
+      if (!request) return { status: 'conflict', reason: 'requestGone' };
+      if (request.sentBy !== me) return { status: 'forbidden', reason: 'notTheSender' };
+      if (command.seen === undefined) return { status: 'invalid', reason: 'seenRequired' };
+      if (command.seen.throughSeq !== plan.throughSeq)
+        return { status: 'conflict', reason: 'proposalChanged' };
+      if (
+        !request.live ||
+        !['awaitingReply', 'confirmed'].includes(request.state) ||
+        (request.needsCheck !== true && !(request.standalone && command.decision === 'cancel'))
+      )
+        return { status: 'conflict', reason: 'requestChanged' };
+      const original = state.requests.get(request.requestId);
+      if (!original?.snapshot) return { status: 'invalid', reason: 'legacyRequestUnclear' };
+      if (command.decision === 'keep') {
+        const snapshot = original.snapshot;
+        const household = state.household;
+        const window = snapshot.window;
+        if (
+          snapshot.basis.arrangementKey?.startsWith('arr:childCare:') &&
+          (!snapshot.childId || !snapshot.window)
+        )
+          return { status: 'invalid', reason: 'legacyRequestUnclear' };
+        const sameCare =
+          household &&
+          snapshot.childId &&
+          window &&
+          plan.arrangements.some(
+            (a) =>
+              a.live &&
+              a.kind === 'childCare' &&
+              a.childId === snapshot.childId &&
+              localDateOf(toEpochMinutes(a.start), household.timeZone) ===
+                localDateOf(toEpochMinutes(window.start), household.timeZone),
+          );
+        if (
+          sameCare ||
+          plan.arrangements.some((a) => a.live && a.key === request.basis.arrangementKey)
+        )
+          return { status: 'conflict', reason: 'arrangementReturned' };
+      }
+      return {
+        bodies: [
+          {
+            type: 'requestCheckResolved',
+            requestId: request.requestId,
+            decision: command.decision,
+          },
+        ],
+      };
+    }
     case 'confirmItem':
     case 'correctItem':
     case 'dismissItem': {
@@ -800,6 +908,20 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       if (Object.keys(command.interpretation).length === 0) {
         return { status: 'invalid', reason: 'nothingToCorrect' };
       }
+      if (
+        item.kind !== 'need' &&
+        command.interpretation.date !== undefined &&
+        command.interpretation.date !== item.interpretation.date &&
+        dateConditionLinks(state, item).length > 0
+      ) {
+        return { status: 'invalid', reason: 'dateLinkedCondition' };
+      }
+      const readingBound = item.kind !== 'need' && !state.statedSources.has(item.sourceId);
+      if (readingBound) {
+        const source = state.sources.get(item.sourceId);
+        if (!source || (state.extractionVersion.get(item.sourceId) ?? 0) < source.version)
+          return { status: 'conflict', reason: 'rereadPending' };
+      }
       // 家族の言明の「すること」は、直した後も言った時と同じ決まりで確かめる。形（締切か時間か）は替えない
       // （替えるなら言い直す。前の形の欄を残したまま別の形にしない）。読み取りに形が無かった物だけ、形を入れられる。
       // いつにするかの候補のある「すること」：形・日・時刻はいつも直せない（時刻は候補が持つ）。何を・場所・だれのため・
@@ -840,7 +962,12 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       }
       return {
         bodies: [
-          { type: 'itemCorrected', itemId: item.id, interpretation: command.interpretation },
+          {
+            type: 'itemCorrected',
+            itemId: item.id,
+            interpretation: command.interpretation,
+            ...(readingBound ? { readingBound: true as const } : {}),
+          },
           ...bumped,
         ],
       };
@@ -955,6 +1082,27 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         ],
       };
     }
+    case 'discardSource':
+      if (!state.sources.has(command.sourceId)) return { status: 'conflict', reason: 'sourceGone' };
+      // 家族が自分で言った「すること」はお知らせの読み取りではない（その画面から直す・要らなくする）。
+      if (state.statedSources.has(command.sourceId))
+        return { status: 'invalid', reason: 'statedSourceNotNotice' };
+      if (state.excludedSources.has(command.sourceId)) return { bodies: [] };
+      if (state.withdrawnSources.has(command.sourceId))
+        return { status: 'conflict', reason: 'sourceWithdrawn' };
+      // 前の形で控えの無い依頼は、出典を外すと今の作業から相手と根拠を復元できなくなることがある。
+      // 誰に何を送ったか作らず、先に家族が確認できるよう、この操作は受けない。
+      if (
+        [...state.requests.values()].some(
+          (request) =>
+            request.snapshot === undefined &&
+            (request.state === 'awaitingReply' || request.state === 'confirmed'),
+        )
+      )
+        return { status: 'invalid', reason: 'legacyRequestUnclear' };
+      return {
+        bodies: [{ type: 'sourceExcluded', sourceId: command.sourceId, reason: command.reason }],
+      };
     case 'withdrawSource':
       if (!state.sources.has(command.sourceId)) return { status: 'conflict', reason: 'sourceGone' };
       // 取り下げ済みなら何も足さない（操作は記録する）。
@@ -1520,11 +1668,20 @@ export function previewedInput(
   state?: EngineState,
 ): { input: unknown; seen?: { throughSeq: number; changes: string } } | undefined {
   switch (command.type) {
+    case 'discardSource':
+      return {
+        input: { sourceId: command.sourceId, reason: command.reason },
+        ...(command.seen ? { seen: command.seen } : {}),
+      };
     case 'correctItem':
     case 'dismissItem': {
       if (state !== undefined) {
         const item = itemsOf(state).find((i) => i.id === command.itemId);
-        if (item?.kind !== 'need' || awaitingConfirmation(state, item)) return undefined;
+        if (
+          (command.type === 'dismissItem' && item?.kind !== 'need') ||
+          (item?.kind === 'need' && awaitingConfirmation(state, item))
+        )
+          return undefined;
       }
       const input =
         command.type === 'correctItem'

@@ -193,10 +193,21 @@ describe('お知らせの文を入れる', () => {
       operationId: 'while-correcting',
     });
     await started;
-    const corrected = await command(app, sessionId, {
+    const correction = {
       type: 'correctItem',
       itemId: 'n1:i5',
       interpretation: { what: '青いシャツ' },
+    };
+    const shown = await app.request(`/api/demo/sessions/${sessionId}/change-preview`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ memberId: 'b', command: correction }),
+    });
+    expect(shown.status).toBe(200);
+    const { preview } = (await shown.json()) as { preview: { throughSeq: number; seen: string } };
+    const corrected = await command(app, sessionId, {
+      ...correction,
+      seen: { throughSeq: preview.throughSeq, changes: preview.seen },
     });
     expect(corrected.status).toBe(200);
     open();

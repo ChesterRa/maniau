@@ -19,6 +19,8 @@ import { weekday } from './time';
 
 export interface FactState {
   items: Map<string, Item>;
+  /** 加え間違えた出典。計画には使わず、依頼の現実の取消しとも決めない。 */
+  excludedSources: Set<string>;
   /** 家族の言明か、採用中の読み取りを家族が確かめたか。事項と読み取りの事象から独立に組む。 */
   needConfirmation: Map<string, 'stated' | 'confirmed' | 'dismissed' | 'pending'>;
   /** 出典の内容を持ち越さず、送り手だけを要件の検査に使う。 */
@@ -33,6 +35,8 @@ export interface FactState {
   resolvedValues: Map<string, string>;
   /** 名前や事項の内容が今と異なり、使えないと確認できた答えの通し番号。 */
   inapplicableAnswers: Set<number>;
+  /** 家族が直した後で根拠の読み取りが替わり、新しい事項をまだ確かめていない。 */
+  correctionRereadPending: Set<string>;
   conditions: Map<string, ConditionNode>;
   changes: Map<string, { kind: 'replace' | 'cancel'; itemId: string; active: Truth }[]>;
   staleItems: Set<string>;
@@ -92,6 +96,8 @@ export function historicalItem(
     if (seen.has(itemId)) return { itemId, active: 'unknown' };
     seen.add(itemId);
     if (!facts.items.has(itemId)) return { itemId, active: 'unknown' };
+    const item = facts.items.get(itemId);
+    if (item && facts.excludedSources.has(item.sourceId)) return { itemId, active: 'unknown' };
     const changes = facts.changes.get(itemId) ?? [];
     if (changes.some((change) => change.active === 'unknown')) return { itemId, active: 'unknown' };
     const effective = changes.filter((change) => change.active === true);
@@ -245,6 +251,7 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   const latestBySource = new Map<string, Extracted>();
   const correctedSources = new Set<string>();
   const withdrawnSources = new Set<string>();
+  const excludedSources = new Set<string>();
   const purgedSources = new Set<string>();
   const statedSources = new Set<string>();
   const declaredBySource = new Map<string, Set<string>>();
@@ -307,9 +314,12 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
       }
       continue;
     }
-    if (event.type === 'sourceWithdrawn') {
-      if (sources.has(event.sourceId)) withdrawnSources.add(event.sourceId);
-      else
+    if (event.type === 'sourceWithdrawn' || event.type === 'sourceExcluded') {
+      if (sources.has(event.sourceId)) {
+        if (event.type === 'sourceExcluded' && !withdrawnSources.has(event.sourceId))
+          excludedSources.add(event.sourceId);
+        withdrawnSources.add(event.sourceId);
+      } else
         report.undetermined('source_event_unverified', event.id, '取り下げる出典を確認できない。');
       continue;
     }
@@ -376,10 +386,15 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
         });
         continue;
       }
-      // モデルが読んだ need への確かめ・直しは、その時に採用された読み取りに結ぶ。
+      // モデルが読んだ need と、新しい読み取りに結んだ直しは、その時に採用された読み取りに結ぶ。
       // 同じ事項 ID が読み直しで別の内容に使われても、前の言明を新しい読み取りに当てない。
+      const boundCorrection = event.type === 'itemCorrected' && event.readingBound === true;
       const reading = [...latestBySource.values()].find((entry) =>
-        entry.items.some((item) => item.id === event.itemId && item.kind === 'need'),
+        entry.items.some(
+          (item) =>
+            item.id === event.itemId &&
+            (item.kind === 'need' || boundCorrection || needVerdicts.has(event.itemId)),
+        ),
       );
       if (reading && !statedSources.has(reading.sourceId)) {
         const previous = needVerdicts.get(event.itemId);
@@ -391,7 +406,11 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
         const correction =
           event.type === 'itemCorrected'
             ? {
-                ...(sameReading ? previous.correction : {}),
+                ...(sameReading
+                  ? previous.correction
+                  : boundCorrection && !previous
+                    ? corrections.get(event.itemId)
+                    : {}),
                 ...event.interpretation,
               }
             : sameReading
@@ -541,6 +560,8 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   }
 
   for (const invalid of invalidExtractions) {
+    // 家族が加え間違えたと確かめて外した出典は、新しい計画の根拠にしない。出典が分かる時だけ除く。
+    if (invalid.sourceId && excludedSources.has(invalid.sourceId)) continue;
     if (
       (invalid.sourceId && purgedSources.has(invalid.sourceId)) ||
       (!invalid.sourceId && purgedSources.size > 0)
@@ -562,6 +583,7 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
     .filter((entry) => !purgedSources.has(entry.sourceId))
     .sort((a, b) => a.sourceSeq - b.sourceSeq);
   const staleItems = new Set<string>();
+  const correctionRereadPending = new Set<string>();
   const staleUnknowns = new Set<string>();
   for (const extraction of extracted) {
     const currentVersion = sources.get(extraction.sourceId)?.source.version;
@@ -572,14 +594,7 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   }
   // 再読は通知を新しくしない。家族の後の答えを、再読しただけで上書きしない。
   for (const extraction of extracted) {
-    for (const item of extraction.items) {
-      const { date, writtenWeekday } = item.interpretation;
-      if (writtenWeekday !== undefined && date === undefined) {
-        report.undetermined('weekday_date_missing', item.id, '書かれた曜日と照らす日付がない。');
-      } else if (writtenWeekday !== undefined && date && weekday(date) !== writtenWeekday) {
-        report.violation('weekday_mismatch', item.id, '原文に書かれた曜日と日付が合わない。');
-      }
-    }
+    if (excludedSources.has(extraction.sourceId)) continue;
     if (extraction.source) checkCoverage(extraction.source, extraction, report);
     else
       report.undetermined(
@@ -603,9 +618,10 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
       const bound = needVerdicts.get(raw.id);
       const readNeed = raw.kind === 'need' && !statedSources.has(extraction.sourceId);
       const useBound = readNeed || bound !== undefined;
-      const references = readNeed
-        ? needReferences(raw, latestBySource.values(), purgedSources)
-        : undefined;
+      const references =
+        readNeed || bound !== undefined
+          ? needReferences(raw, latestBySource.values(), purgedSources)
+          : undefined;
       const current =
         bound?.reading === extraction.seq &&
         references !== undefined &&
@@ -614,6 +630,11 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
           : undefined;
       const correction = useBound ? current?.correction : corrections.get(raw.id);
       const verdict = useBound ? current?.verdict : verdicts.get(raw.id);
+      // 一度確かめた別の種類の事項も、読み直しで根拠が替われば前の直しを当てず、未確認にする。
+      if (bound !== undefined && current === undefined && raw.kind !== 'need') {
+        staleItems.add(raw.id);
+        correctionRereadPending.add(raw.id);
+      }
       if (verdict !== undefined) effectiveVerdicts.set(raw.id, verdict);
       if (raw.kind === 'need') {
         needConfirmation.set(
@@ -628,6 +649,16 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
           : {}),
         ...(verdict === 'confirmed' ? { evidence: 'confirmed' } : {}),
       };
+      // 家族が直した有効な解釈と、読んだ曜日を照らす。原文と古い読み取りは事象に残すが、直した前の
+      // 読み違いを今の計画の違反として残さない。加え間違いの出典は新しい計画の根拠にしない。
+      if (!excludedSources.has(extraction.sourceId)) {
+        const { date, writtenWeekday } = item.interpretation;
+        if (writtenWeekday !== undefined && date === undefined) {
+          report.undetermined('weekday_date_missing', item.id, '書かれた曜日と照らす日付がない。');
+        } else if (writtenWeekday !== undefined && date && weekday(date) !== writtenWeekday) {
+          report.violation('weekday_mismatch', item.id, '原文に書かれた曜日と日付が合わない。');
+        }
+      }
       items.set(raw.id, item);
       itemSeq.set(raw.id, extraction.sourceSeq);
     }
@@ -1037,6 +1068,8 @@ export function collectFacts(events: readonly DomainEvent[], report: Collector):
   }
   return {
     items,
+    excludedSources,
+    correctionRereadPending,
     needConfirmation,
     sourceReadingSeq: new Map(extracted.map((entry) => [entry.sourceId, entry.seq])),
     sourceSenders: new Map(

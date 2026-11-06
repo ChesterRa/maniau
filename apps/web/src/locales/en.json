@@ -250,10 +250,15 @@
     "check": {
       "label": "Please check",
       "title": "Is your request to {{to}} still needed?",
-      "body": "Something it relied on has changed (the notice changed or was deleted). You decide whether to cancel.",
+      "body": "Something the request relied on has changed or can no longer be confirmed. You decide whether to cancel.",
       "bodyUnusable": "Your family marked this way as unusable. You decide whether to cancel this request.",
       "bodyUnusableDrop": "Your family marked this way as unusable. You decide whether to cancel this request (if you drop this way, a task to send the cancellation is added).",
-      "action": "See details"
+      "action": "See details",
+      "keep": "Still need this request",
+      "cancel": "No longer need it",
+      "keepNote": "The original request stays. It does not secure a new arrangement.",
+      "unknownCare": "The record does not identify the child or the requested time. Check what you asked the person.",
+      "failed": "Things may have changed, or the choice could not be saved. Check the current details and choose again."
     },
     "noReply": {
       "label": "Reply not recorded",
@@ -431,6 +436,8 @@
   },
   "quiet": {
     "waiting": "Waiting for {{to}} (sent {{sent}})",
+    "standaloneConfirmed": "Reply from {{to}} recorded as OK (sent {{sent}})",
+    "standalone": "The original arrangement is gone. This request remains, but it does not secure a new arrangement.",
     "careRecorded": "Request record: care for {{child}} · {{when}}",
     "careRecordedNoChild": "Request record: child care · {{when}}",
     "careRecordedNoTime": "Request record: care for {{child}} (the requested time is not in the record)",
@@ -656,6 +663,9 @@
   "ask": {
     "title": "Message to send",
     "body": "Send it by LINE or similar. {{name}} doesn't need this app.",
+    "gone": "This task is no longer active in the plan. If you already sent the message below, press “Record that I sent it”. If you haven't sent it, go back without sending it.",
+    "changed": "This request has changed. The message below is the one you saw before. If you already sent it, press “Record that I sent it”. If you haven't sent it, go back without sending it.",
+    "recordUncertain": "We couldn't confirm whether it was recorded. If you already sent it, check directly with the recipient too.",
     "draft": "Draft",
     "share": "Share via LINE etc.",
     "copy": "Copy",
@@ -2043,6 +2053,41 @@
       "invalid": "This link can’t be used (it was stopped or replaced). Please ask the person who sent it.",
       "tooMany": "Opened too many times in a row. Please wait a moment and open it again.",
       "failed": "Couldn’t load right now. Please open it again shortly."
+    }
+  },
+  "sourceFix": {
+    "look": "See what changes",
+    "date": {
+      "open": "Correct a date read from this notice",
+      "compare": "Compare the original notice above with the date that was read.",
+      "read": "Date read: {{date}}",
+      "missing": "No date was read.",
+      "inactive": "This item is not currently in the plan because its condition is not met.",
+      "unconfirmed": "The new reading has not been checked yet.",
+      "link": "The same notice also uses {{date}} in the condition, choices or an answer for “{{label}}”. It may or may not be the same date.",
+      "unknownCondition": "an unnamed condition",
+      "linkHelp": "Changing this date alone could leave the old date in the condition, choices or answer, so it cannot be saved here. If the reading is wrong, select that reason under “Remove this notice from the plan”, add the notice again, and check what was read. Reading it again also uses a reading.",
+      "linkHelpUnavailable": "Changing this date alone could leave the old date in the condition, choices or answer, so it cannot be saved here. This server cannot read a new notice. Please check the original in another way.",
+      "changed": "A condition, choice or answer using this date was found, so the change cannot be saved. Refresh the screen to check it.",
+      "refresh": "Refresh the screen",
+      "label": "Correct date",
+      "save": "Record this date"
+    },
+    "discard": {
+      "open": "Remove this notice from the plan",
+      "body": "This does not mean the event was cancelled. You will need to check whether requests already sent are still needed.",
+      "noUndo": "Removing it from the plan cannot be undone.",
+      "readd": "If it is a valid notice, add it again and check what was read. Reading it again also uses a reading.",
+      "readdUnavailable": "This server cannot read a new notice.",
+      "reason": "Why are you removing it?",
+      "misfiled": "I added the wrong notice",
+      "misread": "The reading is wrong",
+      "excluded": {
+        "misfiled": "This notice was removed from the plan as added by mistake. The original remains.",
+        "misread": "This reading was removed from the plan as incorrect. The original notice remains."
+      },
+      "legacy": "An earlier request is missing its recorded details, so this action cannot remove the notice. Check the real request separately.",
+      "save": "Remove from the plan"
     }
   },
   "voice": {

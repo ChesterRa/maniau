@@ -2,6 +2,7 @@
 // ことを示さない（買って帰る前かもしれない）ので、一言の前提の今の答えは空にする。「見つからない」も「家に
 // あった」も候補になる。デモの家庭にはほかにも答えられる問いがあるので、一言では記録せず（取り違えないため）、
 // 同じ答えを札で記録すると、二人の札に出る。
+import type { PreviewCommand } from '@maniau/core';
 import { expect, it } from 'vitest';
 import { demoSessions, type UtteranceReader } from '../src/demo-sessions';
 
@@ -16,10 +17,16 @@ async function boughtThenSay(value: 'yes' | 'no', text: string) {
     expect(
       (await sessions.command(id, memberId, operationId, command as never))?.result.status,
     ).toBe('ok');
-  await ok('b', 'date', {
+  const correction: PreviewCommand = {
     type: 'correctItem',
     itemId: 'n1:i5',
     interpretation: { date: '2026-12-05' },
+  };
+  const shown = await sessions.changePreview(id, 'b', correction);
+  if (!shown || 'status' in shown) throw new Error('直す内容を見られない');
+  await ok('b', 'date', {
+    ...correction,
+    seen: { throughSeq: shown.throughSeq, changes: shown.seen },
   });
   await ok('a', 'buy', {
     type: 'commitment',

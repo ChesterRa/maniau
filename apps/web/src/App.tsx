@@ -168,6 +168,9 @@ function Body(props: {
           ...(view.changes ? { changes: view.changes } : {}),
           items: view.items,
           sources: new Map(view.sources.map((s) => [s.id, s])),
+          excludedSources: new Map(
+            (view.excludedSources ?? []).map((entry) => [entry.sourceId, entry.reason]),
+          ),
           readings: withLive(props.readings, view.readings ?? []),
           ...(props.canRead ? { read: live.read, wayIdeas: live.wayIdeas } : {}),
           ...(props.canRead && props.canPhoto ? { transcribe: live.transcribe } : {}),

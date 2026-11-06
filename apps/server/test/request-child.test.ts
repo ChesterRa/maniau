@@ -5,6 +5,7 @@ import { computePlan, keys } from '@maniau/core/engine';
 import { describe, expect, it } from 'vitest';
 import { runCommand } from '../src/commands';
 import { DEMO_STAGES, demoEvents } from '../src/demo';
+import { previewChange } from '../src/preview';
 import { memoryStore } from '../src/store';
 
 const care = 'arr:childCare:n1:i6:c';
@@ -15,13 +16,23 @@ function household() {
   const now = DEMO_STAGES.find((s) => s.id === 'chase')?.now ?? '';
   const store = memoryStore(new Map([['demo', demoEvents('chase')]]));
   let seq = 0;
-  const run = (memberId: string, command: Command) =>
-    runCommand(
+  const run = async (memberId: string, command: Command) => {
+    if (command.type === 'correctItem' && !command.seen) {
+      const shown = previewChange(
+        await store.withHousehold('demo', (log) => [...log.events()]),
+        { memberId, now },
+        command,
+      );
+      if ('status' in shown) return shown;
+      command = { ...command, seen: { throughSeq: shown.throughSeq, changes: shown.seen } };
+    }
+    return runCommand(
       store,
       'demo',
       { memberId, operationId: `child-${++seq}`, now, demo: true },
       command,
     );
+  };
   const state = () =>
     store.withHousehold('demo', (log) => {
       const events = [...log.events()];

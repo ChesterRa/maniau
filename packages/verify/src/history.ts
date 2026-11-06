@@ -28,6 +28,7 @@ interface SentRequest {
   sentBy: string;
   state: RequestState;
   snapshot?: Extract<DomainEvent, { type: 'externalRequestSent' }>['snapshot'];
+  checked?: { decision: 'keep' | 'cancel'; seq: number };
 }
 
 type RequestBasis = Extract<DomainEvent, { type: 'externalRequestSent' }>['snapshot'];
@@ -269,8 +270,10 @@ export function checkHistory(
       event.type === 'answerLinkRevoked' ||
       event.type === 'candidateChosen' ||
       event.type === 'sourceWithdrawn' ||
+      event.type === 'sourceExcluded' ||
       event.type === 'transcriptionCorrected' ||
-      event.type === 'requestRecordCorrected'
+      event.type === 'requestRecordCorrected' ||
+      event.type === 'requestCheckResolved'
     ) {
       const member = householdAtTime?.members.find((entry) => entry.id === event.actorId);
       if (
@@ -554,6 +557,17 @@ export function checkHistory(
       } else {
         requests.delete(event.requestId);
         correctedRequests.add(event.requestId);
+      }
+    } else if (event.type === 'requestCheckResolved') {
+      const request = requests.get(event.requestId);
+      if (!request?.snapshot) {
+        report.violation('request_check_without_snapshot', event.id, '控えのある依頼がない。');
+      } else if (request.sentBy !== event.actorId) {
+        report.violation('request_check_actor_mismatch', event.id, '依頼を送った本人ではない。');
+      } else if (request.state !== 'awaitingReply' && request.state !== 'confirmed') {
+        report.violation('request_check_not_allowed', event.id, '確かめる依頼ではない。');
+      } else {
+        request.checked = { decision: event.decision, seq: event.seq };
       }
     } else if (event.type === 'externalReplyRecorded' || event.type === 'cancellationSent') {
       const request = requests.get(event.requestId);
@@ -1196,6 +1210,153 @@ function pendingReadRemoved(
   );
 }
 
+/**
+ * 元の依頼の根拠を、読み取り・言明・条件から独立に集める。依頼の事項、そこへ作用する事項、使う条件と値を
+ * たどる。子の居場所なら同じ日の休みも含める。計画やエンジンの版は使わない。
+ */
+function checkedRequestFacts(
+  facts: FactState,
+  basis: NonNullable<RequestBasis>['basis'],
+  careDay: string | undefined,
+  events: readonly DomainEvent[],
+): unknown {
+  // 外した出典の条件も、以前の依頼が何に拠ったかの確認には必要（今の計画には戻さない）。検証器が採用した読み取りの
+  // 通し番号に合う出力を、事象から別に集める。
+  const readings = new Map<string, ReturnType<typeof Extraction.parse>>();
+  for (const event of events) {
+    if (
+      event.type === 'modelOutputRecorded' &&
+      event.call === 'extract' &&
+      event.sourceId &&
+      facts.sourceReadingSeq.get(event.sourceId) === event.seq
+    ) {
+      const parsed = Extraction.safeParse(event.output);
+      if (parsed.success) readings.set(event.sourceId, parsed.data);
+    } else if (
+      event.type === 'itemsStated' &&
+      facts.sourceReadingSeq.get(event.sourceId) === event.seq
+    ) {
+      readings.set(event.sourceId, {
+        sourceId: event.sourceId,
+        items: event.items,
+        unknowns: [],
+        conditions: [],
+        irrelevantSentenceIds: [],
+        ambiguities: [],
+      });
+    }
+  }
+  const nodes = new Map(
+    [...readings.values()].flatMap((reading) => reading.conditions).map((node) => [node.id, node]),
+  );
+  const itemIds = new Set(basis.itemIds);
+  const nodeIds = new Set<string>();
+  const unknownIds = new Set<string>();
+  if (careDay) {
+    for (const item of facts.items.values()) {
+      if (
+        item.kind === 'dayChange' &&
+        item.interpretation.dayType === 'noSchool' &&
+        item.interpretation.date === careDay
+      )
+        itemIds.add(item.id);
+    }
+  }
+  let changed = true;
+  while (changed) {
+    const before = itemIds.size + nodeIds.size + unknownIds.size;
+    for (const item of facts.items.values()) {
+      const affects = item.effects.some((effect) =>
+        effect.type === 'resolveUnknown'
+          ? unknownIds.has(effect.unknownId)
+          : itemIds.has(effect.itemId),
+      );
+      if (!itemIds.has(item.id) && !affects) continue;
+      itemIds.add(item.id);
+      const visit = (id: string) => {
+        if (nodeIds.has(id)) return;
+        nodeIds.add(id);
+        const node = nodes.get(id);
+        if (node?.kind === 'eq') unknownIds.add(node.unknownId);
+        else if (node?.kind === 'not') visit(node.childId);
+        else if (node) for (const child of node.childIds) visit(child);
+      };
+      if (item.conditionNodeId) visit(item.conditionNodeId);
+      for (const effect of item.effects) {
+        if (effect.type === 'resolveUnknown') unknownIds.add(effect.unknownId);
+        else itemIds.add(effect.itemId);
+      }
+    }
+    changed = before !== itemIds.size + nodeIds.size + unknownIds.size;
+  }
+  const items = [...itemIds].sort().map((id) => {
+    const item = facts.items.get(id);
+    return [
+      id,
+      item ?? null,
+      facts.active.get(id) ?? null,
+      facts.staleItems.has(id),
+      item ? facts.excludedSources.has(item.sourceId) : null,
+      item ? (facts.sourceReadingSeq.get(item.sourceId) ?? null) : null,
+    ];
+  });
+  // 中身を元に戻しても、確認した後に関係する出典が変わった事実は消えない。内容や名前ではなく、独立にたどった
+  // 出典に関係する事象の位置を比べる（依頼への返事や確認の記録そのものは含めない）。
+  const sources = new Set(
+    [...readings]
+      .filter(
+        ([, reading]) =>
+          reading.items.some((item) => itemIds.has(item.id)) ||
+          reading.unknowns.some((unknown) => unknownIds.has(unknown.id)) ||
+          reading.conditions.some((node) => nodeIds.has(node.id)),
+      )
+      .map(([sourceId]) => sourceId),
+  );
+  const itemSource = new Map(
+    [...readings].flatMap(([sourceId, reading]) =>
+      reading.items.map((item) => [item.id, sourceId] as const),
+    ),
+  );
+  const unknownSource = new Map(
+    [...readings].flatMap(([sourceId, reading]) =>
+      reading.unknowns.map((unknown) => [unknown.id, sourceId] as const),
+    ),
+  );
+  const changedAt = new Map<string, number>();
+  for (const event of events) {
+    let sourceId: string | undefined;
+    if (event.type === 'noticeReceived') sourceId = event.source.id;
+    else if (event.type === 'modelOutputRecorded') sourceId = event.sourceId;
+    else if (
+      event.type === 'itemsStated' ||
+      event.type === 'sourceWithdrawn' ||
+      event.type === 'sourceExcluded' ||
+      event.type === 'sourceContentPurged' ||
+      event.type === 'transcriptionCorrected'
+    )
+      sourceId = event.sourceId;
+    else if (
+      event.type === 'itemConfirmed' ||
+      event.type === 'itemCorrected' ||
+      event.type === 'itemDismissed' ||
+      event.type === 'turnStated' ||
+      event.type === 'escortStated' ||
+      event.type === 'needWaysSet'
+    )
+      sourceId = itemSource.get(event.itemId);
+    else if (event.type === 'answered') sourceId = unknownSource.get(event.unknownId);
+    if (sourceId && sources.has(sourceId)) changedAt.set(sourceId, event.seq);
+  }
+  return {
+    items,
+    nodes: [...nodeIds].sort().map((id) => [id, nodes.get(id) ?? null]),
+    unknowns: [...unknownIds]
+      .sort()
+      .map((id) => [id, facts.unknowns.get(id) ?? null, facts.resolvedValues.get(id) ?? null]),
+    changed: [...sources].sort().map((sourceId) => [sourceId, changedAt.get(sourceId) ?? null]),
+  };
+}
+
 /** 依頼の必要性を、事象による選択と元の事項から計画の live とは別に確かめる。 */
 export function checkRequestNeed(
   plan: PlanResult,
@@ -1331,8 +1492,13 @@ export function checkRequestNeed(
       );
     const pendingProof = pendingNeedProof(plan, history, facts, sent, request.basis);
     const removedBeforeReread = pendingReadRemoved(history, facts, pendingProof);
+    const explicitlyCancelled = sent?.checked?.decision === 'cancel';
     const needed: Truth =
-      superseded || optionNeeded === false || factsNeeded === false || removedBeforeReread
+      explicitlyCancelled ||
+      superseded ||
+      optionNeeded === false ||
+      factsNeeded === false ||
+      removedBeforeReread
         ? false
         : optionNeeded === true && factsNeeded === true
           ? true
@@ -1350,7 +1516,83 @@ export function checkRequestNeed(
         task.cancels === request.requestId &&
         !['declined', 'withdrawn', 'cancelled'].includes(task.commitment),
     );
-    const pending = pendingReadStanding(history, pendingProof);
+    // 手配の無い依頼を残すには、送った本人が今の根拠を見てそう決めた記録が要る。決めた後に根拠が替わった時、
+    // または同じ手配・同じ子の日の手配が現れた時は、その記録を当てない。計画エンジンの版は使わず、事象から集めた
+    // 前後の事実を比べる（返事の記録だけでは根拠は替わらない）。
+    const checked = sent?.checked;
+    const snapshot = sent?.snapshot;
+    const beforeCheck =
+      checked?.decision === 'keep'
+        ? history.events.filter((event) => event.seq < checked.seq)
+        : undefined;
+    const prior = beforeCheck ? collectFacts(beforeCheck, new Collector()) : undefined;
+    const careDay =
+      snapshot?.childId && snapshot.window
+        ? localMinute(instantMinute(snapshot.window.start), timeZone).date
+        : undefined;
+    const related = plan.arrangements.some(
+      (a) =>
+        a.live &&
+        (a.key === basis.arrangementKey ||
+          (snapshot?.childId !== undefined &&
+            a.kind === 'childCare' &&
+            a.childId === snapshot.childId &&
+            matchesArrangementDay(snapshot.window, a, timeZone) === true)),
+    );
+    const missingCareWindow =
+      basis.arrangementKey?.startsWith('arr:childCare:') === true &&
+      (!snapshot?.childId || !snapshot.window);
+    const validStandalone =
+      history.complete &&
+      checked?.decision === 'keep' &&
+      prior !== undefined &&
+      beforeCheck !== undefined &&
+      !related &&
+      !missingCareWindow &&
+      sameValue(
+        checkedRequestFacts(prior, basis, careDay, beforeCheck),
+        checkedRequestFacts(facts, basis, careDay, history.events),
+      );
+    if (request.standalone && (!validStandalone || !request.live || request.needsCheck))
+      report.violation(
+        'request_standalone_unconfirmed',
+        request.requestId,
+        '元の依頼を独立に残すための本人の確認が無いか、確認した根拠が替わった。',
+      );
+    // 加え間違えた出典から送った依頼は、家族がその案を外したのでなければ、現実の取消しとも継続とも決めない。
+    // 控えの事項と事象を、計画エンジンと別にたどる。実際に送った後、その古い画面から記録した時は、
+    // 加え間違いの記録が「送った」の事象より先にあることもある。
+    const excludedAfterSent =
+      sent !== undefined &&
+      history.complete &&
+      optionNeeded !== false &&
+      !superseded &&
+      ['awaitingReply', 'confirmed'].includes(sent.state) &&
+      basis.itemIds.some((id) => {
+        const sourceId = facts.items.get(id)?.sourceId;
+        return (
+          sourceId !== undefined &&
+          facts.excludedSources.has(sourceId) &&
+          history.events.some(
+            (event) => event.type === 'sourceExcluded' && event.sourceId === sourceId,
+          )
+        );
+      });
+    if (
+      excludedAfterSent &&
+      !explicitlyCancelled &&
+      !(request.standalone && validStandalone) &&
+      (!request.live || !request.needsCheck || cancellations.length > 0)
+    )
+      report.violation(
+        'excluded_request_unchecked',
+        request.requestId,
+        '加え間違えた出典の依頼を、まだ要るか確かめずに扱っている。',
+      );
+    const pending =
+      !explicitlyCancelled &&
+      !(request.standalone && validStandalone) &&
+      pendingReadStanding(history, pendingProof);
     if (pending && !request.live)
       report.violation(
         'request_liveness_mismatch',

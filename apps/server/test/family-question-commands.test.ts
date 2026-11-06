@@ -7,6 +7,7 @@ import { computePlan } from '@maniau/core/engine';
 import { describe, expect, it } from 'vitest';
 import { runCommand } from '../src/commands';
 import { demoEvents } from '../src/demo';
+import { previewChange } from '../src/preview';
 import { memoryStore } from '../src/store';
 
 const START = '2026-11-25T20:00+09:00';
@@ -70,13 +71,23 @@ async function setup() {
     );
   });
   let sequence = 0;
-  const run = (memberId: string, command: Parameters<typeof runCommand>[3], now = NOW) =>
-    runCommand(
+  const run = async (memberId: string, command: Parameters<typeof runCommand>[3], now = NOW) => {
+    if (command.type === 'correctItem' && !command.seen) {
+      const shown = previewChange(
+        await store.withHousehold('demo', (log) => [...log.events()]),
+        { memberId, now },
+        command,
+      );
+      if ('status' in shown) return shown;
+      command = { ...command, seen: { throughSeq: shown.throughSeq, changes: shown.seen } };
+    }
+    return runCommand(
       store,
       'demo',
       { memberId, now, operationId: `family-question-${++sequence}`, demo: true },
       command,
     );
+  };
   const plan = async (now = NOW) =>
     computePlan(await store.withHousehold('demo', (log) => [...log.events()]), now);
   /** お知らせの文を直す（読み直しの読み取りを渡せば、それも記録する）。 */

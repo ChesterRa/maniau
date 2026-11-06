@@ -392,6 +392,8 @@ export const ExternalRequest = z.object({
    * 要るかを家族に確かめる（02-foundation §5.6）。この間 live は true のまま（取り消したとは決めない）。
    */
   needsCheck: z.boolean().optional(),
+  /** 手配は無いが、送った本人がこの依頼自体は要ると確かめた。どの手配の確保にも数えない。 */
+  standalone: z.literal(true).optional(),
   /**
    * 根拠が今、条件しだい（例：5日に行えば要る）。送った時から分かっていた不確かさで、それだけでは
    * 確かめを求めない。送った後に生じた疑い（送った時は確かだった、置き換え・取り消しが分からない、

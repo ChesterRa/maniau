@@ -7,6 +7,7 @@ import { expect, it } from 'vitest';
 import { runCommand } from '../src/commands';
 import { DEMO_STAGES, demoEvents } from '../src/demo';
 import { demoSessions } from '../src/demo-sessions';
+import { previewChange } from '../src/preview';
 import { memoryStore } from '../src/store';
 
 const at = DEMO_STAGES.find((s) => s.id === 'asked')?.now ?? '';
@@ -16,13 +17,20 @@ const seenOf = (task: Task) => ({ titleKey: task.titleKey, titleParams: task.tit
 function setup() {
   const store = memoryStore(new Map([['demo', [...demoEvents('asked')]]]));
   let op = 0;
-  const run = (memberId: string, command: Command) =>
-    runCommand(
+  const run = async (memberId: string, command: Command) => {
+    if (command.type === 'correctItem' && command.seen === undefined) {
+      const events = await store.withHousehold('demo', (log) => [...log.events()]);
+      const shown = previewChange(events, { memberId, now: at }, command);
+      if ('status' in shown) return shown;
+      command = { ...command, seen: { throughSeq: shown.throughSeq, changes: shown.seen } };
+    }
+    return runCommand(
       store,
       'demo',
       { memberId, operationId: `op-${++op}`, now: at, demo: true },
       command,
     );
+  };
   const plan = () =>
     store.withHousehold('demo', (log) => {
       const events = [...log.events()];
@@ -140,10 +148,16 @@ it('ひとことの「済んだ」の候補も、前提に載せた作業の用�
   // 札で、用件を付けた同じ命令を記録する。
   expect((await sessions.command(id, 'a', 'card-1', proposal.command))?.result.status).toBe('ok');
   // 記録に用件が残ったので、直されて別の物になると、済みは当たらない。
-  const corrected = await sessions.command(id, 'b', 'cmd-1', {
+  const change = {
     type: 'correctItem',
     itemId: 'n1:i5',
     interpretation: { what: '赤い帽子' },
+  } as const;
+  const seen = await sessions.changePreview(id, 'b', change);
+  if (!seen || 'status' in seen) throw Error('直しの変化を見られない');
+  const corrected = await sessions.command(id, 'b', 'cmd-1', {
+    ...change,
+    seen: { throughSeq: seen.throughSeq, changes: seen.seen },
   });
   expect(corrected?.result.status).toBe('ok');
   const hat = corrected?.view.plan.tasks.find((t) => t.key === buy);
@@ -158,13 +172,20 @@ it('決め時を過ぎた案の選び直しは、今の日の分を始めた時�
   const start = async (moveTo?: string) => {
     const store = memoryStore(new Map([['demo', [...demoEvents('arrived')]]]));
     let op = 0;
-    const run = (memberId: string, command: Command) =>
-      runCommand(
+    const run = async (memberId: string, command: Command) => {
+      if (command.type === 'correctItem' && command.seen === undefined) {
+        const events = await store.withHousehold('demo', (log) => [...log.events()]);
+        const shown = previewChange(events, { memberId, now: '2026-11-25T19:31+09:00' }, command);
+        if ('status' in shown) return shown;
+        command = { ...command, seen: { throughSeq: shown.throughSeq, changes: shown.seen } };
+      }
+      return runCommand(
         store,
         'demo',
         { memberId, operationId: `op-${++op}`, now: '2026-11-25T19:31+09:00', demo: true },
         command,
       );
+    };
     expect(
       await run('b', {
         type: 'chooseOption',

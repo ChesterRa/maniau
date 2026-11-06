@@ -16,6 +16,7 @@ it('頼む文と同じ頼む時間を、送ったの記録に付ける', () => {
     type: 'recordSent',
     taskKey: task.key,
     window: { start: arrangement.start, end: arrangement.end },
+    shown: { throughSeq: ctx.plan.throughSeq, at: ctx.now },
   });
   expect(arrangement.start.startsWith('2026-12-07')).toBe(true);
   expect(askDraft(ctx, task)).toContain('12月7日');

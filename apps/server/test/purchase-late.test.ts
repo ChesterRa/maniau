@@ -1,12 +1,18 @@
 // 買える時を過ぎても、家にあるかがまだ分からなければ、不可能と決めない。問いを残して答えられるようにし、
 // 検証器の違反で家庭の知らせを全部止めない。家に無いと分かった後も、過ぎた決め時を添えて示す。
-import { DomainEvent, notificationHistory, notificationIntents } from '@maniau/core';
+import {
+  DomainEvent,
+  notificationHistory,
+  notificationIntents,
+  type PreviewCommand,
+} from '@maniau/core';
 import { computePlan } from '@maniau/core/engine';
 import { verifyPlan } from '@maniau/verify';
 import { expect, it } from 'vitest';
 import { runCommand } from '../src/commands';
 import { demoEvents } from '../src/demo';
 import { sendGate } from '../src/gate';
+import { previewChange } from '../src/preview';
 import { memoryStore } from '../src/store';
 import { viewFor } from '../src/views';
 
@@ -289,6 +295,23 @@ it('直されて別の品物になった後の古い札の「用意できた」�
     now: at,
     demo: true,
   });
+  const fix = async (operationId: string, what: string) => {
+    const command: PreviewCommand = {
+      type: 'correctItem',
+      itemId: 'n1:i5',
+      interpretation: { what },
+    };
+    const shown = previewChange(
+      await store.withHousehold('demo', (log) => [...log.events()]),
+      { memberId: 'b', now: at },
+      command,
+    );
+    if ('status' in shown) throw new Error(`直す内容を見られない: ${shown.reason}`);
+    return runCommand(store, 'demo', as('b', operationId), {
+      ...command,
+      seen: { throughSeq: shown.throughSeq, changes: shown.seen },
+    });
+  };
   await runCommand(store, 'demo', as('b', 'no'), {
     type: 'answer',
     unknownId,
@@ -296,13 +319,7 @@ it('直されて別の品物になった後の古い札の「用意できた」�
     seen: { what: '白い長袖シャツ', throughSeq: await shownAt(store) },
   });
   // b が品物を直す。a の画面は、まだ白い長袖シャツの札。
-  expect(
-    await runCommand(store, 'demo', as('b', 'fix'), {
-      type: 'correctItem',
-      itemId: 'n1:i5',
-      interpretation: { what: '赤い帽子' },
-    }),
-  ).toMatchObject({ status: 'ok' });
+  expect(await fix('fix', '赤い帽子')).toMatchObject({ status: 'ok' });
   expect(
     await runCommand(store, 'demo', as('a', 'old-card'), {
       type: 'answer',
@@ -323,11 +340,7 @@ it('直されて別の品物になった後の古い札の「用意できた」�
       seen: { what: '赤い帽子', throughSeq: await shownAt(store) },
     }),
   ).toMatchObject({ status: 'ok' });
-  await runCommand(store, 'demo', as('b', 'fix-back'), {
-    type: 'correctItem',
-    itemId: 'n1:i5',
-    interpretation: { what: '白い長袖シャツ' },
-  });
+  await fix('fix-back', '白い長袖シャツ');
   const again = await store.withHousehold('demo', (log) => viewFor(log.events(), 'a', at));
   expect(again.plan.arrangements.find((a) => a.key === shirt)?.status).toBe('askFirst');
   expect(again.plan.questions.some((q) => q.unknownId === unknownId)).toBe(true);

@@ -141,13 +141,14 @@ export function previewChange(
       return { status: 'conflict', reason: 'notWaiting' };
     }
   }
-  // 事項の直しと外しは、「すること」の物だけ見せる（ほかの事項は、今の札の確かめのまま）。モデルが読んだ「すること」
-  // は書く時に見せた番号が要るので、今の番号で通す（見るのは今の中身。書く時に番号と要約を確かめる）。
+  // 事項の直しは、読み取りの種類に関係なく変化を見せる。外す操作は、これまでどおり「すること」だけ。
+  // モデルが読んだ「すること」は書く時に見せた番号が要るので、今の番号で通す。
   let asCommand: Command = command;
   if (command.type === 'correctItem' || command.type === 'dismissItem') {
     const item = itemsOf(state).find((i) => i.id === command.itemId);
     if (!item) return { status: 'conflict', reason: 'itemGone' };
-    if (item.kind !== 'need') return { status: 'invalid', reason: 'previewNeedOnly' };
+    if (command.type === 'dismissItem' && item.kind !== 'need')
+      return { status: 'invalid', reason: 'previewNeedOnly' };
     asCommand = { ...command, seen: { throughSeq: state.lastSeq } };
   }
   const at = {

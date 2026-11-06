@@ -124,10 +124,16 @@ it('見せた後に事項の日が直されていたら、取り消しが同じ�
   const seen = (await sessions.preview(id, 'a', care))?.find((p) => p.optionKey === gakudo);
   expect(seen?.steps[0]?.titleParams.date).toBe('2026-12-07');
   expect(seen?.cancels).toEqual([]);
-  const fixed = await sessions.command(id, 'b', 'fix', {
+  const correction = {
     type: 'correctItem',
     itemId: 'n1:i6',
     interpretation: { date: '2026-12-14', writtenWeekday: 1 },
+  } as const;
+  const correctionPreview = await sessions.changePreview(id, 'b', correction);
+  if (!correctionPreview || 'status' in correctionPreview) throw Error('直しの変化を見られない');
+  const fixed = await sessions.command(id, 'b', 'fix', {
+    ...correction,
+    seen: { throughSeq: correctionPreview.throughSeq, changes: correctionPreview.seen },
   });
   expect(fixed?.result.status).toBe('ok');
   const choose = (operationId: string, shown: string | undefined) =>

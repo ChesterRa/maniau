@@ -6,6 +6,7 @@ import test from 'node:test';
 import { runCommand } from '../../apps/server/src/commands';
 import { demoEvents } from '../../apps/server/src/demo';
 import { sendGate } from '../../apps/server/src/gate';
+import { previewChange } from '../../apps/server/src/preview';
 import { memoryStore } from '../../apps/server/src/store';
 import { viewFor } from '../../apps/server/src/views';
 import {
@@ -84,7 +85,12 @@ test('08：前の日の返事で新しい日の本命を確定せず、予備を
   const { run, state } = scenario('chase', now);
   await run('b', { type: 'chooseOption', arrangementKey: care, optionKey: school, role: 'backup', assigneeId: 'a' });
   await run('b', { type: 'recordReply', requestId: 'r-grandma', reply: 'yes' });
-  await run('a', { type: 'correctItem', itemId: 'n1:i6', interpretation: { date: '2026-12-14', writtenWeekday: 1 } });
+  const correction = {
+    type: 'correctItem', itemId: 'n1:i6', interpretation: { date: '2026-12-14', writtenWeekday: 1 },
+  } as const;
+  const shown = previewChange((await state()).events, { memberId: 'a', now }, correction);
+  if ('status' in shown) throw new Error(`日付の直しを見られない: ${shown.reason}`);
+  await run('a', { ...correction, seen: { throughSeq: shown.throughSeq, changes: shown.seen } });
   const result = await state();
   const current = result.plan.arrangements.find((entry) => entry.key === care);
   assert.equal(current?.start.slice(0, 10), '2026-12-14');

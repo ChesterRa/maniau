@@ -1,7 +1,7 @@
 // 家族の一言や札で「家にあるか」に答える：前提に買い物の手配の値を載せ、候補の命令には見せた品物を付ける。
 // 押すまでに品物が直されていれば、古い候補では記録しない。見せた後に答えが入っていれば（同じ答えの言い直し
 // でも）、古い候補で上書きしない。読み取りは偽物で、Claude の API は呼ばない。
-import type { UtteranceContext } from '@maniau/core';
+import type { PreviewCommand, UtteranceContext } from '@maniau/core';
 import { expect, it } from 'vitest';
 import { demoSessions, type UtteranceReader } from '../src/demo-sessions';
 
@@ -84,10 +84,16 @@ it('「シャツは家にない」と言えば、家にあるかの値に答え�
 
 it('押すまでに品物が直されていたら、古い候補では答えない', async () => {
   const { sessions, id, proposal } = await heard();
-  const corrected = await sessions.command(id, 'a', 'cmd-1', {
+  const correction: PreviewCommand = {
     type: 'correctItem',
     itemId: 'n1:i5',
     interpretation: { what: '赤い帽子' },
+  };
+  const shown = await sessions.changePreview(id, 'a', correction);
+  if (!shown || 'status' in shown) throw new Error('直す内容を見られない');
+  const corrected = await sessions.command(id, 'a', 'cmd-1', {
+    ...correction,
+    seen: { throughSeq: shown.throughSeq, changes: shown.seen },
   });
   expect(corrected?.result.status).toBe('ok');
   const stale = await sessions.confirm(id, 'b', proposal.id, 'c-2');

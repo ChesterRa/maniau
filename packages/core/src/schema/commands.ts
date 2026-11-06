@@ -143,6 +143,12 @@ const DismissItem = z.object({
   itemId: Id,
   reason: z.enum(['notOurs', 'misread', 'other']),
 });
+/** 入れ間違えた通知、または誤った読み取りを計画から外す。現実の取り消しとは別。 */
+const DiscardSource = z.object({
+  type: z.literal('discardSource'),
+  sourceId: Id,
+  reason: z.enum(['misfiled', 'misread']),
+});
 /**
  * 保存の前に見せた物：計画の通し番号と、見せた「この変更で変わること」の要約（サーバーが作る）。書く時は要る。
  * 今と違えば断って見せ直す（もう一人の変更・時が進んで変わった結果を、黙って書かない）。
@@ -170,6 +176,7 @@ export const PreviewCommand = z.discriminatedUnion('type', [
   ChooseCandidate,
   CorrectItem,
   DismissItem,
+  DiscardSource,
   RecordReply,
 ]);
 export type PreviewCommand = z.infer<typeof PreviewCommand>;
@@ -258,6 +265,8 @@ export const Command = z.discriminatedUnion('type', [
     taskKey: z.string().min(1),
     requestId: Id,
     window: z.object({ start: DateTime, end: DateTime }).optional(),
+    /** 見せた計画と時刻。作業が消えた後も、送った事実を当時の控えで記録するため。 */
+    shown: z.object({ throughSeq: z.number().int().nonnegative(), at: DateTime }).optional(),
   }),
   z.object({ type: z.literal('correctSentRecord'), requestId: Id }),
   RecordReply,
@@ -293,6 +302,14 @@ export const Command = z.discriminatedUnion('type', [
     seen: ItemSeen,
   }),
   z.object({ type: z.literal('withdrawSource'), sourceId: Id }),
+  /** 根拠が分からなくなった依頼を、送った本人が控えを見て、要るまま残すか、要らないと決める。 */
+  z.object({
+    type: z.literal('resolveRequestCheck'),
+    requestId: Id,
+    decision: z.enum(['keep', 'cancel']),
+    seen: z.object({ throughSeq: z.number().int().nonnegative() }),
+  }),
+  DiscardSource.extend({ seen: Seen.optional() }),
   UpdateHousehold.extend({ seen: Seen.optional() }),
   StateNeed.extend({ seen: Seen.optional() }),
   AddThing.extend({ seen: Seen.optional() }),

@@ -18,6 +18,7 @@ import {
 } from '@maniau/core';
 import {
   currentReadings,
+  dateConditionLinks,
   type EngineState,
   foldEvents,
   itemShown,
@@ -40,11 +41,16 @@ export interface View {
   changes?: ChangeSummary;
   /** 元の文（どの予定からも戻れるように）。 */
   sources: Source[];
+  /** 外した原文は残すが、今の計画には使っていない。 */
+  excludedSources: { sourceId: string; reason: 'misfiled' | 'misread' }[];
   /** 出典ごとの読み取り（どのモデルが読んだか）。後から入れたお知らせの物も含む。 */
   /** 出典ごとの最後の読み取り：読んだモデルと、家族に確かめてほしい文（どの文か分からない時は全体）。 */
   readings: { sourceId: string; model: string; check: string[]; checkAll: boolean }[];
   /** 今の事項（確かめてほしい推定も含む）。条件しだいの事項には、分かる時だけ条件を添える。 */
-  items: (LiveItem & { when?: ItemWhen } & NeedShown)[];
+  items: (LiveItem & {
+    when?: ItemWhen;
+    dateLinks?: { label?: string; value: string }[];
+  } & NeedShown)[];
   /** デモだけ：この時刻の知らせの候補（送らない。notify-preview.ts）。家族の家庭では付けない。 */
   notificationPreview?: NotificationPreview;
 }
@@ -93,6 +99,10 @@ export function viewFor(
     today: todayCards(plan, memberId),
     ...withChange(events, plan, maps),
     sources: [...state.sources.values()],
+    excludedSources: [...state.sourceExclusionReasons].map(([sourceId, reason]) => ({
+      sourceId,
+      reason,
+    })),
     readings: readingsOf(events),
     items: withWhen(state),
   };
@@ -117,7 +127,8 @@ function withWhen(state: EngineState): View['items'] {
   return liveItems(state).map((l) => {
     const id = l.item.conditionNodeId;
     const when = l.conditional && !l.doubted && id !== undefined ? whenOf(id) : undefined;
-    const base = when ? { ...l, when } : l;
+    const links = l.item.kind === 'need' ? [] : dateConditionLinks(state, l.item);
+    const base = { ...l, ...(when ? { when } : {}), ...(links.length ? { dateLinks: links } : {}) };
     if (l.item.kind !== 'need') return base;
     const shown = itemShown(state, l.item);
     return {

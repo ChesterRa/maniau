@@ -62,6 +62,8 @@ export interface SessionView {
   /** 後から届いたお知らせで変わったこと（二人に同じ物）。 */
   changes?: ChangeSummary;
   sources: Source[];
+  /** 家族が入れ間違い・読み取りの誤りとして、計画から外した出典。原文は残る。 */
+  excludedSources?: { sourceId: string; reason: 'misfiled' | 'misread' }[];
   /** 出典ごとの読み取り（どのモデルが読んだか、家族に確かめてほしい文）。 */
   readings?: { sourceId: string; model: string; check: string[]; checkAll: boolean }[];
   /** 今の事項。条件しだいの事項には、一つの値で決まる時だけ条件が付く。 */

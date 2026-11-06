@@ -1,6 +1,7 @@
 // 日が直された後の一言の「頼んだ」（架空のデモ・偽の読み取り。API は呼ばない）。前の日の分を送った作業は、今の日の
 // 分を頼み直す作業に戻るので、一言の前提でも「まだ送っていない」とし、候補は新しい日の分を頼む時間を持つ。デモの
 // 家庭にはほかにも作業があるので、一言では記録せず（取り違えないため）、同じ命令を札で記録する。
+import type { PreviewCommand } from '@maniau/core';
 import { keys } from '@maniau/core/engine';
 import { expect, it } from 'vitest';
 import { demoSessions, type UtteranceReader } from '../src/demo-sessions';
@@ -11,12 +12,18 @@ const ask = keys.task(keys.option(care, 'opt-grandma'), 'ask');
 it('日を直した後の一言の「頼んだ」は、新しい日の分の候補になり、札で記録できる', async () => {
   const sessions = demoSessions();
   const id = sessions.create('chase');
+  const correction: PreviewCommand = {
+    type: 'correctItem',
+    itemId: 'n1:i6',
+    interpretation: { date: '2026-12-14', writtenWeekday: 1 },
+  };
+  const shown = await sessions.changePreview(id, 'a', correction);
+  if (!shown || 'status' in shown) throw new Error('直す内容を見られない');
   expect(
     (
       await sessions.command(id, 'a', 'date', {
-        type: 'correctItem',
-        itemId: 'n1:i6',
-        interpretation: { date: '2026-12-14', writtenWeekday: 1 },
+        ...correction,
+        seen: { throughSeq: shown.throughSeq, changes: shown.seen },
       })
     )?.result.status,
   ).toBe('ok');
