@@ -115,6 +115,16 @@ export function executionScope(
   if (task.cancels || !task.basis.optionKey) return 'active';
   const arrangement = plan.arrangements.find((entry) => entry.key === task.basis.arrangementKey);
   if (!arrangement) return 'unknown';
+  // 家族が使えないとした子の居場所の手の作業は、もう進めない（家庭の記録で見る。計画の印には頼らない）。
+  const templateId = arrangement.options.find(
+    (entry) => entry.key === task.basis.optionKey,
+  )?.templateId;
+  if (
+    arrangement.kind === 'childCare' &&
+    templateId !== undefined &&
+    household.unusableCareOptionIds?.includes(templateId)
+  )
+    return 'inactive';
   const selection = history.selections.get(arrangement.key);
   const primary = history.complete ? selection?.primary : arrangement.chosenOptionKey;
   const backups = history.complete ? [...(selection?.backups ?? [])] : arrangement.backupOptionKeys;

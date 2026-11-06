@@ -183,11 +183,21 @@ function activeTask(
   timeZone: string,
   needShapes: ReadonlyMap<string, 'by' | 'window'>,
   needRequestCurrent: ReadonlyMap<string, boolean>,
+  unusable: ReadonlySet<string>,
 ): boolean {
   const { arrangementKey, optionKey } = task.basis;
   if (arrangementKey === undefined || optionKey === undefined) return true;
   const arrangement = plan.arrangements.find((a) => a.key === arrangementKey);
   if (!arrangement?.live) return false;
+  // 家族が使えないとした子の居場所の手の作業は、もう進めない（家庭の記録で見る。計画の印には頼らない）。
+  const templateId = arrangement.options.find((o) => o.key === optionKey)?.templateId;
+  if (
+    task.cancels === undefined &&
+    arrangement.kind === 'childCare' &&
+    templateId !== undefined &&
+    unusable.has(templateId)
+  )
+    return false;
   if (task.extra && arrangement.inUseOptionKey !== optionKey) return false;
   if (arrangement.chosenOptionKey === optionKey) return true;
   if (arrangement.backupOptionKeys.includes(optionKey)) {
@@ -512,6 +522,7 @@ function checkSubject(
 ): undefined {
   const { subject, titleKey, toMemberId: member } = intent;
   const covered = careCovered(household, events);
+  const unusable = new Set(household.unusableCareOptionIds ?? []);
   const wrong = (): undefined => {
     out.violation('notification_subject_mismatch', intent.key, 'この人に出す根拠が計画にない。');
     return undefined;
@@ -636,7 +647,7 @@ function checkSubject(
       !task?.live ||
       task.cancels !== undefined ||
       task.assigneeId !== member ||
-      !activeTask(task, plan, timeZone, needShapes, needRequestCurrent) ||
+      !activeTask(task, plan, timeZone, needShapes, needRequestCurrent, unusable) ||
       (titleKey === 'notify.proposal'
         ? task.commitment !== 'proposed'
         : task.commitment !== 'accepted' || !task.reconfirm)
@@ -655,7 +666,7 @@ function checkSubject(
       task.cancels !== undefined ||
       ['done', 'cancelled'].includes(task.commitment) ||
       (task.assigneeId !== undefined && !['declined', 'withdrawn'].includes(task.commitment)) ||
-      !activeTask(task, plan, timeZone, needShapes, needRequestCurrent)
+      !activeTask(task, plan, timeZone, needShapes, needRequestCurrent, unusable)
     )
       return wrong();
     const arrangement = plan.arrangements.find((entry) => entry.key === task.basis.arrangementKey);
@@ -769,7 +780,7 @@ function checkSubject(
         task.live &&
         task.cancels === undefined &&
         task.basis.optionKey === inUse &&
-        activeTask(task, plan, timeZone, needShapes, needRequestCurrent) &&
+        activeTask(task, plan, timeZone, needShapes, needRequestCurrent, unusable) &&
         task.commitment !== 'done' &&
         !(
           task.cover === true &&

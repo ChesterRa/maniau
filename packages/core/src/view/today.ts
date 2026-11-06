@@ -127,6 +127,13 @@ export function isActiveTask(
   if (arrangementKey === undefined || optionKey === undefined) return true;
   const arrangement = plan.arrangements.find((a) => a.key === arrangementKey);
   if (!arrangement?.live) return false;
+  // 家族が使えないとした子の居場所の手の作業は、もう進めない（引き受けていれば、要らなくなったと本人に知らせる。
+  // 送った頼み事は、要るかを確かめる。取り消しの連絡は、別の作業で出す）。
+  if (
+    task.cancels === undefined &&
+    arrangement.options.some((o) => o.key === optionKey && o.unusable === true)
+  )
+    return false;
   // 当日の準備は、今使う案の物だけ（本命が生きている間の予備の弁当は、まだ候補）。
   if (task.extra && arrangement.inUseOptionKey !== optionKey) return false;
   if (arrangement.chosenOptionKey === optionKey) return true;

@@ -33,9 +33,26 @@ const input =
   'min-h-11 rounded-xl border-[1.5px] border-btn-line bg-white px-2.5 text-base text-ink';
 
 /**
- * 学童の一日利用で見てもらえる時間を直す欄。始まりと終わりの両方が入り、始まりが終わりより前の時だけ、直しに入れる
- * （途中の値や逆さまの値を、見てもらえる時間として記録しない）。記録の無い前からの手は、空から入れる。
+ * 取れる手を「使えない」とする（学童の登録が無かった・頼めなくなった等）。保存した後は戻さない（また使う時は新しく
+ * 足す）。保存の前なら、付けた印を外せる。
  */
+function UnusableToggle(props: {
+  ctx: Ctx;
+  saved: boolean;
+  marked: boolean;
+  onChange: (marked: boolean) => void;
+}) {
+  const { ctx } = props;
+  if (props.saved) return null;
+  return (
+    <Row>
+      <Button kind="secondary" onClick={() => props.onChange(!props.marked)}>
+        {ctx.t(props.marked ? 'household.ways.keepUsable' : 'household.ways.markUnusable')}
+      </Button>
+    </Row>
+  );
+}
+
 /** 時刻の欄の値が、分までの時刻か。 */
 const clockOk = (value: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 
@@ -320,8 +337,18 @@ export function householdPreviewLines(
       );
     }
   }
+  // 新しく使えないとした手（手の名前と、送った頼み事は取り消さないこと・また使う時は新しく足すこと）。見てもらえない
+  // 時間の変化の行は、この手には出さない（同じことを二度書かない）。
+  const before = new Set(ctx.household.unusableCareOptionIds ?? []);
+  const unusable = (after?.unusableCareOptionIds ?? []).filter((id) => !before.has(id));
+  for (const id of unusable) {
+    const template = after?.careOptions.find((o) => o.id === id);
+    if (template) {
+      lines.push(ctx.t('household.preview.unusable', { name: wayTitle(ctx, template, after) }));
+    }
+  }
   // 選んだ手（本命・予備）で、手配の時間のうち見てもらえない時間が変わる（学童の時間を直した時など）。
-  for (const c of changes.covers ?? []) {
+  for (const c of (changes.covers ?? []).filter((x) => !unusable.includes(x.templateId))) {
     const name = optionName(c);
     const gaps = new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(
       c.after.map((g) => `${timeOnly(ctx, g.start)}–${timeOnly(ctx, g.end)}`),
@@ -602,7 +629,7 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
 
   const day = household.routines.find((d) => d.memberId === editor && d.weekday === weekday);
   const stores = household.places.filter((p) => p.kind === 'store');
-  const lines = shown ? householdPreviewLines(ctx, shown) : [];
+  const lines = shown ? householdPreviewLines(ctx, shown, draft) : [];
 
   return (
     <>
@@ -841,6 +868,25 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
           {household.careOptions.map((way) => (
             <div key={way.id} className="flex flex-col gap-1">
               <Title>{wayTitle(ctx, way)}</Title>
+              {/* 家族が使えないとした手（戻さない。また使う時は新しく足す）。 */}
+              {household.unusableCareOptionIds?.includes(way.id) && (
+                <Text quiet>{ctx.t('household.ways.unusable')}</Text>
+              )}
+              {mode === 'ways' && (
+                <UnusableToggle
+                  ctx={ctx}
+                  saved={ctx.household.unusableCareOptionIds?.includes(way.id) === true}
+                  marked={household.unusableCareOptionIds?.includes(way.id) === true}
+                  onChange={(marked) =>
+                    change((h) => {
+                      const rest = (h.unusableCareOptionIds ?? []).filter((id) => id !== way.id);
+                      const next = marked ? [...rest, way.id] : rest;
+                      if (next.length > 0) h.unusableCareOptionIds = next;
+                      else delete h.unusableCareOptionIds;
+                    })
+                  }
+                />
+              )}
               {mode !== 'ways' && <Text>{deadlineText(ctx, way.deadline)}</Text>}
               {/* 決まった時間だけ見てもらえる手（学童の一日利用など）は、その時間を書く。 */}
               {typeof way.covers === 'object' && (

@@ -865,11 +865,13 @@ function placeCare(
         placed.get(keys.option(slot.arrangementKey, template.id)) ?? fresh(template);
       // 手配の時間のうち、この手で見てもらえない時間（careCoverGaps）。あれば勧めず、新しくは選べず、確保とも言わない。
       const holes = careCoverGaps(ctx, template, slot.date, gap, option.key);
+      const unusable = ctx.household.unusableCareOptionIds?.includes(template.id) === true;
       return {
         option:
           holes.length > 0
             ? {
                 ...option,
+                ...(unusable ? { unusable: true as const } : {}),
                 coverGaps: holes.map((g) => ({
                   start: ctx.fmt(g.start),
                   end: ctx.fmt(g.end),
@@ -960,6 +962,8 @@ function careCoverGaps(
   optionKey: string,
 ): { start: EpochMinutes; end: EpochMinutes; unsure?: true }[] {
   const { covers, watcherId } = template;
+  // 家族が使えないとした手は、手配の時間の全部を見てもらえない（確かめられない、ではない）。
+  if (ctx.household.unusableCareOptionIds?.includes(template.id)) return [{ ...gap }];
   if (covers === undefined) return [{ ...gap, unsure: true }];
   const at = (time: string) => zonedToEpochMinutes(date, time, ctx.tz);
   const range = covers === 'whole' ? gap : { start: at(covers.start), end: at(covers.end) };
@@ -3314,7 +3318,10 @@ function requestStanding(
       arrangement.live &&
       !superseded &&
       optionStillNeeded(ctx, tasks, items, basis, sentSeq, arrangement);
-    return { live, needsCheck: live && (unclear || changed), conditional };
+    // 家族が使えないとした手の頼み事は、取り消したとも続けてよいとも決めず、要るかを頼んだ本人に確かめる（返事を
+    // 追わない。取り下げるなら、その手配で家族が取り下げる）。
+    const unusable = arrangement.options.find((o) => o.key === basis.optionKey)?.unusable === true;
+    return { live, needsCheck: live && (unclear || changed || unusable), conditional };
   }
   // 手配が無い：根拠が分からないだけなら、家族が外していない限り、要るかを頼んだ本人に確かめる（取り消しとも
   // 続けてよいとも決めない）。家族が前に外した・選び替えた依頼は、要らないまま（取り消しの連絡を消さない）。

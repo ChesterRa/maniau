@@ -302,6 +302,26 @@ const seenOf = (task: Task) => ({
 });
 
 /**
+ * 選んだ案（本命・予備）をやめる命令。見せたその案の作業と頼み事を付ける（見せた後に替わっていたら、やめずに
+ * 見せ直す）。やめると、送った頼み事には取り消しを伝える作業が出る。
+ */
+function dropOptionCommand(ctx: Ctx, arrangementKey: string, optionKey: string): Command {
+  const ofOption = (basis: { arrangementKey?: string; optionKey?: string }) =>
+    basis.arrangementKey === arrangementKey && basis.optionKey === optionKey;
+  return {
+    type: 'dropOption',
+    arrangementKey,
+    optionKey,
+    seen: {
+      tasks: ctx.plan.tasks.filter((t) => t.live && ofOption(t.basis)).map(seenOf),
+      requests: ctx.plan.requests
+        .filter((r) => r.live && ofOption(r.basis))
+        .map((r) => ({ requestId: r.requestId, state: r.state })),
+    },
+  };
+}
+
+/**
  * 本人しかできない手順の担当（家族の情報の案・やり方の手順で決まっている。例：自分の有休の申請、やり方の
  * 受け持ちの担当）。
  */
@@ -1359,6 +1379,13 @@ export function releasedTitle(ctx: Ctx, released: Released): string {
 
 function ReleasedCard({ ctx, released }: { ctx: Ctx; released: Released }) {
   const { start, end } = released;
+  // 家族が使えないとした手の作業（別の手を選んだのではない）。
+  const current = ctx.plan.tasks.find((t) => t.key === released.taskKey);
+  const unusable =
+    current !== undefined &&
+    arrangementOf(ctx, current.basis.arrangementKey)?.options.some(
+      (o) => o.key === current.basis.optionKey && o.unusable === true,
+    ) === true;
   return (
     <Card>
       <Label tone="warn">
@@ -1383,7 +1410,9 @@ function ReleasedCard({ ctx, released }: { ctx: Ctx; released: Released }) {
       <Text quiet>
         {ctx.t(
           released.reason === 'inactive'
-            ? 'card.released.inactive'
+            ? unusable
+              ? 'card.released.unusable'
+              : 'card.released.inactive'
             : released.reason === 'unconfirmed'
               ? 'card.released.check'
               : 'card.released.body',
@@ -1407,16 +1436,46 @@ function ReleasedCard({ ctx, released }: { ctx: Ctx; released: Released }) {
 /** 送った後に根拠が分からなくなった・替わった依頼。取り消しとも続けるとも決めず、頼んだ本人に確かめてもらう。 */
 function CheckCard({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
   const arrangement = arrangementOf(ctx, request.basis.arrangementKey);
+  const option = arrangement?.options.find((o) => o.key === request.basis.optionKey);
+  // 家族が使えないとした手の頼み事は、お知らせが変わったのではない（そうと書く）。その手を選んである間は、ここで
+  // やめられる（送った頼み事に取り消しを伝える作業が出る。ほかの本命・予備は替えない）。
+  const unusable = option?.unusable === true;
+  const role =
+    unusable && arrangement && option
+      ? arrangement.chosenOptionKey === option.key
+        ? 'primary'
+        : arrangement.backupOptionKeys.includes(option.key)
+          ? 'backup'
+          : undefined
+      : undefined;
   return (
     <Card>
       <Label tone="warn">{ctx.t('card.check.label')}</Label>
       <Title>{ctx.t('card.check.title', { to: nameOf(ctx.household, request.to) })}</Title>
-      <Text quiet>{ctx.t('card.check.body')}</Text>
-      {arrangement && (
-        <Button onClick={() => ctx.go(decideRoute(arrangement))}>
-          {ctx.t('card.check.action')}
-        </Button>
-      )}
+      <Text quiet>
+        {ctx.t(
+          role
+            ? 'card.check.bodyUnusableDrop'
+            : unusable
+              ? 'card.check.bodyUnusable'
+              : 'card.check.body',
+        )}
+      </Text>
+      <Row>
+        {arrangement && (
+          <Button onClick={() => ctx.go(decideRoute(arrangement))}>
+            {ctx.t('card.check.action')}
+          </Button>
+        )}
+        {arrangement && option && role && (
+          <Button
+            kind="secondary"
+            onClick={() => void ctx.send(dropOptionCommand(ctx, arrangement.key, option.key))}
+          >
+            {ctx.t(role === 'backup' ? 'card.unowned.dropBackup' : 'card.unowned.dropPrimary')}
+          </Button>
+        )}
+      </Row>
     </Card>
   );
 }
@@ -1438,7 +1497,11 @@ function DecideCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 
       {uncovered && (
         <Text>
           {ctx.t(
-            uncovered.unknown ? 'card.decide.careNotCoveredUnknown' : 'card.decide.careNotCovered',
+            uncovered.unusable
+              ? 'card.decide.careNotCoveredUnusable'
+              : uncovered.unknown
+                ? 'card.decide.careNotCoveredUnknown'
+                : 'card.decide.careNotCovered',
             uncovered,
           )}
         </Text>
@@ -1851,7 +1914,7 @@ function gapList(ctx: Ctx, option: OptionPlan): string {
 export function careNotCovered(
   ctx: Ctx,
   arrangement: Arrangement,
-): { option: string; gaps: string; unknown: boolean } | undefined {
+): { option: string; gaps: string; unknown: boolean; unusable: boolean } | undefined {
   if (arrangement.kind !== 'childCare') return undefined;
   const refs = arrangement.reasons.find((r) => r.code === 'notCovered')?.refs ?? [];
   const inUse = arrangement.options.find((o) => o.key === arrangement.inUseOptionKey);
@@ -1866,6 +1929,8 @@ export function careNotCovered(
     // 見てもらえる時間の記録が無い手（前からの記録）や、見る人が「分からない」と答えた時間は、見てもらえないと
     // 分かったのではない（確かめられない）。
     unknown: (inUse.coverGaps ?? []).some((g) => g.unsure),
+    // 家族が使えないとした手（時間ではなく、手そのものが使えない）。
+    unusable: inUse.unusable === true,
   };
 }
 
@@ -2533,8 +2598,6 @@ function UnownedCard({
   // 二人が同じ札を見るので、見せた担当と状態を付ける（もう一人が先に持っていたら、断って見せ直す）。
   const propose = (assigneeId: string) =>
     void ctx.send({ type: 'proposeAssignment', taskKey: task.key, assigneeId, seen: seenOf(task) });
-  const ofOption = (basis: { arrangementKey?: string; optionKey?: string }) =>
-    basis.arrangementKey === arrangement?.key && basis.optionKey === option?.key;
   // 本人しかできない手順は、その人だけが持てる（他の人には、案をやめるかだけを出す）。断った本人には
   // 頼み直さない。断ったのが自分なら、まずもう一人に頼む。
   const fixed = fixedAssignee(ctx.household, task);
@@ -2587,19 +2650,7 @@ function UnownedCard({
         (arrangement.chosenOptionKey === option.key ||
           arrangement.backupOptionKeys.includes(option.key)) && (
           <MoreLink
-            onClick={() =>
-              void ctx.send({
-                type: 'dropOption',
-                arrangementKey: arrangement.key,
-                optionKey: option.key,
-                seen: {
-                  tasks: ctx.plan.tasks.filter((t) => t.live && ofOption(t.basis)).map(seenOf),
-                  requests: ctx.plan.requests
-                    .filter((r) => r.live && ofOption(r.basis))
-                    .map((r) => ({ requestId: r.requestId, state: r.state })),
-                },
-              })
-            }
+            onClick={() => void ctx.send(dropOptionCommand(ctx, arrangement.key, option.key))}
           >
             {ctx.t(
               arrangement.backupOptionKeys.includes(option.key)
@@ -3156,7 +3207,11 @@ export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey
           <Card tone="warn">
             <Text>
               {ctx.t(
-                uncovered.unknown ? 'decide.careNotCoveredUnknown' : 'decide.careNotCovered',
+                uncovered.unusable
+                  ? 'decide.careNotCoveredUnusable'
+                  : uncovered.unknown
+                    ? 'decide.careNotCoveredUnknown'
+                    : 'decide.careNotCovered',
                 uncovered,
               )}
             </Text>
@@ -3554,14 +3609,16 @@ function OptionRow({
         {option.coverGaps && (
           <span className="text-sm font-bold text-warn">
             {notCovering
-              ? templateOf(ctx.household, option)?.covers === undefined
-                ? ctx.t('decide.careCoverUnknown')
-                : ctx.t(
-                    option.coverGaps.some((g) => g.unsure)
-                      ? 'decide.careCoverUnsure'
-                      : 'decide.careCoverGaps',
-                    { gaps: gapList(ctx, option) },
-                  )
+              ? option.unusable
+                ? ctx.t('decide.careUnusable')
+                : templateOf(ctx.household, option)?.covers === undefined
+                  ? ctx.t('decide.careCoverUnknown')
+                  : ctx.t(
+                      option.coverGaps.some((g) => g.unsure)
+                        ? 'decide.careCoverUnsure'
+                        : 'decide.careCoverGaps',
+                      { gaps: gapList(ctx, option) },
+                    )
               : ctx.t('decide.coverGaps', { gaps: gapList(ctx, option) })}
           </span>
         )}

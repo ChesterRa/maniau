@@ -212,6 +212,59 @@ describe('うちのこと', () => {
     ]);
   });
 
+  it('取れる手を「使えない」にでき、保存の前に変わることに書く。保存した手は、そう書き、戻す所を出さない', async () => {
+    const preview: HouseholdPreview = {
+      changes: emptyChanges,
+      issues: [],
+      unverified: [],
+      seen: 'u1',
+      throughSeq: 9,
+    };
+    const { ctx, looked } = ctxWith({ preview });
+    await step(() => root.render(<HouseholdScreen ctx={ctx} />));
+    const waysCard = () =>
+      [...host.querySelectorAll('section')].find((section) =>
+        section.textContent?.startsWith('取れる手'),
+      );
+    const edit = [...(waysCard()?.querySelectorAll('button') ?? [])].find(
+      (b) => b.textContent === '直す',
+    );
+    await step(() => edit?.click());
+    /** 取れる手の一つの欄（名前で探す）。 */
+    const block = (title: string) =>
+      [...(waysCard()?.querySelectorAll('div') ?? [])].find(
+        (d) => d.firstElementChild?.textContent === title,
+      );
+    const toggle = (title: string, label: string) =>
+      [...(block(title)?.querySelectorAll('button') ?? [])].find((b) => b.textContent === label);
+    await step(() => toggle('学童に預ける', 'この手は使えない')?.click());
+    expect(block('学童に預ける')?.textContent).toContain('使えないとした手です');
+    // 保存の前なら、付けた印を外せる。
+    expect(toggle('学童に預ける', '使えないにするのをやめる')).toBeDefined();
+    await step(() => button('変わることを見る')?.click());
+    expect(looked[0]?.unusableCareOptionIds).toEqual(['opt-gakudo']);
+    expect(host.textContent).toContain(
+      '「学童に預ける」を使えない手にします。新しくは選べず、選んである時も確保とは言いません。送った頼み事は取り消さず、要るかを確かめる札を出します。また使う時は、新しく足してください。',
+    );
+    // 印を外すと、見た物を消す（違う中身で保存しない）。
+    await step(() => toggle('学童に預ける', '使えないにするのをやめる')?.click());
+    expect(button('この内容で保存')).toBeUndefined();
+
+    // 保存した後（家の情報に入っている手）は、そう書き、戻す所を出さない。
+    await step(() => root.unmount());
+    root = createRoot(host);
+    const saved = ctxWith({ preview }).ctx;
+    saved.household = { ...saved.household, unusableCareOptionIds: ['opt-gakudo'] };
+    await step(() => root.render(<HouseholdScreen ctx={saved} />));
+    expect(block('学童に預ける')?.textContent).toContain('使えないとした手です');
+    const again = [...(waysCard()?.querySelectorAll('button') ?? [])].find(
+      (b) => b.textContent === '直す',
+    );
+    await step(() => again?.click());
+    expect(toggle('学童に預ける', 'この手は使えない')).toBeUndefined();
+    expect(toggle('学童に預ける', '使えないにするのをやめる')).toBeUndefined();
+  });
+
   it('学童の手の見てもらえる時間を直せる。逆さまの時間は直さず、そう言う', async () => {
     const preview: HouseholdPreview = {
       changes: emptyChanges,

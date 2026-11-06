@@ -1714,6 +1714,16 @@ function checkHouseholdEdit(
     // 代償の「分からない」は、家族が足すやり方だけ（取れる手の勧め方と選び直しの札を替えない）。
     if (edited.cost.unknown !== undefined) return invalid('careOptionsLocked');
   }
+  // 使えないとした手は、前からある取れる手だけを、足すことだけできる（外して戻さない。重ねない）。
+  const unusableBefore = current.unusableCareOptionIds ?? [];
+  const unusableAfter = next.unusableCareOptionIds ?? [];
+  if (
+    new Set(unusableAfter).size !== unusableAfter.length ||
+    unusableBefore.some((id) => !unusableAfter.includes(id)) ||
+    unusableAfter.some((id) => !current.careOptions.some((o) => o.id === id))
+  ) {
+    return invalid('careOptionsLocked');
+  }
   const ways = checkWays(current, next);
   if ('reason' in ways) return ways;
   const around = checkResources(current, next, now, surveyed);
@@ -1953,6 +1963,12 @@ function checkResources(
 /** 新しく足す成員・場所・やり方・手順の ID（画面が作る。ID は比べるだけで、区切って読まない。これは守りの形）。 */
 const NEW_ID = /^[a-z0-9][a-z0-9-]{0,47}$/;
 
+/** 家族が使えないとしていない取れる手（頼める人・学童・大人ごとに一つまでを数える時は、これだけを数える）。 */
+function usableOptions(household: Household): CareOptionTemplate[] {
+  const unusable = new Set(household.unusableCareOptionIds ?? []);
+  return household.careOptions.filter((o) => !unusable.has(o.id));
+}
+
 /**
  * 家族が足す取れる手が、頼める人に頼む決まった形か（helperAskOption と同じ中身。締切は選べる物だけ）。頼める人は今いる
  * 手伝いの人で、その人に頼む手は一つだけ。
@@ -1968,8 +1984,8 @@ function helperAskAllowed(option: CareOptionTemplate, next: Household): boolean 
     allowed !== undefined &&
     NEW_ID.test(option.id) &&
     sameJson(option, helperAskOption(option.id, helper.id, allowed)) &&
-    next.careOptions.filter((o) => o.kind === 'askHelper' && o.providerId === helper.id).length ===
-      1
+    usableOptions(next).filter((o) => o.kind === 'askHelper' && o.providerId === helper.id)
+      .length === 1
   );
 }
 const NEW_PLACE_KINDS: ReadonlySet<PlaceKind> = new Set(['store', 'helperHome', 'other']);
@@ -2012,7 +2028,7 @@ function afterSchoolAllowed(option: CareOptionTemplate, next: Household): boolea
         covers,
       ),
     ) &&
-    next.careOptions.filter((o) => o.kind === 'afterSchoolFullDay' && o.providerId === place.id)
+    usableOptions(next).filter((o) => o.kind === 'afterSchoolFullDay' && o.providerId === place.id)
       .length === 1
   );
 }
@@ -2031,7 +2047,7 @@ function leaveAllowed(option: CareOptionTemplate, next: Household): boolean {
     careDays(rule.days, LEAVE_MAX_BUSINESS_DAYS) &&
     NEW_ID.test(option.id) &&
     sameJson(option, leaveOption(option.id, adult.id, place.id, rule.days, rule.at)) &&
-    next.careOptions.filter((o) => o.kind === 'paidLeave' && o.steps[0]?.assigneeId === adult.id)
+    usableOptions(next).filter((o) => o.kind === 'paidLeave' && o.steps[0]?.assigneeId === adult.id)
       .length === 1
   );
 }

@@ -170,7 +170,8 @@
       "split": "From the times on record, the times we can’t confirm an adult to watch are split ({{times}}). This arrangement is for {{main}} only. Please check the other times together.",
       "actionChildCare": "Choose how to arrange care",
       "careNotCovered": "The current way doesn’t cover {{gaps}}.",
-      "careNotCoveredUnknown": "We can’t confirm the current way covers {{gaps}}."
+      "careNotCoveredUnknown": "We can’t confirm the current way covers {{gaps}}.",
+      "careNotCoveredUnusable": "The current way is marked as unusable."
     },
     "question": {
       "label": "Please tell us",
@@ -250,6 +251,8 @@
       "label": "Please check",
       "title": "Is your request to {{to}} still needed?",
       "body": "Something it relied on has changed (the notice changed or was deleted). You decide whether to cancel.",
+      "bodyUnusable": "Your family marked this way as unusable. You decide whether to cancel this request.",
+      "bodyUnusableDrop": "Your family marked this way as unusable. You decide whether to cancel this request (if you drop this way, a task to send the cancellation is added).",
       "action": "See details"
     },
     "noReply": {
@@ -343,6 +346,7 @@
       "ask": "Asking someone",
       "ok": "Got it",
       "inactive": "You took this on, but the family chose another way (or the main plan was confirmed), so this step will not go ahead. Please check before you head out.",
+      "unusable": "You took this on, but the family marked this way as unusable, so this step will not go ahead. Please check before you head out.",
       "checkLabel": "Please check",
       "check": "A task you took on is no longer in the plan (for example, its notice was deleted). Please check whether it is still needed."
     },
@@ -545,7 +549,9 @@
     "careCoverUnknown": "The hours this way covers aren’t recorded, so you can’t choose it.",
     "careNotCovered": "The current way ({{option}}) doesn’t cover {{gaps}}. Choose another way, or if someone can watch your child then, update that day in “Family”.",
     "careNotCoveredUnknown": "We can’t confirm the current way ({{option}}) covers {{gaps}}. Choose another way, or check that day’s plans and the way’s hours.",
-    "careCoverUnsure": "We can’t confirm this way covers {{gaps}}, so you can’t choose it. Check and update that day in “Family” and you can choose it."
+    "careCoverUnsure": "We can’t confirm this way covers {{gaps}}, so you can’t choose it. Check and update that day in “Family” and you can choose it.",
+    "careUnusable": "Marked as unusable (it can’t be chosen).",
+    "careNotCoveredUnusable": "The current way ({{option}}) is marked as unusable. Choose another way (choosing one adds a task to send a cancellation for requests already sent)."
   },
   "facts": {
     "title": "{{date}}: who can watch {{child}}?",
@@ -1084,12 +1090,16 @@
       "weekday": "Day",
       "previousWeekDay": "{{weekday}} the week before",
       "at": "Time",
-      "covers": "Covers {{from}}–{{to}}"
+      "covers": "Covers {{from}}–{{to}}",
+      "unusable": "Marked as unusable (it can’t be chosen; to use it again, add it as a new way).",
+      "markUnusable": "This way can’t be used",
+      "keepUsable": "Keep it usable"
     },
     "preview": {
       "label": "What this change would do",
       "none": "The plan doesn't change.",
       "aWay": "a way",
+      "unusable": "“{{name}}” will be marked as unusable. It can’t be newly chosen, and even if it’s already chosen it isn’t called secured. Requests you already sent aren’t withdrawn; a card asks whether they’re still needed. To use it again, add it as a new way.",
       "cover": {
         "lost": "{{name}} will no longer cover {{gaps}} (it can’t be newly chosen, and if it’s already chosen it isn’t called secured).",
         "changed": "The time {{name}} doesn’t cover becomes {{gaps}}.",

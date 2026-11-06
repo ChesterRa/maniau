@@ -517,13 +517,26 @@ function HelperForm({ ctx, onAdded }: { ctx: Ctx; onAdded: (name: string) => voi
   const [name, setName] = useState('');
   const [days, setDays] = useState<(typeof HELPER_ASK_DAYS)[number]>();
   const trimmed = name.trim();
+  // 同じ名前の頼める人がいて、その人に頼む手が全部使えないとした物なら、その人に新しい手を足す（また頼む時。同じ
+  // 名前の人を二人にしない）。
+  const unusable = new Set(ctx.household.unusableCareOptionIds ?? []);
+  const same = ctx.household.members.find(
+    (m) => m.kind === 'helper' && m.active && m.name === trimmed,
+  );
+  const reuse =
+    same &&
+    ctx.household.careOptions
+      .filter((o) => o.kind === 'askHelper' && o.providerId === same.id)
+      .every((o) => unusable.has(o.id))
+      ? same
+      : undefined;
   const next =
     days === undefined
       ? undefined
       : (() => {
           const household = structuredClone(ctx.household);
-          household.members.push({ id, kind: 'helper', name: trimmed, active: true });
-          household.careOptions.push(helperAskOption(`opt-${id}`, id, days));
+          if (!reuse) household.members.push({ id, kind: 'helper', name: trimmed, active: true });
+          household.careOptions.push(helperAskOption(`opt-${id}`, reuse?.id ?? id, days));
           return household;
         })();
   return (
@@ -606,9 +619,36 @@ function AfterSchoolForm({ ctx, onAdded }: { ctx: Ctx; onAdded: (name: string) =
       ? undefined
       : (() => {
           const household = structuredClone(ctx.household);
-          household.places.push({ id: placeId, kind: 'afterSchoolCare', name: trimmed, goods: [] });
+          // 同じ名前の学童があり、その学童の手が全部使えないとした物なら、その学童に新しい手を足す（また使う時。
+          // 同じ名前の場所を二つにしない）。手の ID は新しい物（前の手の頼み事・返事を当てない）。
+          const unusable = new Set(ctx.household.unusableCareOptionIds ?? []);
+          const same = household.places.find(
+            (p) => p.kind === 'afterSchoolCare' && p.name === trimmed,
+          );
+          const reuse =
+            same &&
+            household.careOptions
+              .filter((o) => o.kind === 'afterSchoolFullDay' && o.providerId === same.id)
+              .every((o) => unusable.has(o.id))
+              ? same
+              : undefined;
+          if (!reuse) {
+            household.places.push({
+              id: placeId,
+              kind: 'afterSchoolCare',
+              name: trimmed,
+              goods: [],
+            });
+          }
           household.careOptions.push(
-            afterSchoolOption(`opt-${placeId}`, placeId, deadline, amount, bento, hours),
+            afterSchoolOption(
+              `opt-${placeId}`,
+              reuse?.id ?? placeId,
+              deadline,
+              amount,
+              bento,
+              hours,
+            ),
           );
           return household;
         })();
@@ -750,12 +790,14 @@ function AfterSchoolForm({ ctx, onAdded }: { ctx: Ctx; onAdded: (name: string) =
 function LeaveForm({ ctx, onAdded }: { ctx: Ctx; onAdded: (name: string) => void }) {
   const [placeId] = useState(() => newId('p'));
   const [optionId] = useState(() => newId('opt-leave'));
+  // 休む手を足せるのは、使える休みの手がまだ無い大人（使えないとした手だけなら、新しく足せる）。
+  const unusable = new Set(ctx.household.unusableCareOptionIds ?? []);
   const adults = ctx.household.members.filter(
     (m) =>
       m.kind === 'adult' &&
       m.active &&
       !ctx.household.careOptions.some(
-        (o) => o.kind === 'paidLeave' && o.steps[0]?.assigneeId === m.id,
+        (o) => o.kind === 'paidLeave' && o.steps[0]?.assigneeId === m.id && !unusable.has(o.id),
       ),
   );
   const [adultId, setAdultId] = useState('');
@@ -768,13 +810,30 @@ function LeaveForm({ ctx, onAdded }: { ctx: Ctx; onAdded: (name: string) => void
       ? undefined
       : (() => {
           const household = structuredClone(ctx.household);
-          household.places.push({
-            id: placeId,
-            kind: 'workplace',
-            name: ctx.t('careAdd.leave.workplace', { name: adult.name }),
-            goods: [],
-          });
-          household.careOptions.push(leaveOption(optionId, adult.id, placeId, days, at));
+          // 前に使えないとした休みの手（いちばん新しい物）があれば、その職場を使う：手の職場、無ければ手順の頼む先
+          // （今ある職場が一つに決まる時だけ）。はっきりした前の職場を、名前で置き換えない。どちらも無い古い記録なら、
+          // 同じ名前の職場を使い、それも無ければ新しく足す（同じ名前の場所を二つにしない。無い場所を指さない）。
+          const name = ctx.t('careAdd.leave.workplace', { name: adult.name });
+          const workplaceOf = (id: string | undefined) =>
+            household.places.find((p) => p.kind === 'workplace' && p.id === id);
+          const before = household.careOptions.findLast(
+            (o) => o.kind === 'paidLeave' && o.steps[0]?.assigneeId === adult.id,
+          );
+          const asked = new Set(
+            (before?.steps ?? [])
+              .map((s) => s.external?.to)
+              .filter((to): to is string => workplaceOf(to) !== undefined),
+          );
+          const [only] = asked.size === 1 ? [...asked] : [];
+          const workplace =
+            workplaceOf(before?.providerId) ??
+            workplaceOf(only) ??
+            household.places.find((p) => p.kind === 'workplace' && p.name === name);
+          if (!workplace)
+            household.places.push({ id: placeId, kind: 'workplace', name, goods: [] });
+          household.careOptions.push(
+            leaveOption(optionId, adult.id, workplace?.id ?? placeId, days, at),
+          );
           return household;
         })();
   if (adults.length === 0) return <Text quiet>{ctx.t('careAdd.leave.none')}</Text>;

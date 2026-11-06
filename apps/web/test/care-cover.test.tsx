@@ -7,6 +7,7 @@ import {
   type DomainEvent,
   type Household,
   leaveOption,
+  proposalSnapshot,
 } from '@maniau/core';
 import { keys } from '@maniau/core/engine';
 import { Window } from 'happy-dom';
@@ -67,6 +68,10 @@ afterEach(async () => {
   await step(() => root.unmount());
   host.remove();
 });
+
+/** 文字の合うボタン（無ければ undefined）。 */
+const buttonOf = (label: string) =>
+  [...host.querySelectorAll('button')].find((b) => b.textContent === label);
 
 /**
  * 見本の段から始め、画面と同じ命令で家の情報を直し（edit が無ければ直さない）、手を選ぶ（サーバーの道）。start は、
@@ -256,6 +261,115 @@ describe('休みを引き受ける本人', () => {
         to: '18:15',
       }),
     );
+  });
+});
+
+describe('使えないとした手', () => {
+  it('選んでいない手は、使えないとした手と書き、選ぶボタンを出さない。今使う手なら、決める画面と札にそう書く', async () => {
+    const mark =
+      (id: string) =>
+      (h: Household): Household => ({
+        ...h,
+        unusableCareOptionIds: [...(h.unusableCareOptionIds ?? []), id],
+      });
+    const unchosen = await family(mark('opt-gakudo'));
+    const c = await unchosen.ctx('a');
+    await step(() => root.render(<DecideScreen ctx={c} arrangementKey={CARE} />));
+    const cards = [...host.querySelectorAll('div.rounded-\\[18px\\]')];
+    const gakudo = cards.find((card) => card.textContent?.includes(c.t('decide.careUnusable')));
+    expect(gakudo, host.textContent ?? '').toBeDefined();
+    expect(gakudo?.querySelector('button')).toBeNull();
+
+    // 見本の段 asked：祖母に頼んで返事待ちの本命を、使えないとする。
+    const inUse = await family(mark('opt-grandma'), undefined, 'asked');
+    for (const lang of ['ja', 'en'] as const) {
+      const d = await inUse.ctx('b', lang);
+      const arrangement = d.plan.arrangements.find((a) => a.key === CARE);
+      if (!arrangement) throw new Error('手配が無い');
+      const uncovered = careNotCovered(d, arrangement);
+      expect(uncovered?.unusable).toBe(true);
+      await step(() => root.render(<DecideScreen ctx={d} arrangementKey={CARE} />));
+      expect(host.textContent).toContain(
+        d.t('decide.careNotCoveredUnusable', { option: uncovered?.option }),
+      );
+      await step(() => root.render(<TodayScreen ctx={d} />));
+      expect(host.textContent).toContain(d.t('card.decide.careNotCoveredUnusable'));
+      // 頼み事を確かめる札は、お知らせが変わったとは言わず、使えないとしたからと書き、その手をやめられる。
+      expect(host.textContent).toContain(d.t('card.check.bodyUnusableDrop'));
+      expect(host.textContent).not.toContain(d.t('card.check.body'));
+      expect(buttonOf(d.t('card.unowned.dropPrimary'))).toBeDefined();
+    }
+  });
+
+  it('使えないとした予備の頼み事の札から、その予備をやめる（見せた作業と頼み事を付けて送る）', async () => {
+    // 見本の段 backup：学童を予備に押さえ、「はい」をもらってある。
+    const backup = await family(
+      (h) => ({ ...h, unusableCareOptionIds: ['opt-gakudo'] }),
+      undefined,
+      'backup',
+    );
+    // 札は、頼んだ本人に出す。
+    const sender = (await backup.ctx('a')).plan.requests.find(
+      (r) => r.requestId === 'r-gakudo',
+    )?.sentBy;
+    if (!sender) throw new Error('頼んだ人が無い');
+    const d = await backup.ctx(sender);
+    const sent: Command[] = [];
+    const c: Ctx = {
+      ...d,
+      send: async (command) => {
+        sent.push(command);
+        return { status: 'ok' };
+      },
+    };
+    await step(() => root.render(<TodayScreen ctx={c} />));
+    expect(host.textContent).toContain(c.t('card.check.bodyUnusableDrop'));
+    await step(() => buttonOf(c.t('card.unowned.dropBackup'))?.click());
+    const gakudo = keys.option(CARE, 'opt-gakudo');
+    expect(sent).toEqual([
+      {
+        type: 'dropOption',
+        arrangementKey: CARE,
+        optionKey: gakudo,
+        seen: {
+          tasks: c.plan.tasks
+            .filter((t) => t.live && t.basis.optionKey === gakudo)
+            .map((t) => ({
+              taskKey: t.key,
+              assigneeId: t.assigneeId ?? null,
+              commitment: t.commitment,
+            })),
+          requests: [{ requestId: 'r-gakudo', state: 'confirmed' }],
+        },
+      },
+    ]);
+  });
+
+  it('引き受けていた作業が、使えないとした手の物なら、別の手を選んだとは言わない', async () => {
+    const f = await family(undefined);
+    const grandma = keys.option(CARE, 'opt-grandma');
+    expect(
+      await f.run('b', {
+        type: 'chooseOption',
+        arrangementKey: CARE,
+        optionKey: grandma,
+        role: 'primary',
+        assigneeId: 'a',
+      }),
+    ).toMatchObject({ status: 'ok' });
+    const ask = (await f.ctx('a')).plan.tasks.find((t) => t.key === `task:${grandma}:ask`);
+    const shown = ask && proposalSnapshot(ask);
+    if (!ask || !shown) throw new Error('頼む作業が無い');
+    expect(await f.run('a', { type: 'accept', taskKey: ask.key, shown })).toMatchObject({
+      status: 'ok',
+    });
+    await f.save({ ...(await f.home()), unusableCareOptionIds: ['opt-grandma'] });
+    for (const lang of ['ja', 'en'] as const) {
+      const d = await f.ctx('a', lang);
+      await step(() => root.render(<TodayScreen ctx={d} />));
+      expect(host.textContent).toContain(d.t('card.released.unusable'));
+      expect(host.textContent).not.toContain(d.t('card.released.inactive'));
+    }
   });
 });
 

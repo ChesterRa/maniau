@@ -3,6 +3,7 @@
 // 見られるかと平日の型を入れる画面（見てから記録）、頼める人を足す札。家の情報は、見せる物の家庭から組む。
 import {
   afterSchoolOption,
+  type CareOptionTemplate,
   type Command,
   Household,
   type HouseholdPreview,
@@ -364,6 +365,45 @@ describe('頼める人を足す', () => {
     expect(sent).toHaveLength(1);
     expect(text()).toContain('「サトウさん」を足しました');
   });
+
+  it('頼む手が全部使えないとした物の人なら、同じ人に新しい手を足す（人は増やさず、手は新しい ID）', async () => {
+    const { ctx, looked } = probe();
+    const old = helperAskOption('opt-h-old', 'h-old', 1);
+    const withUnusable: Ctx = {
+      ...ctx,
+      household: {
+        ...ctx.household,
+        members: [
+          ...ctx.household.members,
+          { id: 'h-old', kind: 'helper', name: 'サトウさん', active: true },
+        ],
+        careOptions: [old],
+        unusableCareOptionIds: [old.id],
+      },
+    };
+    await step(() => root.render(<CareOptionAddCard ctx={withUnusable} />));
+    const input = host.querySelector('input[type="text"]');
+    if (!(input instanceof HTMLInputElement)) throw new Error('呼び名の欄が無い');
+    await step(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+        input,
+        'サトウさん',
+      );
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const select = host.querySelector('select');
+    if (!select) throw new Error('締切の欄が無い');
+    await step(() => {
+      select.value = '3';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await press(i18n.t('careAdd.look'));
+    const draft = looked.at(-1);
+    expect(draft?.members.filter((m) => m.kind === 'helper').map((m) => m.id)).toEqual(['h-old']);
+    const fresh = draft?.careOptions.at(-1);
+    expect(fresh?.id).not.toBe(old.id);
+    expect(fresh).toEqual(helperAskOption(fresh?.id ?? '', 'h-old', 3));
+  });
 });
 
 describe('学童と休みの手を足す', () => {
@@ -551,5 +591,113 @@ describe('学童と休みの手を足す', () => {
     expect(who).not.toContain('大人A');
     await step(() => root.render(<CareOptionAddCard ctx={withLeave(['a1', 'a2'])} />));
     expect(text()).toContain(i18n.t('careAdd.leave.none'));
+  });
+
+  it('古い休みの手に職場の記録が無くても、無い場所を指さない（手順の頼む先、同じ名前の職場、新しい職場の順）', async () => {
+    const { ctx, looked } = probe();
+    /** 職場の記録（providerId）の無い、古い形の休みの手。手順の頼む先は to。 */
+    const oldLeave = (to: string) => {
+      const old = leaveOption('opt-old', 'a1', to, 3, '18:00');
+      delete old.providerId;
+      return old;
+    };
+    /** 大人A の休みの手を、締切 3 日前の 18:00 で足して見る。 */
+    const addLeave = async (old: CareOptionTemplate, places: Household['places']) => {
+      await step(() => root.unmount());
+      root = createRoot(host);
+      const withOld: Ctx = {
+        ...ctx,
+        household: {
+          ...ctx.household,
+          places,
+          careOptions: [old],
+          unusableCareOptionIds: [old.id],
+        },
+      };
+      await step(() => root.render(<CareOptionAddCard ctx={withOld} />));
+      await press(i18n.t('careAdd.kind.leave'));
+      await pick(selects()[0], 'a1');
+      await pick(selects()[1], '3');
+      await typeInto(clock('careAdd.at'), '18:00');
+      await press(i18n.t('careAdd.look'));
+      const draft = looked.at(-1);
+      return { draft, fresh: draft?.careOptions.at(-1) };
+    };
+    const used = { id: 'p-work', kind: 'workplace', name: '前に使った職場', goods: [] } as const;
+    const named = { id: 'p-other', kind: 'workplace', name: '大人Aの職場', goods: [] } as const;
+    // 手順の頼む先が今ある職場：名前の違う職場でも、それを使う（同じ名前の別の職場に差し替えない）。
+    const explicit = await addLeave(oldLeave('p-work'), [used, named]);
+    expect(explicit.fresh?.providerId).toBe('p-work');
+    expect(explicit.fresh?.steps[0]?.external?.to).toBe('p-work');
+    expect(explicit.draft?.places).toHaveLength(2);
+    // 頼む先が今の家の情報に無い：同じ名前の職場を使い、職場を二つにしない。
+    const byName = await addLeave(oldLeave('p-gone'), [named]);
+    expect(byName.fresh?.providerId).toBe('p-other');
+    expect(byName.draft?.places).toHaveLength(1);
+    // どれも無い：新しく足し、そこを指す。
+    const none = await addLeave(oldLeave('p-gone'), []);
+    const added = none.draft?.places.find((p) => p.id === none.fresh?.providerId);
+    expect(added).toMatchObject({ kind: 'workplace', name: '大人Aの職場' });
+  });
+
+  it('使えないとした手しか無い大人・学童には、新しい手を足せる（前の職場・学童の場所を使い、手は新しい ID）', async () => {
+    const { ctx, looked } = probe();
+    const old = leaveOption('opt-leave-a1', 'a1', 'p-work-a1', 3, '18:00');
+    const gakudo = afterSchoolOption(
+      'opt-p-old',
+      'p-old',
+      { type: 'daysBefore', days: 3, at: '18:30' },
+      1000,
+      true,
+      { start: '08:00', end: '19:00' },
+    );
+    const withUnusable: Ctx = {
+      ...ctx,
+      household: {
+        ...ctx.household,
+        places: [
+          ...ctx.household.places,
+          { id: 'p-work-a1', kind: 'workplace', name: '大人Aの職場', goods: [] },
+          { id: 'p-old', kind: 'afterSchoolCare', name: 'ひかり学童', goods: [] },
+        ],
+        careOptions: [old, gakudo],
+        unusableCareOptionIds: [old.id, gakudo.id],
+      },
+    };
+    // 休み：使えないとした休みの手だけの大人も選べ、前の職場を使う。
+    await step(() => root.render(<CareOptionAddCard ctx={withUnusable} />));
+    await press(i18n.t('careAdd.kind.leave'));
+    const who = [...(selects()[0]?.querySelectorAll('option') ?? [])].map((o) => o.textContent);
+    expect(who).toContain('大人A');
+    await pick(selects()[0], 'a1');
+    await pick(selects()[1], '5');
+    await typeInto(clock('careAdd.at'), '18:00');
+    await press(i18n.t('careAdd.look'));
+    const leave = looked.at(-1);
+    expect(leave?.places.filter((p) => p.kind === 'workplace').map((p) => p.id)).toEqual([
+      'p-work-a1',
+    ]);
+    const added = leave?.careOptions.at(-1);
+    expect(added?.id).not.toBe(old.id);
+    expect(added).toEqual(leaveOption(added?.id ?? '', 'a1', 'p-work-a1', 5, '18:00'));
+    // 学童：同じ名前の学童の手が全部使えないとした物なら、その学童の場所に新しい手を足す。
+    await step(() => root.unmount());
+    root = createRoot(host);
+    await step(() => root.render(<CareOptionAddCard ctx={withUnusable} />));
+    await press(i18n.t('careAdd.kind.afterSchool'));
+    await typeInto(host.querySelector('input[type="text"]'), 'ひかり学童');
+    await pick(selects()[0], 'days');
+    await pick(selects()[1], '3');
+    await typeInto(clock('careAdd.at'), '18:30');
+    await typeInto(host.querySelector('input[inputmode="numeric"]'), '1000');
+    await restOfGakudo('careAdd.afterSchool.bentoNo');
+    await press(i18n.t('careAdd.look'));
+    const school = looked.at(-1);
+    expect(school?.places.filter((p) => p.kind === 'afterSchoolCare').map((p) => p.id)).toEqual([
+      'p-old',
+    ]);
+    const fresh = school?.careOptions.at(-1);
+    expect(fresh?.id).not.toBe(gakudo.id);
+    expect(fresh?.providerId).toBe('p-old');
   });
 });

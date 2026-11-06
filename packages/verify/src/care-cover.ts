@@ -79,6 +79,8 @@ export function expectedCareGaps(
   optionKey: string,
   history: { chosen: ReadonlyMap<string, number>; answered: ReadonlyMap<string, number> },
 ): Gap[] {
+  // 家族が使えないとした手は、手配の時間の全部を見てもらえない（確かめられない、ではない）。
+  if (household.unusableCareOptionIds?.includes(template.id)) return [{ ...window }];
   const covers = template.covers;
   if (covers === undefined) return [{ ...window, unsure: true }];
   const range: Interval =
@@ -171,6 +173,15 @@ export function checkCareCover(
       }
       const gaps = expectedCareGaps(household, template, date, window, option.key, choices);
       expected.set(option.key, gaps);
+      // 使えないとした手の印は、家庭の記録のとおり（画面が「使えないとした手」と書く根拠）。
+      const unusable = household.unusableCareOptionIds?.includes(template.id) === true;
+      if ((option.unusable === true) !== unusable) {
+        report.violation(
+          'care_unusable_mismatch',
+          option.key,
+          '使えないとした手の印が、家庭の記録と違う。',
+        );
+      }
       const reported = (option.coverGaps ?? []).map((g) => {
         const range = dayRange(g.start, g.end, date, tz);
         return range && (g.unsure ? { ...range, unsure: true as const } : range);
@@ -239,6 +250,26 @@ export function checkCareCover(
         arrangement.key,
         '今使う手で手配の時間の全部を見てもらえるのに、見てもらえない時間を書いている。',
       );
+    }
+    // 使えないとした手で送った頼み事は、取り消したとも続けてよいとも決めず、要るかを確かめる（返事を追わない）。
+    for (const option of arrangement.options) {
+      const template = household.careOptions.find((t) => t.id === option.templateId);
+      if (!template || !household.unusableCareOptionIds?.includes(template.id)) continue;
+      for (const request of plan.requests) {
+        if (
+          request.live &&
+          request.basis.arrangementKey === arrangement.key &&
+          request.basis.optionKey === option.key &&
+          (request.state === 'awaitingReply' || request.state === 'confirmed') &&
+          request.needsCheck !== true
+        ) {
+          report.violation(
+            'care_unusable_request_unmarked',
+            request.requestId,
+            '使えないとした手で送った頼み事が、要確認になっていない。',
+          );
+        }
+      }
     }
     // 本人が子を見る手の、その本人の手順の作業には、見る子と手配の時間が付く（引き受けの控えに入る）。ほかの作業には
     // 付かない。

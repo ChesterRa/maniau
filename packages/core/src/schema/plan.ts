@@ -289,6 +289,11 @@ export const OptionPlan = z.object({
    */
   stopped: z.literal(true).optional(),
   /**
+   * 家族が使えないとした子の居場所の手（household.unusableCareOptionIds）。見てもらえない時間は手配の時間の全部
+   * （coverGaps）。選べず、勧めず、確保と言わない。この手で送った頼み事は、要るかを確かめる（needsCheck）。
+   */
+  unusable: z.literal(true).optional(),
+  /**
    * やり方の前提（事前の登録など。家の情報の preparations）のうち、この「すること」の使う日・だれのために満たされて
    * いない物の全部（通用の「すること」だけ。view/preparations）。あれば勧めない（家族は選べる。済んだとは見せない）。
    * by は、家族が確かめた日数から求めた、済ませておく最後の日。
