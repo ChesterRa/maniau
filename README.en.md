@@ -149,6 +149,7 @@ On the first screen, press “View prepared scenes (for judges)”. Use the scen
    2. Use “Make a new link” for コーチ, open it in another tab or browser, and answer “Yes” for 12/19.
    3. On the family screen, press “Load the latest answers (from other screens or links)” and compare the answers and whose answers can change it.
    4. Open “See what changes if you choose this day” for 12/19, choose the day, then open “See the arrangement for this day” to see the gym arrangement.
+8. **12/6 Busy time:** 健太 recorded busy time on 12/19, 9:30–10:30 (an online meeting at home). The 12/19 practice candidate now shows an “overlaps” line (answers and counts stay as they are). Open that day from the list in Family and remove it, and the line goes away. It also changes where tasks go: in the “11/26 Errand on the way home” scene, add 18:30–19:30 on 11/26 for 健太 and look — the shirt purchase moves to 11/27.
 
 Answer links work only in demo households. Anyone holding a link can answer; the holder's identity is not checked. Meeting the answer and number requirements does not confirm that the venue has room. To change the day after someone has been asked or taken on a task, mark the “thing to do” as not needed and add it again.
 
