@@ -2295,9 +2295,11 @@ function failure(
   option: OptionPlan,
   tasks: readonly Task[],
 ): Reason | undefined {
-  // 取り消しを伝えた依頼は、返事として数えない（今の日の分として、前の日の断りを打ち消さない）。
+  // 取り消しを伝えた依頼は、返事として数えない（今の日の分として、前の日の断りを打ち消さない）。時間の変更の
+  // お願いに替わった依頼も数えない（替えたお願いの返事で決める）。
   const requests = [...ctx.state.requests.values()].filter(
-    (r) => option.taskKeys.includes(r.taskKey) && r.state !== 'cancelled',
+    (r) =>
+      option.taskKeys.includes(r.taskKey) && r.state !== 'cancelled' && r.replacedBy === undefined,
   );
   const current = requests.filter((r) => requestForDay(r, arrangement, ctx.tz));
   const turned = (current.length > 0 ? current : requests).filter((r) => r.state === 'turnedDown');
@@ -2335,6 +2337,7 @@ function withStatus(ctx: Context, arrangement: Arrangement, tasks: Task[]): Arra
     const waiting = [...ctx.state.requests.values()].filter(
       (r) =>
         r.state === 'awaitingReply' &&
+        r.replacedBy === undefined &&
         option?.taskKeys.includes(r.taskKey) &&
         requestForDay(r, arrangement, ctx.tz),
     );
@@ -3184,6 +3187,7 @@ function optionStillNeeded(
     (r) =>
       primaryTasks.has(r.taskKey) &&
       r.state !== 'cancelled' &&
+      r.replacedBy === undefined &&
       requestForDay(r, arrangement, ctx.tz),
   );
   const settled = (request: RequestRecord) => {
@@ -3317,11 +3321,16 @@ function requestStanding(
   snapshot: RequestSnapshot,
   sentSeq: number,
   superseded: boolean,
-): { live: boolean; needsCheck: boolean; conditional: boolean } {
+): { live: boolean; needsCheck: boolean; conditional: boolean; timeOnly: boolean } {
   const { basis } = snapshot;
   const arrangement =
     basis.arrangementKey === undefined ? undefined : arrangements.get(basis.arrangementKey);
-  const { unclear, changed, conditional } = requestDoubt(ctx, items, snapshot, arrangement);
+  const { unclear, changed, windowChanged, otherChanged, conditional } = requestDoubt(
+    ctx,
+    items,
+    snapshot,
+    arrangement,
+  );
   // 家族が読んだ日を直しただけでは、既に外へ伝えた旧日の頼み事が現実に不要になったとは言えない。
   // 新しい日に手配が無い場合も、本人が確かめるまで残す。控えに日がある子の居場所に限り、今の有効な直しと
   // 控えの日が違う時だけ見る（実際の取消し・家族による案の取り下げは従来どおり）。
@@ -3349,7 +3358,7 @@ function requestStanding(
       );
     });
   if (correctedDay && !arrangement?.live && !superseded && !decidedAgainst(ctx, basis, sentSeq)) {
-    return { live: true, needsCheck: true, conditional };
+    return { live: true, needsCheck: true, conditional, timeOnly: false };
   }
   if (arrangement) {
     const live =
@@ -3359,26 +3368,48 @@ function requestStanding(
     // 家族が使えないとした手の頼み事は、取り消したとも続けてよいとも決めず、要るかを頼んだ本人に確かめる（返事を
     // 追わない。取り下げるなら、その手配で家族が取り下げる）。
     const unusable = arrangement.options.find((o) => o.key === basis.optionKey)?.unusable === true;
-    return { live, needsCheck: live && (unclear || changed || unusable), conditional };
+    // 送った後に変わったのが頼んだ時間だけ（条件しだいかと条件の形も送った時のまま。控えに条件の形が無い古い
+    // 依頼は、同じと推さない）。時間の変更のお願いは、この時だけ送れる。
+    const timeOnly =
+      live &&
+      windowChanged &&
+      !otherChanged &&
+      !unclear &&
+      !unusable &&
+      snapshot.condition !== undefined &&
+      snapshot.conditional === conditional;
+    return {
+      live,
+      needsCheck: live && (unclear || changed || unusable),
+      conditional,
+      timeOnly,
+    };
   }
   // 手配が無い：根拠が分からないだけなら、家族が外していない限り、要るかを頼んだ本人に確かめる（取り消しとも
   // 続けてよいとも決めない）。家族が前に外した・選び替えた依頼は、要らないまま（取り消しの連絡を消さない）。
   return unclear && !decidedAgainst(ctx, basis, sentSeq)
-    ? { live: true, needsCheck: true, conditional }
-    : { live: false, needsCheck: false, conditional };
+    ? { live: true, needsCheck: true, conditional, timeOnly: false }
+    : { live: false, needsCheck: false, conditional, timeOnly: false };
 }
 
 /**
  * 送った後に生じた疑い（requestStanding の needsCheck の中身。要るかは別に見る）。unclear：根拠の事項の
- * どれかが分からない（見つからない・確かでない）。changed：手配があり、根拠や頼んだ時間が送った時と違う。
- * conditional：根拠が今、条件しだい。本命の「はい」で予備をたたむかも、同じ見方で決める。
+ * どれかが分からない（見つからない・確かでない）。changed：手配があり、根拠や頼んだ時間が送った時と違う
+ * （windowChanged：頼んだ時間が違う。otherChanged：時間のほかが違う）。conditional：根拠が今、条件しだい。
+ * 本命の「はい」で予備をたたむかも、同じ見方で決める。
  */
 function requestDoubt(
   ctx: Context,
   items: ReadonlyMap<string, LiveItem>,
   snapshot: RequestSnapshot,
   arrangement: Pick<Arrangement, 'start' | 'end'> | undefined,
-): { unclear: boolean; changed: boolean; conditional: boolean } {
+): {
+  unclear: boolean;
+  changed: boolean;
+  windowChanged: boolean;
+  otherChanged: boolean;
+  conditional: boolean;
+} {
   const { basis } = snapshot;
   const fates = basis.itemIds.map((id) => itemFate(ctx.state, id));
   const current = fates.flatMap((fate) =>
@@ -3395,18 +3426,26 @@ function requestDoubt(
         ((fate.item.evidence !== 'stated' && fate.item.evidence !== 'confirmed') ||
           awaitingConfirmation(ctx.state, fate.item))),
   );
-  const changed =
+  const windowChanged =
+    arrangement !== undefined &&
+    snapshot.window !== undefined &&
+    (!sameTime(snapshot.window.start, arrangement.start) ||
+      !sameTime(snapshot.window.end, arrangement.end));
+  const otherChanged =
     arrangement !== undefined &&
     (fates.some((fate) => fate.status === 'cancelled') ||
       current.some((i) => i.doubted) ||
       (conditional && snapshot.conditional === false) ||
       (snapshot.condition !== undefined &&
         snapshot.condition !== basisCondition(ctx.state, basis.itemIds)) ||
-      (snapshot.window !== undefined &&
-        (!sameTime(snapshot.window.start, arrangement.start) ||
-          !sameTime(snapshot.window.end, arrangement.end))) ||
       (snapshot.about !== undefined && snapshot.about !== aboutNow(ctx.state, snapshot)));
-  return { unclear, changed, conditional };
+  return {
+    unclear,
+    changed: windowChanged || otherChanged,
+    windowChanged,
+    otherChanged,
+    conditional,
+  };
 }
 
 /** 通用の「すること」の依頼の、今の中身とやり方の版の要約（控えの about と比べる）。 */
@@ -3475,6 +3514,9 @@ function externalRequests(
       arrangement?.kind === 'childCare' &&
       resent.has(request.taskKey) &&
       !requestForDay(request, arrangement, ctx.tz);
+    // 時間の変更のお願いに相手が「はい」と言った依頼は、その時間に替わった（生きていないが、取り消しは要らない。
+    // 疑いも、替えたお願いのほうで見る）。
+    const replaced = request.replacedBy !== undefined;
     const standing = requestStanding(
       ctx,
       tasks,
@@ -3498,18 +3540,36 @@ function externalRequests(
     // 「要るまま」は、元の手配が無く、同じ子・日の手配も無い間だけの控え。根拠が変われば見直す。
     const checked = request.checked;
     const standalone =
+      !replaced &&
       checked?.decision === 'keep' &&
       checked.basisVersion === requestBasisVersion(ctx.state, snapshot) &&
       standing.live &&
       standing.needsCheck &&
       !arrangement?.live &&
       !relatedCare;
-    const live = checked?.decision === 'cancel' ? false : standing.live;
-    const needsCheck = checked?.decision === 'cancel' ? false : standing.needsCheck && !standalone;
-    const { conditional } = standing;
+    const settledOff = replaced || checked?.decision === 'cancel';
+    const live = settledOff ? false : standing.live;
+    const needsCheck = settledOff ? false : standing.needsCheck && !standalone;
+    const conditional = replaced ? false : standing.conditional;
+    // 時間の変更のお願いを送れる依頼：子の居場所の手配の同じ日の分で、送った後に変わったのが頼んだ時間だけ
+    // （頼む作業の根拠も送った時のまま）。
+    const current = byKey.get(request.taskKey);
+    const timeOnly =
+      !settledOff &&
+      standing.timeOnly &&
+      arrangement?.kind === 'childCare' &&
+      snapshot.childId !== undefined &&
+      requestForDay(request, arrangement, ctx.tz) &&
+      current !== undefined &&
+      JSON.stringify(current.basis) === JSON.stringify(snapshot.basis);
     // だれの分か：控えの子。控えに無い古い依頼は、同じキーの手配が今あれば、その手配の子（キーが子を決める）。
     const childId =
       snapshot.childId ?? (arrangement?.kind === 'childCare' ? arrangement.childId : undefined);
+    // 変えてほしいと頼んだ前の依頼が、今もある時だけ見せる（押し間違いで消した依頼は指さない）。
+    const replaces =
+      request.replaces && ctx.state.requests.has(request.replaces.requestId)
+        ? request.replaces
+        : undefined;
     result.push({
       requestId: request.requestId,
       taskKey: request.taskKey,
@@ -3522,11 +3582,23 @@ function externalRequests(
       ...('window' in snapshot && snapshot.window ? { window: snapshot.window } : {}),
       ...askedNeedOf(snapshot, request.taskKey),
       ...(childId ? { childId } : {}),
+      ...(replaces ? { replaces } : {}),
+      ...(request.replacedBy ? { replacedBy: request.replacedBy } : {}),
       live,
       ...(needsCheck ? { needsCheck } : {}),
+      ...(timeOnly ? { timeOnly: true as const } : {}),
       ...(standalone ? { standalone: true as const } : {}),
       ...(conditional ? { conditional } : {}),
     });
+  }
+  // 時間の変更のお願いの返事を待つ間は、前の依頼の確かめの札を出さず、お願いの返事を追う。そのお願いが今の時間の
+  // まま（生きていて、確かめの要らない返事待ち）の間だけ。また時間が変わったら、どちらも確かめに戻す。
+  for (const request of result) {
+    if (!request.replaces || request.state !== 'awaitingReply') continue;
+    if (!request.live || request.needsCheck === true) continue;
+    const previous = result.find((r) => r.requestId === request.replaces?.requestId);
+    if (previous?.live && previous.replacedBy === undefined)
+      previous.changeAsked = request.requestId;
   }
   return result;
 }
@@ -3584,10 +3656,23 @@ function askedNeedOf(
   };
 }
 
-/** 前提が消えた依頼で、まだ取り消していない物には、取り消しの連絡の作業を作る（§4）。 */
+/**
+ * 前提が消えた依頼で、まだ取り消していない物には、取り消しの連絡の作業を作る（§4）。時間の変更のお願いに替わった
+ * 依頼は、取り消さない（相手は新しい時間で引き受けた。要らなくなれば、替えたお願いのほうを取り消す）。前の依頼を
+ * 替えた変更のお願いは、後で断られたと記録されていても取り消しを伝える（「OK だった」が押し間違いなら、相手には
+ * 前の時間のお願いが残っている。同じ日の分なので、一つの連絡で足りる）。
+ */
 function cancellationTasks(ctx: Context, requests: readonly ExternalRequest[]): Task[] {
+  const replacing = new Set(requests.flatMap((r) => (r.replacedBy ? [r.replacedBy] : [])));
   return requests
-    .filter((r) => !r.live && (r.state === 'awaitingReply' || r.state === 'confirmed'))
+    .filter(
+      (r) =>
+        !r.live &&
+        r.replacedBy === undefined &&
+        (r.state === 'awaitingReply' ||
+          r.state === 'confirmed' ||
+          (r.state === 'turnedDown' && replacing.has(r.requestId))),
+    )
     .map((r) =>
       task(ctx, keys.cancellationTask(r.requestId), {
         titleKey: 'task.cancelRequest',

@@ -92,7 +92,14 @@ export function verifyPlan(input: VerificationInput): VerificationReport {
   checkNeedConfirmation(plan.data, facts, history, report);
   checkReleased(household.data, plan.data, facts, history, report);
   checkProposals(plan.data, history, report, household.data, facts);
-  checkRequestNeed(plan.data, history, facts, report, household.data.timeZone);
+  checkRequestNeed(
+    plan.data,
+    history,
+    facts,
+    report,
+    household.data.timeZone,
+    household.data.unusableCareOptionIds ?? [],
+  );
   checkPlan(household.data, plan.data, facts, history, report, whenWindows);
   const checkedCare = checkChildCareKnowledge(household.data, plan.data, facts, history, report);
   checkSplitCareClaims(household.data, plan.data, facts, history, report, checkedCare);

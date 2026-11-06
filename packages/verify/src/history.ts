@@ -29,6 +29,10 @@ interface SentRequest {
   state: RequestState;
   snapshot?: Extract<DomainEvent, { type: 'externalRequestSent' }>['snapshot'];
   checked?: { decision: 'keep' | 'cancel'; seq: number };
+  /** 時間の変更のお願いが、送った時の事象で前の依頼と結べた時の、前の依頼の ID と見せた時間。 */
+  replaces?: { requestId: string; window: { start: string; end: string } };
+  /** 時間の変更のお願いに「はい」が記録され、この依頼が替わった（その依頼の ID）。 */
+  replacedBy?: string;
 }
 
 type RequestBasis = Extract<DomainEvent, { type: 'externalRequestSent' }>['snapshot'];
@@ -513,6 +517,38 @@ export function checkHistory(
           '依頼を送った人が、その時の担当と違う。',
         );
       }
+      // 時間の変更のお願いは、送った時の前の依頼と、作業・相手・種類・子・日が同じで、前の依頼の控えの時間が
+      // 見せた時間と同じ、今と違う時間の時だけ結ぶ。前の依頼は返事待ちか「はい」で、まだ替わっていない物。
+      const before = event.replaces ? requests.get(event.replaces.requestId) : undefined;
+      const shown = event.replaces?.window;
+      const oldWindow = before?.snapshot?.window;
+      const newWindow = event.snapshot?.window;
+      const dayOf = (value: string) => localMinute(instantMinute(value), household.timeZone).date;
+      const linked =
+        event.replaces !== undefined &&
+        before !== undefined &&
+        shown !== undefined &&
+        oldWindow !== undefined &&
+        newWindow !== undefined &&
+        before.taskKey === event.taskKey &&
+        (before.state === 'awaitingReply' || before.state === 'confirmed') &&
+        before.replacedBy === undefined &&
+        before.checked?.decision !== 'cancel' &&
+        before.snapshot?.to === event.snapshot?.to &&
+        before.snapshot?.kind === event.snapshot?.kind &&
+        before.snapshot?.childId !== undefined &&
+        before.snapshot.childId === event.snapshot?.childId &&
+        // 時間のほかは送った時のまま（相手の OK は時間の変更だけへの物）。条件の形の無い古い控えは同じと推さない。
+        JSON.stringify(before.snapshot.basis) === JSON.stringify(event.snapshot?.basis) &&
+        before.snapshot.condition !== undefined &&
+        before.snapshot.condition === event.snapshot?.condition &&
+        before.snapshot.conditional === event.snapshot?.conditional &&
+        before.snapshot.about === event.snapshot?.about &&
+        instantMinute(oldWindow.start) === instantMinute(shown.start) &&
+        instantMinute(oldWindow.end) === instantMinute(shown.end) &&
+        dayOf(oldWindow.start) === dayOf(newWindow.start) &&
+        (instantMinute(oldWindow.start) !== instantMinute(newWindow.start) ||
+          instantMinute(oldWindow.end) !== instantMinute(newWindow.end));
       requests.set(event.requestId, {
         taskKey: event.taskKey,
         seq: event.seq,
@@ -520,6 +556,7 @@ export function checkHistory(
         sentBy: event.actorId,
         state: 'awaitingReply',
         ...(event.snapshot ? { snapshot: event.snapshot } : {}),
+        ...(linked && event.replaces ? { replaces: event.replaces } : {}),
       });
       commitmentChanges.push({
         taskKey: event.taskKey,
@@ -583,6 +620,15 @@ export function checkHistory(
         request.state = 'cancelled';
       } else if (request.state !== 'cancelled') {
         request.state = event.reply === 'yes' ? 'confirmed' : 'turnedDown';
+        // 結べた時間の変更のお願いに、初めて「はい」：前の依頼は替わる（後の「いいえ」でも戻らない）。
+        const before = request.replaces ? requests.get(request.replaces.requestId) : undefined;
+        if (
+          event.reply === 'yes' &&
+          before &&
+          before.state !== 'cancelled' &&
+          before.replacedBy === undefined
+        )
+          before.replacedBy = event.requestId;
       }
     }
   }
@@ -1364,11 +1410,96 @@ export function checkRequestNeed(
   facts: FactState,
   report: Collector,
   timeZone: string,
+  /** 家族が使えないとした子の居場所の手（家庭の記録。計画の印には頼らない）。 */
+  unusableCareOptionIds: readonly string[] = [],
 ): void {
   const beforeSending = new Map<number, FactState>();
   for (const request of plan.requests) {
     const source = plan.tasks.find((task) => task.key === request.taskKey);
     const sent = history.requests.get(request.requestId);
+    // 時間の変更のお願い：計画が言う前の依頼との結びと、返事を待つ間に確かめの札を止めること（changeAsked）は、
+    // 事象から結べる時だけ。止めるのは、お願いが返事待ちで、今の手配の時間のままの間だけ。
+    const sameWindow = (a: { start: string; end: string }, b: { start: string; end: string }) =>
+      instantMinute(a.start) === instantMinute(b.start) &&
+      instantMinute(a.end) === instantMinute(b.end);
+    if (
+      request.replaces !== undefined &&
+      (sent?.replaces?.requestId !== request.replaces.requestId ||
+        !sameWindow(sent.replaces.window, request.replaces.window))
+    )
+      report.violation(
+        'request_change_unproven',
+        request.requestId,
+        '時間の変更のお願いと前の依頼の結びを、事象から確かめられない。',
+      );
+    if (request.changeAsked !== undefined) {
+      const asking = history.requests.get(request.changeAsked);
+      const arrangement = plan.arrangements.find(
+        (entry) => entry.key === request.basis.arrangementKey && entry.live,
+      );
+      // お願い自体が確かめ待ち・生きていない時と、家族がお願いの手を使えないとした時は、返事を待っても前の依頼の
+      // 確かめを止めない（使えないかは家庭の記録で、手のキーから見る）。
+      const asked = plan.requests.find((entry) => entry.requestId === request.changeAsked);
+      const prefix = `opt:${asking?.snapshot?.basis.arrangementKey ?? ''}:`;
+      const optionKey = asking?.snapshot?.basis.optionKey;
+      const unusable =
+        optionKey?.startsWith(prefix) === true &&
+        unusableCareOptionIds.includes(optionKey.slice(prefix.length));
+      if (
+        asking?.replaces?.requestId !== request.requestId ||
+        asking.state !== 'awaitingReply' ||
+        !arrangement ||
+        matchesArrangementWindow(asking.snapshot?.window, arrangement) !== true ||
+        sent?.replacedBy !== undefined ||
+        !asked?.live ||
+        asked.needsCheck === true ||
+        unusable
+      )
+        report.violation(
+          'request_change_unproven',
+          request.requestId,
+          '今の時間の変更のお願いの返事を待っていないのに、確かめを止めている。',
+        );
+    }
+    // 時間の変更のお願いに替わった依頼：事象から結べて「はい」が記録された物だけ。生きておらず、取り消しも要らない
+    // （相手は新しい時間で引き受けた）。後で変更が断られても、前の依頼には戻さない。
+    if (request.replacedBy !== undefined && request.replacedBy !== sent?.replacedBy) {
+      if (history.complete)
+        report.violation(
+          'request_replacement_unproven',
+          request.requestId,
+          '時間の変更のお願いに替わったと、事象から確かめられない。',
+        );
+      else
+        report.undetermined(
+          'request_replacement_unverified',
+          request.requestId,
+          '時間の変更のお願いに替わったかを、事象から確かめられない。',
+        );
+    }
+    const replacedBy = history.complete ? sent?.replacedBy : undefined;
+    if (replacedBy !== undefined) {
+      if (request.replacedBy !== replacedBy || request.live || request.needsCheck)
+        report.violation(
+          'request_replacement_missing',
+          request.requestId,
+          '時間の変更のお願いに替わった依頼を、替わっていない物として扱っている。',
+        );
+      if (
+        plan.tasks.some(
+          (task) =>
+            task.live &&
+            task.cancels === request.requestId &&
+            !['declined', 'withdrawn', 'cancelled'].includes(task.commitment),
+        )
+      )
+        report.violation(
+          'unexpected_cancellation',
+          request.requestId,
+          '時間の変更のお願いに替わった依頼に、取消しの連絡がある。',
+        );
+      continue;
+    }
     const basis = sent?.snapshot?.basis ?? source?.basis ?? request.basis;
     let optionNeeded: Truth = true;
     if (basis.arrangementKey && basis.optionKey) {
@@ -1400,8 +1531,9 @@ export function checkRequestNeed(
               )
               .map((task) => task.key),
           );
-          const primaryRequests = [...history.requests.entries()].filter(([, sent]) =>
-            primaryTasks.has(sent.taskKey),
+          // 時間の変更のお願いに替わった依頼は数えない（替えたお願いの返事で見る）。
+          const primaryRequests = [...history.requests.entries()].filter(
+            ([, sent]) => primaryTasks.has(sent.taskKey) && sent.replacedBy === undefined,
           );
           const currentArrangement = plan.arrangements.find((a) => a.key === basis.arrangementKey);
           const current = currentArrangement
@@ -1834,7 +1966,17 @@ export function checkRequestNeed(
         );
       }
     }
-    if (needed === false && (state === 'awaitingReply' || state === 'confirmed')) {
+    // 前の依頼を替えた変更のお願い（事象から確かめた物）は、後で断られていても、要らなくなれば取り消しを伝える
+    // （押し間違いの「OK だった」なら、相手には前の時間のお願いが残っている）。
+    const replacedOne =
+      history.complete &&
+      [...history.requests.values()].some((entry) => entry.replacedBy === request.requestId);
+    if (
+      needed === false &&
+      (state === 'awaitingReply' ||
+        state === 'confirmed' ||
+        (state === 'turnedDown' && replacedOne))
+    ) {
       if (cancellations.length === 0)
         report.violation(
           'cancellation_missing',

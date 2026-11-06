@@ -706,7 +706,13 @@ function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {
     case 'needFix':
       return <NeedFixScreen ctx={ctx} itemId={route.itemId} />;
     case 'ask':
-      return <AskScreen ctx={ctx} taskKey={route.taskKey} />;
+      return (
+        <AskScreen
+          ctx={ctx}
+          taskKey={route.taskKey}
+          {...(route.replaces ? { replaces: route.replaces } : {})}
+        />
+      );
     case 'week':
       return <WeekScreen ctx={ctx} />;
     case 'household':

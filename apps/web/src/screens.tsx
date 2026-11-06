@@ -131,7 +131,8 @@ export type Route =
     }
   /** 「すること」（手配の key）に、Claude がやり方の案を出す。 */
   | { name: 'wayIdeas'; key: string }
-  | { name: 'ask'; taskKey: string }
+  /** 頼む文。replaces は、同じ日に時間が変わった依頼（その ID）の、時間の変更のお願い。 */
+  | { name: 'ask'; taskKey: string; replaces?: string }
   /** 「断られたら？」：返事を待っている頼み事（依頼の ID）を、断られたと仮に置いて計算する（何も書かない）。 */
   | { name: 'whatIf'; requestId: string }
   /**
@@ -715,7 +716,7 @@ function WrittenTime({ ctx, task }: { ctx: Ctx; task: Task }) {
  * 外へ出した（頼んだ・届けを出した）と記録する命令。子の居場所の手配は、画面で見せた頼む時間（手配の区間。
  * 頼む文と同じ）を付ける。
  */
-export function sentCommand(ctx: Ctx, task: Task): Command {
+export function sentCommand(ctx: Ctx, task: Task, previous?: ExternalRequest): Command {
   const arrangement = arrangementOf(ctx, task.basis.arrangementKey);
   return {
     type: 'recordSent',
@@ -725,6 +726,10 @@ export function sentCommand(ctx: Ctx, task: Task): Command {
     ...(arrangement?.kind === 'childCare' ||
     (arrangement?.kind === 'need' && arrangement.needShape === 'window')
       ? { window: { start: arrangement.start, end: arrangement.end } }
+      : {}),
+    // 時間の変更のお願い：前の依頼と、画面で見せた前の頼んだ時間（サーバーが、前の依頼の控えと同じかを確かめる）。
+    ...(previous?.window
+      ? { replaces: { requestId: previous.requestId, window: previous.window } }
       : {}),
   };
 }
@@ -883,6 +888,68 @@ export function askDraft(ctx: Ctx, task: Task): string {
     );
   }
   return parts.join('\n');
+}
+
+/**
+ * 時間の変更のお願いの文（相手の言葉）。前にお願いした時間（前の依頼の控え）と今の時間を書き、変えてもらえるかを
+ * 頼む（前のお願いの取り消しではない。前のお願いに返事があったかは書かない）。同じ日の分だけ。
+ */
+export function changeDraft(ctx: Ctx, task: Task, previous: ExternalRequest): string {
+  const helper = helperOf(ctx, task);
+  const arrangement = arrangementOf(ctx, task.basis.arrangementKey);
+  if (!helper || arrangement?.kind !== 'childCare' || !previous.window) return '';
+  const lng = outboundLanguage(helper);
+  const t = ctx.outbound(lng);
+  const parts = [
+    t('draft.change', {
+      address: helper.addressAs ?? helper.name,
+      date: formatLongDay(arrangement.start, lng, ctx.tz),
+      child: childLabel(ctx, arrangement.childId, t),
+      oldFrom: formatTime(previous.window.start, lng, ctx.tz),
+      oldTo: formatTime(previous.window.end, lng, ctx.tz),
+      from: formatTime(arrangement.start, lng, ctx.tz),
+      to: formatTime(arrangement.end, lng, ctx.tz),
+    }),
+  ];
+  if (isConditional(arrangement)) parts.push(t('draft.conditional'));
+  const reply = replyBy(ctx, arrangement, task.basis.optionKey);
+  if (reply) {
+    parts.push(
+      reply.evening
+        ? t('draft.replyBy', { date: formatLongDay(reply.evening, lng, ctx.tz) })
+        : t('draft.replySoon'),
+    );
+  }
+  return parts.join('\n');
+}
+
+/**
+ * 同じ日に頼む時間が変わった子の居場所の依頼に、時間の変更のお願いを送れるか（サーバーと同じ決まり）。送れるなら、
+ * 頼む作業を返す：前の依頼が返事待ちか「はい」で替わっておらず、送った後に変わったのが頼んだ時間だけ（計画の
+ * timeOnly：同じ日・同じ子で、条件しだいかと条件の形も送った時のまま、使えないとした手でない）、頼む作業が今も
+ * 自分の担当で同じ相手、ほかに同じ日の依頼（返事待ちや断られた変更のお願い）が無い。
+ */
+export function changeTask(ctx: Ctx, request: ExternalRequest): Task | undefined {
+  if (request.state !== 'awaitingReply' && request.state !== 'confirmed') return undefined;
+  if (request.timeOnly !== true || !request.live || request.replacedBy || !request.window)
+    return undefined;
+  // 頼める人（家の名簿の人）への頼み事だけ。学童などの所への届けは、相手に送る文を作れないので入口を出さない
+  // （確かめの札で、ほかの手を選ぶか、所に直接確かめる）。
+  if (!ctx.household.members.some((m) => m.id === request.to && m.active)) return undefined;
+  const task = ctx.plan.tasks.find((t) => t.key === request.taskKey);
+  if (!task?.live || task.external?.to !== request.to || task.assigneeId !== ctx.me.id)
+    return undefined;
+  const dayOf = (at: string) => localDateOf(toEpochMinutes(at), ctx.tz);
+  const others = ctx.plan.requests.some(
+    (r) =>
+      r.requestId !== request.requestId &&
+      r.taskKey === request.taskKey &&
+      r.state !== 'cancelled' &&
+      r.replacedBy === undefined &&
+      r.window !== undefined &&
+      dayOf(r.window.start) === dayOf(request.window?.start ?? r.window.start),
+  );
+  return others ? undefined : task;
 }
 
 /**
@@ -1490,6 +1557,20 @@ function CheckCard({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
   const unknownCare =
     request.basis.arrangementKey?.startsWith('arr:childCare:') &&
     (!request.childId || !request.window);
+  // 同じ日に頼む時間が変わった：前の時間と今の時間を書く。時間の変更のお願いを送れる時は、その入口を先に出す。
+  // 変更のお願いが断られた時は、前のお願いの状態（OK の返事あり・返事待ち）のまま残っていると書く（断られたのは
+  // 新しい時間のお願いの全体で、どこまで見てもらえるかは確かめていない）。
+  // 時間だけが変わった（計画の timeOnly）時だけ、前と今の時間を書く。条件の形なども変わった時は、ほかの疑いと
+  // 同じく前提が変わったと書く（時間だけの変更とは言わない）。
+  const change = changeTask(ctx, request);
+  const timeChanged = request.timeOnly === true;
+  const declined = ctx.plan.requests.some(
+    (r) => r.replaces?.requestId === request.requestId && r.state === 'turnedDown',
+  );
+  const times = {
+    old: requestWhen(ctx, request) ?? '',
+    now: arrangement ? (requestWhen(ctx, { window: arrangement }) ?? '') : '',
+  };
   const decide = async (decision: 'keep' | 'cancel') => {
     setBusy(true);
     const result = await ctx.send({
@@ -1515,27 +1596,57 @@ function CheckCard({ ctx, request }: { ctx: Ctx; request: ExternalRequest }) {
   return (
     <Card>
       <Label tone="warn">{ctx.t('card.check.label')}</Label>
-      <Title>{ctx.t('card.check.title', { to: nameOf(ctx.household, request.to) })}</Title>
+      <Title>
+        {ctx.t(!declined && timeChanged ? 'card.check.titleTime' : 'card.check.title', {
+          to: nameOf(ctx.household, request.to),
+        })}
+      </Title>
       <Text quiet>
         {ctx.t(
           role
             ? 'card.check.bodyUnusableDrop'
             : unusable
               ? 'card.check.bodyUnusable'
-              : 'card.check.body',
+              : declined
+                ? request.state === 'confirmed'
+                  ? 'card.check.changeDeclined'
+                  : 'card.check.changeDeclinedWaiting'
+                : change
+                  ? 'card.check.timeChanged'
+                  : timeChanged
+                    ? 'card.check.timeChangedOnly'
+                    : 'card.check.body',
+          times,
         )}
       </Text>
       <RequestDetails ctx={ctx} request={request} />
       {!arrangement && !unknownCare && <Text quiet>{ctx.t('card.check.keepNote')}</Text>}
       {unknownCare && <Text quiet>{ctx.t('card.check.unknownCare')}</Text>}
+      {/* 手が同じ日に選ばれている間は「もう要らない」を出さないので、決める画面で選び直す道を先に書く（時間の変更を
+          頼める時と、変更が断られた時は、本文がその道を書く）。 */}
+      {selectedHere && !role && !change && !declined && failed !== 'optionStillChosen' && (
+        <Text quiet>{ctx.t('card.check.stillChosen')}</Text>
+      )}
       {failed && (
         <Text>
           {ctx.t(failed === 'optionStillChosen' ? 'card.check.stillChosen' : 'card.check.failed')}
         </Text>
       )}
       <Row>
+        {change && (
+          <Button
+            onClick={() =>
+              ctx.go({ name: 'ask', taskKey: change.key, replaces: request.requestId })
+            }
+          >
+            {ctx.t('card.check.askChange')}
+          </Button>
+        )}
         {arrangement && (
-          <Button onClick={() => ctx.go(decideRoute(arrangement))}>
+          <Button
+            {...(change ? { kind: 'secondary' as const } : {})}
+            onClick={() => ctx.go(decideRoute(arrangement))}
+          >
             {ctx.t('card.check.action')}
           </Button>
         )}
@@ -2967,8 +3078,26 @@ function RequestDetails({ ctx, request }: { ctx: Ctx; request: ExternalRequest }
     request.state === 'awaitingReply' &&
     request.window !== undefined &&
     toEpochMinutes(ctx.now) >= toEpochMinutes(request.window.end);
+  // 時間の変更のお願い：どの前のお願い（時間と、その時の返事）を変えてもらうお願いか。返事を待つ間は、「OK だった」が
+  // 何を意味するか（前のお願いがこの時間に替わり、後で断られても前の時間には戻らない）も書く。
+  const previous = request.replaces
+    ? ctx.plan.requests.find((r) => r.requestId === request.replaces?.requestId)
+    : undefined;
+  const changeOf = request.replaces
+    ? ctx.t(
+        request.state !== 'awaitingReply'
+          ? 'quiet.changedFrom'
+          : previous?.state === 'confirmed'
+            ? 'quiet.changeOfConfirmed'
+            : previous?.state === 'awaitingReply'
+              ? 'quiet.changeOfWaiting'
+              : 'quiet.changeOf',
+        { old: requestWhen(ctx, request.replaces) ?? '' },
+      )
+    : undefined;
   return (
     <>
+      {changeOf && <span className="text-sm text-sub">{changeOf}</span>}
       {request.standalone && <span className="text-sm text-sub">{ctx.t('quiet.standalone')}</span>}
       {careDetail && <span className="text-sm text-sub">{careDetail}</span>}
       {careCondition && <span className="text-sm text-sub">{careCondition}</span>}
@@ -3799,9 +3928,27 @@ function DraftActions({ ctx, draft }: { ctx: Ctx; draft: string }) {
   );
 }
 
-export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
+export function AskScreen({
+  ctx,
+  taskKey,
+  replaces,
+}: {
+  ctx: Ctx;
+  taskKey: string;
+  /** 時間の変更のお願いなら、変えてもらう前の依頼の ID。 */
+  replaces?: string;
+}) {
   const task = ctx.plan.tasks.find((t) => t.key === taskKey);
   const [failed, setFailed] = useState<string>();
+  // 時間の変更のお願いは、前の依頼と今の時間で文を作る（送れなくなっていれば、作らない）。
+  const previous = replaces ? ctx.plan.requests.find((r) => r.requestId === replaces) : undefined;
+  const screenKey = replaces ? `${taskKey}|${replaces}` : taskKey;
+  const draftOf = (t: Task) =>
+    replaces === undefined
+      ? askDraft(ctx, t)
+      : previous && changeTask(ctx, previous)?.key === t.key
+        ? changeDraft(ctx, t, previous)
+        : undefined;
   // 外のアプリに移っている間に作業が消えても、表示していた文と命令をこの画面の間だけ持つ。
   // 実際には送っていない文を、ここから新しく送らせない。
   const last = useRef<{
@@ -3812,36 +3959,36 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
     sourceIds: string[];
     content: string;
   }>(undefined);
-  const active = task?.live === true && isActiveTask(ctx.plan, task);
+  const active = task?.live === true && isActiveTask(ctx.plan, task) && draftOf(task) !== undefined;
   const content =
     active && task
       ? JSON.stringify([
-          askDraft(ctx, task),
+          draftOf(task),
           task.external,
           task.basis,
           arrangementOf(ctx, task.basis.arrangementKey)?.start,
           arrangementOf(ctx, task.basis.arrangementKey)?.end,
         ])
       : undefined;
-  if (active && task && last.current?.taskKey !== taskKey) {
+  if (active && task && last.current?.taskKey !== screenKey) {
     const sourceIds = task.basis.itemIds.flatMap(
       (id) => ctx.items.find((entry) => entry.item.id === id)?.item.sourceId ?? [],
     );
     last.current =
       sourceIds.length > 0 && sourceIds.length === task.basis.itemIds.length
         ? {
-            taskKey,
+            taskKey: screenKey,
             title: taskTitle(ctx, task),
-            draft: askDraft(ctx, task),
-            command: sentCommand(ctx, task),
+            draft: draftOf(task) ?? '',
+            command: sentCommand(ctx, task, previous),
             sourceIds,
             content: content ?? '',
           }
         : undefined;
   }
-  const changed = active && last.current?.taskKey === taskKey && last.current.content !== content;
+  const changed = active && last.current?.taskKey === screenKey && last.current.content !== content;
   if (!active || changed) {
-    const before = last.current?.taskKey === taskKey ? last.current : undefined;
+    const before = last.current?.taskKey === screenKey ? last.current : undefined;
     // 内容を削除した出典は、以前の画面にあっても再び出さない。
     if (!before || before.sourceIds.some((id) => !ctx.sources.has(id))) {
       last.current = undefined;
@@ -3857,7 +4004,7 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
         <Header
           back={{ label: ctx.t('nav.today'), onClick: () => ctx.go({ name: 'today' }) }}
           eyebrow={before.title}
-          title={ctx.t('ask.title')}
+          title={ctx.t(replaces ? 'ask.changeTitle' : 'ask.title')}
         />
         <Main>
           <Card tone="warn">
@@ -3886,7 +4033,7 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
   }
   if (!task) return <Missing ctx={ctx} />;
   const helper = helperOf(ctx, task);
-  const draft = askDraft(ctx, task);
+  const draft = draftOf(task) ?? '';
   // 見守れる大人を確かめられない時間が分かれる日は、頼む文がどの時間の分かと、ほかの時間を書く。
   const found = arrangementOf(ctx, task.basis.arrangementKey);
   const split = found?.kind === 'childCare' ? splitLine(ctx, found) : undefined;
@@ -3894,7 +4041,7 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
   // 記録を確かめられない時は、外で送った可能性を見落とさないよう画面にも伝える。
   const sent = async () => {
     const result = await ctx.send(
-      last.current?.taskKey === taskKey ? last.current.command : sentCommand(ctx, task),
+      last.current?.taskKey === screenKey ? last.current.command : sentCommand(ctx, task, previous),
     );
     if (succeeded(result)) ctx.go({ name: 'today', done: 'sent' });
     else setFailed('reason' in result ? (result.reason ?? 'other') : 'other');
@@ -3917,10 +4064,11 @@ export function AskScreen({ ctx, taskKey }: { ctx: Ctx; taskKey: string }) {
       <Header
         back={{ label: ctx.t('nav.today'), onClick: () => ctx.go({ name: 'today' }) }}
         eyebrow={taskTitle(ctx, task)}
-        title={ctx.t('ask.title')}
+        title={ctx.t(replaces ? 'ask.changeTitle' : 'ask.title')}
       />
       <Main>
         <Text quiet>{ctx.t('ask.body', { name: helper?.name ?? '' })}</Text>
+        {replaces && <Text quiet>{ctx.t('ask.changeBody')}</Text>}
         <Card>
           <span className="flex items-center gap-1.5 text-sm font-bold text-sub">
             <Icon path={ICON.message} size={18} />
@@ -4669,9 +4817,15 @@ function SayAnswer({
                 requestFor(ctx, request),
               )}
             </span>
-            {/* 返事の状態と、まだ要るかは別のこと。要らなくなった頼み事は、取り消しを伝える。 */}
-            {!request.live && request.state !== 'cancelled' && (
-              <span className="text-sub text-sm">{ctx.t('say.noLongerNeeded')}</span>
+            {/* 返事の状態と、まだ要るかは別のこと。要らなくなった頼み事は、取り消しを伝える。時間の変更のお願いに
+                替わった頼み事は、取り消さない（新しい時間のお願いのほうを見る）。 */}
+            {request.replacedBy !== undefined ? (
+              <span className="text-sub text-sm">{ctx.t('say.replaced')}</span>
+            ) : (
+              !request.live &&
+              request.state !== 'cancelled' && (
+                <span className="text-sub text-sm">{ctx.t('say.noLongerNeeded')}</span>
+              )
             )}
             {request.live && request.needsCheck && (
               <span className="text-sub text-sm">{ctx.t('say.needsCheck')}</span>

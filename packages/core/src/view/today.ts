@@ -415,10 +415,12 @@ export function todayCards(
     if (request && request.state !== 'cancelled') cancel.push({ kind: 'cancel', task, request });
   }
 
+  // 時間の変更のお願いの返事を待つ依頼（changeAsked）は、確かめの札を出さない（お願いの返事待ちの行で追う）。
   const check: TodayCard[] = plan.requests
     .filter(
       (r) =>
         r.needsCheck === true &&
+        r.changeAsked === undefined &&
         r.sentBy === memberId &&
         (r.state === 'awaitingReply' || r.state === 'confirmed'),
     )

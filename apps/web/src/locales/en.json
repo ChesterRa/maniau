@@ -259,7 +259,13 @@
       "keepNote": "The original request stays. It does not secure a new arrangement.",
       "unknownCare": "The record does not identify the child or the requested time. Check what you asked the person.",
       "failed": "Things may have changed, or the choice could not be saved. Check the current details and choose again.",
-      "stillChosen": "This option is still selected. On the decision screen, choose another option or drop this one."
+      "askChange": "Ask to change the time",
+      "timeChanged": "The time changed after you asked (before: {{old}}, now: {{now}}). Ask whether they can change to the new time, or pick another option.",
+      "timeChangedOnly": "The time changed after you asked (before: {{old}}, now: {{now}}). You decide whether to cancel.",
+      "changeDeclined": "They said no to the time change. Your earlier request ({{old}}, they said OK) has not been cancelled. Whether they can help outside the earlier time has not been checked. If you pick another option, a task to send the cancellation is added.",
+      "changeDeclinedWaiting": "They said no to the time change. Your earlier request ({{old}}) is still waiting for a reply and has not been cancelled. Whether they can help outside the earlier time has not been checked. If you pick another option, a task to send the cancellation is added.",
+      "titleTime": "The time for your request to {{to}} changed",
+      "stillChosen": "This option is still selected. To change it, check the other options on the decision screen."
     },
     "noReply": {
       "label": "Reply not recorded",
@@ -464,7 +470,11 @@
     "recordedStep": "As recorded: {{step}} ({{what}}). This is not the message they read.",
     "recordedPlace": "Place: {{place}}",
     "recordedFor": "For: {{name}}",
-    "recordedUnknown": "We cannot tell from the record what was asked. Check what the reply is about before recording it."
+    "recordedUnknown": "We cannot tell from the record what was asked. Check what the reply is about before recording it.",
+    "changeOfConfirmed": "This asks them to change your earlier request ({{old}}, they said OK) to this time. If you tap “They said OK”, the earlier request is replaced by this time (it does not switch back if they later say no).",
+    "changeOfWaiting": "This asks them to change your earlier request ({{old}}, still waiting for a reply) to this time. If you tap “They said OK”, the earlier request is replaced by this time (it does not switch back if they later say no).",
+    "changeOf": "This asks them to change your earlier request ({{old}}) to this time. If you tap “They said OK”, the earlier request is replaced by this time (it does not switch back if they later say no).",
+    "changedFrom": "This was the request to change your earlier request ({{old}}) to this time."
   },
   "decide": {
     "eyebrow": "{{date}} {{what}}",
@@ -677,7 +687,9 @@
     "sent": "Record that I sent it",
     "nextLabel": "Next",
     "next1": "When they reply, tap “They said OK” or “They said no” under “Waiting on others” on Today.",
-    "next2": "If there's no reply, the backup option shows on Today about a day before its deadline."
+    "next2": "If there's no reply, the backup option shows on Today about a day before its deadline.",
+    "changeTitle": "Message to change the time",
+    "changeBody": "It states the time you asked for before and the new time. If they say OK to the new time, tap “They said OK”."
   },
   "child": {
     "unknown": "the child"
@@ -707,7 +719,8 @@
     "whenBy": "by {{date}}",
     "whenByTime": "by {{time}} on {{date}}",
     "cancelHelperNeed": "Hi {{address}}, plans changed, so we no longer need help with “{{what}}” ({{when}}). Thank you!",
-    "cancelHelperNeedWhen": "Hi {{address}}, plans changed, so we no longer need the help we asked for ({{when}}). Thank you!"
+    "cancelHelperNeedWhen": "Hi {{address}}, plans changed, so we no longer need the help we asked for ({{when}}). Thank you!",
+    "change": "Hi {{address}}, about {{date}}: I asked you to look after {{child}} from {{oldFrom}} to about {{oldTo}}, but the times have changed. Could you look after {{child}} from {{from}} to about {{to}} instead?"
   },
   "sources": {
     "eyebrow": "Imported notices",
@@ -1002,7 +1015,8 @@
     "needUnconfirmed": "Reading not checked yet (not in the plan)",
     "requestBy": "by {{by}}",
     "privacySummaryFictional": "Share fictional details only. Your update, family and helper names, and current plans and requests are sent to Anthropic.",
-    "privacyFictional": "Share fictional details only. Your update, this demo’s family and helper names, and the current items, tasks and requests (including the people and places involved) are sent to Anthropic’s Claude API to be read. This demo is kept in server memory and periodically deleted after 12 hours unused."
+    "privacyFictional": "Share fictional details only. Your update, this demo’s family and helper names, and the current items, tasks and requests (including the people and places involved) are sent to Anthropic’s Claude API to be read. This demo is kept in server memory and periodically deleted after 12 hours unused.",
+    "replaced": "replaced by the request for the new time"
   },
   "clock": {
     "label": "Until each choice disappears",

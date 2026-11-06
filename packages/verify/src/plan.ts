@@ -662,8 +662,12 @@ export function optionFailure(
   history: History,
   timeZone: string,
 ): { code: 'turnedDown' | 'missedDeadline'; refs: string[] } | undefined {
+  // 時間の変更のお願いに替わった依頼の返事は見ない（替えたお願いの返事で決める）。
   const requests = [...history.requests.entries()].filter(
-    ([, sent]) => option.taskKeys.includes(sent.taskKey) && sent.state !== 'cancelled',
+    ([, sent]) =>
+      option.taskKeys.includes(sent.taskKey) &&
+      sent.state !== 'cancelled' &&
+      sent.replacedBy === undefined,
   );
   // 今の日の依頼があればその返事を見る。新しい依頼が一つも無い時は、以前の断りを見落として
   // 使えると決めない（今の日への断りが確定したという意味ではない）。
@@ -1669,7 +1673,9 @@ export function checkPlan(
     const waiting = subjectOption
       ? [...history.requests.values()].filter(
           (request) =>
-            subjectOption.taskKeys.includes(request.taskKey) && request.state === 'awaitingReply',
+            subjectOption.taskKeys.includes(request.taskKey) &&
+            request.state === 'awaitingReply' &&
+            request.replacedBy === undefined,
         )
       : [];
     const waitingToday = waiting.some(

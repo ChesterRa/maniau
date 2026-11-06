@@ -37,6 +37,13 @@ export interface RequestRecord {
   snapshot?: RequestSnapshot;
   /** 送った本人が確かめた時の根拠の版。返事とは別に持つ。 */
   checked?: { decision: 'keep' | 'cancel'; basisVersion: string; seq: number };
+  /**
+   * 時間の変更のお願い：変えてほしいと頼んだ前の依頼と、その頼んだ時間。送った時に、前の依頼と同じ作業・相手・
+   * 子・日で、前の依頼の控えの時間が見せた時間と同じだった時だけ持つ（validReplacement）。
+   */
+  replaces?: { requestId: string; window: { start: DateTime; end: DateTime } };
+  /** この依頼の時間の変更のお願いに、相手が「はい」と言ったと記録された（その依頼の ID）。戻らない。 */
+  replacedBy?: string;
 }
 
 /**
@@ -809,6 +816,12 @@ function apply(state: EngineState, event: DomainEvent): void {
         return;
       }
       state.sentRequestIds.add(event.requestId);
+      // 時間の変更のお願いは、前の依頼と結べる時だけ結ぶ（結べなければ、ほかの依頼と同じ一通として扱う。前の依頼を
+      // 替えない）。
+      const replaces =
+        event.replaces && validReplacement(state, event.taskKey, event.snapshot, event.replaces)
+          ? event.replaces
+          : undefined;
       state.requests.set(event.requestId, {
         requestId: event.requestId,
         taskKey: event.taskKey,
@@ -817,6 +830,7 @@ function apply(state: EngineState, event: DomainEvent): void {
         sentSeq: event.seq,
         state: 'awaitingReply',
         ...(event.snapshot ? { snapshot: event.snapshot } : {}),
+        ...(replaces ? { replaces } : {}),
       });
       setCommitment(state, event.taskKey, 'done', event, event.requestId);
       return;
@@ -827,6 +841,17 @@ function apply(state: EngineState, event: DomainEvent): void {
       // 後の返事に従う。取り消した依頼は変えない。
       if (request && request.state !== 'cancelled') {
         request.state = event.reply === 'yes' ? 'confirmed' : 'turnedDown';
+        // 時間の変更のお願いに「はい」：前の依頼は、この時間に替わる（初めの「はい」で。後で断られても戻さない。
+        // 取り消しを伝えた前の依頼は、取り消したまま）。
+        const previous = request.replaces && state.requests.get(request.replaces.requestId);
+        if (
+          event.reply === 'yes' &&
+          previous &&
+          previous.state !== 'cancelled' &&
+          previous.replacedBy === undefined
+        ) {
+          previous.replacedBy = request.requestId;
+        }
       }
       return;
     }
@@ -879,6 +904,50 @@ function releasedTaskKey(notificationKey: string, memberId: string): string | un
   if (!base.startsWith(prefix) || !base.endsWith(suffix)) return undefined;
   const taskKey = base.slice(prefix.length, base.length - suffix.length);
   return taskKey.length > 0 ? taskKey : undefined;
+}
+
+/**
+ * 時間の変更のお願いが、前の依頼と結べるか（送った時の事象で見る）。前の依頼が、同じ作業・同じ相手・同じ種類で、
+ * 返事待ちか「はい」のまま替わっておらず、家族が「もう要らない」と決めておらず、控えに子と頼んだ時間があり、その
+ * 時間が見せた時間（replaces.window）と同じ。新しい依頼の控えも同じ子で、同じ日（家庭の時区）の違う時間、時間の
+ * ほか（根拠・条件の形・条件しだいか・中身）は前の控えと同じ。子の居場所の依頼だけ（控えに子がある）。
+ */
+function validReplacement(
+  state: EngineState,
+  taskKey: string,
+  snapshot: RequestSnapshot | undefined,
+  replaces: { requestId: string; window: { start: DateTime; end: DateTime } },
+): boolean {
+  const previous = state.requests.get(replaces.requestId);
+  const before = previous?.snapshot;
+  const timeZone = state.household?.timeZone;
+  if (!previous || !before?.window || !snapshot?.window || timeZone === undefined) return false;
+  const same = (a: DateTime, b: DateTime) => toEpochMinutes(a) === toEpochMinutes(b);
+  const day = (at: DateTime) => localDateOf(toEpochMinutes(at), timeZone);
+  return (
+    previous.taskKey === taskKey &&
+    (previous.state === 'awaitingReply' || previous.state === 'confirmed') &&
+    previous.replacedBy === undefined &&
+    previous.checked?.decision !== 'cancel' &&
+    before.to === snapshot.to &&
+    before.kind === snapshot.kind &&
+    before.childId !== undefined &&
+    before.childId === snapshot.childId &&
+    // 時間のほかは送った時のまま（根拠・条件の形・条件しだいか・中身）。相手が OK と言うのは時間の変更だけ。
+    // 控えに条件の形が無い古い依頼は、同じと推さない。
+    JSON.stringify(before.basis) === JSON.stringify(snapshot.basis) &&
+    before.condition !== undefined &&
+    before.condition === snapshot.condition &&
+    before.conditional === snapshot.conditional &&
+    before.about === snapshot.about &&
+    same(before.window.start, replaces.window.start) &&
+    same(before.window.end, replaces.window.end) &&
+    day(before.window.start) === day(snapshot.window.start) &&
+    !(
+      same(before.window.start, snapshot.window.start) &&
+      same(before.window.end, snapshot.window.end)
+    )
+  );
 }
 
 function setCommitment(

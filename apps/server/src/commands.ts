@@ -61,6 +61,7 @@ import {
   needWaysBasis,
   optionStarted,
   planFromState,
+  type RequestRecord,
   requestSnapshot,
   retiredUnknowns,
 } from '@maniau/core/engine';
@@ -691,6 +692,8 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       let task = taskOf(command.taskKey);
       let snapshot = task?.external ? requestSnapshot(events, context.now, task.key) : undefined;
       const shown = command.shown;
+      // 本人が見ていた計画（古い画面なら、その画面の時の計画）。時間の変更のお願いの入口を見せたかを、これで決める。
+      let seenPlan = plan;
       if (
         shown &&
         (shown.throughSeq > plan.throughSeq ||
@@ -706,6 +709,7 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         if (!previous.household || previous.lastSeq !== shown.throughSeq)
           return { status: 'conflict', reason: 'taskGone' };
         const oldPlan = planFromState(previous, shown.at, context.maps);
+        seenPlan = oldPlan;
         const oldTask = oldPlan.tasks.find((entry) => entry.key === command.taskKey);
         if (
           !oldTask?.live ||
@@ -773,15 +777,86 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       // 依頼は一通だけ。控えの時刻は家庭の時区で書いてある（日をそのまま読める）。取り消しを伝えた依頼は
       // 数えない（日が戻ったり、案を選び直したりしたら、同じ日の分を頼み直せる）。
       const day = (window: { start: DateTime } | undefined) => window?.start.slice(0, 10);
-      if (
-        [...state.requests.values()].some(
-          (r) =>
-            r.taskKey === task.key &&
-            r.state !== 'cancelled' &&
-            day(r.snapshot?.window) === day(snapshot.window),
-        )
-      ) {
-        return { status: 'conflict', reason: 'alreadySent' };
+      const sameDay = (r: RequestRecord) =>
+        r.taskKey === task.key &&
+        r.state !== 'cancelled' &&
+        day(r.snapshot?.window) === day(snapshot.window);
+      if (!command.replaces) {
+        if ([...state.requests.values()].some(sameDay)) {
+          return { status: 'conflict', reason: 'alreadySent' };
+        }
+      } else {
+        // 時間の変更のお願い：同じ日に時間が変わった子の居場所の依頼を、今の時間に変えてほしいと頼む。前の依頼が、
+        // この作業・この相手・この子・この日の、返事待ちか「はい」で替わっていない一通で、その控えの時間が画面で
+        // 見せた時間と同じで、今の時間と違う時だけ受ける。ほかに同じ日の依頼（返事待ちの変更のお願い、断られた
+        // 変更のお願い）があれば受けない（一つずつ。断られたら、ほかの手を選ぶ）。
+        const previous = state.requests.get(command.replaces.requestId);
+        const before = previous?.snapshot;
+        const same = (a: DateTime, b: DateTime) => toEpochMinutes(a) === toEpochMinutes(b);
+        // 同じ日かは、家庭の時区の暦の日で見る（控えの書き方に頼らない）。
+        const timeZone = state.household?.timeZone;
+        if (timeZone === undefined) return { status: 'conflict', reason: 'requestGone' };
+        const localDay = (at: DateTime) => localDateOf(toEpochMinutes(at), timeZone);
+        if (
+          !previous ||
+          !before?.window ||
+          !snapshot.window ||
+          previous.taskKey !== task.key ||
+          previous.replacedBy !== undefined ||
+          previous.checked?.decision === 'cancel' ||
+          (previous.state !== 'awaitingReply' && previous.state !== 'confirmed') ||
+          before.to !== snapshot.to ||
+          // 頼める人（家の名簿の人）への頼み事だけ（学童などの所への届けは、変更のお願いの文を作れない）。
+          !state.household?.members.some((m) => m.id === before.to && m.active) ||
+          before.kind !== snapshot.kind ||
+          before.childId === undefined ||
+          before.childId !== snapshot.childId ||
+          localDay(before.window.start) !== localDay(snapshot.window.start)
+        ) {
+          return { status: 'conflict', reason: 'requestGone' };
+        }
+        // 本人が見ていた計画で、前の依頼に時間の変更を頼めた時だけ受ける（画面の入口と同じ timeOnly。使えないとした
+        // 手や、条件の形も替わった依頼には入口を出さない）。外で送った後に、もう一人が手を「使えない」にした時でも、
+        // 送った時の画面で頼めたなら、送った事実として記録する（記録の後は、確かめの札で追う）。
+        const seen = seenPlan.requests.find((r) => r.requestId === command.replaces?.requestId);
+        if (seen?.timeOnly !== true) return { status: 'conflict', reason: 'proposalChanged' };
+        // 変わったのが時間だけの時に限る（根拠・条件の形・条件しだいか・中身が送った時のまま。条件の形の無い古い控えは
+        // 同じと推さない）。相手が OK と言うのは、文に書いた時間の変更だけだから。
+        if (
+          !sameJson(before.basis, snapshot.basis) ||
+          before.condition === undefined ||
+          before.condition !== snapshot.condition ||
+          before.conditional !== snapshot.conditional ||
+          before.about !== snapshot.about
+        ) {
+          return { status: 'conflict', reason: 'proposalChanged' };
+        }
+        if (
+          !same(before.window.start, command.replaces.window.start) ||
+          !same(before.window.end, command.replaces.window.end)
+        ) {
+          return { status: 'conflict', reason: 'proposalChanged' };
+        }
+        if (
+          same(before.window.start, snapshot.window.start) &&
+          same(before.window.end, snapshot.window.end)
+        ) {
+          return { status: 'conflict', reason: 'proposalChanged' };
+        }
+        const window = snapshot.window;
+        if (
+          [...state.requests.values()].some(
+            (r) =>
+              r.taskKey === task.key &&
+              r.state !== 'cancelled' &&
+              r.requestId !== previous.requestId &&
+              r.replacedBy === undefined &&
+              r.snapshot?.window !== undefined &&
+              localDay(r.snapshot.window.start) === localDay(window.start),
+          )
+        ) {
+          return { status: 'conflict', reason: 'alreadySent' };
+        }
       }
       return {
         bodies: [
@@ -790,6 +865,7 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
             taskKey: task.key,
             requestId: command.requestId,
             snapshot,
+            ...(command.replaces ? { replaces: command.replaces } : {}),
           },
         ],
       };

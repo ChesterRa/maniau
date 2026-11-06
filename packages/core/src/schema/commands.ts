@@ -258,7 +258,8 @@ export const Command = z.discriminatedUnion('type', [
   /**
    * 外の相手に頼んだと記録する。控えはサーバーが今の計画から作る。頼む時間のある依頼（子の居場所）は、画面で
    * 見せた頼む時間（window）を必ず付ける。今の控えと違えば断って見せ直す（日が直された後の古い画面から、
-   * 新しい日を送ったことにしない）。
+   * 新しい日を送ったことにしない）。replaces は、同じ日に時間が変わった子の居場所の依頼の、時間の変更の
+   * お願い：前の依頼の ID と、画面で見せた前の頼んだ時間。前の依頼が今もそうでなければ断る。
    */
   z.object({
     type: z.literal('recordSent'),
@@ -267,6 +268,9 @@ export const Command = z.discriminatedUnion('type', [
     window: z.object({ start: DateTime, end: DateTime }).optional(),
     /** 見せた計画と時刻。作業が消えた後も、送った事実を当時の控えで記録するため。 */
     shown: z.object({ throughSeq: z.number().int().nonnegative(), at: DateTime }).optional(),
+    replaces: z
+      .object({ requestId: Id, window: z.object({ start: DateTime, end: DateTime }) })
+      .optional(),
   }),
   z.object({ type: z.literal('correctSentRecord'), requestId: Id }),
   RecordReply,

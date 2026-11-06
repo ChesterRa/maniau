@@ -584,7 +584,12 @@ function checkSubject(
     } else if (
       request.live ||
       request.needsCheck === true ||
-      !['awaitingReply', 'confirmed'].includes(request.state) ||
+      !(
+        ['awaitingReply', 'confirmed'].includes(request.state) ||
+        // 前の依頼を替えた変更のお願いは、後で断られていても取り消しを伝える。
+        (request.state === 'turnedDown' &&
+          plan.requests.some((r) => r.replacedBy === request.requestId))
+      ) ||
       !plan.tasks.some(
         (task) =>
           task.live &&

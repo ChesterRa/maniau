@@ -21,7 +21,8 @@ function primaryConfirmed(
   if (optionFailure(option, arrangement, plan, history, timeZone)) return false;
 
   const primaryRequests = [...history.requests.entries()].filter(([, sent]) => {
-    if (sent.state === 'cancelled') return false;
+    // 時間の変更のお願いに替わった依頼は数えない（替えたお願いのほうで見る）。
+    if (sent.state === 'cancelled' || sent.replacedBy !== undefined) return false;
     if (sent.snapshot) {
       const { basis } = sent.snapshot;
       return basis.arrangementKey === arrangement.key && basis.optionKey === primary;

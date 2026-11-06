@@ -274,6 +274,15 @@ export const DomainEvent = z.discriminatedUnion('type', [
      * 控えの無い古い事象だけ、今の作業から補う。
      */
     snapshot: RequestSnapshot.optional(),
+    /**
+     * 同じ日の時間の変更のお願い：前に送った依頼（requestId）の、頼んだ時間（画面で見せた控えの window）を、この
+     * 依頼の時間に変えてほしいと頼んだ。相手がこの依頼に「はい」と言ったと記録されて初めて、前の依頼はこれに
+     * 替わる（後でこれが断られても、前の依頼には戻らない）。同じ作業・同じ相手・同じ子・同じ日で、前の依頼の
+     * 控えが見せた時間と同じ時だけ当たる（エンジンと検証器が、それぞれ事象から確かめる）。
+     */
+    replaces: z
+      .object({ requestId: Id, window: z.object({ start: DateTime, end: DateTime }) })
+      .optional(),
   }),
   /** 外の返事（祖母、学童、勤務先）。家族の誰でも記録できる。依頼の一件ごとに記録する。 */
   z.object({
