@@ -3927,7 +3927,11 @@ function DraftActions({ ctx, draft }: { ctx: Ctx; draft: string }) {
   return (
     <>
       <Row>
-        <Button onClick={share}>{ctx.t('ask.share')}</Button>
+        {/* 共有の名前（「LINE などで共有」）は、札の中の狭い幅でも一字だけ折り返さないよう、文の幅を先に取る（入らない
+            時は、コピーが次の行へ回る）。 */}
+        <Button onClick={share} className="basis-auto">
+          {ctx.t('ask.share')}
+        </Button>
         <Button kind="secondary" onClick={copy}>
           {ctx.t(result === 'copied' || result === 'paste' ? 'ask.copied' : 'ask.copy')}
         </Button>

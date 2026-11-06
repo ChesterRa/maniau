@@ -110,7 +110,7 @@ export function MoreLink(props: { children: ReactNode; onClick: () => void }) {
     <button
       type="button"
       onClick={props.onClick}
-      className="inline-flex min-h-10 items-center gap-0.5 self-start font-bold text-accent"
+      className="inline-flex min-h-10 items-center gap-0.5 self-start text-left font-bold text-accent"
     >
       {props.children}
       <Icon path={ICON.chevron} size={18} />
