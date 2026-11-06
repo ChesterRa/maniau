@@ -48,7 +48,7 @@ When a Saturday school event turns the following weekday into a make-up school h
 
 - Each task is proposed to one adult and shown as waiting to be taken on until that person accepts. Requests keep “awaiting a reply” separate from “confirmed”. While a child-care request, or a request for a “thing to do” with set times, has no reply recorded, it moves to the requester’s “To do now” as a prompt to check from 26 hours before the requested time (not when a child-care backup is already secured, for example; a “thing to do” with only a deadline is not raised, because no reply deadline is defined for it).
 - When a postponement or cancellation arrives, preparations no longer needed are removed, and cancellation messages for people already asked are drafted (the family sends them).
-- Notifications go out only when something can't wait. A verifier written separately from the planning engine checks the plan and stops notifications when it finds a violation.
+- Notifications go out only when a rule calls for one: for example, when a decision deadline is near, when another adult asks you to take on a task, or when a “thing to do” read from a notice remains unchecked for an hour after the reading (the notification goes to the person who added the notice). At night, anything that can wait until morning is held. Before sending, a verifier written separately from the planning engine checks the plan and the notifications, and stops them when it finds a violation.
 
 ## What Claude does and what code does
 
@@ -60,7 +60,7 @@ The model reads, looks around, infers unstated preparations, and explains. Date 
 | Around us | Searches the web, reads pages, and suggests candidates with a reading on advance registration | Checks that the sentence Claude cites appears in the text of pages read (quotes aren't shown or kept). Nothing enters household information until the family adds it, and the family's treatment of a place is never changed |
 | Quick updates | Turns a short message into something to record, a what-if, or a one-off day | Fills in a date only when it matches the date code works out from the wording. Records only when the family taps |
 | Deadlines and placement | — | Working back from deadlines, fitting tasks into the usual week, stores, hours and walking times, overlaps, usual stores |
-| Notifications | — | Whether something can't wait, and the independent verifier's gate |
+| Notifications | — | Rules for whether to notify (a decision deadline is near, someone was asked to take on a task, and so on), and the independent verifier's gate |
 | Suggestions | Search words for stores, ideas for ways | Nothing changes until the family checks and edits them |
 
 Claude features used in the product:
