@@ -25,7 +25,7 @@ import {
   type UiLanguage,
 } from './i18n';
 import { MemberDayScreen } from './member-day';
-import { NeedFixScreen, NeedScreen, StateNeedScreen } from './need';
+import { AddThingScreen, NeedFixScreen, NeedScreen, StateNeedScreen } from './need';
 import { usePush } from './push';
 import {
   AskScreen,
@@ -698,6 +698,8 @@ function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {
       return <WhenScreen ctx={ctx} requirementKey={route.key} />;
     case 'stateNeed':
       return <StateNeedScreen ctx={ctx} />;
+    case 'addThing':
+      return <AddThingScreen ctx={ctx} />;
     case 'needFix':
       return <NeedFixScreen ctx={ctx} itemId={route.itemId} />;
     case 'ask':

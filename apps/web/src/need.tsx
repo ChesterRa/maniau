@@ -9,6 +9,7 @@ import {
   type NeedInterpretation,
   needStep,
   type SaveablePreview,
+  SELF_WAY_ID,
   zonedToEpochMinutes,
 } from '@maniau/core';
 import { useState } from 'react';
@@ -51,6 +52,8 @@ function refusedKey(reason: string): string {
     'candidateNeedTimeLocked',
     'candidateChanged',
     'decisionInUse',
+    'thingPast',
+    'selfWayChanged',
   ].includes(reason)
     ? reason
     : 'other';
@@ -123,6 +126,141 @@ export function PreviewBlock(props: {
         lines.map((line) => <Text key={line}>{line}</Text>)
       )}
     </div>
+  );
+}
+
+// ── 一言で足す ──────────────────────────────
+
+/**
+ * いつまでに何をするかと、だれがするかだけで「すること」を足す（一つの命令 addThing）。家族の一言をそのまま「何を」
+ * にし、日（時刻は空でよい。空ならその日のうち）とする大人を選ぶ。自分たちで済ませるやり方（家に無ければ足す）を
+ * 本命にして、その人に作業を提案する（自分を選んでも、引き受けるのは「きょう」で）。時間の窓・日の候補・だれの
+ * ためは、詳しい表で入れる。保存の前に、変わることを見る。
+ */
+export function AddThingScreen({ ctx }: { ctx: Ctx }) {
+  const adults = ctx.household.members.filter((m) => m.active && m.kind === 'adult');
+  const [text, setText] = useState('');
+  const [date, setDate] = useState(() => localDate(ctx.now, ctx.tz));
+  const [byTime, setByTime] = useState('');
+  const [who, setWho] = useState(() =>
+    adults.some((m) => m.id === ctx.me.id) ? ctx.me.id : (adults[0]?.id ?? ''),
+  );
+  const flow = usePreviewSave(ctx);
+  const filled = text.trim() !== '' && date !== '' && who !== '';
+  const command: SaveablePreview | undefined = filled
+    ? {
+        type: 'addThing',
+        text: text.trim(),
+        date,
+        ...(byTime ? { byTime } : {}),
+        assigneeId: who,
+        wayName: ctx.t('need.thing.wayName'),
+        stepName: ctx.t('need.thing.stepName'),
+      }
+    : undefined;
+  const shown = command && flow.shownFor(command);
+  const refused = command && flow.refusedFor(command);
+  const save = async () => {
+    if (command && (await flow.save(command))) ctx.go({ name: 'today' });
+  };
+  // 家にまだ無ければ、自分たちで済ませるやり方を足す（今の家の情報から、画面が確かに言える事）。
+  const selfWay = ctx.household.ways.find((w) => w.id === SELF_WAY_ID);
+  const notes = selfWay ? [] : [ctx.t('need.thing.newWay', { name: ctx.t('need.thing.wayName') })];
+  // 置き方の前提（かかる時間と、する所）は家族が入れていないので、そうと書く（できると確かめた事ではない）。家に
+  // あるやり方を使う時は、その手順の時間と区間で書く。
+  const step = selfWay?.steps[0];
+  const assumed = ctx.t('need.thing.assumed', {
+    min: step?.durationMin ?? 15,
+    where: new Intl.ListFormat(ctx.lang, { type: 'disjunction' }).format(
+      (step?.segments ?? ['home', 'work']).map((s) =>
+        ctx.t('need.thing.where', { kind: ctx.t(`household.week.kind.${s}`) }),
+      ),
+    ),
+  });
+  const field = 'flex flex-col gap-1';
+  const label = 'text-sm font-bold text-sub';
+  return (
+    <>
+      <Header
+        back={{ label: ctx.t('nav.today'), onClick: () => ctx.go({ name: 'today' }) }}
+        title={ctx.t('need.add.title')}
+      />
+      <Main>
+        <Text quiet>{ctx.t('need.thing.intro')}</Text>
+        <Card>
+          <label className={field}>
+            <span className={label}>{ctx.t('need.thing.what')}</span>
+            <input
+              className={input}
+              maxLength={500}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+            />
+            <span className="text-sm text-sub">{ctx.t('need.thing.example')}</span>
+          </label>
+          <div className="flex flex-wrap gap-3">
+            <label className={field}>
+              <span className={label}>{ctx.t('need.thing.date')}</span>
+              <input
+                type="date"
+                className={input}
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+              />
+            </label>
+            <label className={field}>
+              <span className={label}>{ctx.t('need.thing.byTime')}</span>
+              <input
+                type="time"
+                className={input}
+                value={byTime}
+                onChange={(e) => setByTime(e.target.value)}
+              />
+            </label>
+          </div>
+          <fieldset className={field}>
+            <legend className={label}>{ctx.t('need.thing.who')}</legend>
+            {adults.map((m) => (
+              <label key={m.id} className="flex min-h-11 items-center gap-2">
+                <input
+                  type="radio"
+                  name="thing-who"
+                  className="size-5 accent-accent"
+                  checked={who === m.id}
+                  onChange={() => setWho(m.id)}
+                />
+                {m.name}
+              </label>
+            ))}
+          </fieldset>
+        </Card>
+        <Text quiet>{assumed}</Text>
+        {!filled && <Text quiet>{ctx.t('need.thing.missing')}</Text>}
+        <PreviewBlock
+          ctx={ctx}
+          {...(shown ? { preview: shown } : {})}
+          {...(refused ? { refused } : {})}
+          notes={notes}
+        />
+        <Row>
+          {shown ? (
+            <Button onClick={() => void save()} disabled={flow.busy}>
+              {ctx.t('need.thing.save')}
+            </Button>
+          ) : (
+            <Button
+              onClick={() => command && void flow.look(command)}
+              disabled={flow.busy || !command || !ctx.previewChange}
+            >
+              {ctx.t('need.look')}
+            </Button>
+          )}
+        </Row>
+        <MoreLink onClick={() => ctx.go({ name: 'stateNeed' })}>
+          {ctx.t('need.thing.detailed')}
+        </MoreLink>
+      </Main>
+    </>
   );
 }
 

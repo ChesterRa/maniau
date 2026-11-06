@@ -29,6 +29,7 @@ import {
   type PlanResult,
   proposalSnapshot,
   repeatedNames,
+  SELF_WAY_ID,
   type SurveyCandidate,
   sameContent,
   sameNamePairs,
@@ -40,6 +41,7 @@ import {
   toEpochMinutes,
   validateHousehold,
   type Way,
+  zonedToEpochMinutes,
 } from '@maniau/core';
 import {
   awaitingConfirmation,
@@ -1031,6 +1033,94 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         ],
       };
     }
+    case 'addThing': {
+      // 一言の「すること」を一度に足す：言明（stateNeed）・自分たちで済ませるやり方（家に無ければ足す）の選び
+      // （setNeedWays）・本命と担当の提案（chooseOption）を、同じ展開を順に通して、一つの命令の事象にする。途中の
+      // 計画は、それまでの事象を足した状態から作る（書く時と見る時で同じ）。どれかが断れば、何も書かない。
+      const household = state.household;
+      if (!household) return { status: 'invalid', reason: 'householdMissing' };
+      if (!adultOf(state, command.assigneeId)) {
+        return { status: 'invalid', reason: 'assigneeNotAnAdult' };
+      }
+      if (household.stoppedWayIds?.includes(SELF_WAY_ID)) {
+        return { status: 'invalid', reason: 'wayInactive' };
+      }
+      // 家にあるやり方を使うのは、家族が済ませる一つの手順のままの時だけ（「うちのこと」で頼む相手・場所・決まった人
+      // などのある形に直されていれば、一言の「すること」に黙って当てない。直したやり方は、詳しい表で選べる）。
+      const existing = household.ways.find((w) => w.id === SELF_WAY_ID);
+      if (existing && !selfWayFits(existing)) {
+        return { status: 'invalid', reason: 'selfWayChanged' };
+      }
+      const tz = household.timeZone;
+      // 時刻の無い締切は、その日のうち（stateNeed の deadlineDayOnly と同じ）。もう過ぎた締切は足さない。
+      const deadline = zonedToEpochMinutes(command.date, command.byTime ?? '00:00', tz);
+      const last = command.byTime === undefined ? deadline + 24 * 60 : deadline;
+      if (last <= toEpochMinutes(context.now)) return { status: 'invalid', reason: 'thingPast' };
+      const bodies: EventBody[] = [];
+      let at: Now = { plan, state, events };
+      const take = (more: readonly EventBody[]) => {
+        bodies.push(...more);
+        const all = [...events, ...asEvents(events, bodies, me, context.now)];
+        const folded = foldEvents(all);
+        at = { events: all, state: folded, plan: planFromState(folded, context.now, context.maps) };
+      };
+      if (!household.ways.some((w) => w.id === SELF_WAY_ID)) {
+        const way: Way = {
+          id: SELF_WAY_ID,
+          name: command.wayName,
+          steps: [
+            {
+              id: 'do',
+              name: command.stepName,
+              durationMin: 15,
+              segments: ['home', 'work'],
+              waitAfterMin: 0,
+            },
+          ],
+          cost: { leaveMinutes: 0, helperRequests: 0, yen: 0, extraTasks: 0 },
+        };
+        take([
+          { type: 'householdSet', household: { ...household, ways: [...household.ways, way] } },
+        ]);
+      }
+      const stated = expand(at, context, {
+        type: 'stateNeed',
+        text: command.text,
+        interpretation: {
+          what: command.text,
+          shape: 'by',
+          date: command.date,
+          deadline: formatDateTime(deadline, tz),
+          ...(command.byTime === undefined ? { deadlineDayOnly: true as const } : {}),
+        },
+      });
+      if ('reason' in stated) return stated;
+      const said = stated.bodies.find((b) => b.type === 'itemsStated');
+      const itemId = said?.type === 'itemsStated' ? said.items[0]?.id : undefined;
+      if (itemId === undefined) return { status: 'conflict', reason: 'thingAlready' };
+      take(stated.bodies);
+      const ways = expand(at, context, { type: 'setNeedWays', itemId, wayIds: [SELF_WAY_ID] });
+      if ('reason' in ways) return ways;
+      take(ways.bodies);
+      const arrangement = at.plan.arrangements.find(
+        (a) =>
+          a.kind === 'need' &&
+          at.plan.requirements.some(
+            (r) => r.key === a.requirementKey && r.basis.itemIds.includes(itemId),
+          ),
+      );
+      const option = arrangement?.options.find((o) => o.templateId === SELF_WAY_ID);
+      if (!arrangement || !option) return { status: 'conflict', reason: 'thingUnplanned' };
+      const chosen = expand(at, context, {
+        type: 'chooseOption',
+        arrangementKey: arrangement.key,
+        optionKey: option.key,
+        role: 'primary',
+        assigneeId: command.assigneeId,
+      });
+      if ('reason' in chosen) return chosen;
+      return { bodies: [...bodies, ...chosen.bodies] };
+    }
     case 'setNeedWays': {
       // 家族が「すること」に使うやり方を選ぶ。選んだ時の中身とやり方の版を控える（替われば当てない）。
       const item = liveItems(state).find((l) => l.item.id === command.itemId)?.item;
@@ -1401,6 +1491,30 @@ function placeCandidates(
  * 今の決まりのまま）。
  * state が無ければ（見せる時）、要約に入れる中身だけを返す。
  */
+/**
+ * 自分たちで済ませるやり方が、一言の「すること」に当ててよい形か：手順が一つで、外の相手に頼まず、決まった場所・
+ * 店の種類・品・決まった人・窓の受け持ち・締切の決まりが無く、やり方にも締切・受け持てる時間・前提・資源が無い。
+ * 名前・かかる時間・区間・待ち時間・代償の直しはかまわない。
+ */
+function selfWayFits(way: Way): boolean {
+  const [step, ...more] = way.steps;
+  return (
+    step !== undefined &&
+    more.length === 0 &&
+    step.external === undefined &&
+    step.placeId === undefined &&
+    step.placeKind === undefined &&
+    step.goods === undefined &&
+    step.assigneeId === undefined &&
+    step.cover !== true &&
+    step.deadline === undefined &&
+    way.deadline === undefined &&
+    way.covers === undefined &&
+    (way.requires ?? []).length === 0 &&
+    (way.resourceIds ?? []).length === 0
+  );
+}
+
 export function previewedInput(
   command: Command,
   state?: EngineState,
@@ -1432,6 +1546,18 @@ export function previewedInput(
           text: command.text,
           interpretation: command.interpretation,
           ...(command.candidates === undefined ? {} : { candidates: command.candidates }),
+        },
+        ...(command.seen ? { seen: command.seen } : {}),
+      };
+    case 'addThing':
+      return {
+        input: {
+          text: command.text,
+          date: command.date,
+          ...(command.byTime === undefined ? {} : { byTime: command.byTime }),
+          assigneeId: command.assigneeId,
+          wayName: command.wayName,
+          stepName: command.stepName,
         },
         ...(command.seen ? { seen: command.seen } : {}),
       };

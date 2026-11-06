@@ -1247,6 +1247,22 @@
       "removeCandidate": "Remove this candidate",
       "hold": "Someone must cover the whole time"
     },
+    "thing": {
+      "intro": "Just enter what to do, by when, and who does it. The person you choose gets it as a task (even if you choose yourself, you take it on from Today).",
+      "what": "What to do",
+      "example": "e.g. Hand in the after-school care form",
+      "date": "By",
+      "byTime": "Time (if empty, by the end of that day)",
+      "who": "Who does it",
+      "missing": "Enter what to do and by when.",
+      "save": "Add",
+      "detailed": "If someone is needed at set times, or the day depends on others’ answers, add the details",
+      "wayName": "Do it ourselves",
+      "stepName": "Get it done",
+      "newWay": "Adds the way “{{name}}” to your ways (you can change it in “Our family”).",
+      "where": "“{{kind}}”",
+      "assumed": "Things added here are treated as taking {{min}} minutes during {{where}} time in your usual week (we haven’t checked that this works), and we look for a time before the deadline. If none fits, we say so. For things done at a set place, such as a ward office or a shop, or that take longer, add the details instead."
+    },
     "fix": {
       "title": "Fix the reading",
       "intro": "Fix the fields the plan uses, looking at the original text. Once saved, it goes into the plan as checked by your family.",
@@ -1281,7 +1297,9 @@
       "candidateUnknown": "The candidates changed. Please reopen this screen.",
       "candidateNeedTimeLocked": "For an item with candidate days, the day and time can’t be changed here. To change them, mark this item not needed and add it again.",
       "candidateChanged": "The candidates changed. Please choose again from the current ones.",
-      "decisionInUse": "Someone has already asked or accepted, so the chosen day and details can’t change. To change them, mark this item not needed and add it again."
+      "decisionInUse": "Someone has already asked or accepted, so the chosen day and details can’t change. To change them, mark this item not needed and add it again.",
+      "thingPast": "That date and time has already passed. Change the date or time.",
+      "selfWayChanged": "The do-it-ourselves way has been changed (it now has someone to ask, a place, a set person or similar), so it can’t be used here. Add the details instead, or change that way in “Our family”."
     }
   },
   "ways": {

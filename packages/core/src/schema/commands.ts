@@ -88,6 +88,25 @@ const StateNeed = z.object({
   candidates: z.array(CandidateTime).min(2).max(8).optional(),
 });
 /**
+ * 一言の「すること」を一度に足す（02-foundation §3.4 の言明と、§6 のやり方・本命・担当を一つの命令で）。家族の一言
+ * （原文。そのまま「何を」にする）・いつまでに（日。時刻は任意で、無ければその日のうち）・だれが済ませるか（家の大人）を
+ * 入れると、締切の形の「すること」に、家族が自分たちで済ませる一つのやり方（家に無ければ、その名前で足す）を選び、
+ * 本命にして、その人に作業を提案する。書く事象は、家の情報・言明・やり方の選び・本命の選び・担当の提案と同じ種類
+ * （新しい種類は無い）。足したやり方は、ほかのやり方と同じく、家族が直せる・やめられる。
+ */
+/** 一言の「すること」で使う、自分たちで済ませるやり方の ID（家に一つ。家族が直せる・やめられる）。 */
+export const SELF_WAY_ID = 'way-self';
+const AddThing = z.object({
+  type: z.literal('addThing'),
+  text: z.string().trim().min(1).max(500),
+  date: LocalDate,
+  byTime: LocalTime.optional(),
+  assigneeId: Id,
+  /** 家に自分たちで済ませるやり方が無い時に足す、やり方と手順の名前（画面の言葉）。 */
+  wayName: z.string().trim().min(1).max(40),
+  stepName: z.string().trim().min(1).max(40),
+});
+/**
  * 窓の「すること」の候補を置き直す（全部を送る）。前からある候補は id を付ける。時刻が変われば、サーバーがその
  * 候補の代（rev）を進め、前の代への答えは当てない。消した候補の id は使い回さない。
  */
@@ -145,6 +164,7 @@ const RecordReply = z.object({
 export const PreviewCommand = z.discriminatedUnion('type', [
   UpdateHousehold,
   StateNeed,
+  AddThing,
   SetNeedWays,
   SetNeedCandidates,
   ChooseCandidate,
@@ -275,6 +295,7 @@ export const Command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('withdrawSource'), sourceId: Id }),
   UpdateHousehold.extend({ seen: Seen.optional() }),
   StateNeed.extend({ seen: Seen.optional() }),
+  AddThing.extend({ seen: Seen.optional() }),
   SetNeedWays.extend({ seen: Seen.optional() }),
   SetNeedCandidates.extend({ seen: Seen.optional() }),
   ChooseCandidate.extend({ seen: Seen.optional() }),

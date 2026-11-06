@@ -113,6 +113,7 @@ export type Route =
   | { name: 'when'; key: string }
   /** 家族の言明で「すること」を足す。 */
   | { name: 'stateNeed' }
+  | { name: 'addThing' }
   /** モデルが読んだ「すること」の読み取りを、家族が直す（事項の ID）。 */
   | { name: 'needFix'; itemId: string }
   /**
@@ -1061,9 +1062,7 @@ export function TodayScreen({ ctx, done }: { ctx: Ctx; done?: TodayDone }) {
           <SayCard ctx={ctx} hear={ctx.hear} confirm={ctx.confirm} />
         )}
         {!fresh && ctx.previewChange && (
-          <MoreLink onClick={() => ctx.go({ name: 'stateNeed' })}>
-            {ctx.t('today.addNeed')}
-          </MoreLink>
+          <MoreLink onClick={() => ctx.go({ name: 'addThing' })}>{ctx.t('today.addNeed')}</MoreLink>
         )}
         <NeedList ctx={ctx} />
       </Main>
@@ -1163,7 +1162,7 @@ function StartCard({ ctx }: { ctx: Ctx }) {
         </>
       )}
       {/* 手で足す道（お知らせを読むのではない。読み取りの鍵が無くても進める）。 */}
-      <MoreLink onClick={() => ctx.go({ name: 'stateNeed' })}>
+      <MoreLink onClick={() => ctx.go({ name: 'addThing' })}>
         {ctx.t('start.empty.manual')}
       </MoreLink>
     </Card>
