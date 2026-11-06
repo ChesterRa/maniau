@@ -72,11 +72,15 @@ export function StartScreen(props: {
         <Button onClick={() => setStep('family')} disabled={busy}>
           {t('start.begin')}
         </Button>
-        <p className="-mt-1 text-center text-[13px] text-sub">{t('start.beginSub')}</p>
+        <p className="-mt-1 text-center text-[13px] text-sub [word-break:auto-phrase]">
+          {t('start.beginSub')}
+        </p>
         <Button kind="secondary" onClick={() => props.onStart({ start: 'sample' })} disabled={busy}>
           {t('start.sample')}
         </Button>
-        <p className="-mt-1 text-center text-[13px] text-sub">{t('start.sampleSub')}</p>
+        <p className="-mt-1 text-center text-[13px] text-sub [word-break:auto-phrase]">
+          {t('start.sampleSub')}
+        </p>
         <p className="text-center text-[13px] text-sub">{t('start.note')}</p>
         <button
           type="button"
