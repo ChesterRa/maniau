@@ -120,6 +120,10 @@ flowchart TB
 
 The trial clock is separate from the current date and time. The trial is kept in server memory and expires after a period of inactivity. Reading a made-up notice you write sends the text to Claude, on a server where reading is available.
 
+### Try the sample family
+
+On the first screen, press “Try the sample family” to start with a family that already has weekly routines, after-school care, a person to ask (grandma) and leave for both adults. Add the example notice with “Try an example”, then press “Choose how to arrange care” to compare the deadlines of the four ways and which one goes next.
+
 ### View prepared scenes
 
 On the first screen, press “View prepared scenes (for judges)”. Use the scene selector at the top to move between points in time, and “Viewing as” to switch between the two adults (健太 and 彩). Each scene also shows a one-line guide at the top of the screen.
