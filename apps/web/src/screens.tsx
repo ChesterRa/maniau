@@ -2685,6 +2685,29 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
     const secured = arrangement ? securedBackup(ctx.plan, arrangement) : undefined;
     const replyIn =
       arrangement && !secured ? replyBy(ctx, arrangement, request.basis.optionKey) : undefined;
+    // 見守りの依頼は、依頼の子と送った時の控えの時間で見分ける。現在の手配の時間では補わない。
+    const careRequest = arrangement !== undefined || request.childId !== undefined;
+    const child = ctx.household.members.find(
+      (member) => member.kind === 'child' && member.id === request.childId,
+    )?.name;
+    const when = requestWhen(ctx, request);
+    const careDetail = careRequest
+      ? when
+        ? child
+          ? ctx.t('quiet.careRecorded', { child, when })
+          : ctx.t('quiet.careRecordedNoChild', { when })
+        : child
+          ? ctx.t('quiet.careRecordedNoTime', { child })
+          : ctx.t('quiet.careRecordedNoChildOrTime')
+      : undefined;
+    const condition =
+      careRequest && request.conditional ? conditionOf(ctx, request.basis) : undefined;
+    const careCondition =
+      careRequest && request.conditional
+        ? condition?.when
+          ? ctx.t('card.decide.conditionalWhen', { when: condition.when })
+          : ctx.t('card.decide.conditional')
+        : undefined;
     return (
       <div className={`flex flex-col gap-2 py-2.5 ${border}`}>
         <span className="flex items-center gap-2">
@@ -2696,6 +2719,8 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
             sent: day(ctx, request.sentAt),
           })}
         </span>
+        {careDetail && <span className="text-sm text-sub">{careDetail}</span>}
+        {careCondition && <span className="text-sm text-sub">{careCondition}</span>}
         {secured && <BackupReady ctx={ctx} option={secured} />}
         {replyIn && (
           <span className="text-sm text-sub">

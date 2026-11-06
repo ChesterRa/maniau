@@ -407,6 +407,10 @@
   },
   "quiet": {
     "waiting": "{{to}}の返事待ち（{{sent}}に送った）",
+    "careRecorded": "依頼の記録：{{child}}の見守り・{{when}}",
+    "careRecordedNoChild": "依頼の記録：子どもの見守り・{{when}}",
+    "careRecordedNoTime": "依頼の記録：{{child}}の見守り（頼んだ時間は記録にありません）",
+    "careRecordedNoChildOrTime": "依頼の記録：子どもの見守り（頼んだ時間は記録にありません）",
     "backupReady": "断られても、予備の「{{option}}」に進めます（手順は済んでいます）。",
     "backupReadyAccepted": "断られても、予備の「{{option}}」に進めます（手順は済み、受け付けられています）。",
     "backupExtra": "当日の準備は、予備に進む時に出します。",

@@ -45,6 +45,113 @@ describe('返事待ちの行', () => {
     expect(shown).not.toContain('予備の「');
   });
 
+  it('子の居場所の返事待ちに、送った時の控えの子と窓を出す（日英）', () => {
+    const ja = text(renderToStaticMarkup(<TodayScreen ctx={ctxFor('asked', 'b', 'ja')} />));
+    expect(ja).toContain('依頼の記録：陽菜の見守り・12/7（月） 8:10–18:15');
+    const en = text(renderToStaticMarkup(<TodayScreen ctx={ctxFor('asked', 'b', 'en')} />));
+    expect(en).toContain('Request record: care for 陽菜');
+    expect(en).toContain('Mon 12/7 8:10 AM–6:15 PM');
+  });
+
+  it('今の手配の日で控えを上書きせず、控えに無い時間や子を推さない', () => {
+    const ctx = ctxFor('asked', 'b', 'ja');
+    const card = ctx.today.quiet.find((item) => item.kind === 'waiting');
+    if (card?.kind !== 'waiting') throw new Error('返事待ちが無い');
+    const changed = {
+      ...ctx,
+      plan: {
+        ...ctx.plan,
+        arrangements: ctx.plan.arrangements.map((a) =>
+          a.key === card.request.basis.arrangementKey
+            ? { ...a, start: '2026-12-08T09:00+09:00', end: '2026-12-08T17:00+09:00' }
+            : a,
+        ),
+      },
+      today: { main: [], quiet: [card] },
+    };
+    const original = text(renderToStaticMarkup(<TodayScreen ctx={changed} />));
+    expect(original).toContain('12/7（月） 8:10–18:15');
+    expect(original).not.toContain('12/8（火） 9:00–17:00');
+    const { window: _window, childId: _childId, ...old } = card.request;
+    const missing = text(
+      renderToStaticMarkup(
+        <TodayScreen
+          ctx={{ ...changed, today: { main: [], quiet: [{ ...card, request: old }] } }}
+        />,
+      ),
+    );
+    expect(missing).toContain('子どもの見守り（頼んだ時間は記録にありません）');
+    expect(missing).not.toContain('陽菜の見守り');
+    expect(missing).not.toContain('12/8（火） 9:00–17:00');
+  });
+
+  it('返事待ちが条件しだいなら条件を見せ、詳細が無ければ条件しだいと示す', () => {
+    const ctx = ctxFor('asked', 'b', 'ja');
+    const card = ctx.today.quiet.find((item) => item.kind === 'waiting');
+    if (card?.kind !== 'waiting') throw new Error('返事待ちが無い');
+    const conditional = { ...card, request: { ...card.request, conditional: true as const } };
+    const known = text(
+      renderToStaticMarkup(
+        <TodayScreen ctx={{ ...ctx, today: { main: [], quiet: [conditional] } }} />,
+      ),
+    );
+    expect(known).toContain('学習発表会の実施日が12/5（土）なら要ります');
+    const noConditionDetail = {
+      ...ctx,
+      plan: {
+        ...ctx.plan,
+        requirements: [],
+        arrangements: ctx.plan.arrangements.map((arrangement) => {
+          const { conditional: _conditional, ...withoutCondition } = arrangement;
+          return withoutCondition;
+        }),
+      },
+      today: { main: [], quiet: [conditional] },
+    };
+    const unknown = text(renderToStaticMarkup(<TodayScreen ctx={noConditionDetail} />));
+    expect(unknown).toContain('お知らせの条件しだいで要ります（まだ決まっていません）');
+    const en = ctxFor('asked', 'b', 'en');
+    const enCard = en.today.quiet.find((item) => item.kind === 'waiting');
+    if (enCard?.kind !== 'waiting') throw new Error('返事待ちが無い');
+    const enConditional = { ...enCard, request: { ...enCard.request, conditional: true as const } };
+    const english = text(
+      renderToStaticMarkup(
+        <TodayScreen ctx={{ ...en, today: { main: [], quiet: [enConditional] } }} />,
+      ),
+    );
+    expect(english).toContain('not settled yet');
+    const { conditional: _conditional, ...certain } = conditional.request;
+    const settled = text(
+      renderToStaticMarkup(
+        <TodayScreen
+          ctx={{ ...ctx, today: { main: [], quiet: [{ ...card, request: certain }] } }}
+        />,
+      ),
+    );
+    expect(settled).not.toContain('なら要ります（まだ決まっていません）');
+  });
+
+  it('同じ相手への二つの依頼は、それぞれの控えの時間で区別できる', () => {
+    const ctx = ctxFor('asked', 'b', 'ja');
+    const first = ctx.today.quiet.find((item) => item.kind === 'waiting');
+    if (first?.kind !== 'waiting') throw new Error('返事待ちが無い');
+    const second = {
+      ...first,
+      request: {
+        ...first.request,
+        requestId: 'another-request',
+        window: { start: '2026-12-08T09:00+09:00', end: '2026-12-08T17:00+09:00' },
+      },
+    };
+    const shown = text(
+      renderToStaticMarkup(
+        <TodayScreen ctx={{ ...ctx, today: { main: [], quiet: [first, second] } }} />,
+      ),
+    );
+    expect(shown).toContain('依頼の記録：陽菜の見守り・12/7（月） 8:10–18:15');
+    expect(shown).toContain('依頼の記録：陽菜の見守り・12/8（火） 9:00–17:00');
+  });
+
   it('予備が確保できていれば、それを書き、次の予備も、間に合う期限も出さない（日英）', () => {
     const ja = text(
       renderToStaticMarkup(
