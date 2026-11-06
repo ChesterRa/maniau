@@ -106,6 +106,8 @@ interface Session {
   stage?: string;
   /** 例のお知らせ（架空。録った読み取りで足す）。 */
   example?: { sourceId: string; title: string };
+  /** 例のお知らせの続き（架空の延期の連絡）。一通目の例の後で、試用の時計が届いた時（at）になったら足せる。 */
+  exampleChange?: { sourceId: string; title: string; at: string };
   /** お知らせの文を入れて読めるか（読み取りの鍵があるサーバーだけ）。 */
   canRead?: boolean;
   /** 家族の一言を読めるか（同じく、鍵のあるデモのサーバーだけ）。 */
@@ -1226,13 +1228,20 @@ export function useTrialSession(memberId: string | undefined) {
       setExpired(false);
       setPhase('none');
     },
-    /** 例のお知らせを足す（Claude を呼ばない。押し直しても二度入れない）。足せたら見せる物を読み直す。 */
-    addExample: async (): Promise<boolean> => {
+    /**
+     * 例のお知らせを足す（Claude を呼ばない。押し直しても二度入れない）。which が change なら例の続き（延期の連絡。
+     * 試用の時計が届いた時から）。足せたら見せる物を読み直す。
+     */
+    addExample: async (which?: 'change'): Promise<boolean> => {
       if (!session || !memberId) return false;
       try {
         const response = await fetch(
           `/api/demo/sessions/${encodeURIComponent(session.sessionId)}/example-notice`,
-          { method: 'POST', headers: json, body: JSON.stringify({ memberId }) },
+          {
+            method: 'POST',
+            headers: json,
+            body: JSON.stringify({ memberId, ...(which ? { which } : {}) }),
+          },
         );
         if (!response.ok) return false;
         live.refresh();

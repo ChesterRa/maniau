@@ -198,6 +198,21 @@ export function exampleNotice() {
   return { source, output, extraction, reading };
 }
 
+/**
+ * 例のお知らせの続き（架空の学習発表会の延期の連絡）の出典と、前に録った読み取り。一通目の例を入れた試用で、試用の
+ * 時計がこの連絡の届いた時になってからだけ使う（変わった時の片付けを、自分の試用で試せるように）。家族が書いた文の
+ * 読み取りには使わない。
+ */
+export function exampleChangeNotice() {
+  const data = loadDemoData();
+  const source = data.sources[1];
+  const output = data.outputs[1];
+  const extraction = data.extractions[1];
+  const reading = data.readings[1];
+  if (!source || !output || !extraction || !reading) throw new Error('例の続きのお知らせが無い');
+  return { source, output, extraction, reading };
+}
+
 /** デモの段までの事象の列。段は前の段の事象をすべて含む。 */
 export function demoEvents(stage: DemoStageId): DomainEvent[] {
   const data = loadDemoData();

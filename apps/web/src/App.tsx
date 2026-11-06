@@ -347,6 +347,17 @@ function DemoApp() {
           onToggle={() => setControls((open) => !open)}
         >
           <ClockButtons onAdvance={onAdvance} />
+          {view && session.example && session.exampleChange && (
+            <ExampleChange
+              change={session.exampleChange}
+              firstId={session.example.sourceId}
+              sourceIds={view.sources.map((s) => s.id)}
+              now={view.now}
+              timeZone={view.household.timeZone}
+              lang={lang}
+              onAdd={() => demo.addExample('change')}
+            />
+          )}
           <div className="flex flex-wrap items-center gap-2">
             {people.length > 1 && (
               <Switcher
@@ -456,6 +467,59 @@ function TrialBar(props: {
 }
 
 /** デモの時計を進める（分）。戻せない。決め時の前後で札と知らせがどう変わるかを見るため。 */
+/**
+ * 例のお知らせの続き（架空の延期の連絡）を足す所（試用の操作の中）。一通目の例を入れた試用だけに出し、足した後は
+ * 出さない。試用の時計が届いた時より前は、いつから足せるかだけを書く（時計は動かさない。上の「+1日」で進める）。
+ * 録った読み取りで足し、Claude には送らない。
+ */
+function ExampleChange(props: {
+  change: { sourceId: string; title: string; at: string };
+  firstId: string;
+  sourceIds: string[];
+  now: string;
+  timeZone: string;
+  lang: UiLanguage;
+  onAdd: () => Promise<boolean>;
+}) {
+  const { t } = useTranslation();
+  const [adding, setAdding] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const { change } = props;
+  if (!props.sourceIds.includes(props.firstId) || props.sourceIds.includes(change.sourceId)) {
+    return null;
+  }
+  if (toEpochMinutes(props.now) < toEpochMinutes(change.at)) {
+    return (
+      <p className="text-sub">
+        {t('trial.change.later', {
+          title: change.title,
+          when: formatDayTime(change.at, props.lang, props.timeZone),
+        })}
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        disabled={adding}
+        onClick={() => {
+          setAdding(true);
+          setFailed(false);
+          void props.onAdd().then((ok) => {
+            setAdding(false);
+            if (!ok) setFailed(true);
+          });
+        }}
+        className="min-h-11 self-start rounded-xl border-[1.5px] border-btn-line bg-white px-3 text-left font-bold text-accent"
+      >
+        {t('trial.change.add', { title: change.title })}
+      </button>
+      <span className="text-sub">{t(failed ? 'trial.change.failed' : 'trial.change.note')}</span>
+    </div>
+  );
+}
+
 function ClockButtons({ onAdvance }: { onAdvance: ((minutes: number) => void) | undefined }) {
   const { t } = useTranslation();
   if (!onAdvance) return null;

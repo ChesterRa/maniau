@@ -27,6 +27,7 @@ import {
   seenOf,
   splitSentences,
   taskContent,
+  toEpochMinutes,
   toExtraction,
   toUtteranceReply,
   type UnsupportedReason,
@@ -56,6 +57,7 @@ import {
   DEMO_STAGES,
   type DemoStageId,
   demoEvents,
+  exampleChangeNotice,
   exampleNotice,
   loadDemoData,
   ownHousehold,
@@ -997,15 +999,22 @@ export function demoSessions(
     },
     /**
      * 例のお知らせ（架空）を、前に録った読み取りと一緒に足す。例だけに使う（家族が書いた文は Claude で読む）。
-     * もう入っていれば足さない（押し直しで二度入れない）。大人でなければ forbidden。
+     * もう入っていれば足さない（押し直しで二度入れない）。大人でなければ forbidden。which が change なら、例の続き
+     * （延期の連絡）：一通目の例が入っていなければ needsFirst（前のお知らせに結ぶ読み取りなので）、試用の時計が
+     * その連絡の届いた時より前なら tooEarly（届く前の連絡を入れない。時計は動かさない）。
      */
     async exampleNotice(
       id: string,
       memberId: string,
-    ): Promise<{ view: View; added: boolean } | 'forbidden' | undefined> {
+      which: 'first' | 'change' = 'first',
+    ): Promise<
+      { view: View; added: boolean } | 'forbidden' | 'needsFirst' | 'tooEarly' | undefined
+    > {
       const session = touch(id);
       if (!session) return undefined;
-      const { source, output, extraction } = exampleNotice();
+      const { source, output, extraction } =
+        which === 'change' ? exampleChangeNotice() : exampleNotice();
+      const first = exampleNotice().source.id;
       const maps = await mapsOf(id);
       return store.withHousehold(id, (log) => {
         const events = log.events();
@@ -1017,6 +1026,13 @@ export function demoSessions(
           return { view: demoView(events, memberId, session.now, maps), added: false };
         }
         const before = computePlan(events, session.now, maps);
+        if (which === 'change') {
+          if (!events.some((e) => e.type === 'noticeReceived' && e.source.id === first)) {
+            return 'needsFirst';
+          }
+          // 試用の時計（進めた時刻を含む。計画の now）で比べる。
+          if (toEpochMinutes(before.now) < toEpochMinutes(source.receivedAt)) return 'tooEarly';
+        }
         log.append([{ type: 'noticeReceived', source }], memberId, source.receivedAt);
         log.append(
           [

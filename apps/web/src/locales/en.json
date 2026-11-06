@@ -117,7 +117,13 @@
     "close": "Close",
     "leave": "Back to start (end this trial)",
     "scenes": "View prepared scenes",
-    "clockAt": "Trial clock: {{time}}"
+    "clockAt": "Trial clock: {{time}}",
+    "change": {
+      "later": "The example’s follow-up, “{{title}}” (made up), can be added from {{when}} on the trial clock (move it with “+1 day” or “+1 hour” above).",
+      "add": "Add the example’s follow-up: {{title}} (made up)",
+      "note": "Added from a reading prepared earlier; nothing is sent to Claude. If you first record that you asked someone to watch the child on Dec 7 in this example, and add this before recording “They said no”, you can follow it through to telling them it’s cancelled (a request they turned down needs no cancellation).",
+      "failed": "Couldn’t add it. Please try again in a moment."
+    }
   },
   "notice": {
     "changed": "Something changed. Please check the new details.",

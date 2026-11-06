@@ -9,7 +9,14 @@ import { ACCESS_HEADER, type AccessVerifier } from './auth/access';
 import { nowIn } from './clock';
 import { type CommandResult, runCommand } from './commands';
 import type { Db } from './db/store';
-import { DEMO_STAGES, exampleNotice, isDemoStage, loadDemoData, type TrialStart } from './demo';
+import {
+  DEMO_STAGES,
+  exampleChangeNotice,
+  exampleNotice,
+  isDemoStage,
+  loadDemoData,
+  type TrialStart,
+} from './demo';
 import {
   demoSessions,
   MAX_STORE_TEXT_CHARS,
@@ -544,8 +551,13 @@ export function createApp(
       ...(from.stage ? { stage: from.stage } : {}),
       readings: data.readings.map(({ sourceId, origin, model }) => ({ sourceId, origin, model })),
       stages: DEMO_STAGES.map((s) => ({ id: s.id, now: s.now, viewer: s.viewer })),
-      // 例のお知らせ（架空。録った読み取りで足す）の題。
+      // 例のお知らせ（架空。録った読み取りで足す）の題。例の続き（延期の連絡）は、届いた時（at）から足せる。
       example: { sourceId: exampleNotice().source.id, title: exampleNotice().source.title ?? '' },
+      exampleChange: {
+        sourceId: exampleChangeNotice().source.id,
+        title: exampleChangeNotice().source.title ?? '',
+        at: exampleChangeNotice().source.receivedAt,
+      },
       // お知らせの文を入れて読めるか（読み取りの鍵があるサーバーだけ）。一言を読めるか。
       canRead: reader !== undefined,
       canHear: listener !== undefined,
@@ -609,15 +621,21 @@ export function createApp(
     c.header('Cache-Control', 'private, no-store');
     return c.json(sessionInfo(sessionId, meta.household, meta));
   });
-  // 例のお知らせ（架空）を、録った読み取りで足す（Claude を呼ばない。押し直しても二度入れない）。
+  // 例のお知らせ（架空）を、録った読み取りで足す（Claude を呼ばない。押し直しても二度入れない）。which が change なら
+  // 例の続き（延期の連絡）：一通目の例の後で、試用の時計がその連絡の届いた時から。
   app.post('/api/demo/sessions/:sid/example-notice', async (c) => {
     const body = z
-      .object({ memberId: z.string().min(1) })
+      .object({ memberId: z.string().min(1), which: z.enum(['first', 'change']).default('first') })
       .safeParse(await c.req.json().catch(() => null));
     if (!body.success) return c.json({ error: 'invalidBody' }, 400);
-    const result = await sessions.exampleNotice(c.req.param('sid'), body.data.memberId);
+    const result = await sessions.exampleNotice(
+      c.req.param('sid'),
+      body.data.memberId,
+      body.data.which,
+    );
     if (!result) return c.json({ error: 'unknownSession' }, 404);
     if (result === 'forbidden') return c.json({ error: 'notAnAdult' }, 403);
+    if (result === 'needsFirst' || result === 'tooEarly') return c.json({ error: result }, 409);
     return c.json(result);
   });
   // デモの家の周りの資源を調べる（記録した調べ、または Claude がいま調べる）。何も書かない（家族が候補を入れる）。
