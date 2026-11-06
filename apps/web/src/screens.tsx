@@ -4128,6 +4128,15 @@ function requestId(): string {
 
 // ── よてい ──────────────────────────────
 
+type WeekSource = { sourceId: string; title: string; highlight: string[] };
+type WeekLine = {
+  key: string;
+  text: string;
+  status?: string;
+  attention?: boolean;
+  sources?: WeekSource[];
+};
+
 export function WeekScreen({ ctx }: { ctx: Ctx }) {
   const today = localDate(ctx.now, ctx.tz);
   // きょうから七日と、その後の七日（暦の週にしない。日曜の夜に、終わる週の空の日を並べない）。
@@ -4143,7 +4152,7 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
     const next = arrangement.options
       .filter(
         (o) =>
-          !o.expired &&
+          choosable(arrangement, o) &&
           o.decisionDeadline !== undefined &&
           o.key !== arrangement.chosenOptionKey &&
           !arrangement.backupOptionKeys.includes(o.key),
@@ -4154,49 +4163,189 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
       )[0];
     if (next) deadlineKeys.add(next.key);
   }
+  // 引き受けと外への返事は別の記録。候補の手の作業や終わった作業を、これからの予定として並べない。
+  // 断られた・できなくなった作業自体は残るので、前の担当や置き時刻を当てずに、担当を決める物として見せる。
+  const tasks = ctx.plan.tasks.filter(
+    (task) =>
+      task.live &&
+      (task.commitment === 'proposed' ||
+        task.commitment === 'accepted' ||
+        (task.cancels === undefined &&
+          (task.commitment === 'declined' || task.commitment === 'withdrawn'))) &&
+      (task.cancels !== undefined || isActiveTask(ctx.plan, task)),
+  );
+  const requests = ctx.plan.requests.filter(
+    (request) =>
+      request.live && (request.state === 'awaitingReply' || request.state === 'confirmed'),
+  );
+  // 一つの作業に複数のお知らせが関わる時は、それぞれの元の文へ戻れるようにする。
+  const sourcesFor = (ids: readonly string[]): WeekSource[] => {
+    const found = new Map<string, WeekSource>();
+    for (const { item } of ctx.items) {
+      if (!ids.includes(item.id)) continue;
+      const source = ctx.sources.get(item.sourceId);
+      if (!source) continue;
+      const existing = found.get(item.sourceId);
+      if (existing) {
+        existing.highlight = [...new Set([...existing.highlight, ...item.sentenceIds])];
+      } else {
+        found.set(item.sourceId, {
+          sourceId: item.sourceId,
+          title: source.title?.trim() || ctx.t('week.untitledSource'),
+          highlight: [...item.sentenceIds],
+        });
+      }
+    }
+    return [...found.values()];
+  };
+  const needsOwner = (task: Task) =>
+    task.commitment === 'declined' || task.commitment === 'withdrawn';
+  const shownTime = (task: Task) =>
+    needsOwner(task)
+      ? task.timing === 'fixed' || task.timing === 'fixedEndEstimated'
+        ? task.earliestStart
+        : undefined
+      : task.start;
+  const taskDay = (task: Task) => {
+    if (task.timing === 'undated') return undefined;
+    if (task.timing === 'day')
+      return task.earliestStart ? localDate(task.earliestStart, ctx.tz) : undefined;
+    const at = shownTime(task);
+    return at ? localDate(at, ctx.tz) : undefined;
+  };
+  const isBackup = (basis: Task['basis'], requestedAt?: string) => {
+    const arrangement = ctx.plan.arrangements.find((entry) => entry.key === basis.arrangementKey);
+    if (!arrangement?.live || !basis.optionKey) return false;
+    if (requestedAt && localDate(arrangement.start, ctx.tz) !== localDate(requestedAt, ctx.tz))
+      return false;
+    return (
+      arrangement.backupOptionKeys.includes(basis.optionKey) &&
+      arrangement.inUseOptionKey !== basis.optionKey
+    );
+  };
+  const taskLine = (task: Task): WeekLine => {
+    const name = needsOwner(task)
+      ? ctx.t('week.unassigned')
+      : nameOf(ctx.household, task.assigneeId) || ctx.t('week.unassigned');
+    const what = taskTitle(ctx, task);
+    const at = shownTime(task);
+    const text =
+      task.timing === 'day' && task.earliestStart
+        ? ctx.t('week.taskDay', { name, what })
+        : at && task.timing !== 'undated'
+          ? ctx.t('week.task', { name, what, time: time(ctx, at) })
+          : ctx.t('week.taskUnplaced', { name, what });
+    let status = ctx.t(
+      needsOwner(task)
+        ? 'week.statusNeedsOwner'
+        : task.reconfirm
+          ? 'week.statusReconfirm'
+          : task.commitment === 'accepted'
+            ? 'week.statusAccepted'
+            : 'week.statusProposed',
+    );
+    const basisItems = ctx.items.filter(({ item }) => task.basis.itemIds.includes(item.id));
+    if (basisItems.some((item) => item.conditional))
+      status = ctx.t('week.statusConditional', { status });
+    if (basisItems.some((item) => !item.trusted))
+      status = ctx.t('week.statusUnconfirmed', { status });
+    if (task.timeUnconfirmed) status = ctx.t('week.statusTimeUnconfirmed', { status });
+    if (task.turnUnconfirmed) status = ctx.t('week.statusTurnUnconfirmed', { status });
+    if (isBackup(task.basis)) status = ctx.t('week.statusBackup', { status });
+    return {
+      key: `task:${task.key}`,
+      text,
+      status,
+      attention:
+        task.reconfirm === true ||
+        task.timeUnconfirmed === true ||
+        task.turnUnconfirmed === true ||
+        needsOwner(task),
+      sources: sourcesFor(task.basis.itemIds),
+    };
+  };
+  const requestLine = (request: ExternalRequest): WeekLine => {
+    const name = nameOf(ctx.household, request.to) || ctx.t('week.unknownRecipient');
+    const window = request.window;
+    const end =
+      window && localDate(window.end, ctx.tz) === localDate(window.start, ctx.tz)
+        ? time(ctx, window.end)
+        : window
+          ? dayTime(ctx, window.end)
+          : undefined;
+    const text =
+      window && end
+        ? ctx.t('week.requestWindow', { name, from: time(ctx, window.start), to: end })
+        : ctx.t('week.requestNoWindow', { name });
+    const next = request.changeAsked
+      ? ctx.plan.requests.find((entry) => entry.requestId === request.changeAsked)
+      : undefined;
+    const arrangement = ctx.plan.arrangements.find(
+      (entry) => entry.live && entry.key === request.basis.arrangementKey,
+    );
+    const waitingForChange =
+      next?.replaces?.requestId === request.requestId &&
+      next.state === 'awaitingReply' &&
+      next.live &&
+      !next.needsCheck &&
+      next.window !== undefined &&
+      arrangement !== undefined &&
+      toEpochMinutes(next.window.start) === toEpochMinutes(arrangement.start) &&
+      toEpochMinutes(next.window.end) === toEpochMinutes(arrangement.end);
+    const statusKey = waitingForChange
+      ? request.state === 'confirmed'
+        ? 'week.oldYesChange'
+        : 'week.oldWaitingChange'
+      : request.state === 'confirmed'
+        ? request.needsCheck
+          ? 'week.replyYesCheck'
+          : 'week.replyYes'
+        : request.needsCheck
+          ? 'week.replyWaitingCheck'
+          : 'week.replyWaiting';
+    let status = ctx.t(statusKey);
+    if (request.replaces) status = ctx.t('week.statusTimeChange', { status });
+    if (request.conditional) status = ctx.t('week.statusConditional', { status });
+    if (request.standalone) status = ctx.t('week.statusStandalone', { status });
+    if (window && isBackup(request.basis, window.start))
+      status = ctx.t('week.statusBackup', { status });
+    return {
+      key: `request:${request.requestId}`,
+      text,
+      status,
+      attention: request.needsCheck === true,
+      sources: sourcesFor(request.basis.itemIds),
+    };
+  };
+  const unplacedTasks = tasks.filter((task) => taskDay(task) === undefined).map(taskLine);
+  const undatedRequests = requests.filter((request) => !request.window).map(requestLine);
   const linesFor = (date: string) => {
-    const lines: string[] = [];
+    const lines: WeekLine[] = [];
     for (const { item, live, conditional, trusted, when: condition } of ctx.items) {
       if (!live || item.interpretation.date !== date) continue;
       if (item.kind === 'event' || item.kind === 'dayChange' || item.kind === 'test') {
         const what = item.interpretation.what ?? item.written;
         const when = whenText(ctx, condition) ?? ctx.t('say.conditional');
         // 確かでない予定を、決まった予定と同じ形で見せない。確かめていない上に条件しだいなら、両方を書く。
-        lines.push(
-          !trusted
+        lines.push({
+          key: `item:${item.id}`,
+          text: !trusted
             ? conditional
               ? ctx.t('week.unconfirmedConditional', { what, when })
               : ctx.t('week.unconfirmed', { what })
             : conditional
               ? ctx.t('week.conditional', { what, when })
               : what,
-        );
+          attention: !trusted || conditional,
+          sources: sourcesFor([item.id]),
+        });
       }
     }
-    for (const task of ctx.plan.tasks) {
-      if (!task.live || task.commitment !== 'accepted') continue;
-      // 日だけの当番は、時刻なしで、その日に出す。
-      if (task.timing !== 'day' || !task.earliestStart) continue;
-      if (localDate(task.earliestStart, ctx.tz) !== date) continue;
-      lines.push(
-        ctx.t('week.taskDay', {
-          name: nameOf(ctx.household, task.assigneeId),
-          what: taskTitle(ctx, task),
-        }),
-      );
-    }
-    for (const task of ctx.plan.tasks) {
-      if (!task.live || !task.start || localDate(task.start, ctx.tz) !== date) continue;
-      if (task.commitment !== 'accepted' && task.commitment !== 'done') continue;
-      // 引き受けた後に中身が変わった作業は、確かめ直すまで、決まった予定として見せない。
-      lines.push(
-        ctx.t(task.reconfirm ? 'week.taskReconfirm' : 'week.task', {
-          name: nameOf(ctx.household, task.assigneeId),
-          what: taskTitle(ctx, task),
-          time: time(ctx, task.start),
-        }),
-      );
-    }
+    for (const task of tasks) if (taskDay(task) === date) lines.push(taskLine(task));
+    // 頼んだ窓は、控えにある時だけその日に出す（今の手配の日を、以前の依頼の日に当てない）。
+    for (const request of requests)
+      if (request.window && localDate(request.window.start, ctx.tz) === date)
+        lines.push(requestLine(request));
     for (const arrangement of ctx.plan.arrangements) {
       if (!arrangement.live) continue;
       for (const option of arrangement.options) {
@@ -4208,13 +4357,45 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
           arrangement.kind === 'purchase'
             ? ctx.plan.tasks.find((t) => t.key === option.taskKeys[0])
             : undefined;
-        lines.push(
-          ctx.t('week.deadline', { option: buy ? taskTitle(ctx, buy) : optionTitle(ctx, option) }),
-        );
+        lines.push({
+          key: `deadline:${option.key}`,
+          text: ctx.t('week.deadline', {
+            option: buy ? taskTitle(ctx, buy) : optionTitle(ctx, option),
+          }),
+          sources: sourcesFor(
+            ctx.plan.requirements.find((entry) => entry.key === arrangement.requirementKey)?.basis
+              .itemIds ?? [],
+          ),
+        });
       }
     }
     return lines;
   };
+  const showLine = (line: WeekLine) => (
+    <span key={line.key} className="flex flex-col gap-0.5 py-1">
+      <span className="text-base leading-snug break-words">{line.text}</span>
+      {line.status && (
+        <span className={`text-sm font-bold ${line.attention ? 'text-warn' : 'text-sub'}`}>
+          {line.status}
+        </span>
+      )}
+      {line.sources?.map((source) => (
+        <button
+          key={source.sourceId}
+          type="button"
+          aria-label={ctx.t('week.source', { title: source.title })}
+          className="min-h-10 self-start text-left text-sm text-accent underline"
+          onClick={() =>
+            ctx.go({ name: 'sources', sourceId: source.sourceId, highlight: source.highlight })
+          }
+        >
+          {line.sources?.length === 1
+            ? ctx.t('week.sourceShort')
+            : ctx.t('week.source', { title: source.title })}
+        </button>
+      ))}
+    </span>
+  );
   return (
     <>
       <Header
@@ -4222,6 +4403,7 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
         title={ctx.t('week.title')}
       />
       <Main>
+        <Text quiet>{ctx.t('week.guide')}</Text>
         <Card className="gap-0 px-1.5 py-2">
           {days.map((date) => {
             const lines = linesFor(date);
@@ -4248,11 +4430,7 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
                   {lines.length === 0 ? (
                     <span className="text-[15px] text-sub">{ctx.t('week.none')}</span>
                   ) : (
-                    lines.map((line) => (
-                      <span key={line} className="text-base leading-normal">
-                        {line}
-                      </span>
-                    ))
+                    lines.map(showLine)
                   )}
                 </span>
               </div>
@@ -4268,11 +4446,29 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
               <Pair
                 key={d.date}
                 left={day(ctx, d.date)}
-                right={d.lines.join(ctx.t('list.separator'))}
+                right={
+                  <span className="flex flex-col items-start text-left">
+                    {d.lines.map(showLine)}
+                  </span>
+                }
                 last={index === all.length - 1}
               />
             ))}
         </Card>
+        {unplacedTasks.length > 0 && (
+          <Card>
+            <Label tone="sub">{ctx.t('week.unplacedTitle')}</Label>
+            <Text quiet>{ctx.t('week.unplacedBody')}</Text>
+            {unplacedTasks.map(showLine)}
+          </Card>
+        )}
+        {undatedRequests.length > 0 && (
+          <Card>
+            <Label tone="sub">{ctx.t('week.undatedRequestsTitle')}</Label>
+            <Text quiet>{ctx.t('week.undatedRequestsBody')}</Text>
+            {undatedRequests.map(showLine)}
+          </Card>
+        )}
       </Main>
     </>
   );

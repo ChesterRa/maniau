@@ -11,7 +11,7 @@ it('日曜（11/29、祖母の返事待ち）：きょうから七日に、学�
   const shown = text(renderToStaticMarkup(<WeekScreen ctx={ctxFor('chase', 'b', 'ja')} />));
   expect(shown).toContain('11/29（日） – 12/5（土）');
   // 次に消える手（断られた時に間に合う学童）の決め時。
-  expect(shown).toContain('学童に預けるの決め時');
+  expect(shown).toContain('「学童に預ける」の決め時');
   expect(shown).toContain('学習発表会（学習発表会の実施日が12/5（土）なら）');
   // その後の七日に、12/7 の振替休業日。
   const later = shown.slice(shown.indexOf('その後の7日'));
@@ -30,8 +30,8 @@ it('平日でも、きょうから始める（英語も同じ）', () => {
 
 it('買う手の決め時は、何を買うかを書く（「買うの決め時」だけにしない。英語も同じ）', () => {
   const ja = text(renderToStaticMarkup(<WeekScreen ctx={ctxFor('asked', 'b', 'ja')} />));
-  expect(ja).toContain('白い長袖シャツを買うの決め時');
-  expect(ja).not.toMatch(/(^|\s)買うの決め時/);
+  expect(ja).toContain('「白い長袖シャツを買う」の決め時');
+  expect(ja).not.toContain('「買う」の決め時');
   const en = text(renderToStaticMarkup(<WeekScreen ctx={ctxFor('asked', 'b', 'en')} />));
-  expect(en).toMatch(/Deadline: Buy [^ ]/);
+  expect(en).toMatch(/Deadline to decide: Buy [^ ]/);
 });
