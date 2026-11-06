@@ -2,7 +2,7 @@
 // 言葉・やり直すを選べる。家族の家庭では、使う人はログインの身元で決まり、言葉だけを選ぶ。
 // 計画と「きょう」の札はサーバーが作る。ここは受け取った見せる物を画面に渡し、命令を送るだけ。
 import { formatDateTime, type Member, toEpochMinutes } from '@maniau/core';
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DemoNotifications } from './demo-notify';
 import { FactsScreen } from './facts';
@@ -259,6 +259,11 @@ function DemoApp() {
   const [memberId, setMemberId] = useState<string>();
   const [route, setRoute] = useState<Route>({ name: 'today' });
   const [controls, setControls] = useState(false);
+  // 時計を進める命令の返事を待つ間は、進めるボタンを押せなくする（待つ間に押しても、送られずに消えるので、押せない
+  // と見せる）。「操作」を閉じて開き直しても待ちを覚えておくよう、ボタンの外に持つ。待ちはその試用（sessionId）の物
+  // で、別の試用・場面に替えたら前の待ちを待たない。同じ描画の中の二度押しは ref で止める。
+  const [advancingIn, setAdvancingIn] = useState<string>();
+  const advancingNow = useRef<string | undefined>(undefined);
   const demo = useTrialSession(memberId);
   const { session, view } = demo;
 
@@ -320,16 +325,28 @@ function DemoApp() {
   }
   const stage = session.stage ?? FIRST_STAGE;
   const clock = view ? formatDayTime(view.now, lang, view.household.timeZone) : undefined;
+  const sessionId = session.sessionId;
+  const advancing = advancingIn === sessionId;
   const onAdvance = view
     ? (minutes: number) => {
+        if (advancingNow.current === sessionId) return;
         // 時計を進めたら、押した後の一行（「送ったと記録しました」など）は消す（日が変わっても出たままにしない）。
         setRoute((current) =>
           current.name === 'today' && current.done !== undefined ? { name: 'today' } : current,
         );
-        void demo.send({
-          type: 'advanceClock',
-          to: formatDateTime(toEpochMinutes(view.now) + minutes, view.household.timeZone),
-        });
+        advancingNow.current = sessionId;
+        setAdvancingIn(sessionId);
+        // 返事が届かなかった時も、押せるように戻す（届いたか分からない操作の知らせは、今までどおり出る）。前の試用の
+        // 返事が後から届いても、今の試用の待ちは解かない。
+        void demo
+          .send({
+            type: 'advanceClock',
+            to: formatDateTime(toEpochMinutes(view.now) + minutes, view.household.timeZone),
+          })
+          .finally(() => {
+            if (advancingNow.current === sessionId) advancingNow.current = undefined;
+            setAdvancingIn((current) => (current === sessionId ? undefined : current));
+          });
       }
     : undefined;
   const people = adults.map((m) => ({ value: m.id, label: m.name }));
@@ -350,7 +367,7 @@ function DemoApp() {
           open={controls}
           onToggle={() => setControls((open) => !open)}
         >
-          <ClockButtons onAdvance={onAdvance} />
+          <ClockButtons onAdvance={onAdvance} busy={advancing} />
           {view && session.example && session.exampleChange && (
             <ExampleChange
               change={session.exampleChange}
@@ -399,6 +416,7 @@ function DemoApp() {
           onLang={chooseLanguage}
           clock={clock}
           onAdvance={onAdvance}
+          advancing={advancing}
           onRestart={() => begin({ stage })}
           onLeave={leave}
           notifications={notifications}
@@ -533,7 +551,14 @@ function ExampleChange(props: {
   );
 }
 
-function ClockButtons({ onAdvance }: { onAdvance: ((minutes: number) => void) | undefined }) {
+function ClockButtons({
+  onAdvance,
+  busy = false,
+}: {
+  onAdvance: ((minutes: number) => void) | undefined;
+  /** 進める命令の返事を待っている（押せなくする）。 */
+  busy?: boolean;
+}) {
   const { t } = useTranslation();
   if (!onAdvance) return null;
   return (
@@ -549,7 +574,8 @@ function ClockButtons({ onAdvance }: { onAdvance: ((minutes: number) => void) | 
           key={label}
           type="button"
           onClick={() => onAdvance(minutes)}
-          className="min-h-9 rounded-lg border border-line bg-card px-3 font-bold"
+          disabled={busy}
+          className="min-h-9 rounded-lg border border-line bg-card px-3 font-bold disabled:opacity-50"
         >
           {t(label)}
         </button>
@@ -763,6 +789,8 @@ export function DemoBar(props: {
   clock: string | undefined;
   /** デモの時計を進める（分）。戻せない。決め時の前後で札と知らせがどう変わるかを見るため。 */
   onAdvance: ((minutes: number) => void) | undefined;
+  /** 時計を進める命令の返事を待っている（進めるボタンを押せなくする）。 */
+  advancing?: boolean;
   onRestart: () => void;
   /** 初めの画面へ戻る（この場面を閉じる）。 */
   onLeave?: () => void;
@@ -787,7 +815,7 @@ export function DemoBar(props: {
           )}
         </span>
       </div>
-      <ClockButtons onAdvance={props.onAdvance} />
+      <ClockButtons onAdvance={props.onAdvance} busy={props.advancing === true} />
       <div className="flex flex-wrap items-center gap-2">
         {/* 狭い画面でも、場面の長い名前で枠の外へはみ出さない（選ぶ物は端末のまま）。 */}
         <label className="flex min-w-0 max-w-full items-center gap-1">
