@@ -104,7 +104,7 @@
       "input": "Add a notice",
       "cannotRead": "This server can’t read text you write right now. You can try the example notice below.",
       "example": "Try an example: {{title}} (made-up)",
-      "exampleNote": "The example uses a reading prepared earlier (nothing is sent to Claude now).",
+      "exampleNote": "Example summary (written for this demo): A Dec 5 school event may move to Dec 8. If held on Dec 5, Dec 7 is a school holiday. A white long-sleeved shirt is needed. The reading was prepared earlier; nothing is sent to Claude now.",
       "exampleFailed": "Couldn’t add the example. Please try again.",
       "manual": "Add something to do by hand (no notice is read)"
     }

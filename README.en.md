@@ -114,7 +114,7 @@ flowchart TB
 ### Try it from the start
 
 1. Press “Start” and enter made-up nicknames for the adults and one child. The trial supports one child for now.
-2. Add the example notice with “Try an example”. It uses a prepared reading; nothing is sent to Claude for this example.
+2. Add the example notice with “Try an example”. It uses a prepared reading; nothing is sent to Claude for this example. **Example summary (written for this demo):** A Dec 5 school event may move to Dec 8. If held on Dec 5, Dec 7 is a school holiday. A white long-sleeved shirt is needed.
 3. When asked about child care, enter what you know, see what changes, and then save. You can leave times you do not know as unknown.
 4. Add a person to ask and a deadline, choose a way, and review the message. Your family sends the message. After sending, press “Record that I sent it”; Today then shows the request under “Waiting on others”. Your family also records the reply, for example with “They said OK”.
 
