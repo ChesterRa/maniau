@@ -404,7 +404,7 @@
       "title": "{{date}}: who can watch {{child}}?",
       "why": "Why: {{what}}",
       "wholeDay": "We don’t know yet whether {{who}} can watch on this day. Until we know, we won’t decide whether care needs arranging.",
-      "times": "We don’t know yet whether anyone can watch {{times}} ({{who}}). Until we know, we won’t decide whether care needs arranging.",
+      "times": "We don’t know yet whether anyone can watch during {{times}} ({{who}}). Until we know, we won’t decide whether care needs arranging.",
       "action": "Enter who can watch"
     }
   },

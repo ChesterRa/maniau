@@ -200,6 +200,29 @@ describe('聞く札', () => {
     expect(text()).toContain('whether 大人A and 大人B can watch');
     expect(text()).not.toContain('大人A · 大人B');
   });
+
+  it('一部の時間だけ分からない時は、その時間を出す（英語は、時間そのものを見るようには読ませない）', async () => {
+    const partial: Extract<TodayCard, { kind: 'facts' }> = {
+      kind: 'facts',
+      requirement: {
+        ...requirement,
+        unsure: [
+          { start: '2026-12-07T08:00+09:00', end: '2026-12-07T09:00+09:00' },
+          { start: '2026-12-07T17:00+09:00', end: '2026-12-07T19:00+09:00' },
+        ],
+      },
+    };
+    await step(() => root.render(<FactsCard ctx={probe().ctx} card={partial} />));
+    expect(text()).toContain(
+      '8:00–9:00、17:00–19:00に見られる人がいるか、まだ分かりません（大人A、大人B）',
+    );
+    await step(() => root.render(<FactsCard ctx={probe('en').ctx} card={partial} />));
+    // 時刻の形（AM・PM の前の空白の種類など）は言葉の決まりの版で変わりうるので、空白をそろえ、二つの時間が順に
+    // 「and」でつながって出ることを見る（時間が抜けても通るような見方にしない）。
+    const en = text().replace(/\s/gu, ' ');
+    expect(en).toMatch(/can watch during 8:00\D*9:00\D* and 5:00\D*7:00\D* \(大人A and 大人B\)/);
+    expect(en).not.toContain('can watch on this day');
+  });
 });
 
 describe('見られるかを入れる画面', () => {
