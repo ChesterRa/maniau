@@ -812,7 +812,11 @@ function checkReasons(
         arrangement.key,
         '理由に挙げた案を使えるか、断りなどを含めて確かめきれない。',
       );
-    } else if (reason.code === 'notCovered' && arrangement.kind === 'need') {
+    } else if (
+      reason.code === 'notCovered' &&
+      (arrangement.kind === 'need' || arrangement.kind === 'childCare')
+    ) {
+      // 窓の「すること」は need-coverage、子の居場所は care-cover が、家庭の記録から独立に照らす。
     } else {
       report.undetermined(
         'reason_not_independently_proved',

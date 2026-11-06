@@ -32,6 +32,75 @@ const EDITABLE_KINDS = ['home', 'work', 'pickup', 'away'] as const;
 const input =
   'min-h-11 rounded-xl border-[1.5px] border-btn-line bg-white px-2.5 text-base text-ink';
 
+/**
+ * 学童の一日利用で見てもらえる時間を直す欄。始まりと終わりの両方が入り、始まりが終わりより前の時だけ、直しに入れる
+ * （途中の値や逆さまの値を、見てもらえる時間として記録しない）。記録の無い前からの手は、空から入れる。
+ */
+/** 時刻の欄の値が、分までの時刻か。 */
+const clockOk = (value: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+
+/**
+ * 下書きの学童の手の見てもらえる時間が、どれも始まりと終わりのそろった、前後の正しい時間か（そうでない間は、保存の
+ * 前に変わることを見る所へ進ませない。画面に出ている値と違う物を見せない・書かない）。
+ */
+export function hoursReady(household: Household): boolean {
+  return household.careOptions.every(
+    (o) =>
+      o.kind !== 'afterSchoolFullDay' ||
+      typeof o.covers !== 'object' ||
+      (clockOk(o.covers.start) && clockOk(o.covers.end) && o.covers.start < o.covers.end),
+  );
+}
+
+/**
+ * 学童の一日利用で見てもらえる時間を直す欄。欄は家の情報の下書きをそのまま映し（打った値は、空でも逆さまでも下書きに
+ * 入る）、空・逆さまの間はそう書く（hoursReady が、見る所へ進ませない）。
+ */
+function HoursEdit(props: {
+  ctx: Ctx;
+  covers: CareOptionTemplate['covers'];
+  onChange: (covers: { start: string; end: string }) => void;
+}) {
+  const { ctx } = props;
+  const typed = typeof props.covers === 'object' ? props.covers : undefined;
+  const from = typed?.start ?? '';
+  const to = typed?.end ?? '';
+  const missing = typed !== undefined && (!clockOk(from) || !clockOk(to));
+  const backwards = typed !== undefined && !missing && from >= to;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span>{ctx.t('careAdd.afterSchool.hours')}</span>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="time"
+          aria-label={ctx.t('careAdd.afterSchool.hoursFrom')}
+          className={input}
+          value={from}
+          onChange={(e) => props.onChange({ start: e.target.value, end: to })}
+        />
+        <span aria-hidden="true">–</span>
+        <input
+          type="time"
+          aria-label={ctx.t('careAdd.afterSchool.hoursTo')}
+          className={input}
+          value={to}
+          onChange={(e) => props.onChange({ start: from, end: e.target.value })}
+        />
+      </div>
+      {missing && (
+        <span className="text-sm font-bold text-warn">
+          {ctx.t('careAdd.afterSchool.hoursMissing')}
+        </span>
+      )}
+      {backwards && (
+        <span className="text-sm font-bold text-warn">
+          {ctx.t('careAdd.afterSchool.hoursBackwards')}
+        </span>
+      )}
+    </div>
+  );
+}
+
 /** 曜日の名前（1 が月曜）。2026-11-23 は月曜。 */
 const weekdayName = (ctx: Ctx, weekday: number) =>
   new Intl.DateTimeFormat(ctx.lang, { weekday: 'short', timeZone: 'UTC' }).format(
@@ -250,6 +319,20 @@ export function householdPreviewLines(
         }),
       );
     }
+  }
+  // 選んだ手（本命・予備）で、手配の時間のうち見てもらえない時間が変わる（学童の時間を直した時など）。
+  for (const c of changes.covers ?? []) {
+    const name = optionName(c);
+    const gaps = new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(
+      c.after.map((g) => `${timeOnly(ctx, g.start)}–${timeOnly(ctx, g.end)}`),
+    );
+    const known = (list: typeof c.after) => list.filter((g) => !g.unsure);
+    if (c.after.length === 0) lines.push(ctx.t('household.preview.cover.full', { name }));
+    else if (known(c.after).length === 0)
+      lines.push(ctx.t('household.preview.cover.unsure', { name, gaps }));
+    else if (known(c.before).length === 0)
+      lines.push(ctx.t('household.preview.cover.lost', { name, gaps }));
+    else lines.push(ctx.t('household.preview.cover.changed', { name, gaps }));
   }
   // いつにするかの候補と、記録した手が離せない時間の重なりが、新しくできる・無くなる（答えは変えない）。
   for (const o of changes.overlaps ?? []) {
@@ -759,6 +842,12 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
             <div key={way.id} className="flex flex-col gap-1">
               <Title>{wayTitle(ctx, way)}</Title>
               {mode !== 'ways' && <Text>{deadlineText(ctx, way.deadline)}</Text>}
+              {/* 決まった時間だけ見てもらえる手（学童の一日利用など）は、その時間を書く。 */}
+              {typeof way.covers === 'object' && (
+                <Text quiet>
+                  {ctx.t('household.ways.covers', { from: way.covers.start, to: way.covers.end })}
+                </Text>
+              )}
               {mode === 'ways' && (
                 <div className="flex flex-wrap items-center gap-2">
                   {way.deadline.type === 'daysBefore' ||
@@ -827,6 +916,19 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
                   />
                 </div>
               )}
+              {/* 学童に一日預ける手は、見てもらえる時間も直せる（入れ間違い・学童の時間が変わった時）。 */}
+              {mode === 'ways' && way.kind === 'afterSchoolFullDay' && (
+                <HoursEdit
+                  ctx={ctx}
+                  covers={way.covers}
+                  onChange={(covers) =>
+                    change((h) => {
+                      const option = h.careOptions.find((o) => o.id === way.id);
+                      if (option) option.covers = covers;
+                    })
+                  }
+                />
+              )}
               <Text quiet>{stepsText(ctx, way)}</Text>
               {costText(ctx, way) && <Text quiet>{costText(ctx, way)}</Text>}
             </div>
@@ -855,7 +957,12 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
                   {ctx.t('household.save')}
                 </Button>
               ) : (
-                <Button onClick={() => void look()} disabled={busy || !ctx.previewHousehold}>
+                <Button
+                  onClick={() => void look()}
+                  disabled={
+                    busy || !ctx.previewHousehold || (draft !== undefined && !hoursReady(draft))
+                  }
+                >
                   {ctx.t('household.look')}
                 </Button>
               )}

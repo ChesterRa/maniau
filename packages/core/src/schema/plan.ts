@@ -325,7 +325,17 @@ export const OptionPlan = z.object({
    * いないことは、ここに入れない。
    */
   coverGaps: z
-    .array(z.object({ start: DateTime, end: DateTime }))
+    .array(
+      z.object({
+        start: DateTime,
+        end: DateTime,
+        /**
+         * 子の居場所の手だけ：見てもらえないと分かったのではなく、確かめられない時間（見てもらえる時間の記録の無い
+         * 手、子を見る大人が選んだ後に「分からない」と答えた時間）。
+         */
+        unsure: z.literal(true).optional(),
+      }),
+    )
     .min(1)
     .optional(),
   cost: Cost,
@@ -563,6 +573,11 @@ export const Task = z.object({
    * 時だけ、その人が窓を受け持つと言える。
    */
   cover: z.literal(true).optional(),
+  /**
+   * 子の居場所の手で、この作業をする本人が子を見る時（休む大人の、休みを伝える作業など。取れる手の watcherId）：
+   * 見る子と、手配の時間。引き受けの控えに入り、子や時間が替われば前の引き受けを当てない（確かめ直してもらう）。
+   */
+  watch: z.object({ childId: Id, start: DateTime, end: DateTime }).optional(),
   /**
    * 通用の「すること」の作業だけ：「すること」の中身とやり方の版の要約（needWaysBasis）。引き受けと済みの控えに
    * 入り、今と違えば前の引き受け・済みを当てない（だれのため・日・やり方が替わっても、題と時刻は同じことがある）。

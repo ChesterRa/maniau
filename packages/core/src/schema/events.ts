@@ -73,6 +73,11 @@ export const ProposalSnapshot = z.object({
   condition: z.string().min(1).optional(),
   /** 通用の「すること」の作業だけ：見せた時の中身とやり方の版の要約（Task.about）。 */
   about: z.string().min(1).optional(),
+  /**
+   * 本人が子を見る作業だけ（Task.watch）：見せた時の、見る子と手配の時間。無いのは、子を見る作業でないか、古い控え
+   * （子を見る今の作業とは違う物として扱う）。
+   */
+  watch: z.object({ childId: Id, start: DateTime, end: DateTime }).optional(),
 });
 export type ProposalSnapshot = z.infer<typeof ProposalSnapshot>;
 
@@ -91,6 +96,9 @@ export function sameProposal(a: ProposalSnapshot, b: ProposalSnapshot): boolean 
       p.external ? [p.external.to, p.external.kind] : null,
       p.condition ?? null,
       p.about ?? null,
+      p.watch
+        ? [p.watch.childId, toEpochMinutes(p.watch.start), toEpochMinutes(p.watch.end)]
+        : null,
     ]);
   return key(a) === key(b);
 }
@@ -149,6 +157,7 @@ export function proposalSnapshot(task: Task): ProposalSnapshot | undefined {
     ...(task.external ? { external: task.external } : {}),
     ...(task.condition === undefined ? {} : { condition: task.condition }),
     ...(task.about === undefined ? {} : { about: task.about }),
+    ...(task.watch === undefined ? {} : { watch: task.watch }),
   };
 }
 

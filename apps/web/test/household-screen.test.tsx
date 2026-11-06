@@ -179,6 +179,98 @@ describe('うちのこと', () => {
     ]);
   });
 
+  it('選んだ手で見てもらえない時間が変わる時は、「この変更で変わること」に書く', () => {
+    const { ctx } = ctxWith(undefined);
+    const gakudo = {
+      arrangementKey: 'arr:childCare:n1:i6:c',
+      optionKey: 'opt:arr:childCare:n1:i6:c:opt-gakudo',
+      templateId: 'opt-gakudo',
+    };
+    const gaps = [
+      { start: '2026-12-07T08:10+09:00', end: '2026-12-07T09:00+09:00' },
+      { start: '2026-12-07T16:00+09:00', end: '2026-12-07T18:15+09:00' },
+    ];
+    const lines = (covers: NonNullable<HouseholdPreview['changes']['covers']>) =>
+      householdPreviewLines(ctx, {
+        changes: { ...emptyChanges, covers },
+        issues: [],
+        unverified: [],
+        seen: 'x',
+        throughSeq: 9,
+      } as HouseholdPreview);
+    const name = '「学童に預ける」';
+    expect(lines([{ ...gakudo, before: [], after: gaps }])).toEqual([
+      `${name}では、8:10–9:00、16:00–18:15 を見てもらえなくなります（この手は新しくは選べず、選んである時は確保とは言いません）。`,
+    ]);
+    expect(lines([{ ...gakudo, before: gaps, after: [] }])).toEqual([
+      `${name}で、手配の時間の全部を見てもらえるようになります。`,
+    ]);
+    expect(
+      lines([{ ...gakudo, before: [], after: gaps.map((g) => ({ ...g, unsure: true as const })) }]),
+    ).toEqual([
+      `${name}では、8:10–9:00、16:00–18:15 を見てもらえると確かめられなくなります（この手は新しくは選べず、選んである時は確保とは言いません）。`,
+    ]);
+  });
+
+  it('学童の手の見てもらえる時間を直せる。逆さまの時間は直さず、そう言う', async () => {
+    const preview: HouseholdPreview = {
+      changes: emptyChanges,
+      issues: [],
+      unverified: [],
+      seen: 'abc123',
+      throughSeq: 9,
+    };
+    const { ctx, looked } = ctxWith({ preview });
+    await step(() => root.render(<HouseholdScreen ctx={ctx} />));
+    const waysCard = [...host.querySelectorAll('section')].find((section) =>
+      section.textContent?.startsWith('取れる手'),
+    );
+    const edit = [...(waysCard?.querySelectorAll('button') ?? [])].find(
+      (b) => b.textContent === '直す',
+    );
+    await step(() => edit?.click());
+    const field = (label: string) => {
+      const found = host.querySelector(`input[aria-label="${label}"]`);
+      if (!(found instanceof HTMLInputElement)) throw new Error(`${label} が無い`);
+      return found;
+    };
+    const type = (input: HTMLInputElement, value: string) =>
+      step(() => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        setter?.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    const from = field('見てもらえる時間の始まり');
+    const to = field('見てもらえる時間の終わり');
+    const backwards = '終わりは、始まりより後の時刻にしてください。';
+    const missing = '始まりと終わりの時刻を入れてください。';
+    expect([from.value, to.value]).toEqual(['08:00', '19:00']);
+    // 逆さまの間は、そう書き、見る所へ進ませない（前に打った 9:00–19:00 を見せない）。
+    await type(from, '09:00');
+    await type(to, '07:00');
+    expect([from.value, to.value]).toEqual(['09:00', '07:00']);
+    expect(host.textContent).toContain(backwards);
+    expect(button('変わることを見る')?.disabled).toBe(true);
+    // 空の欄も同じ。
+    await type(to, '');
+    expect(host.textContent).toContain(missing);
+    expect(button('変わることを見る')?.disabled).toBe(true);
+    await type(to, '16:00');
+    expect(host.textContent).not.toContain(backwards);
+    expect(host.textContent).not.toContain(missing);
+    await step(() => button('変わることを見る')?.click());
+    expect(looked).toHaveLength(1);
+    expect(looked[0]?.careOptions.find((o) => o.id === 'opt-gakudo')?.covers).toEqual({
+      start: '09:00',
+      end: '16:00',
+    });
+    expect(button('この内容で保存')).toBeDefined();
+    // 見た後に逆さまにすると、見た物を消し、保存させない。
+    await type(to, '08:30');
+    expect(button('この内容で保存')).toBeUndefined();
+    expect(button('変わることを見る')?.disabled).toBe(true);
+  });
+
   it('直せない直しはサーバーの理由を言葉にし、保存のボタンを出さない', async () => {
     const { ctx, sent } = ctxWith({ refused: 'hoursOvernight' });
     await step(() => root.render(<HouseholdScreen ctx={ctx} />));

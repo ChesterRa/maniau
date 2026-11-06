@@ -60,7 +60,7 @@ import { type DutyTurn, dutyTurn, statedTurn } from '../view/ours';
 import { preparationGaps, unusedResources } from '../view/preparations';
 import { isActiveTask } from '../view/today';
 import { hoursUnknownAt, stoppedWay } from '../view/ways';
-import { careCoverage } from './availability';
+import { careCoverage, unavailableOn } from './availability';
 import { type Busy, optionDeadline, placeStep, ruleDeadline } from './deadline';
 import { bestOrder } from './joint';
 import { purchaseOpportunities, purchaseStores, searchPurchase } from './purchase';
@@ -797,6 +797,9 @@ function placeCare(
           slot.entry.live,
           own,
           busy,
+          undefined,
+          undefined,
+          watchOf(ctx, template, slot),
         );
         addBusy(busy, own);
         result.set(option.key, { option, tasks: own, conflicted });
@@ -838,9 +841,8 @@ function placeCare(
     // 時に重ならず、本命から替える時は少し早めの目安になる）。
     const others = new Map<string, Busy[]>();
     for (const chain of placed.values()) addBusy(others, chain.tasks);
-    const built = templates.map((template) => {
-      const committed = placed.get(keys.option(slot.arrangementKey, template.id));
-      if (committed) return committed;
+    const gap = slot.gap;
+    const fresh = (template: CareOptionTemplate): { option: OptionPlan; tasks: Task[] } => {
       const own: Task[] = [];
       const { option } = careOption(
         ctx,
@@ -852,52 +854,158 @@ function placeCare(
         entry.live,
         own,
         others,
+        undefined,
+        undefined,
+        watchOf(ctx, template, slot),
       );
       return { option, tasks: own };
+    };
+    const built = templates.map((template) => {
+      const { option, tasks } =
+        placed.get(keys.option(slot.arrangementKey, template.id)) ?? fresh(template);
+      // 手配の時間のうち、この手で見てもらえない時間（careCoverGaps）。あれば勧めず、新しくは選べず、確保とも言わない。
+      const holes = careCoverGaps(ctx, template, slot.date, gap, option.key);
+      return {
+        option:
+          holes.length > 0
+            ? {
+                ...option,
+                coverGaps: holes.map((g) => ({
+                  start: ctx.fmt(g.start),
+                  end: ctx.fmt(g.end),
+                  ...(g.unsure ? { unsure: true as const } : {}),
+                })),
+              }
+            : option,
+        tasks,
+      };
     });
     const tasks = built.flatMap((b) => b.tasks);
     out.tasks.push(...tasks);
     out.arrangements.push(
-      withStatus(
-        ctx,
-        {
-          key: slot.arrangementKey,
-          requirementKey: slot.requirementKey,
-          kind: 'childCare',
-          childId: slot.childId,
-          start: ctx.fmt(slot.gap.start),
-          end: ctx.fmt(slot.gap.end),
-          status: 'decidable',
-          options: built.map((b) => b.option),
-          backupOptionKeys: backupsOffered(
-            ctx,
-            slot.arrangementKey,
-            built.map((b) => b.option),
-          ),
-          reasons: [
-            ...conflictReasons(placed, slot.arrangementKey),
-            ...(slot.split
-              ? [
-                  {
-                    code: 'splitGaps' as const,
-                    refs: slot.split.map((g) => `${ctx.fmt(g.start)}/${ctx.fmt(g.end)}`),
-                  },
-                ]
-              : []),
-          ],
-          live: entry.live,
-          ...(entry.conditional ? { conditional: entry.conditional } : {}),
-          ...chosen(
-            ctx,
-            slot.arrangementKey,
-            built.map((b) => b.option),
-          ),
-        },
-        tasks,
+      withCareCover(
+        withStatus(
+          ctx,
+          {
+            key: slot.arrangementKey,
+            requirementKey: slot.requirementKey,
+            kind: 'childCare',
+            childId: slot.childId,
+            start: ctx.fmt(slot.gap.start),
+            end: ctx.fmt(slot.gap.end),
+            status: 'decidable',
+            options: built.map((b) => b.option),
+            backupOptionKeys: backupsOffered(
+              ctx,
+              slot.arrangementKey,
+              built.map((b) => b.option),
+            ),
+            reasons: [
+              ...conflictReasons(placed, slot.arrangementKey),
+              ...(slot.split
+                ? [
+                    {
+                      code: 'splitGaps' as const,
+                      refs: slot.split.map((g) => `${ctx.fmt(g.start)}/${ctx.fmt(g.end)}`),
+                    },
+                  ]
+                : []),
+            ],
+            live: entry.live,
+            ...(entry.conditional ? { conditional: entry.conditional } : {}),
+            ...chosen(
+              ctx,
+              slot.arrangementKey,
+              built.map((b) => b.option),
+            ),
+          },
+          tasks,
+        ),
       ),
     );
   }
   return byItem;
+}
+
+/**
+ * 本人が子を見る手（取れる手の watcherId）の、見る人・見る子・手配の時間（その人の作業の watch。引き受けの控えに
+ * 入る）。手配の時間の無い手配（見守りの要らない日）や、見る人の無い手は無し。
+ */
+function watchOf(
+  ctx: Context,
+  template: CareOptionTemplate,
+  slot: CareSlot,
+): { watcherId: string; childId: string; start: DateTime; end: DateTime } | undefined {
+  if (template.watcherId === undefined || !slot.gap) return undefined;
+  return {
+    watcherId: template.watcherId,
+    childId: slot.childId,
+    start: ctx.fmt(slot.gap.start),
+    end: ctx.fmt(slot.gap.end),
+  };
+}
+
+/**
+ * 子の居場所の手配の時間のうち、取れる手で見てもらえない時間（前もって分かる物だけ。だれもいないと分かったのでは
+ * ない）。見てもらえるのは、手の covers の内（whole は手配の時間の全部、時刻の区間はその日のその内）から、子を見る
+ * 家族の大人（watcherId）の、その日の手が離せない時間と、その人がこの手を選んだ後に答えた見られない時間を除いた所。
+ * 選ぶ前の答え（仕事で見られない、など）は、休んで見る手の前の事なので数えない。covers の無い手（前からの記録）と、
+ * 選んだ後に「分からない」と答えた時間は、確かめられない時間（unsure）。
+ */
+function careCoverGaps(
+  ctx: Context,
+  template: CareOptionTemplate,
+  date: LocalDate,
+  gap: { start: EpochMinutes; end: EpochMinutes },
+  optionKey: string,
+): { start: EpochMinutes; end: EpochMinutes; unsure?: true }[] {
+  const { covers, watcherId } = template;
+  if (covers === undefined) return [{ ...gap, unsure: true }];
+  const at = (time: string) => zonedToEpochMinutes(date, time, ctx.tz);
+  const range = covers === 'whole' ? gap : { start: at(covers.start), end: at(covers.end) };
+  const cannot: { start: EpochMinutes; end: EpochMinutes }[] = [];
+  const unknown: { start: EpochMinutes; end: EpochMinutes }[] = [];
+  if (watcherId !== undefined) {
+    cannot.push(...unavailableOn(ctx.household, watcherId, date));
+    const answer = ctx.household.dayAnswers?.find(
+      (a) => a.memberId === watcherId && a.date === date,
+    );
+    const answeredAt = ctx.state.dayAnswerSeq.get(`${watcherId}|${date}`);
+    const chosenAt = ctx.state.optionChosenSeq.get(optionKey);
+    if (answer && answeredAt !== undefined && chosenAt !== undefined && answeredAt > chosenAt) {
+      const spans = (list: readonly { start: string; end: string }[]) =>
+        list.map((s) => ({ start: at(s.start), end: at(s.end) }));
+      cannot.push(...spans(answer.cannot));
+      const rest = uncovered(gap, spans([...answer.can, ...answer.cannot]));
+      if (answer.rest === 'cannot') cannot.push(...rest);
+      if (answer.rest === 'unknown') unknown.push(...rest);
+    }
+  }
+  const known = uncovered(gap, range.start < range.end ? uncovered(range, cannot) : []);
+  const unsure = unknown
+    .flatMap((u) =>
+      uncovered({ start: Math.max(u.start, gap.start), end: Math.min(u.end, gap.end) }, known),
+    )
+    .filter((u) => u.start < u.end);
+  return [...known, ...unsure.map((u) => ({ ...u, unsure: true as const }))].sort(
+    (a, b) => a.start - b.start,
+  );
+}
+
+/**
+ * 子の居場所で、今使う手（本命か、本命に断られて移った予備）では見てもらえない時間が残れば、notCovered に書く
+ * （手配が済んだとは言わない。決める札を残す：careCoverOpen）。
+ */
+function withCareCover(arrangement: Arrangement): Arrangement {
+  const inUse = arrangement.options.find((o) => o.key === arrangement.inUseOptionKey);
+  if (!inUse?.coverGaps || !arrangement.live) return arrangement;
+  return {
+    ...arrangement,
+    reasons: [
+      ...arrangement.reasons,
+      { code: 'notCovered', refs: inUse.coverGaps.map((g) => `${g.start}/${g.end}`) },
+    ],
+  };
 }
 
 /** 案の手順の鎖（子の居場所の取れる手と、通用のやり方の両方。careOption が置く）。 */
@@ -1834,6 +1942,8 @@ function careOption(
   busy: ReadonlyMap<string, readonly Busy[]>,
   params: (step: StepTemplate) => Record<string, string> = () => ({}),
   about?: string,
+  /** 本人が子を見る手（取れる手の watcherId）なら、見る人と、見る子・手配の時間（その人の作業の watch）。 */
+  watch?: { watcherId: string; childId: string; start: DateTime; end: DateTime },
 ): { option: OptionPlan; conflicted: boolean } {
   const optionKey = keys.option(arrangementKey, template.id);
   // 依頼を送って済みになった手順は、送った依頼の日で見る。前の日の分を送った済みは、今の日に当てず、
@@ -1983,6 +2093,9 @@ function careOption(
           ...(step.external === undefined ? {} : { external: step.external }),
           ...(handoff ? { handoff: true } : {}),
           ...(about === undefined ? {} : { about }),
+          ...(watch && step.assigneeId === watch.watcherId
+            ? { watch: { childId: watch.childId, start: watch.start, end: watch.end } }
+            : {}),
           ...(placed && !handoff
             ? {
                 assigneeId: placed.memberId,

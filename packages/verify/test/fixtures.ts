@@ -49,6 +49,8 @@ export const household = () =>
       steps: [{ id: 'step', titleKey: 'task.step', durationMin: 30, segments: ['home'] }],
       cost: {},
       cancellable: true,
+      // 頼む手は、手配の時間の全部を頼む（見てもらえる時間の記録の無い前からの手は、選べない手になる）。
+      covers: 'whole',
     })),
   });
 

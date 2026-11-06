@@ -31,8 +31,17 @@ export function proposalMatches(task: Task, shown: ProposalSnapshot): boolean | 
         Object.hasOwn(shown.titleParams, key) && task.titleParams[key] === shown.titleParams[key],
     );
   const late = task.detour?.delayedArrival;
+  // 本人が子を見る作業は、見る子と手配の時間も見せた物と同じであること（無い控えは、ある作業と違う）。
+  const sameWatch =
+    task.watch === undefined
+      ? shown.watch === undefined
+      : shown.watch !== undefined &&
+        task.watch.childId === shown.watch.childId &&
+        instantMinute(task.watch.start) === instantMinute(shown.watch.start) &&
+        instantMinute(task.watch.end) === instantMinute(shown.watch.end);
   return (
     sameTime &&
+    sameWatch &&
     (late === undefined
       ? shown.delayedArrival === undefined
       : shown.delayedArrival !== undefined &&

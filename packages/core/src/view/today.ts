@@ -290,17 +290,32 @@ function started(plan: PlanResult, arrangement: Arrangement, optionKey: string):
 
 /**
  * 案を今、本命か予備に選べるか：決め時を過ぎていない。家族がやめたやり方の案は、今の本命・予備の時だけ（残せて、
- * 役を替えられる。新しくは選べない）。予備の勧め・決める事の知らせ・断られた時の次の案は、これで数える。
+ * 役を替えられる。新しくは選べない）。子の居場所で、手配の時間のうち見てもらえない時間が残る手（coverGaps）は、
+ * 選べない（今の本命・予備でも、次の案として勧めない：careCoverOpen が選び直しを促す）。予備の勧め・決める事の
+ * 知らせ・断られた時の次の案は、これで数える。
  */
 export function choosable(
-  arrangement: Pick<Arrangement, 'chosenOptionKey' | 'backupOptionKeys'>,
-  option: Pick<OptionPlan, 'key' | 'expired' | 'stopped'>,
+  arrangement: Pick<Arrangement, 'kind' | 'chosenOptionKey' | 'backupOptionKeys'>,
+  option: Pick<OptionPlan, 'key' | 'expired' | 'stopped' | 'coverGaps'>,
 ): boolean {
+  if (arrangement.kind === 'childCare' && option.coverGaps !== undefined) return false;
   return (
     !option.expired &&
     (option.stopped !== true ||
       option.key === arrangement.chosenOptionKey ||
       arrangement.backupOptionKeys.includes(option.key))
+  );
+}
+
+/**
+ * 子の居場所で、今使う手では見てもらえない時間が残る（エンジンの notCovered）。手配の時間が終わるまで、決める札を
+ * 残す（選び直すか、その日の見られるかを直す）。知らせはしない（画面で足りる。splitOpen と同じ）。
+ */
+export function careCoverOpen(arrangement: Arrangement, now: number): boolean {
+  return (
+    arrangement.kind === 'childCare' &&
+    arrangement.reasons.some((r) => r.code === 'notCovered') &&
+    careEnd(arrangement) > now
   );
 }
 
@@ -318,7 +333,8 @@ export function securedBackup(plan: PlanResult, arrangement: Arrangement): Optio
   if (arrangement.kind !== 'childCare') return undefined;
   for (const key of arrangement.backupOptionKeys) {
     const option = arrangement.options.find((o) => o.key === key);
-    if (!option) continue;
+    // 手配の時間のうち、見てもらえない時間が残る手は、受け付けられても確保とは言わない（移っても足りない）。
+    if (!option || option.coverGaps !== undefined) continue;
     const steps = option.taskKeys
       .map((taskKey) => plan.tasks.find((t) => t.key === taskKey))
       .filter((t): t is Task => t !== undefined && !t.extra);
@@ -418,8 +434,12 @@ export function todayCards(
     // （「すること」は need の札）。
     if (!arrangement.live) continue;
     if (arrangement.status === 'dependsOnReply') {
-      // 返事を待つ間も、見守れる大人を確かめられない時間が分かれる日は、決める札を残す（splitOpen）。
-      if (arrangement.kind === 'childCare' && splitOpen(arrangement, now)) {
+      // 返事を待つ間も、見守れる大人を確かめられない時間が分かれる日と、今使う手で見てもらえない時間が残る日は、
+      // 決める札を残す（splitOpen・careCoverOpen）。
+      if (
+        arrangement.kind === 'childCare' &&
+        (splitOpen(arrangement, now) || careCoverOpen(arrangement, now))
+      ) {
         decide.push(decideCard(arrangement));
       }
       // 根拠が分からない依頼は、ふつうの返事待ちとして予備を勧めない（まず要るかを確かめる）。
@@ -448,7 +468,10 @@ export function todayCards(
     }
     if (arrangement.kind === 'childCare' && arrangement.status !== 'askFirst') {
       const needsChoice = arrangement.chosenOptionKey === undefined || mustChooseAgain(arrangement);
-      if ((needsChoice || splitOpen(arrangement, now)) && arrangement.status !== 'infeasible') {
+      if (
+        (needsChoice || splitOpen(arrangement, now) || careCoverOpen(arrangement, now)) &&
+        arrangement.status !== 'infeasible'
+      ) {
         decide.push(decideCard(arrangement));
       }
     }

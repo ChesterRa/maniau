@@ -3,6 +3,7 @@
 
 import type { Arrangement, Household as Family, PlanResult as Plan, Task } from '@maniau/core';
 import { DateTime, DomainEvent, Household, PlanResult, toEpochMinutes } from '@maniau/core';
+import { careChoiceHistory, careOptionGaps } from './care-cover';
 import { collectFacts, type FactState } from './facts';
 import { checkHistory } from './history';
 import { checkNeedWhen } from './need-when';
@@ -414,12 +415,37 @@ function notificationNeedShape(
 }
 
 /**
- * 子の居場所の手配に、確保できた予備があるか：予備の案の作業（足した物を除く）が全部済み、外の相手に頼む作業は、
- * その日の分の確かめの要らない「はい」がある。日の分からない頼み事は確保と数えない。
+ * 子の居場所の手配の手が、手配の時間の全部を見てもらえるか（家庭の記録と事象の列から独立に求める。計画の
+ * coverGaps は使わない）。読めない時は、見てもらえるとは言わない。
  */
-function backupSecured(plan: Plan, arrangement: Arrangement, timeZone: string): boolean {
+function careCovered(
+  household: Family,
+  events: readonly DomainEvent[],
+): (
+  arrangement: Arrangement,
+  option: Pick<Arrangement['options'][number], 'key' | 'templateId'>,
+) => boolean {
+  let choices: ReturnType<typeof careChoiceHistory> | undefined;
+  return (arrangement, option) => {
+    choices ??= careChoiceHistory(events);
+    return careOptionGaps(household, arrangement, option, choices)?.length === 0;
+  };
+}
+
+/**
+ * 子の居場所の手配に、確保できた予備があるか：予備の案が手配の時間の全部を見てもらえ（見てもらえない時間が残る手は
+ * 確保と数えない）、作業（足した物を除く）が全部済み、外の相手に頼む作業は、その日の分の確かめの要らない「はい」が
+ * ある。日の分からない頼み事は確保と数えない。
+ */
+function backupSecured(
+  plan: Plan,
+  arrangement: Arrangement,
+  timeZone: string,
+  covered: ReturnType<typeof careCovered>,
+): boolean {
   return arrangement.backupOptionKeys.some((key) => {
     const option = arrangement.options.find((o) => o.key === key);
+    if (!option || !covered(arrangement, option)) return false;
     const steps = (option?.taskKeys ?? [])
       .map((taskKey) => plan.tasks.find((t) => t.key === taskKey))
       .filter((t): t is Task => t !== undefined && !t.extra);
@@ -445,9 +471,15 @@ function backupSecured(plan: Plan, arrangement: Arrangement, timeZone: string): 
 
 /**
  * 返事を待つ手配で、まだ押さえていない次の手の一番早い決め時が 26 時間以内か（その間は、予備を押さえるかの札が
- * 同じ返事を追う）。「すること」で家族がやめたやり方の案は、次の手に数えない（新しくは選べない）。
+ * 同じ返事を追う）。「すること」で家族がやめたやり方の案と、子の居場所で見てもらえない時間が残る手は、次の手に
+ * 数えない（新しくは選べない）。
  */
-function backupDue(plan: Plan, arrangement: Arrangement, household: Family): boolean {
+function backupDue(
+  plan: Plan,
+  arrangement: Arrangement,
+  household: Family,
+  covered: ReturnType<typeof careCovered>,
+): boolean {
   if (arrangement.status !== 'dependsOnReply') return false;
   const deadlines = arrangement.options
     .filter(
@@ -456,7 +488,8 @@ function backupDue(plan: Plan, arrangement: Arrangement, household: Family): boo
         o.decisionDeadline !== undefined &&
         o.key !== arrangement.chosenOptionKey &&
         !arrangement.backupOptionKeys.includes(o.key) &&
-        !(arrangement.kind === 'need' && household.stoppedWayIds?.includes(o.templateId)),
+        !(arrangement.kind === 'need' && household.stoppedWayIds?.includes(o.templateId)) &&
+        !(arrangement.kind === 'childCare' && !covered(arrangement, o)),
     )
     .map((o) => toEpochMinutes(o.decisionDeadline as string));
   if (deadlines.length === 0) return false;
@@ -478,6 +511,7 @@ function checkSubject(
   windows: NeedWindows,
 ): undefined {
   const { subject, titleKey, toMemberId: member } = intent;
+  const covered = careCovered(household, events);
   const wrong = (): undefined => {
     out.violation('notification_subject_mismatch', intent.key, 'この人に出す根拠が計画にない。');
     return undefined;
@@ -581,8 +615,8 @@ function checkSubject(
       request.basis.optionKey === undefined ||
       arrangement.inUseOptionKey !== request.basis.optionKey ||
       matchesArrangementDay(request.window, arrangement, timeZone, shape) !== true ||
-      (arrangement.kind === 'childCare' && backupSecured(plan, arrangement, timeZone)) ||
-      backupDue(plan, arrangement, household)
+      (arrangement.kind === 'childCare' && backupSecured(plan, arrangement, timeZone, covered)) ||
+      backupDue(plan, arrangement, household, covered)
     )
       return wrong();
     checkTime(intent, request.window.start, undefined, out);
@@ -790,11 +824,15 @@ function checkSubject(
   const option = arrangement?.options.find((o) => o.key === subject.optionId);
   if (!arrangement?.live || !option?.decisionDeadline || option.expired) return wrong();
   const optionDeadline = option.decisionDeadline;
+  // 「すること」で家族がやめたやり方は、今の本命・予備の時だけ。子の居場所で見てもらえない時間が残る手は、選べない
+  // （今の本命・予備でも、次の手として知らせない）。
   const selectable = (candidate: Arrangement['options'][number]) =>
-    arrangement.kind !== 'need' ||
-    !household.stoppedWayIds?.includes(candidate.templateId) ||
-    arrangement.chosenOptionKey === candidate.key ||
-    arrangement.backupOptionKeys.includes(candidate.key);
+    arrangement.kind === 'childCare'
+      ? covered(arrangement, candidate)
+      : arrangement.kind !== 'need' ||
+        !household.stoppedWayIds?.includes(candidate.templateId) ||
+        arrangement.chosenOptionKey === candidate.key ||
+        arrangement.backupOptionKeys.includes(candidate.key);
   if (!selectable(option)) return wrong();
   if (titleKey === 'notify.backup') {
     const request = plan.requests.find((r) => r.requestId === subject.requestId);

@@ -170,6 +170,8 @@ export function checkNeedPotentialCoverage(
   const windows = needWindows(history.events, plan, whenWindows);
   for (const arrangement of plan.arrangements) {
     if (!arrangement.live || arrangement.options.length === 0) continue;
+    // 子の居場所の手で見てもらえない時間は、care-cover が家庭の記録から照らす。
+    if (arrangement.kind === 'childCare') continue;
     if (arrangement.kind !== 'need') {
       for (const option of arrangement.options) {
         if (gapsOf(option).length > 0)

@@ -168,7 +168,9 @@
       "conditionalWhen": "Needed {{when}} (not settled yet).",
       "turnedDown": "The person you asked said no. Please pick another option.",
       "split": "From the times on record, the times we can’t confirm an adult to watch are split ({{times}}). This arrangement is for {{main}} only. Please check the other times together.",
-      "actionChildCare": "Choose how to arrange care"
+      "actionChildCare": "Choose how to arrange care",
+      "careNotCovered": "The current way doesn’t cover {{gaps}}.",
+      "careNotCoveredUnknown": "We can’t confirm the current way covers {{gaps}}."
     },
     "question": {
       "label": "Please tell us",
@@ -218,7 +220,9 @@
       "fixedPast": "The written time has passed. If it's done, tap Done.",
       "cover": "You would cover this whole time (no other tasks are placed then).",
       "whereMaps": "{{place}} · {{walk}} min walk from the station ({{back}} min back)",
-      "usualStore": "Your usual store (change it under “Around us” in Family)."
+      "usualStore": "Your usual store (change it under “Around us” in Family).",
+      "careWatch": "With this time off, {{name}} watches {{child}} on {{day}}, {{from}}–{{to}}.",
+      "careFor": "This is for {{child}}’s care on {{day}}."
     },
     "backup": {
       "label": "Just in case",
@@ -303,9 +307,9 @@
       "undecidedLabel": "Can’t plan when to buy yet",
       "undecided": "It’s needed by {{date}}, but no time to stop at a store could be planned from the household information entered so far. This doesn’t mean it’s too late. If you get it another way, tap \"Got it\".",
       "ownTrial": "You can’t enter stations or routes in this trial. To see when to buy on the way home, try the sample family (start it from “Back to start (end this trial)” under “Controls”; this trial ends and what you’ve entered won’t carry over).",
-      "addHelper": "Add someone you can ask",
+      "addHelper": "Add a way to cover the day",
       "noOptionsLabel": "No ways to arrange yet",
-      "noOptions": "Someone needs to watch {{child}} on {{when}}. Add someone you can ask, and you can choose to ask them."
+      "noOptions": "Someone needs to watch {{child}} on {{when}}. Add someone you can ask, after-school care, or time off, and you can choose between them."
     },
     "timing": {
       "fixed": "{{day}} {{from}}–{{to}}",
@@ -536,7 +540,12 @@
     },
     "unusedResource": "You marked “{{name}}” as “Don’t use” (not recommended; you can still choose it).",
     "coverGaps": "Time we can’t confirm this option would look after, even if everyone agreed: {{gaps}} (not recommended; you can still choose it).",
-    "noOptionsYet": "There are no ways to choose yet. Add one with “Add someone you can ask” below."
+    "noOptionsYet": "There are no ways to choose yet. Add one with “Add a way to cover the day” below.",
+    "careCoverGaps": "This way doesn’t cover {{gaps}}, so you can’t choose it. If someone can watch your child then, update that day in “Family” and you can choose it.",
+    "careCoverUnknown": "The hours this way covers aren’t recorded, so you can’t choose it.",
+    "careNotCovered": "The current way ({{option}}) doesn’t cover {{gaps}}. Choose another way, or if someone can watch your child then, update that day in “Family”.",
+    "careNotCoveredUnknown": "We can’t confirm the current way ({{option}}) covers {{gaps}}. Choose another way, or check that day’s plans and the way’s hours.",
+    "careCoverUnsure": "We can’t confirm this way covers {{gaps}}, so you can’t choose it. Check and update that day in “Family” and you can choose it."
   },
   "facts": {
     "title": "{{date}}: who can watch {{child}}?",
@@ -576,7 +585,6 @@
     "refused": "We couldn’t save this answer. Please check the times."
   },
   "helperAsk": {
-    "label": "Add someone you can ask",
     "body": "Grandparents, neighbours and so on. Once added, you can choose “Ask them” (use a made-up nickname).",
     "name": "Their nickname",
     "namePlaceholder": "e.g. Mr Sato next door",
@@ -586,12 +594,58 @@
       "1": "21:00 the day before",
       "3": "21:00, 3 days before",
       "7": "21:00, 1 week before"
+    }
+  },
+  "careAdd": {
+    "label": "Add a way to cover the day",
+    "body": "Add someone you can ask, after-school care, or time off, then compare above when each way has to be decided.",
+    "kind": {
+      "helper": "Someone to ask",
+      "afterSchool": "After-school care",
+      "leave": "Time off"
     },
     "look": "See what this changes",
-    "add": "Add {{name}}",
-    "added": "Added {{name}}. You can choose them above.",
-    "refused": "Couldn’t add them. Check the nickname (it can’t match someone already added).",
-    "ownTrial": "In this trial, the only childcare way you can add is asking someone. To compare ways including after-school care and time off, try the sample family (via “Back to start (end this trial)” under “Controls”; what you’ve entered won’t carry over)."
+    "add": "Add “{{name}}”",
+    "added": "Added “{{name}}”. You can choose it above.",
+    "choose": "Choose",
+    "at": "Deadline time",
+    "afterSchool": {
+      "body": "A full day at after-school care on a day without school. Check the application deadline, the fee for the day, and the hours they look after your child in the program’s own rules.",
+      "name": "Name of the after-school program",
+      "namePlaceholder": "e.g. Hikari after-school club",
+      "by": "Application deadline",
+      "rule": {
+        "week": "By a set weekday the week before",
+        "days": "A number of days before"
+      },
+      "weekday": "Weekday",
+      "weekdayOf": "{{weekday}} the week before",
+      "daysLabel": "Days before",
+      "daysOf": "{{days}} days before",
+      "yen": "Fee for the day",
+      "yenPlaceholder": "e.g. 1000",
+      "yenUnit": "yen (0 if free)",
+      "bento": "Packed lunch (if needed, making it that morning becomes a task)",
+      "enrolled": "{{child}} is enrolled at this program and can apply for a full day",
+      "hours": "Hours they look after your child on a full day",
+      "hoursFrom": "Start of the hours they look after your child",
+      "hoursTo": "End of the hours they look after your child",
+      "hoursBackwards": "The end time needs to be after the start time.",
+      "hoursMissing": "Enter both the start and end times.",
+      "bentoYes": "Needed",
+      "bentoNo": "Not needed",
+      "unknown": "If you don’t know the deadline, the hours, or whether a lunch is needed, check with the program first, then add it."
+    },
+    "leave": {
+      "body": "Take the whole day off work and look after your child at home. Enter the deadline for telling your workplace (time off by the hour can’t be added yet).",
+      "who": "Who takes the day off",
+      "by": "Tell work by",
+      "daysLabel": "Business days before",
+      "daysOf": "{{days}} business days before",
+      "workplace": "{{name}}’s workplace",
+      "none": "Every adult already has a time-off way. You can change its deadline under “Ways to cover” on “Our family”.",
+      "businessDays": "Business days skip weekends and public holidays. Company-only days off (like the New Year break) aren’t counted, so check your company’s rule around them."
+    }
   },
   "ask": {
     "title": "Message to send",
@@ -757,7 +811,10 @@
     "escortTo": "Drop-off for {{what}}",
     "escortFrom": "Pick-up from {{what}}",
     "wayStep": "{{what}}",
-    "forNeed": "{{title}} ({{date}}, {{what}})"
+    "forNeed": "{{title}} ({{date}}, {{what}})",
+    "gakudo": {
+      "apply": "Apply for a full day at after-school care"
+    }
   },
   "push": {
     "enable": "Get notifications",
@@ -1026,12 +1083,19 @@
       "businessDaysUnit": "business days before",
       "weekday": "Day",
       "previousWeekDay": "{{weekday}} the week before",
-      "at": "Time"
+      "at": "Time",
+      "covers": "Covers {{from}}–{{to}}"
     },
     "preview": {
       "label": "What this change would do",
       "none": "The plan doesn't change.",
       "aWay": "a way",
+      "cover": {
+        "lost": "{{name}} will no longer cover {{gaps}} (it can’t be newly chosen, and if it’s already chosen it isn’t called secured).",
+        "changed": "The time {{name}} doesn’t cover becomes {{gaps}}.",
+        "unsure": "{{name}} can no longer be confirmed to cover {{gaps}} (it can’t be newly chosen, and if it’s already chosen it isn’t called secured).",
+        "full": "{{name}} will cover all of the needed time."
+      },
       "overlap": {
         "added": "Candidate {{when}} for “{{what}}”: if you record this change, it overlaps {{name}}’s busy time ({{busy}}). Answers stay as they are.",
         "removed": "Candidate {{when}} for “{{what}}”: it no longer overlaps {{name}}’s busy time ({{busy}})."

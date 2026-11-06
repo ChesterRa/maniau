@@ -222,6 +222,19 @@ export interface RecommendationChange {
 }
 
 /**
+ * 手配の時間のうち見てもらえない時間が変わる手（前も後も生きている手配の、前も後もある手。選んでいない手は、まだ
+ * 決め時を過ぎていない物だけ：見てもらえない時間が残る手は新しくは選べないので、選べる・選べないが替わる）。無い側は
+ * 空（手配の時間の全部を見てもらえる）。
+ */
+export interface CoverChange {
+  arrangementKey: string;
+  optionKey: string;
+  templateId: string;
+  before: NonNullable<OptionPlan['coverGaps']>;
+  after: NonNullable<OptionPlan['coverGaps']>;
+}
+
+/**
  * 計画が変わる時の差分。選ぶ・家の情報を直す・「もし〜なら」に共通（選んだ手に依らない）。比べるだけで、
  * 計画も文も作らない。空の欄は、その種類の変化が無いこと。
  */
@@ -272,6 +285,8 @@ export interface PlanChanges {
    * 手が離せない時間ごと）。無いのは、変わらない。
    */
   overlaps?: OverlapChange[];
+  /** 見てもらえない時間が変わる手（選んだ手と、まだ選べる時の手）。無いのは、変わらない。 */
+  covers?: CoverChange[];
 }
 
 /** いつにするかの候補と、記録した手が離せない時間の重なりの変化。 */
@@ -335,6 +350,37 @@ function overlapChanges(before: PlanResult, after: PlanResult): OverlapChange[] 
       )
       .map(([, o]) => ({ ...o, change: 'removed' as const })),
   ];
+}
+
+/** 見てもらえない時間が変わる手（選んだ手と、決め時を過ぎていない手）。 */
+function coverChanges(before: PlanResult, after: PlanResult): CoverChange[] {
+  const gapsOf = (option: OptionPlan) => option.coverGaps ?? [];
+  const same = (a: OptionPlan, b: OptionPlan) => {
+    const key = (o: OptionPlan) =>
+      gapsOf(o)
+        .map((g) => `${toEpochMinutes(g.start)}-${toEpochMinutes(g.end)}${g.unsure ? '?' : ''}`)
+        .join(',');
+    return key(a) === key(b);
+  };
+  const out: CoverChange[] = [];
+  for (const later of after.arrangements) {
+    const earlier = before.arrangements.find((a) => a.key === later.key);
+    if (!later.live || !earlier?.live) continue;
+    const chosen = new Set([later.chosenOptionKey, ...later.backupOptionKeys]);
+    for (const now of later.options) {
+      const was = earlier.options.find((o) => o.key === now.key);
+      if (!was || same(now, was) || (now.expired && !chosen.has(now.key))) continue;
+      const key = now.key;
+      out.push({
+        arrangementKey: later.key,
+        optionKey: key,
+        templateId: now.templateId,
+        before: gapsOf(was),
+        after: gapsOf(now),
+      });
+    }
+  }
+  return out;
 }
 
 /** 今の計画（before）と、変えた後の計画（after）を比べる。 */
@@ -549,6 +595,10 @@ export function planChanges(before: PlanResult, after: PlanResult): PlanChanges 
     ...(() => {
       const overlaps = overlapChanges(before, after);
       return overlaps.length > 0 ? { overlaps } : {};
+    })(),
+    ...(() => {
+      const covers = coverChanges(before, after);
+      return covers.length > 0 ? { covers } : {};
     })(),
   };
 }

@@ -207,6 +207,13 @@ export interface EngineState {
   doneContent: Map<string, TaskContent>;
   primary: Map<string, string>;
   backups: Map<string, Set<string>>;
+  /** 案を最後に本命か予備に選んだ事象の seq（案の key → seq）。 */
+  optionChosenSeq: Map<string, number>;
+  /**
+   * 大人のその日の答え（家庭の dayAnswers）が、最後に変わった家の情報の事象の seq（「成員の ID|日」→ seq）。答えを
+   * 足した・直した・外した時に進む（同じ中身のまま書き直しても進まない）。
+   */
+  dayAnswerSeq: Map<string, number>;
   /** 家族が取り下げた案（手配の key → 案の key）。頼んだ後なら、取り消しの連絡が要る。 */
   dropped: Map<string, Set<string>>;
   assignees: Map<string, string>;
@@ -272,6 +279,8 @@ export function emptyState(): EngineState {
     doneContent: new Map(),
     primary: new Map(),
     backups: new Map(),
+    optionChosenSeq: new Map(),
+    dayAnswerSeq: new Map(),
     dropped: new Map(),
     assignees: new Map(),
     commitments: new Map(),
@@ -357,9 +366,18 @@ function apply(state: EngineState, event: DomainEvent): void {
     }
   }
   switch (event.type) {
-    case 'householdSet':
+    case 'householdSet': {
+      // 大人のその日の答えが変わった所だけ、その seq を残す（子の居場所で、選んだ後に本人が言った事かを見る）。
+      const answers = (h: typeof event.household | undefined) =>
+        new Map((h?.dayAnswers ?? []).map((a) => [`${a.memberId}|${a.date}`, JSON.stringify(a)]));
+      const before = answers(state.household);
+      const after = answers(event.household);
+      for (const key of new Set([...before.keys(), ...after.keys()])) {
+        if (before.get(key) !== after.get(key)) state.dayAnswerSeq.set(key, event.seq);
+      }
       state.household = event.household;
       return;
+    }
     case 'noticeReceived':
       // 中身を消した出典の ID は、もう使わない（消した中身を、同じ ID で戻さない）。
       if (state.purgedSources.get(event.source.id) === 'all') {
@@ -579,6 +597,7 @@ function apply(state: EngineState, event: DomainEvent): void {
         return;
       }
       state.dropped.get(event.arrangementKey)?.delete(event.optionKey);
+      state.optionChosenSeq.set(event.optionKey, event.seq);
       if (event.role === 'primary') {
         state.primary.set(event.arrangementKey, event.optionKey);
         state.backups.get(event.arrangementKey)?.delete(event.optionKey);

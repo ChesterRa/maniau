@@ -3,10 +3,15 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  AFTER_SCHOOL_MAX_DAYS,
+  AFTER_SCHOOL_WEEKDAYS,
+  type AfterSchoolDeadline,
+  afterSchoolOption,
   applyCorrection,
   atHomeAnswerable,
   type CareOptionTemplate,
   type Command,
+  careDays,
   type DateTime,
   DomainEvent,
   formatDateTime,
@@ -16,6 +21,8 @@ import {
   type Interpretation,
   isActiveTask,
   isNeedArrangementKey,
+  LEAVE_MAX_BUSINESS_DAYS,
+  leaveOption,
   type MapInputs,
   type NeedInterpretation,
   type PlaceKind,
@@ -473,6 +480,17 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
         !arrangement.backupOptionKeys.includes(option.key)
       ) {
         return { status: 'invalid', reason: 'wayInactive' };
+      }
+      // 子の居場所で、手配の時間のうち見てもらえない時間が残る手は、選べない（本命にも予備にも。今と同じ役で送り
+      // 直すのはよい）。見てもらえない時間を残したまま頼むと、頼んだ時間と見てもらえる時間が食い違う。
+      if (
+        arrangement.kind === 'childCare' &&
+        option.coverGaps !== undefined &&
+        !(command.role === 'primary'
+          ? arrangement.chosenOptionKey === option.key
+          : arrangement.backupOptionKeys.includes(option.key))
+      ) {
+        return { status: 'invalid', reason: 'optionNotCovering' };
       }
       // 決め時を過ぎた案は、もう選べない。既に動き出した案（今の日の分の依頼を出した・今の用件に
       // 当たる済んだ手順がある）は、本命と予備の入れ替えのために選び直してよい（エンジンと同じ判断）。
@@ -1518,12 +1536,17 @@ function checkHouseholdEdit(
     const edited = next.places.find((p) => p.id === place.id);
     if (!edited || edited.kind !== place.kind) return invalid('placesLocked');
   }
-  // 足せる場所は、店・祖母の家など・施設（家・学校・職場・駅・学童は、家の始まりの設定で入れる）。営業時間は無くて
-  // よい（分からない：計算は営業時間で絞らず、画面は「登録なし」と書き、お勧めを出さない）。
+  // 足せる場所は、店・祖母の家など・施設（家・学校・駅は、家の始まりの設定で入れる）。営業時間は無くてよい（分から
+  // ない：計算は営業時間で絞らず、画面は「登録なし」と書き、お勧めを出さない）。学童と職場は、同じ直しで足す学童・
+  // 休みの手が相手にする時だけ足せる（ふだんの週の区間や地図には使わない）。
+  const added = next.careOptions.filter((o) => !current.careOptions.some((c) => c.id === o.id));
   for (const place of next.places) {
+    const newKind =
+      NEW_PLACE_KINDS.has(place.kind) ||
+      (CARE_PLACE_KINDS.has(place.kind) && added.some((o) => o.providerId === place.id));
     if (
       !placeIds.has(place.id) &&
-      (!NEW_PLACE_KINDS.has(place.kind) ||
+      (!newKind ||
         !NEW_ID.test(place.id) ||
         memberIds.has(place.id) ||
         next.members.some((m) => m.id === place.id) ||
@@ -1539,21 +1562,29 @@ function checkHouseholdEdit(
   const pairsBefore = sameNamePairs(current);
   if ([...sameNamePairs(next)].some((pair) => !pairsBefore.has(pair))) return invalid('nameTaken');
   const ids = next.careOptions.map((o) => o.id);
-  // 新しく足せる取れる手は、頼める人に頼む（決まった形。締切だけ家族が選ぶ）を、頼める人一人に一つだけ。
-  const added = next.careOptions.filter((o) => !current.careOptions.some((c) => c.id === o.id));
+  // 新しく足せる取れる手は、決まった形の三つだけ：頼める人に頼む（頼める人一人に一つ）、学童に一日預ける（学童一つに
+  // 一つ）、大人が休む（大人一人に一つ）。家族が選ぶのは締切と、学童の費用・見てもらえる時間・お弁当だけ。
   if (
     new Set(ids).size !== ids.length ||
     ids.length !== current.careOptions.length + added.length ||
-    added.some((o) => !helperAskAllowed(o, next))
+    added.some(
+      (o) => !helperAskAllowed(o, next) && !afterSchoolAllowed(o, next) && !leaveAllowed(o, next),
+    )
   ) {
     return invalid('careOptionsLocked');
   }
   for (const option of current.careOptions) {
     const edited = next.careOptions.find((o) => o.id === option.id);
-    const { deadline: _d, cost: _c, ...rest } = option;
     if (!edited) return invalid('careOptionsLocked');
-    const { deadline: _d2, cost: _c2, ...editedRest } = edited;
+    const { deadline: _d, cost: _c, covers: before, ...rest } = option;
+    const { deadline: _d2, cost: _c2, covers: after, ...editedRest } = edited;
     if (!sameJson(rest, editedRest)) return invalid('careOptionsLocked');
+    // 学童に一日預ける手は、見てもらえる時間も直せる（入れ間違い・学童の時間が変わった時。前からの記録で無ければ
+    // 足せる）。同じ日の中で、始まりが終わりより前の時刻の区間だけ（外す・一日の全部にはしない）。ほかの手の見て
+    // もらえる時間は替えない。
+    const hours =
+      option.kind === 'afterSchoolFullDay' && typeof after === 'object' && after.start < after.end;
+    if (!sameJson(before ?? null, after ?? null) && !hours) return invalid('careOptionsLocked');
     // 代償の「分からない」は、家族が足すやり方だけ（取れる手の勧め方と選び直しの札を替えない）。
     if (edited.cost.unknown !== undefined) return invalid('careOptionsLocked');
   }
@@ -1816,6 +1847,68 @@ function helperAskAllowed(option: CareOptionTemplate, next: Household): boolean 
   );
 }
 const NEW_PLACE_KINDS: ReadonlySet<PlaceKind> = new Set(['store', 'helperHome', 'other']);
+/** 足す学童・休みの手の相手としてだけ足せる場所の種類。 */
+const CARE_PLACE_KINDS: ReadonlySet<PlaceKind> = new Set(['afterSchoolCare', 'workplace']);
+/** 家族が入れる学童の一日の費用の上限（円。打ち間違いで、桁の違う代償で比べない）。 */
+const MAX_CARE_YEN = 100_000;
+
+/**
+ * 家族が足す取れる手が、学童に一日預ける決まった形か（afterSchoolOption と同じ中身。締切・費用・お弁当・一日利用で
+ * 見てもらえる時間を家族が入れる）。学童は今ある学童の場所で、その学童に預ける手は一つだけ。締切は 1〜30 日前か、
+ * 前の週の月〜土の時刻（分まで）。見てもらえる時間は、同じ日の中で始まりが終わりより前。
+ */
+function afterSchoolAllowed(option: CareOptionTemplate, next: Household): boolean {
+  const place = next.places.find((p) => p.id === option.providerId && p.kind === 'afterSchoolCare');
+  const rule = option.deadline;
+  let deadline: AfterSchoolDeadline | undefined;
+  if (rule.type === 'weekdayOfPreviousWeek') {
+    const weekday = AFTER_SCHOOL_WEEKDAYS.find((w) => w === rule.weekday);
+    if (weekday !== undefined) deadline = { type: rule.type, weekday, at: rule.at };
+  } else if (rule.type === 'daysBefore' && careDays(rule.days, AFTER_SCHOOL_MAX_DAYS)) {
+    deadline = { type: rule.type, days: rule.days, at: rule.at };
+  }
+  const covers = option.covers;
+  return (
+    place !== undefined &&
+    deadline !== undefined &&
+    typeof covers === 'object' &&
+    covers.start < covers.end &&
+    option.cost.yen <= MAX_CARE_YEN &&
+    NEW_ID.test(option.id) &&
+    sameJson(
+      option,
+      afterSchoolOption(
+        option.id,
+        place.id,
+        deadline,
+        option.cost.yen,
+        option.extraSteps.length > 0,
+        covers,
+      ),
+    ) &&
+    next.careOptions.filter((o) => o.kind === 'afterSchoolFullDay' && o.providerId === place.id)
+      .length === 1
+  );
+}
+
+/**
+ * 家族が足す取れる手が、大人が休む決まった形か（leaveOption と同じ中身。締切だけ家族が選ぶ：1〜10 営業日前の
+ * 時刻、分まで）。休むのは今いる大人で、相手は職場の場所。その大人が休む手は一つだけ。
+ */
+function leaveAllowed(option: CareOptionTemplate, next: Household): boolean {
+  const adultId = option.steps[0]?.assigneeId;
+  const adult = next.members.find((m) => m.id === adultId && m.kind === 'adult' && m.active);
+  const place = next.places.find((p) => p.id === option.providerId && p.kind === 'workplace');
+  const rule = option.deadline;
+  if (rule.type !== 'businessDaysBefore' || !adult || !place) return false;
+  return (
+    careDays(rule.days, LEAVE_MAX_BUSINESS_DAYS) &&
+    NEW_ID.test(option.id) &&
+    sameJson(option, leaveOption(option.id, adult.id, place.id, rule.days, rule.at)) &&
+    next.careOptions.filter((o) => o.kind === 'paidLeave' && o.steps[0]?.assigneeId === adult.id)
+      .length === 1
+  );
+}
 /** 手順のかかる時間・返事を待つ時間の上限（分。打ち間違いで、何日も先の置き方を探さない）。 */
 const MAX_STEP_MIN = 24 * 60;
 const MAX_WAIT_MIN = 7 * 24 * 60;

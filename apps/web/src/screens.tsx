@@ -43,7 +43,7 @@ import {
 import type { TFunction } from 'i18next';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { ChoiceClock } from './choice-clock';
-import { FactsCard, HelperAskCard } from './facts';
+import { CareOptionAddCard, FactsCard } from './facts';
 import {
   type ConfirmResult,
   type Heard,
@@ -1427,6 +1427,7 @@ function DecideCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 
   const turnedDown = arrangement.reasons.some((r) => r.code === 'turnedDown');
   const date = requirement?.date ?? arrangement.start;
   const split = splitLine(ctx, arrangement);
+  const uncovered = careNotCovered(ctx, arrangement);
   return (
     <Card>
       <Label tone="warn">{ctx.t('card.decide.label')}</Label>
@@ -1435,6 +1436,14 @@ function DecideCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 
       </Title>
       {turnedDown && <Text>{ctx.t('card.decide.turnedDown')}</Text>}
       {split && <Text>{ctx.t('card.decide.split', split)}</Text>}
+      {uncovered && (
+        <Text>
+          {ctx.t(
+            uncovered.unknown ? 'card.decide.careNotCoveredUnknown' : 'card.decide.careNotCovered',
+            uncovered,
+          )}
+        </Text>
+      )}
       <ConditionLine
         ctx={ctx}
         basis={{
@@ -1829,6 +1838,36 @@ export function splitLine(
 /** 手を選び、約束が全部そろっても、受け持てると示せない時間（エンジンが前もって出した物。無ければ空）。 */
 export function optionGaps(ctx: Ctx, option: OptionPlan): string[] {
   return (option.coverGaps ?? []).map((g) => span(ctx, g.start, g.end));
+}
+
+/** 手の受け持てない時間を一続きの言葉に（「8:10–9:00 と 16:00–18:15」）。 */
+function gapList(ctx: Ctx, option: OptionPlan): string {
+  return new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(optionGaps(ctx, option));
+}
+
+/**
+ * 子の居場所で、今使う手では見てもらえない時間（エンジンの notCovered）。無ければ無し。手の名前と、その時間を
+ * 一続きの言葉にした物。
+ */
+export function careNotCovered(
+  ctx: Ctx,
+  arrangement: Arrangement,
+): { option: string; gaps: string; unknown: boolean } | undefined {
+  if (arrangement.kind !== 'childCare') return undefined;
+  const refs = arrangement.reasons.find((r) => r.code === 'notCovered')?.refs ?? [];
+  const inUse = arrangement.options.find((o) => o.key === arrangement.inUseOptionKey);
+  if (refs.length === 0 || !inUse) return undefined;
+  const spans = refs.map((ref) => {
+    const [start, end] = ref.split('/');
+    return start && end ? span(ctx, start, end) : ref;
+  });
+  return {
+    option: optionTitle(ctx, inUse),
+    gaps: new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(spans),
+    // 見てもらえる時間の記録が無い手（前からの記録）や、見る人が「分からない」と答えた時間は、見てもらえないと
+    // 分かったのではない（確かめられない）。
+    unknown: (inUse.coverGaps ?? []).some((g) => g.unsure),
+  };
 }
 
 /**
@@ -2260,6 +2299,29 @@ function MapsFacts({ ctx, task }: { ctx: Ctx; task: Task }) {
   );
 }
 
+/**
+ * 子の居場所の手の作業なら、だれの・どの日の見守りのためか（引き受ける・した事を記録する前に、見る）。休みのように、
+ * 引き受ける本人が子を見る作業（Task.watch。引き受けの控えに入る）なら、その人が、その子を、その時間に見ると書く。
+ * ほかの作業（申し込み・頼む・お弁当）には時間を書かない（控えに入らない時間を、引き受けた約束に見せない）。
+ */
+function careFor(ctx: Ctx, task: Task): string | undefined {
+  if (task.watch && task.assigneeId !== undefined) {
+    return ctx.t('card.proposal.careWatch', {
+      name: nameOf(ctx.household, task.assigneeId),
+      child: childLabel(ctx, task.watch.childId),
+      day: day(ctx, task.watch.start),
+      from: time(ctx, task.watch.start),
+      to: time(ctx, task.watch.end),
+    });
+  }
+  const arrangement = arrangementOf(ctx, task.basis.arrangementKey);
+  if (arrangement?.kind !== 'childCare') return undefined;
+  return ctx.t('card.proposal.careFor', {
+    child: childLabel(ctx, arrangement.childId),
+    day: day(ctx, arrangement.start),
+  });
+}
+
 function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
   // 引き受けには、この札で見せている提案の控えを付ける。今の提案と違えば、サーバーが断って見せ直す。
   const shown = proposalSnapshot(task);
@@ -2328,11 +2390,13 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
   const late = task.detour
     ? minutesBetween(task.detour.plannedArrival, task.detour.delayedArrival)
     : 0;
+  const careLine = careFor(ctx, task);
   return (
     <Card>
       <Label tone="accent">{ctx.t('card.proposal.label')}</Label>
       <Title>{taskTitle(ctx, task)}</Title>
       <ConditionLine ctx={ctx} basis={task.basis} />
+      {careLine && <Text>{careLine}</Text>}
       {unvisited && <Text quiet>{ctx.t('decide.noHours', { place: unvisited.name })}</Text>}
       {/* 書かれた時刻の決まった作業は、置けていなくても書かれた時間を見せる（置いた時刻と同じ）。 */}
       {task.timing !== undefined && <WrittenTime ctx={ctx} task={task} />}
@@ -3055,6 +3119,7 @@ export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey
   // 選んだ手の作業が、ほかに進める作業と重ならずに置けていない（時刻を置いていない）。
   const conflicted = arrangement.reasons.find((r) => r.code === 'timeConflict')?.refs ?? [];
   const split = splitLine(ctx, arrangement);
+  const uncovered = careNotCovered(ctx, arrangement);
 
   // 元の文へ：根拠の事項の出典（事項の ID から推し量らない。ID は中身を持たない）。
   const basisItems = ctx.items.filter(({ item }) => requirement?.basis.itemIds.includes(item.id));
@@ -3088,6 +3153,16 @@ export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey
             </Text>
           </Card>
         )}
+        {uncovered && (
+          <Card tone="warn">
+            <Text>
+              {ctx.t(
+                uncovered.unknown ? 'decide.careNotCoveredUnknown' : 'decide.careNotCovered',
+                uncovered,
+              )}
+            </Text>
+          </Card>
+        )}
         <Text quiet>
           {ctx.t('decide.context', {
             names: new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(working),
@@ -3109,8 +3184,8 @@ export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey
           </MoreLink>
         )}
         <OptionChooser ctx={ctx} arrangement={arrangement} />
-        {/* 子の居場所は、頼める人を足して手を増やせる（取れる手が無い家庭も、ここから進める）。 */}
-        {arrangement.kind === 'childCare' && <HelperAskCard ctx={ctx} />}
+        {/* 子の居場所は、頼める人・学童・休みを足して手を増やせる（取れる手が無い家庭も、ここから進める）。 */}
+        {arrangement.kind === 'childCare' && <CareOptionAddCard ctx={ctx} />}
       </Main>
     </>
   );
@@ -3176,12 +3251,15 @@ export function OptionChooser({ ctx, arrangement }: { ctx: Ctx; arrangement: Arr
         tz={ctx.tz}
         now={ctx.now}
         until={until}
-        options={options.map((o) => ({
-          key: o.key,
-          title: optionTitle(ctx, o),
-          ...(o.decisionDeadline ? { deadline: o.decisionDeadline } : {}),
-          expired: o.expired,
-        }))}
+        // 子の居場所で、見てもらえない時間が残る手は選べないので、「いま選べる手」に数えない（札には理由を書く）。
+        options={options
+          .filter((o) => !(arrangement.kind === 'childCare' && o.coverGaps !== undefined))
+          .map((o) => ({
+            key: o.key,
+            title: optionTitle(ctx, o),
+            ...(o.decisionDeadline ? { deadline: o.decisionDeadline } : {}),
+            expired: o.expired,
+          }))}
       />
       {reading === 'failed' && (
         <Card tone="warn">
@@ -3380,7 +3458,10 @@ function OptionRow({
   const left = option.decisionDeadline
     ? daysBetween(ctx.now, option.decisionDeadline, ctx.tz)
     : undefined;
-  const urgent = left !== undefined && left <= 5 && !option.expired;
+  // 子の居場所で、手配の時間のうち見てもらえない時間が残る手は、選べない（エンジン・サーバーと同じ決まり）。急ぐ印も
+  // 出さない（選べない手の残りの日数で急がせない）。
+  const notCovering = arrangement.kind === 'childCare' && option.coverGaps !== undefined;
+  const urgent = left !== undefined && left <= 5 && !option.expired && !notCovering;
   const holder = deadlineHolder(option, preview);
   const current = arrangement.chosenOptionKey === option.key;
   const backup = arrangement.backupOptionKeys.includes(option.key);
@@ -3396,7 +3477,7 @@ function OptionRow({
       ? replyBy(ctx, arrangement, option.key)
       : undefined;
   // 札は見るだけにし、「選んだら」の後のボタンだけで選ぶ。読める画面では、読み終わるまで押せない。
-  const mayChoose = !(option.expired || current || (stopped && !backup));
+  const mayChoose = !(option.expired || current || (stopped && !backup) || notCovering);
   const choosableNow = mayChoose && waiting === undefined;
   return (
     <div
@@ -3473,11 +3554,16 @@ function OptionRow({
         ))}
         {option.coverGaps && (
           <span className="text-sm font-bold text-warn">
-            {ctx.t('decide.coverGaps', {
-              gaps: new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(
-                optionGaps(ctx, option),
-              ),
-            })}
+            {notCovering
+              ? templateOf(ctx.household, option)?.covers === undefined
+                ? ctx.t('decide.careCoverUnknown')
+                : ctx.t(
+                    option.coverGaps.some((g) => g.unsure)
+                      ? 'decide.careCoverUnsure'
+                      : 'decide.careCoverGaps',
+                    { gaps: gapList(ctx, option) },
+                  )
+              : ctx.t('decide.coverGaps', { gaps: gapList(ctx, option) })}
           </span>
         )}
         {reply && (
@@ -3494,7 +3580,7 @@ function OptionRow({
           </span>
         )}
         {preview && !option.expired && <Consequences ctx={ctx} preview={preview} />}
-        {waiting && !option.expired && !current && (
+        {waiting && mayChoose && (
           <span className="mt-1 rounded-xl bg-paper px-3 py-2 text-sm text-sub">
             {ctx.t(`decide.waiting.${waiting}`)}
           </span>

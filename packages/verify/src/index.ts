@@ -1,5 +1,6 @@
 import { DomainEvent, Household, PlanResult, validateHousehold } from '@maniau/core';
 import { checkCareConfirmationHistory } from './care-confirmation-history';
+import { checkCareCover } from './care-cover';
 import { checkChildCareKnowledge } from './child-care-knowledge';
 import { checkSplitCareClaims } from './child-care-split';
 import { collectFacts } from './facts';
@@ -95,6 +96,7 @@ export function verifyPlan(input: VerificationInput): VerificationReport {
   checkPlan(household.data, plan.data, facts, history, report, whenWindows);
   const checkedCare = checkChildCareKnowledge(household.data, plan.data, facts, history, report);
   checkSplitCareClaims(household.data, plan.data, facts, history, report, checkedCare);
+  checkCareCover(household.data, plan.data, history, report);
   checkPreparations(household.data, plan.data, facts, history, report, whenWindows);
   checkStorePreferences(household.data, plan.data, facts, history, report);
   checkNeedSelections(household.data, plan.data, facts, history, report);

@@ -12,7 +12,7 @@ import {
   trialEvents,
 } from '../../server/src/demo';
 import { viewFor } from '../../server/src/views';
-import { HelperAskCard } from '../src/facts';
+import { CareOptionAddCard } from '../src/facts';
 import i18n from '../src/i18n';
 import { type Ctx, StuckCard } from '../src/screens';
 
@@ -157,17 +157,16 @@ describe('名前だけの家族の試用：買う時を置けない買い物', (
   });
 });
 
-describe('名前だけの家族の試用：頼める人を足す所', () => {
-  it('試用では、足せる手が頼める人だけで、四つの手の比べは見本の家族で見られると書く（日英）', () => {
+describe('名前だけの家族の試用：取れる手を足す所', () => {
+  it('試用でも、頼める人・学童・休みの三つから選んで足せる（日英）。頼める人だけとは書かない', () => {
     const ja = ctxOf(ownEvents(), 'a1', TRIAL_NOW, 'ja', true);
-    const shown = text(renderToStaticMarkup(<HelperAskCard ctx={ja} />));
-    expect(shown).toContain('この試用で、子どもの見守り方として足せる手は、頼める人だけです。');
-    expect(shown).toContain('見本の家族で見られます');
+    const shown = text(renderToStaticMarkup(<CareOptionAddCard ctx={ja} />));
+    for (const kind of ['頼める人', '学童', '休み']) expect(shown).toContain(kind);
+    expect(shown).not.toContain('頼める人だけ');
     const en = ctxOf(ownEvents(), 'a1', TRIAL_NOW, 'en', true);
-    expect(text(renderToStaticMarkup(<HelperAskCard ctx={en} />))).toContain(
-      'In this trial, the only childcare way you can add is asking someone.',
-    );
-    const other = ctxOf(ownEvents(), 'a1', TRIAL_NOW, 'ja', false);
-    expect(text(renderToStaticMarkup(<HelperAskCard ctx={other} />))).not.toContain('この試用');
+    const english = text(renderToStaticMarkup(<CareOptionAddCard ctx={en} />));
+    for (const kind of ['Someone to ask', 'After-school care', 'Time off'])
+      expect(english).toContain(kind);
+    expect(english).not.toContain('the only childcare way');
   });
 });

@@ -2,16 +2,18 @@
 // 子の居場所の足りない事実を聞く画面：名前だけの家族で例のお知らせを足した時の「きょう」の札、その日にだれが子を
 // 見られるかと平日の型を入れる画面（見てから記録）、頼める人を足す札。家の情報は、見せる物の家庭から組む。
 import {
+  afterSchoolOption,
   type Command,
   Household,
   type HouseholdPreview,
   helperAskOption,
+  leaveOption,
   type Requirement,
   type TodayCard,
 } from '@maniau/core';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { FactsCard, FactsScreen, HelperAskCard } from '../src/facts';
+import { CareOptionAddCard, FactsCard, FactsScreen } from '../src/facts';
 import i18n from '../src/i18n';
 import type { Ctx, Route } from '../src/screens';
 import { step } from './fake-fetch';
@@ -332,7 +334,7 @@ describe('ふだんどおり', () => {
 describe('頼める人を足す', () => {
   it('呼び名と頼む締切を選び、決まった形の「その人に頼む」を足す（見てから）', async () => {
     const { ctx, looked, sent } = probe();
-    await step(() => root.render(<HelperAskCard ctx={ctx} />));
+    await step(() => root.render(<CareOptionAddCard ctx={ctx} />));
     const input = host.querySelector('input[type="text"]');
     if (!(input instanceof HTMLInputElement)) throw new Error('呼び名の欄が無い');
     await step(() => {
@@ -344,7 +346,7 @@ describe('頼める人を足す', () => {
     });
     // 締切を選ぶまでは、見ることも足すこともできない（初めの値で黙って記録しない）。
     const look = () =>
-      [...host.querySelectorAll('button')].find((b) => b.textContent === i18n.t('helperAsk.look'));
+      [...host.querySelectorAll('button')].find((b) => b.textContent === i18n.t('careAdd.look'));
     expect(look()?.disabled).toBe(true);
     const select = host.querySelector('select');
     if (!select) throw new Error('締切の欄が無い');
@@ -353,13 +355,201 @@ describe('頼める人を足す', () => {
       select.value = '1';
       select.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    await press(i18n.t('helperAsk.look'));
+    await press(i18n.t('careAdd.look'));
     const draft = looked.at(-1);
     const helper = draft?.members.find((m) => m.kind === 'helper');
     expect(helper?.name).toBe('サトウさん');
     expect(draft?.careOptions).toEqual([helperAskOption(`opt-${helper?.id}`, helper?.id ?? '', 1)]);
-    await press(i18n.t('helperAsk.add', { name: 'サトウさん' }));
+    await press(i18n.t('careAdd.add', { name: 'サトウさん' }));
     expect(sent).toHaveLength(1);
-    expect(text()).toContain('サトウさんを足しました');
+    expect(text()).toContain('「サトウさん」を足しました');
+  });
+});
+
+describe('学童と休みの手を足す', () => {
+  /** 値を入れて、変わったと知らせる（React の欄）。 */
+  const typeInto = async (input: Element | null, value: string) => {
+    if (!(input instanceof HTMLInputElement)) throw new Error('欄が無い');
+    await step(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  };
+  const pick = async (select: Element | null | undefined, value: string) => {
+    if (!(select instanceof HTMLSelectElement)) throw new Error('選ぶ欄が無い');
+    await step(() => {
+      select.value = value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  };
+  const selects = () => [...host.querySelectorAll('select')];
+  const look = () =>
+    [...host.querySelectorAll('button')].find((b) => b.textContent === i18n.t('careAdd.look'));
+
+  /** 時刻の欄（見出しの言葉で探す）。 */
+  const clock = (key: string) => host.querySelector(`input[aria-label="${i18n.t(key)}"]`);
+  const radio = (key: string) =>
+    [...host.querySelectorAll('label')]
+      .find((l) => l.textContent === i18n.t(key))
+      ?.querySelector('input[type="radio"]');
+  const click = async (input: Element | null | undefined) => {
+    if (!(input instanceof HTMLInputElement)) throw new Error('押す欄が無い');
+    await step(() => input.click());
+  };
+  /** 学童の欄のうち、締切と費用以外（見てもらえる時間・登録・お弁当）を入れる。 */
+  const restOfGakudo = async (
+    bento: 'careAdd.afterSchool.bentoYes' | 'careAdd.afterSchool.bentoNo',
+  ) => {
+    await typeInto(clock('careAdd.afterSchool.hoursFrom'), '08:00');
+    await typeInto(clock('careAdd.afterSchool.hoursTo'), '19:00');
+    await click(host.querySelector('input[type="checkbox"]'));
+    await click(radio(bento));
+  };
+
+  it('学童：名前・締切（前の週の曜日と時刻）・見てもらえる時間・費用・お弁当を入れ、登録を確かめて、決まった形の手を学童の場所と一緒に足す', async () => {
+    const { ctx, looked, sent } = probe();
+    await step(() => root.render(<CareOptionAddCard ctx={ctx} />));
+    await press(i18n.t('careAdd.kind.afterSchool'));
+    await typeInto(host.querySelector('input[type="text"]'), ' ひかり学童 ');
+    // 締切を選ぶまでは見られない（初めの値で黙って記録しない）。
+    expect(look()?.disabled).toBe(true);
+    await pick(selects()[0], 'week');
+    await pick(selects()[1], '1');
+    await typeInto(clock('careAdd.at'), '18:30');
+    await typeInto(host.querySelector('input[inputmode="numeric"]'), '1000');
+    await typeInto(clock('careAdd.afterSchool.hoursFrom'), '08:00');
+    await typeInto(clock('careAdd.afterSchool.hoursTo'), '19:00');
+    // 登録を確かめ、お弁当が要るかを選ぶまでは見られない（選ばないのは「要らない」ではない）。
+    expect(look()?.disabled).toBe(true);
+    await click(host.querySelector('input[type="checkbox"]'));
+    expect(look()?.disabled).toBe(true);
+    await click(radio('careAdd.afterSchool.bentoYes'));
+    expect(look()?.disabled).toBe(false);
+    await press(i18n.t('careAdd.look'));
+    const draft = looked.at(-1);
+    const place = draft?.places.find((p) => p.kind === 'afterSchoolCare');
+    expect(place?.name).toBe('ひかり学童');
+    expect(draft?.careOptions).toEqual([
+      afterSchoolOption(
+        `opt-${place?.id}`,
+        place?.id ?? '',
+        { type: 'weekdayOfPreviousWeek', weekday: 1, at: '18:30' },
+        1000,
+        true,
+        { start: '08:00', end: '19:00' },
+      ),
+    ]);
+    await press(i18n.t('careAdd.add', { name: 'ひかり学童' }));
+    expect(sent).toHaveLength(1);
+    expect(text()).toContain('「ひかり学童」を足しました');
+  });
+
+  it('学童：締切は 1〜30 日前と分までの時刻で入れられ、お弁当が要らないも選べる', async () => {
+    const { ctx, looked } = probe();
+    await step(() => root.render(<CareOptionAddCard ctx={ctx} />));
+    await press(i18n.t('careAdd.kind.afterSchool'));
+    await typeInto(host.querySelector('input[type="text"]'), 'ひかり学童');
+    await pick(selects()[0], 'days');
+    const days = [...(selects()[1]?.querySelectorAll('option') ?? [])]
+      .map((o) => o.getAttribute('value'))
+      .filter((v) => v !== '');
+    expect(days).toEqual(Array.from({ length: 30 }, (_, i) => String(i + 1)));
+    await pick(selects()[1], '2');
+    await typeInto(clock('careAdd.at'), '18:15');
+    await typeInto(host.querySelector('input[inputmode="numeric"]'), '800');
+    await restOfGakudo('careAdd.afterSchool.bentoNo');
+    await press(i18n.t('careAdd.look'));
+    const place = looked.at(-1)?.places.find((p) => p.kind === 'afterSchoolCare');
+    expect(looked.at(-1)?.careOptions).toEqual([
+      afterSchoolOption(
+        `opt-${place?.id}`,
+        place?.id ?? '',
+        { type: 'daysBefore', days: 2, at: '18:15' },
+        800,
+        false,
+        { start: '08:00', end: '19:00' },
+      ),
+    ]);
+  });
+
+  it('学童：見てもらえる時間の終わりが始まりより前なら、そう書き、見られない', async () => {
+    const { ctx } = probe();
+    await step(() => root.render(<CareOptionAddCard ctx={ctx} />));
+    await press(i18n.t('careAdd.kind.afterSchool'));
+    await typeInto(host.querySelector('input[type="text"]'), 'ひかり学童');
+    await pick(selects()[0], 'days');
+    await pick(selects()[1], '7');
+    await typeInto(clock('careAdd.at'), '17:00');
+    await typeInto(host.querySelector('input[inputmode="numeric"]'), '0');
+    await restOfGakudo('careAdd.afterSchool.bentoNo');
+    expect(look()?.disabled).toBe(false);
+    await typeInto(clock('careAdd.afterSchool.hoursTo'), '07:30');
+    expect(text()).toContain(i18n.t('careAdd.afterSchool.hoursBackwards'));
+    expect(look()?.disabled).toBe(true);
+  });
+
+  it('学童：費用が数でない・上限を超える間は、見られない', async () => {
+    const { ctx } = probe();
+    await step(() => root.render(<CareOptionAddCard ctx={ctx} />));
+    await press(i18n.t('careAdd.kind.afterSchool'));
+    await typeInto(host.querySelector('input[type="text"]'), 'ひかり学童');
+    await pick(selects()[0], 'days');
+    await pick(selects()[1], '7');
+    await typeInto(clock('careAdd.at'), '17:00');
+    await restOfGakudo('careAdd.afterSchool.bentoNo');
+    for (const yen of ['', 'abc', '-1', '100001']) {
+      await typeInto(host.querySelector('input[inputmode="numeric"]'), yen);
+      expect(look()?.disabled).toBe(true);
+    }
+    await typeInto(host.querySelector('input[inputmode="numeric"]'), '0');
+    expect(look()?.disabled).toBe(false);
+  });
+
+  it('休み：休む人と締切（何営業日前と時刻）を選び、その人の職場の場所と一緒に、決まった形の手を足す', async () => {
+    const { ctx, looked, sent } = probe();
+    await step(() => root.render(<CareOptionAddCard ctx={ctx} />));
+    await press(i18n.t('careAdd.kind.leave'));
+    expect(look()?.disabled).toBe(true);
+    // 営業日に会社だけの休みが入っていないことを、選ぶ所に書く。
+    expect(text()).toContain(i18n.t('careAdd.leave.businessDays'));
+    await pick(selects()[0], 'a2');
+    const days = [...(selects()[1]?.querySelectorAll('option') ?? [])]
+      .map((o) => o.getAttribute('value'))
+      .filter((v) => v !== '');
+    expect(days).toEqual(Array.from({ length: 10 }, (_, i) => String(i + 1)));
+    await pick(selects()[1], '3');
+    await typeInto(clock('careAdd.at'), '18:00');
+    await press(i18n.t('careAdd.look'));
+    const draft = looked.at(-1);
+    const work = draft?.places.find((p) => p.kind === 'workplace');
+    expect(work?.name).toBe('大人Bの職場');
+    const option = draft?.careOptions[0];
+    expect(draft?.careOptions).toEqual([
+      leaveOption(option?.id ?? '', 'a2', work?.id ?? '', 3, '18:00'),
+    ]);
+    const title = i18n.t('option.paidLeave.title', { name: '大人B' });
+    await press(i18n.t('careAdd.add', { name: title }));
+    expect(sent).toHaveLength(1);
+    expect(text()).toContain(`「${title}」を足しました`);
+  });
+
+  it('休み：もう休む手のある大人は選べず、みんなにあれば、そう書く', async () => {
+    const { ctx } = probe();
+    const withLeave = (ids: string[]): Ctx => ({
+      ...ctx,
+      household: {
+        ...ctx.household,
+        careOptions: ids.map((id) =>
+          leaveOption(`opt-leave-${id}`, id, `p-work-${id}`, 3, '18:00'),
+        ),
+      },
+    });
+    await step(() => root.render(<CareOptionAddCard ctx={withLeave(['a1'])} />));
+    await press(i18n.t('careAdd.kind.leave'));
+    const who = [...(selects()[0]?.querySelectorAll('option') ?? [])].map((o) => o.textContent);
+    expect(who).toContain('大人B');
+    expect(who).not.toContain('大人A');
+    await step(() => root.render(<CareOptionAddCard ctx={withLeave(['a1', 'a2'])} />));
+    expect(text()).toContain(i18n.t('careAdd.leave.none'));
   });
 });

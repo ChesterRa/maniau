@@ -955,7 +955,11 @@
         "yen": 1000,
         "extraTasks": 2
       },
-      "cancellable": true
+      "cancellable": true,
+      "covers": {
+        "start": "08:00",
+        "end": "19:00"
+      }
     },
     {
       "id": "opt-leave-a",
@@ -983,7 +987,9 @@
       "cost": {
         "leaveMinutes": 480
       },
-      "cancellable": true
+      "cancellable": true,
+      "covers": "whole",
+      "watcherId": "a"
     },
     {
       "id": "opt-leave-b",
@@ -1011,7 +1017,9 @@
       "cost": {
         "leaveMinutes": 480
       },
-      "cancellable": true
+      "cancellable": true,
+      "covers": "whole",
+      "watcherId": "b"
     },
     {
       "id": "opt-grandma",
@@ -1039,7 +1047,8 @@
       "cost": {
         "helperRequests": 1
       },
-      "cancellable": true
+      "cancellable": true,
+      "covers": "whole"
     }
   ],
   "closedDates": [],

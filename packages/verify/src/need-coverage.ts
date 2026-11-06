@@ -188,6 +188,8 @@ export function checkNeedCoverage(
   for (const arrangement of plan.arrangements) {
     const reported = arrangement.reasons.filter((reason) => reason.code === 'notCovered');
     if (!arrangement.live) continue;
+    // 子の居場所の不足時間は、care-cover が家庭の記録から照らす。
+    if (arrangement.kind === 'childCare') continue;
     if (arrangement.kind !== 'need') {
       if (reported.length > 0)
         report.violation(

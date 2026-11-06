@@ -3,12 +3,18 @@
 // - ふだんの平日の型（出社・在宅で仕事・時短・家にいる）は、具体の時刻を出して直せるようにし、「この時間の前と後は
 //   家にいて、子を見られる」まで確かめた時だけ、平日の一日の記録（allDay）にする。
 // - その日の答えは、ふだんどおり・一日見られる・見られない時間がある・見られる時間だけ分かる・分からない。
-// あわせて、頼める人を足す札（頼める人に頼む手を、締切を選んで足す）。
+// あわせて、取れる手を足す札（頼める人に頼む・学童に一日預ける・大人が休む。決まった形で、締切などを選んで足す）。
 import {
+  AFTER_SCHOOL_MAX_DAYS,
+  AFTER_SCHOOL_WEEKDAYS,
+  type AfterSchoolDeadline,
+  afterSchoolOption,
   type DayAnswer,
   HELPER_ASK_DAYS,
   type Household,
   helperAskOption,
+  LEAVE_MAX_BUSINESS_DAYS,
+  leaveOption,
   type Requirement,
   type RoutineDay,
   type TodayCard,
@@ -396,17 +402,120 @@ function Times(props: {
   );
 }
 
+type AddKind = 'helper' | 'afterSchool' | 'leave';
+const ADD_KINDS: readonly AddKind[] = ['helper', 'afterSchool', 'leave'];
+/** 新しく足す成員・場所の ID（サーバーの決まり：英小文字・数字・ハイフン）。 */
+const newId = (prefix: string) => `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+
 /**
- * 頼める人を足す：呼び名と、いつまでに頼むか（その日の何日前の 21 時まで）を家族が選び、その人に頼む手を足す。
- * 見てから足す（家の情報の直しと同じ）。
+ * 取れる手を足す：頼める人に頼む・学童に一日預ける・大人が休む、の決まった形の三つから選び、家族が選ぶ所（呼び名・
+ * 締切・学童の費用とお弁当・休む人）だけを入れて足す。見てから足す（家の情報の直しと同じ）。締切は、家族が選ぶまで
+ * 決めない（初めの値で黙って記録しない）。
  */
-export function HelperAskCard({ ctx }: { ctx: Ctx }) {
-  const [id] = useState(() => `h-${Math.random().toString(36).slice(2, 10)}`);
-  const [name, setName] = useState('');
-  // いつまでに頼むかは、家族が選ぶまで決めない（初めの値で黙って記録しない）。
-  const [days, setDays] = useState<(typeof HELPER_ASK_DAYS)[number]>();
+export function CareOptionAddCard({ ctx }: { ctx: Ctx }) {
+  const [kind, setKind] = useState<AddKind>('helper');
+  const [added, setAdded] = useState<string>();
+  if (added) {
+    return (
+      <Card>
+        <Text>{ctx.t('careAdd.added', { name: added })}</Text>
+      </Card>
+    );
+  }
+  return (
+    <Card>
+      <Label tone="sub">{ctx.t('careAdd.label')}</Label>
+      <Text quiet>{ctx.t('careAdd.body')}</Text>
+      <div className="flex flex-wrap gap-1.5">
+        {ADD_KINDS.map((k) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setKind(k)}
+            aria-pressed={k === kind}
+            className={`min-h-11 rounded-xl border-[1.5px] px-3 font-bold ${k === kind ? 'border-accent bg-accent text-white' : 'border-btn-line bg-white'}`}
+          >
+            {ctx.t(`careAdd.kind.${k}`)}
+          </button>
+        ))}
+      </div>
+      {kind === 'helper' && <HelperForm ctx={ctx} onAdded={setAdded} />}
+      {kind === 'afterSchool' && <AfterSchoolForm ctx={ctx} onAdded={setAdded} />}
+      {kind === 'leave' && <LeaveForm ctx={ctx} onAdded={setAdded} />}
+    </Card>
+  );
+}
+
+/** 見る → 足す（家の情報の直しと同じ流れ）。next が無い・ready でない間は、見ることもできない。 */
+function AddFlow(props: {
+  ctx: Ctx;
+  next: Household | undefined;
+  ready: boolean;
+  name: string;
+  onAdded: (name: string) => void;
+}) {
+  const { ctx, next, ready, name } = props;
   const flow = useHouseholdSave(ctx);
-  const [added, setAdded] = useState(false);
+  const preview = ready && next ? flow.shownFor(next) : undefined;
+  const refused = ready && next ? flow.refusedFor(next) : undefined;
+  return (
+    <>
+      <Shown
+        ctx={ctx}
+        {...(preview ? { preview } : {})}
+        {...(refused ? { refused } : {})}
+        {...(next ? { household: next } : {})}
+      />
+      <Row>
+        {preview && next ? (
+          <Button
+            onClick={() =>
+              void flow.save(next).then((ok) => {
+                if (ok) props.onAdded(name);
+              })
+            }
+            disabled={flow.busy}
+          >
+            {ctx.t('careAdd.add', { name })}
+          </Button>
+        ) : (
+          <Button
+            kind="secondary"
+            onClick={() => {
+              if (next) void flow.look(next);
+            }}
+            disabled={flow.busy || !ready || !next}
+          >
+            {ctx.t('careAdd.look')}
+          </Button>
+        )}
+      </Row>
+    </>
+  );
+}
+
+/** 時刻（分まで。家族の決まりのとおりに入れる）。入れ終わるまでは空。 */
+function TimeInput(props: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <input
+      type="time"
+      aria-label={props.label}
+      className={field}
+      value={props.value}
+      onChange={(e) => props.onChange(e.target.value)}
+    />
+  );
+}
+/** 時刻の欄に入った値が HH:MM か（途中や空は、まだ入っていない）。 */
+const clockTime = (value: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+/** 1 から max までの整数（締切の日数の選び肢）。 */
+const upTo = (max: number) => Array.from({ length: max }, (_, i) => i + 1);
+
+/** 頼める人：呼び名と、いつまでに頼むか（その日の何日前の 21 時まで）。 */
+function HelperForm({ ctx, onAdded }: { ctx: Ctx; onAdded: (name: string) => void }) {
+  const [id] = useState(() => newId('h'));
+  const [name, setName] = useState('');
+  const [days, setDays] = useState<(typeof HELPER_ASK_DAYS)[number]>();
   const trimmed = name.trim();
   const next =
     days === undefined
@@ -417,19 +526,8 @@ export function HelperAskCard({ ctx }: { ctx: Ctx }) {
           household.careOptions.push(helperAskOption(`opt-${id}`, id, days));
           return household;
         })();
-  const ready = next !== undefined && trimmed.length > 0;
-  const preview = ready ? flow.shownFor(next) : undefined;
-  const refused = ready ? flow.refusedFor(next) : undefined;
-  if (added) {
-    return (
-      <Card>
-        <Text>{ctx.t('helperAsk.added', { name: trimmed })}</Text>
-      </Card>
-    );
-  }
   return (
-    <Card>
-      <Label tone="sub">{ctx.t('helperAsk.label')}</Label>
+    <>
       <Text quiet>{ctx.t('helperAsk.body')}</Text>
       <label className="flex flex-col gap-1.5">
         <span className="font-bold">{ctx.t('helperAsk.name')}</span>
@@ -459,39 +557,272 @@ export function HelperAskCard({ ctx }: { ctx: Ctx }) {
           ))}
         </select>
       </label>
-      <Shown
-        ctx={ctx}
-        {...(preview ? { preview } : {})}
-        {...(refused ? { refused } : {})}
-        {...(next ? { household: next } : {})}
-      />
-      <Row>
-        {preview && next ? (
-          <Button
-            onClick={() =>
-              void flow.save(next).then((ok) => {
-                if (ok) setAdded(true);
-              })
-            }
-            disabled={flow.busy}
-          >
-            {ctx.t('helperAsk.add', { name: trimmed })}
-          </Button>
-        ) : (
-          <Button
-            kind="secondary"
-            onClick={() => {
-              if (next) void flow.look(next);
-            }}
-            disabled={flow.busy || !ready}
-          >
-            {ctx.t('helperAsk.look')}
-          </Button>
-        )}
-      </Row>
-      {/* 名前だけの家族の試用で足せる手は、頼める人だけ。学童・休みを含めた比べは、見本の家族で見られる（入れる欄を
-          押し下げないよう、欄の後に置く）。 */}
-      {ctx.ownTrial && <Text quiet>{ctx.t('helperAsk.ownTrial')}</Text>}
-    </Card>
+      <AddFlow ctx={ctx} next={next} ready={trimmed.length > 0} name={trimmed} onAdded={onAdded} />
+    </>
   );
 }
+
+/**
+ * 学童：名前、申し込みの締切（前の週の曜日の時刻まで、か、その日の何日前の時刻まで）、一日利用で見てもらえる時間、
+ * 一日の費用（円。0 も可）、お弁当が要るか（選ぶまで決めない）。家族が、子がこの学童に登録していて一日利用を
+ * 申し込めると確かめた時だけ足せる。締切・時間・お弁当が分からない時は、学童に確かめてから足してもらう（初めの値で
+ * 黙って記録しない）。
+ */
+function AfterSchoolForm({ ctx, onAdded }: { ctx: Ctx; onAdded: (name: string) => void }) {
+  const [placeId] = useState(() => newId('p'));
+  const [name, setName] = useState('');
+  const [rule, setRule] = useState<'' | 'week' | 'days'>('');
+  const [weekday, setWeekday] = useState<(typeof AFTER_SCHOOL_WEEKDAYS)[number]>();
+  const [days, setDays] = useState<number>();
+  const [at, setAt] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [yen, setYen] = useState('');
+  const [bento, setBento] = useState<boolean>();
+  const [enrolled, setEnrolled] = useState(false);
+  const trimmed = name.trim();
+  const amount = /^\d{1,6}$/.test(yen.trim()) ? Number(yen.trim()) : undefined;
+  const hours =
+    clockTime(from) && clockTime(to) && from < to ? { start: from, end: to } : undefined;
+  const backwards = clockTime(from) && clockTime(to) && from >= to;
+  const children = ctx.household.members.filter((m) => m.kind === 'child' && m.active);
+  const childNames = new Intl.ListFormat(ctx.lang, { type: 'conjunction' }).format(
+    children.map((m) => m.name),
+  );
+  const deadline: AfterSchoolDeadline | undefined = !clockTime(at)
+    ? undefined
+    : rule === 'week' && weekday !== undefined
+      ? { type: 'weekdayOfPreviousWeek', weekday, at }
+      : rule === 'days' && days !== undefined
+        ? { type: 'daysBefore', days, at }
+        : undefined;
+  const next =
+    deadline === undefined ||
+    amount === undefined ||
+    amount > 100_000 ||
+    hours === undefined ||
+    bento === undefined ||
+    !enrolled
+      ? undefined
+      : (() => {
+          const household = structuredClone(ctx.household);
+          household.places.push({ id: placeId, kind: 'afterSchoolCare', name: trimmed, goods: [] });
+          household.careOptions.push(
+            afterSchoolOption(`opt-${placeId}`, placeId, deadline, amount, bento, hours),
+          );
+          return household;
+        })();
+  return (
+    <>
+      <Text quiet>{ctx.t('careAdd.afterSchool.body')}</Text>
+      <label className="flex flex-col gap-1.5">
+        <span className="font-bold">{ctx.t('careAdd.afterSchool.name')}</span>
+        <input
+          type="text"
+          value={name}
+          maxLength={20}
+          placeholder={ctx.t('careAdd.afterSchool.namePlaceholder')}
+          onChange={(e) => setName(e.target.value)}
+          className="min-h-12 rounded-xl border border-line bg-card px-3 text-lg"
+        />
+      </label>
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          className="mt-1.5"
+          checked={enrolled}
+          onChange={(e) => setEnrolled(e.target.checked)}
+        />
+        <span>{ctx.t('careAdd.afterSchool.enrolled', { child: childNames })}</span>
+      </label>
+      <div className="flex flex-col gap-1.5">
+        <span>{ctx.t('careAdd.afterSchool.hours')}</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <TimeInput
+            label={ctx.t('careAdd.afterSchool.hoursFrom')}
+            value={from}
+            onChange={setFrom}
+          />
+          <span aria-hidden="true">–</span>
+          <TimeInput label={ctx.t('careAdd.afterSchool.hoursTo')} value={to} onChange={setTo} />
+        </div>
+        {backwards && (
+          <span className="text-sm font-bold text-warn">
+            {ctx.t('careAdd.afterSchool.hoursBackwards')}
+          </span>
+        )}
+      </div>
+      <label className="flex flex-wrap items-center gap-2">
+        <span>{ctx.t('careAdd.afterSchool.by')}</span>
+        <select
+          className={field}
+          value={rule}
+          onChange={(e) =>
+            setRule(e.target.value === 'week' || e.target.value === 'days' ? e.target.value : '')
+          }
+        >
+          <option value="" disabled>
+            {ctx.t('careAdd.choose')}
+          </option>
+          <option value="week">{ctx.t('careAdd.afterSchool.rule.week')}</option>
+          <option value="days">{ctx.t('careAdd.afterSchool.rule.days')}</option>
+        </select>
+      </label>
+      {rule !== '' && (
+        <div className="flex flex-wrap items-center gap-2">
+          {rule === 'week' ? (
+            <select
+              className={field}
+              aria-label={ctx.t('careAdd.afterSchool.weekday')}
+              value={weekday ?? ''}
+              onChange={(e) =>
+                setWeekday(AFTER_SCHOOL_WEEKDAYS.find((w) => String(w) === e.target.value))
+              }
+            >
+              <option value="" disabled>
+                {ctx.t('careAdd.afterSchool.weekday')}
+              </option>
+              {AFTER_SCHOOL_WEEKDAYS.map((w) => (
+                <option key={w} value={w}>
+                  {ctx.t('careAdd.afterSchool.weekdayOf', { weekday: weekdayLong(ctx, w) })}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <select
+              className={field}
+              aria-label={ctx.t('careAdd.afterSchool.daysLabel')}
+              value={days ?? ''}
+              onChange={(e) =>
+                setDays(upTo(AFTER_SCHOOL_MAX_DAYS).find((d) => String(d) === e.target.value))
+              }
+            >
+              <option value="" disabled>
+                {ctx.t('careAdd.afterSchool.daysLabel')}
+              </option>
+              {upTo(AFTER_SCHOOL_MAX_DAYS).map((d) => (
+                <option key={d} value={d}>
+                  {ctx.t('careAdd.afterSchool.daysOf', { days: d })}
+                </option>
+              ))}
+            </select>
+          )}
+          <TimeInput label={ctx.t('careAdd.at')} value={at} onChange={setAt} />
+        </div>
+      )}
+      <label className="flex flex-wrap items-center gap-2">
+        <span>{ctx.t('careAdd.afterSchool.yen')}</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={yen}
+          maxLength={6}
+          placeholder={ctx.t('careAdd.afterSchool.yenPlaceholder')}
+          onChange={(e) => setYen(e.target.value)}
+          className={`${field} w-28`}
+        />
+        <span>{ctx.t('careAdd.afterSchool.yenUnit')}</span>
+      </label>
+      <fieldset className="flex flex-wrap items-center gap-3">
+        <legend className="mb-1">{ctx.t('careAdd.afterSchool.bento')}</legend>
+        {([true, false] as const).map((value) => (
+          <label key={String(value)} className="flex min-h-11 items-center gap-1.5">
+            <input
+              type="radio"
+              name={`bento-${placeId}`}
+              checked={bento === value}
+              onChange={() => setBento(value)}
+            />
+            {ctx.t(value ? 'careAdd.afterSchool.bentoYes' : 'careAdd.afterSchool.bentoNo')}
+          </label>
+        ))}
+      </fieldset>
+      <Text quiet>{ctx.t('careAdd.afterSchool.unknown')}</Text>
+      <AddFlow ctx={ctx} next={next} ready={trimmed.length > 0} name={trimmed} onAdded={onAdded} />
+    </>
+  );
+}
+
+/**
+ * 休み：だれが休むか（まだ休む手の無い大人）と、勤務先に伝える締切（その日の何営業日前の時刻まで）。営業日は土日・
+ * 祝日を除いて数え、勤務先だけの休みは知らないので、そう書く。
+ */
+function LeaveForm({ ctx, onAdded }: { ctx: Ctx; onAdded: (name: string) => void }) {
+  const [placeId] = useState(() => newId('p'));
+  const [optionId] = useState(() => newId('opt-leave'));
+  const adults = ctx.household.members.filter(
+    (m) =>
+      m.kind === 'adult' &&
+      m.active &&
+      !ctx.household.careOptions.some(
+        (o) => o.kind === 'paidLeave' && o.steps[0]?.assigneeId === m.id,
+      ),
+  );
+  const [adultId, setAdultId] = useState('');
+  const [days, setDays] = useState<number>();
+  const [at, setAt] = useState('');
+  const adult = adults.find((m) => m.id === adultId);
+  const title = adult ? ctx.t('option.paidLeave.title', { name: adult.name }) : '';
+  const next =
+    adult === undefined || days === undefined || !clockTime(at)
+      ? undefined
+      : (() => {
+          const household = structuredClone(ctx.household);
+          household.places.push({
+            id: placeId,
+            kind: 'workplace',
+            name: ctx.t('careAdd.leave.workplace', { name: adult.name }),
+            goods: [],
+          });
+          household.careOptions.push(leaveOption(optionId, adult.id, placeId, days, at));
+          return household;
+        })();
+  if (adults.length === 0) return <Text quiet>{ctx.t('careAdd.leave.none')}</Text>;
+  return (
+    <>
+      <Text quiet>{ctx.t('careAdd.leave.body')}</Text>
+      <label className="flex flex-wrap items-center gap-2">
+        <span>{ctx.t('careAdd.leave.who')}</span>
+        <select className={field} value={adultId} onChange={(e) => setAdultId(e.target.value)}>
+          <option value="" disabled>
+            {ctx.t('careAdd.choose')}
+          </option>
+          {adults.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="flex flex-wrap items-center gap-2">
+        <span>{ctx.t('careAdd.leave.by')}</span>
+        <select
+          className={field}
+          aria-label={ctx.t('careAdd.leave.daysLabel')}
+          value={days ?? ''}
+          onChange={(e) =>
+            setDays(upTo(LEAVE_MAX_BUSINESS_DAYS).find((d) => String(d) === e.target.value))
+          }
+        >
+          <option value="" disabled>
+            {ctx.t('careAdd.leave.daysLabel')}
+          </option>
+          {upTo(LEAVE_MAX_BUSINESS_DAYS).map((d) => (
+            <option key={d} value={d}>
+              {ctx.t('careAdd.leave.daysOf', { days: d })}
+            </option>
+          ))}
+        </select>
+        <TimeInput label={ctx.t('careAdd.at')} value={at} onChange={setAt} />
+      </div>
+      <Text quiet>{ctx.t('careAdd.leave.businessDays')}</Text>
+      <AddFlow ctx={ctx} next={next} ready={adult !== undefined} name={title} onAdded={onAdded} />
+    </>
+  );
+}
+
+/** 曜日の名前（1 が月曜）。2026-11-23 は月曜。 */
+const weekdayLong = (ctx: Ctx, weekday: number) =>
+  new Intl.DateTimeFormat(ctx.lang, { weekday: 'long', timeZone: 'UTC' }).format(
+    new Date(Date.UTC(2026, 10, 22 + weekday)),
+  );

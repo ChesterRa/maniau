@@ -258,6 +258,14 @@ export const CareOptionTemplate = z.object({
   cost: Cost,
   /** 後で取り消せるか（予備に出せるか）。 */
   cancellable: z.boolean(),
+  /**
+   * この手で子を見てもらえる時間。whole：手配の時間の全部（頼める人には、その時間で頼み、その時間への「はい」で
+   * 決まる。休みなら、休む大人がその日いる）。時刻の区間：その日のその内だけ（学童の一日利用の時間など）。無いのは、
+   * 分からない（前からの記録）：見てもらえると示せないので、勧めず、新しくは選べず、確保とも言わない。
+   */
+  covers: z.union([z.literal('whole'), DaySpan]).optional(),
+  /** 子を見る家族の大人（休みの手なら、休む本人）。その日の手が離せない時間は、見てもらえない時間に入る。 */
+  watcherId: Id.optional(),
 });
 export type CareOptionTemplate = z.infer<typeof CareOptionTemplate>;
 
@@ -455,5 +463,109 @@ export function helperAskOption(
     ],
     cost: { helperRequests: 1 },
     cancellable: true,
+    covers: 'whole',
+  });
+}
+
+/** 家族が足せる学童の一日利用の締切：その日の何日前か（1 から、この日数まで。前の週の曜日の時刻までも選べる）。 */
+export const AFTER_SCHOOL_MAX_DAYS = 30;
+/** 前の週の曜日で決める締切の曜日（月〜土）。 */
+export const AFTER_SCHOOL_WEEKDAYS = [1, 2, 3, 4, 5, 6] as const;
+/** 家族が足せる休みの締切：その日の何営業日前か（1 から、この日数まで）。 */
+export const LEAVE_MAX_BUSINESS_DAYS = 10;
+
+/** 1 から max までの整数か（家族が足す取れる手の、締切の日数）。 */
+export const careDays = (days: number, max: number) =>
+  Number.isInteger(days) && days >= 1 && days <= max;
+
+/** 学童の一日利用の締切（家族が選ぶ二つの形。時刻は分まで）。 */
+export type AfterSchoolDeadline =
+  | {
+      type: 'weekdayOfPreviousWeek';
+      weekday: (typeof AFTER_SCHOOL_WEEKDAYS)[number];
+      at: string;
+    }
+  | { type: 'daysBefore'; days: number; at: string };
+
+/**
+ * 家族が足せる取れる手：学童に一日預ける（学童一つに一つ）。手順は決まった形（学童に一日の利用を申し込み、学童が
+ * 受け付ける）で、締切（AfterSchoolDeadline）・費用（円。分からないは受けない）・お弁当が要るか・一日利用で見て
+ * もらえる時間（covers）を家族が入れる。お弁当が要れば、その日の朝に家で作る作業が増える。学童へ出向いて出す手順は
+ * 置かない（ふだんの週に迎えの区間が無い家でも置けるように。窓口に出す家は、申し込む作業の中で済ませる）。見てもらえる
+ * のは covers の内だけ（手配の時間がはみ出れば、その手では足りない）。
+ */
+export function afterSchoolOption(
+  id: string,
+  placeId: string,
+  deadline: AfterSchoolDeadline,
+  yen: number,
+  bento: boolean,
+  covers: DaySpan,
+): CareOptionTemplate {
+  return CareOptionTemplate.parse({
+    id,
+    kind: 'afterSchoolFullDay',
+    titleKey: 'option.afterSchoolFullDay',
+    providerId: placeId,
+    deadline,
+    steps: [
+      {
+        id: 'apply',
+        titleKey: 'task.gakudo.apply',
+        durationMin: 10,
+        segments: ['home', 'work'],
+        external: { to: placeId, kind: 'acceptance' },
+      },
+    ],
+    extraSteps: bento
+      ? [
+          {
+            id: 'bento-make',
+            titleKey: 'task.bento.make',
+            durationMin: 30,
+            segments: ['home'],
+            dayOffset: 0,
+          },
+        ]
+      : [],
+    cost: { yen, extraTasks: bento ? 1 : 0 },
+    cancellable: true,
+    covers,
+  });
+}
+
+/**
+ * 家族が足せる取れる手：大人が仕事を一日休む（大人一人に一つ）。手順は決まった形（本人が勤務先に休みを伝え、
+ * 勤務先が承認する）で、締切（その日の何営業日前の何時まで。営業日は土日・祝日と家の休みの日を除いて数え、勤務先
+ * だけの休みは知らない）だけを家族が選ぶ。休む時間は一日（480 分）として数える。子を見るのは休む本人（watcherId）
+ * で、その日の手が離せない時間は見られない。時間単位の休み（一日の一部だけを受け持つ）は、まだ足せない。
+ */
+export function leaveOption(
+  id: string,
+  adultId: string,
+  workplaceId: string,
+  days: number,
+  at: string,
+): CareOptionTemplate {
+  return CareOptionTemplate.parse({
+    id,
+    kind: 'paidLeave',
+    titleKey: 'option.paidLeave',
+    providerId: workplaceId,
+    deadline: { type: 'businessDaysBefore', days, at },
+    steps: [
+      {
+        id: 'apply',
+        titleKey: 'task.leave.apply',
+        durationMin: 5,
+        segments: ['work', 'home'],
+        assigneeId: adultId,
+        external: { to: workplaceId, kind: 'approval' },
+      },
+    ],
+    cost: { leaveMinutes: 480 },
+    cancellable: true,
+    covers: 'whole',
+    watcherId: adultId,
   });
 }
