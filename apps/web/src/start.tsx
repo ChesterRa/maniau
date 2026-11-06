@@ -68,12 +68,15 @@ export function StartScreen(props: {
       </ol>
       {status}
       <div className="mt-auto flex flex-col gap-3">
+        {/* 二つの始め方の違いを、押す前に一行ずつ（空から一件を通すか、手の入った見本の家族で比べるか）。 */}
         <Button onClick={() => setStep('family')} disabled={busy}>
           {t('start.begin')}
         </Button>
+        <p className="-mt-1 text-center text-[13px] text-sub">{t('start.beginSub')}</p>
         <Button kind="secondary" onClick={() => props.onStart({ start: 'sample' })} disabled={busy}>
           {t('start.sample')}
         </Button>
+        <p className="-mt-1 text-center text-[13px] text-sub">{t('start.sampleSub')}</p>
         <p className="text-center text-[13px] text-sub">{t('start.note')}</p>
         <button
           type="button"

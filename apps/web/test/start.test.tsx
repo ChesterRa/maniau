@@ -108,6 +108,9 @@ it('初めの画面：何をするか・試用であること・始め方を出�
   expect(text()).toContain(t('start.note'));
   expect(button(t('start.begin'))).toBeDefined();
   expect(button(t('start.sample'))).toBeDefined();
+  // 二つの始め方の違いを、押す前に読める。
+  expect(text()).toContain(t('start.beginSub'));
+  expect(text()).toContain(t('start.sampleSub'));
   expect(sessionPosts()).toEqual([]);
 });
 

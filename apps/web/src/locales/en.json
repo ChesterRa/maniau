@@ -78,7 +78,9 @@
       "followSub": "Record the reply, and see the next step"
     },
     "begin": "Start",
+    "beginSub": "Start with names and try the example notice.",
     "sample": "Try the sample family",
+    "sampleSub": "Compare options and deadlines with a sample family.",
     "note": "No sign-up needed. This is a trial, so please use made-up details.",
     "stages": "View prepared scenes (for judges)",
     "expired": "Your earlier trial has expired. Please start again.",
