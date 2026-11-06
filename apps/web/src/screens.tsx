@@ -4375,6 +4375,9 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
     }
     return lines;
   };
+  const laterWithLines = later
+    .map((date) => ({ date, lines: linesFor(date) }))
+    .filter((entry) => entry.lines.length > 0);
   const showLine = (line: WeekLine) => (
     <span key={line.key} className="flex flex-col gap-0.5 py-1">
       <span className="text-base leading-snug break-words">{line.text}</span>
@@ -4443,10 +4446,10 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
         </Card>
         <Card className="gap-0.5">
           <Label tone="sub">{ctx.t('week.later')}</Label>
-          {later
-            .map((date) => ({ date, lines: linesFor(date) }))
-            .filter((d) => d.lines.length > 0)
-            .map((d, index, all) => (
+          {laterWithLines.length === 0 ? (
+            <Text quiet>{ctx.t('week.none')}</Text>
+          ) : (
+            laterWithLines.map((d, index, all) => (
               <Pair
                 key={d.date}
                 left={day(ctx, d.date)}
@@ -4457,7 +4460,8 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
                 }
                 last={index === all.length - 1}
               />
-            ))}
+            ))
+          )}
         </Card>
         {unplacedTasks.length > 0 && (
           <Card>
