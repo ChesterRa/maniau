@@ -445,9 +445,9 @@ function backupSecured(plan: Plan, arrangement: Arrangement, timeZone: string): 
 
 /**
  * 返事を待つ手配で、まだ押さえていない次の手の一番早い決め時が 26 時間以内か（その間は、予備を押さえるかの札が
- * 同じ返事を追う）。
+ * 同じ返事を追う）。「すること」で家族がやめたやり方の案は、次の手に数えない（新しくは選べない）。
  */
-function backupDue(plan: Plan, arrangement: Arrangement): boolean {
+function backupDue(plan: Plan, arrangement: Arrangement, household: Family): boolean {
   if (arrangement.status !== 'dependsOnReply') return false;
   const deadlines = arrangement.options
     .filter(
@@ -455,7 +455,8 @@ function backupDue(plan: Plan, arrangement: Arrangement): boolean {
         !o.expired &&
         o.decisionDeadline !== undefined &&
         o.key !== arrangement.chosenOptionKey &&
-        !arrangement.backupOptionKeys.includes(o.key),
+        !arrangement.backupOptionKeys.includes(o.key) &&
+        !(arrangement.kind === 'need' && household.stoppedWayIds?.includes(o.templateId)),
     )
     .map((o) => toEpochMinutes(o.decisionDeadline as string));
   if (deadlines.length === 0) return false;
@@ -564,15 +565,24 @@ function checkSubject(
     )
       return wrong();
     const arrangement = plan.arrangements.find((a) => a.key === request.basis.arrangementKey);
+    // 子の居場所と、窓の「すること」だけ（締切の形は、返事の期限を決めていないので知らせない）。「すること」は、
+    // 送った時の中身とやり方が今も同じと、事象から確かめられる頼み事だけ。確保できた予備で追うのをやめるのは、
+    // 子の居場所だけ（「すること」の窓の受け持ちは別に数え、予備が済んでも確保とは言わない）。
+    const shape = arrangement?.kind === 'need' ? needShapes.get(arrangement.key) : undefined;
     if (
       !arrangement?.live ||
-      arrangement.kind !== 'childCare' ||
+      !(
+        arrangement.kind === 'childCare' ||
+        (arrangement.kind === 'need' &&
+          shape === 'window' &&
+          needRequestCurrent.get(request.requestId) === true)
+      ) ||
       arrangement.status !== 'dependsOnReply' ||
       request.basis.optionKey === undefined ||
       arrangement.inUseOptionKey !== request.basis.optionKey ||
-      matchesArrangementDay(request.window, arrangement, timeZone) !== true ||
-      backupSecured(plan, arrangement, timeZone) ||
-      backupDue(plan, arrangement)
+      matchesArrangementDay(request.window, arrangement, timeZone, shape) !== true ||
+      (arrangement.kind === 'childCare' && backupSecured(plan, arrangement, timeZone)) ||
+      backupDue(plan, arrangement, household)
     )
       return wrong();
     checkTime(intent, request.window.start, undefined, out);

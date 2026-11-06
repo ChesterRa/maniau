@@ -343,10 +343,12 @@ export function securedBackup(plan: PlanResult, arrangement: Arrangement): Optio
 }
 
 /**
- * 返事待ちを今やることに上げるか（noReply の札。予備の札との重なりは呼ぶ側で除く）。子の居場所の手配が、この頼み事の
- * 返事を待っている時（今使う手の、その日の分）に、送った本人に。生きていて、確かめの要らない返事待ちで、送った時の
- * 控えの窓がある物だけ。確保できた予備があれば上げない（断られても移れる）。今が窓の始まりの NOREPLY_LEAD_MIN 前から、
- * 窓の終わりの前まで。上げるなら、その手配を返す。
+ * 返事待ちを今やることに上げるか（noReply の札。予備の札との重なりは呼ぶ側で除く）。子の居場所の手配と、窓の
+ * 「すること」の手配が、この頼み事の返事を待っている時（今使う手の、その日の分）に、送った本人に。生きていて、
+ * 確かめの要らない返事待ちで、送った時の控えの窓がある物だけ（締切の形の「すること」は、いつを返事の期限とするかを
+ * 決めていないので上げない。控えにも窓が無い）。確保できた予備があれば上げない（断られても移れる。予備の確保は子の
+ * 居場所だけで数える：securedBackup）。今が窓の始まりの NOREPLY_LEAD_MIN 前から、窓の終わりの前まで。上げるなら、
+ * その手配を返す。
  */
 export function noReplyArrangement(
   plan: PlanResult,
@@ -356,7 +358,9 @@ export function noReplyArrangement(
   if (!request.live || request.needsCheck === true || request.state !== 'awaitingReply') return;
   if (request.sentBy !== memberId || request.window === undefined) return;
   const arrangement = plan.arrangements.find((a) => a.key === request.basis.arrangementKey);
-  if (!arrangement?.live || arrangement.kind !== 'childCare') return;
+  if (!arrangement?.live) return;
+  const windowNeed = arrangement.kind === 'need' && arrangement.needShape === 'window';
+  if (arrangement.kind !== 'childCare' && !windowNeed) return;
   if (arrangement.status !== 'dependsOnReply') return;
   const awaited = arrangement.reasons.some(
     (r) => r.code === 'awaitingReply' && r.refs.includes(request.requestId),
