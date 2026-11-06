@@ -17,7 +17,13 @@ import {
 } from './family';
 import { formatDayTime } from './format';
 import { HouseholdScreen } from './household';
-import { isUiLanguage, rememberedLanguage, rememberLanguage, type UiLanguage } from './i18n';
+import {
+  isUiLanguage,
+  rememberDeviceLanguage,
+  rememberedLanguage,
+  rememberLanguage,
+  type UiLanguage,
+} from './i18n';
 import { MemberDayScreen } from './member-day';
 import { NeedFixScreen, NeedScreen, StateNeedScreen } from './need';
 import { usePush } from './push';
@@ -69,21 +75,27 @@ export function App() {
 /**
  * 使う人が選んだ言葉にする（人ごとに覚える）。デモ（keep）では、まだ言葉を選んでいない大人に替えても、今の言葉の
  * ままにし、その人の分としては覚えない。英語で見ている人が、案内どおりに大人や場面を替えても、日本語に戻さない。
+ * 空から始めた試用（見本の家族・名前だけの家族）の人ごとの言葉は、その試用（scope）の中だけで覚える：別の試用は、
+ * 同じ ID の大人でも別の家族なので、前の試用で選んだ言葉で、初めの画面で選んだ言葉を上書きしない。用意した場面は、
+ * 場面を替えても同じ家族なので、今までどおり大人ごとに覚える（scope なし）。
  */
-function useMemberLanguage(me: Member | undefined, keep = false) {
+function useMemberLanguage(me: Member | undefined, keep = false, scope?: string) {
   const { i18n } = useTranslation();
+  const key = me && (keep && scope !== undefined ? `${scope}.${me.id}` : me.id);
   useEffect(() => {
-    if (!me) return;
+    if (!me || key === undefined) return;
     const own = isUiLanguage(me.uiLanguage) ? me.uiLanguage : 'ja';
     const current = isUiLanguage(i18n.language) ? i18n.language : 'ja';
-    void i18n.changeLanguage(rememberedLanguage(me.id, keep ? current : own));
-  }, [me, i18n, keep]);
+    void i18n.changeLanguage(rememberedLanguage(key, keep ? current : own));
+  }, [me, key, i18n, keep]);
   const lang: UiLanguage = isUiLanguage(i18n.language) ? i18n.language : 'ja';
   useEffect(() => {
     document.documentElement.lang = lang;
   }, [lang]);
   const chooseLanguage = (next: UiLanguage) => {
-    if (me) rememberLanguage(me.id, next);
+    if (key !== undefined) rememberLanguage(key, next);
+    // デモでは、端末の言葉としても覚える（初めの画面で選んだ言葉を、開き直した後も使う）。
+    if (keep) rememberDeviceLanguage(next);
     void i18n.changeLanguage(next);
   };
   return { lang, chooseLanguage };
@@ -260,7 +272,11 @@ function DemoApp() {
     [household],
   );
   const me = adults.find((m) => m.id === memberId);
-  const { lang, chooseLanguage } = useMemberLanguage(me, true);
+  const { lang, chooseLanguage } = useMemberLanguage(
+    me,
+    true,
+    session?.trial ? session.sessionId : undefined,
+  );
   const languages = (
     <Switcher
       label={t('language.label')}
