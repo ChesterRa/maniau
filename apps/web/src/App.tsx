@@ -148,6 +148,8 @@ function Body(props: {
   onRestart?: () => void;
   /** 空から始めた試用だけ：例のお知らせ（架空）と、それを足す口。 */
   example?: { title: string; add: () => Promise<boolean> };
+  /** 名前だけの試用だけ：家の場所を入れる口。 */
+  home?: Ctx['home'];
 }) {
   const { t, i18n } = useTranslation();
   const { live, me, lang, route } = props;
@@ -192,6 +194,7 @@ function Body(props: {
           ...(props.trial ? { trialInput: true as const } : {}),
           ...(props.fictional ? { fictional: true as const } : {}),
           ...(props.ownTrial ? { ownTrial: true as const } : {}),
+          ...(props.home ? { home: props.home } : {}),
           ...(props.example ? { example: props.example } : {}),
           preview: live.preview,
           previewHousehold: live.previewHousehold,
@@ -420,6 +423,15 @@ function DemoApp() {
         ownTrial={session.trial === 'own'}
         {...(session.trial && session.example
           ? { example: { title: session.example.title, add: demo.addExample } }
+          : {})}
+        {...(session.trial === 'own'
+          ? {
+              home: {
+                set: demo.setHome,
+                confirm: demo.confirmHome,
+                maps: session.canSearchStores === true,
+              },
+            }
           : {})}
       />
     </div>

@@ -1,3 +1,4 @@
+export * from './reading/address';
 export * from './reading/output';
 export * from './reading/survey';
 export * from './reading/utterance';

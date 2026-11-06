@@ -1,6 +1,14 @@
 // API。見る人ごとのデモの家庭（架空の家族。ログインなし）と、家族の家庭（Cloudflare Access の身元。
 // Postgres）。どちらも、画面には見せる物だけを渡し、事象の列は渡さない（02-foundation §7.1）。
-import { Command, Household, PreviewCommand, SourceSender, splitSentences } from '@maniau/core';
+import {
+  Command,
+  Household,
+  MAX_ADDRESS_DETAIL_LENGTH,
+  MAX_AREA_LENGTH,
+  PreviewCommand,
+  SourceSender,
+  splitSentences,
+} from '@maniau/core';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
@@ -669,6 +677,63 @@ export function createApp(
         return c.json({ error: 'noRecord' }, 404);
       case 'failed':
         return c.json({ error: 'readingFailed', reason: done.reason }, 502);
+    }
+  });
+  // 名前だけの試用で、家の場所を入れる。地域の欄（都道府県・市区町村・町名）だけを家に入れ、番地の欄は地域の欄と
+  // 合わせて地図の照会にだけ使う（残さない・ログに書かない）。地図で見つけた所は候補で、家族が確かめた時だけ入れる。
+  app.post('/api/demo/sessions/:sid/home-address', async (c) => {
+    const body = z
+      .object({
+        memberId: z.string().min(1),
+        area: z.string().max(MAX_AREA_LENGTH * 2),
+        detail: z.string().max(MAX_ADDRESS_DETAIL_LENGTH).default(''),
+      })
+      .safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badAddress' }, 400);
+    const { memberId, ...input } = body.data;
+    const done = await sessions.homeAddress(c.req.param('sid'), memberId, input);
+    if (!done) return c.json({ error: 'unknownSession' }, 404);
+    switch (done.status) {
+      case 'ok':
+        return c.json({
+          view: done.view,
+          ...(done.candidate ? { candidate: done.candidate } : {}),
+        });
+      case 'forbidden':
+        return c.json({ error: 'notAnAdult' }, 403);
+      case 'notOwn':
+        return c.json({ error: 'notOwnTrial' }, 403);
+      case 'detail':
+        return c.json({ error: 'detailInArea' }, 400);
+      case 'noArea':
+        return c.json({ error: 'noArea' }, 400);
+      case 'limit':
+        return c.json({ error: 'addressLimit' }, 429);
+      case 'stale':
+        return c.json({ error: 'stale' }, 409);
+    }
+  });
+  // 地図で見つけた家の場所を、家族が「合っている」と確かめた時だけ、その place ID を家の場所に入れる。
+  app.post('/api/demo/sessions/:sid/home-address/confirm', async (c) => {
+    const body = z
+      .object({ memberId: z.string().min(1), candidateId: z.string().min(1).max(100) })
+      .safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'badConfirm' }, 400);
+    const done = await sessions.confirmHome(
+      c.req.param('sid'),
+      body.data.memberId,
+      body.data.candidateId,
+    );
+    if (!done) return c.json({ error: 'unknownSession' }, 404);
+    switch (done.status) {
+      case 'ok':
+        return c.json({ view: done.view });
+      case 'forbidden':
+        return c.json({ error: 'notAnAdult' }, 403);
+      case 'notOwn':
+        return c.json({ error: 'notOwnTrial' }, 403);
+      case 'gone':
+        return c.json({ error: 'candidateGone' }, 409);
     }
   });
   // 品物から、店を探す言葉の案（推定）。送るのは品物の名前だけ。何も書かない。

@@ -11,9 +11,9 @@ import type {
   SurveyCandidate,
   SurveyShown,
 } from '@maniau/core';
-import { surveyPreparation } from '@maniau/core';
+import { checkHomeArea, surveyPreparation } from '@maniau/core';
 import { useState } from 'react';
-import { operationId } from './family';
+import { type HomeCandidate, operationId } from './family';
 import { type Ctx, day, nameOf } from './screens';
 import { Button, Card, Label, Row, Text, Title } from './ui';
 import { Shown, useHouseholdSave } from './ways';
@@ -327,6 +327,7 @@ export function ResourcesCard({ ctx }: { ctx: Ctx }) {
         ))}
       {unattached.map(preparationBlock)}
       <Text quiet>{ctx.t('resources.used')}</Text>
+      {!editing && ctx.home && <HomePanel ctx={ctx} home={ctx.home} />}
       {!editing && ctx.survey && (
         <SurveyPanel
           ctx={ctx}
@@ -506,6 +507,186 @@ export function copyBases(
         )
         .map((instead) => ({ way, instead })),
     );
+}
+
+type HomeState =
+  | 'idle'
+  | 'working'
+  | 'detail'
+  | 'noArea'
+  | 'limit'
+  | 'stale'
+  | 'failed'
+  | 'notFound'
+  | 'denied'
+  | 'gone';
+
+/** Google マップで、その place ID の場所を開く（中身は取らない。リンクだけ）。 */
+const mapsLink = (query: string, placeId: string) =>
+  `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}&query_place_id=${encodeURIComponent(placeId)}`;
+
+/**
+ * 名前だけの試用の家の場所：地域の欄（都道府県・市区町村・町名。家に残し、周りを調べる時に Claude に送る）と、番地の
+ * 欄（地域の欄と合わせて、地図の照会にだけ使う）。地図で見つけた所は、家族が「合っている」を押した時だけ入れる。入れた
+ * 後は、欄を空にする（番地を画面に残さない）。
+ */
+function HomePanel({ ctx, home }: { ctx: Ctx; home: NonNullable<Ctx['home']> }) {
+  const place = ctx.household.places.find((p) => p.kind === 'home');
+  const [open, setOpen] = useState(false);
+  const [area, setArea] = useState('');
+  const [detail, setDetail] = useState('');
+  const [state, setState] = useState<HomeState>('idle');
+  const [candidate, setCandidate] = useState<HomeCandidate>();
+  const editing = open || !place;
+  const checked = area.trim() === '' ? undefined : checkHomeArea(area);
+  const ready = checked !== undefined && typeof checked !== 'string';
+  const set = async () => {
+    if (!ready) return;
+    setState('working');
+    setCandidate(undefined);
+    // 地図を使わないサーバーには、番地を送らない（番地の欄も出さない）。
+    const asked = home.maps ? detail.trim() : '';
+    const result = await home.set(area, asked);
+    if (result.status !== 'ok') {
+      setState(result.status);
+      return;
+    }
+    setArea('');
+    setDetail('');
+    setOpen(false);
+    // 住所の無い候補は、見分けられないので確かめに出さない（サーバーも出さない）。
+    const shown = result.candidate?.address ? result.candidate : undefined;
+    setCandidate(shown);
+    setState(!shown && home.maps && asked !== '' ? 'notFound' : 'idle');
+  };
+  const confirm = async (yes: boolean) => {
+    if (!candidate) return;
+    if (!yes) {
+      setCandidate(undefined);
+      setState('denied');
+      return;
+    }
+    setState('working');
+    const done = await home.confirm(candidate.id);
+    setCandidate(undefined);
+    setState(done === 'ok' ? 'idle' : done);
+  };
+  const said = (
+    ['detail', 'noArea', 'limit', 'stale', 'failed', 'notFound', 'denied', 'gone'] as const
+  )
+    .filter((s) => s === state)
+    .map((s) => <Text key={s}>{ctx.t(`resources.home.${s}`)}</Text>);
+
+  return (
+    <div className="flex flex-col gap-2 rounded-xl bg-paper px-3 py-2.5">
+      <Title>{ctx.t('resources.home.title')}</Title>
+      {place?.area && !editing && (
+        <>
+          <Text>{ctx.t('resources.home.area', { area: place.area })}</Text>
+          {place.googlePlaceId ? (
+            <>
+              <Text quiet>{ctx.t('resources.home.mapped')}</Text>
+              <a
+                className="text-sm text-accent underline"
+                href={mapsLink(place.area, place.googlePlaceId)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {ctx.t('resources.home.mapLink')}
+              </a>
+            </>
+          ) : (
+            <Text quiet>{ctx.t('resources.home.notMapped')}</Text>
+          )}
+        </>
+      )}
+      {candidate && (
+        <>
+          <Text>{ctx.t('resources.home.candidate', { address: candidate.address })}</Text>
+          <Text quiet>
+            {ctx.t('resources.home.credit', {
+              providers: ['Google', ...(candidate.attributions ?? []).map((a) => a.provider)].join(
+                ctx.t('list.separator'),
+              ),
+            })}
+          </Text>
+          <Text quiet>{ctx.t('resources.home.confirmNote')}</Text>
+          <Row>
+            <Button onClick={() => void confirm(true)} disabled={state === 'working'}>
+              {ctx.t('resources.home.yes')}
+            </Button>
+            <Button
+              kind="secondary"
+              onClick={() => void confirm(false)}
+              disabled={state === 'working'}
+            >
+              {ctx.t('resources.home.no')}
+            </Button>
+          </Row>
+        </>
+      )}
+      {said}
+      {editing ? (
+        <>
+          <label className="flex flex-col gap-1">
+            <span className="text-sub">{ctx.t('resources.home.areaLabel')}</span>
+            <input
+              className={input}
+              value={area}
+              maxLength={60}
+              autoComplete="off"
+              placeholder={ctx.t('resources.home.areaPlaceholder')}
+              onChange={(e) => setArea(e.target.value)}
+            />
+          </label>
+          {home.maps && (
+            <label className="flex flex-col gap-1">
+              <span className="text-sub">{ctx.t('resources.home.detailLabel')}</span>
+              <input
+                className={input}
+                value={detail}
+                maxLength={60}
+                autoComplete="off"
+                placeholder={ctx.t('resources.home.detailPlaceholder')}
+                onChange={(e) => setDetail(e.target.value)}
+              />
+            </label>
+          )}
+          {ready && <Text>{ctx.t('resources.home.sends', { area: checked.area })}</Text>}
+          {checked === 'detail' && <Text>{ctx.t('resources.home.detail')}</Text>}
+          {checked === 'noCity' && <Text>{ctx.t('resources.home.noArea')}</Text>}
+          <Text quiet>{ctx.t('resources.home.noteArea')}</Text>
+          <Text quiet>
+            {ctx.t(home.maps ? 'resources.home.noteDetail' : 'resources.home.noteNoMaps')}
+          </Text>
+          <Text quiet>{ctx.t('resources.home.noteKeep')}</Text>
+          <Row>
+            <Button onClick={() => void set()} disabled={!ready || state === 'working'}>
+              {ctx.t('resources.home.set')}
+            </Button>
+            {place && (
+              <Button kind="secondary" onClick={() => setOpen(false)}>
+                {ctx.t('resources.home.cancel')}
+              </Button>
+            )}
+          </Row>
+        </>
+      ) : (
+        <Row>
+          <Button
+            kind="secondary"
+            onClick={() => {
+              setOpen(true);
+              setCandidate(undefined);
+              setState('idle');
+            }}
+          >
+            {ctx.t('resources.home.again')}
+          </Button>
+        </Row>
+      )}
+    </div>
+  );
 }
 
 type SurveyState = 'idle' | 'working' | 'limit' | 'busy' | 'noRecord' | 'noArea' | 'failed';
@@ -763,14 +944,31 @@ function SurveyPanel({
     );
   };
 
+  // 名前だけの試用は、記録した調べ（見本の家族の地域の物）を使わず、家の場所を入れてから Claude にいま調べてもらう。
+  const own = ctx.ownTrial === true;
+  const homeArea = household.places.find((p) => p.kind === 'home')?.area;
+  const canRun = !own || (homeArea !== undefined && survey.live);
+  // 調べた後に家の場所を入れ直した時は、どの地域の結果かを言う（今の家の場所の結果と見せない）。
+  const otherArea =
+    shown !== undefined &&
+    homeArea !== undefined &&
+    shown.area !== homeArea &&
+    !shown.area.startsWith(`${homeArea}（`);
+
   return (
     <div className="flex flex-col gap-2">
       <Text quiet>{ctx.t('resources.survey.intro')}</Text>
-      {!shown && (
+      {!shown && own && homeArea === undefined && (
+        <Text>{ctx.t('resources.survey.ownNoArea')}</Text>
+      )}
+      {!shown && own && homeArea !== undefined && !survey.live && (
+        <Text>{ctx.t('resources.survey.ownUnavailable')}</Text>
+      )}
+      {!shown && canRun && (
         <Row>
           <Button
             kind="secondary"
-            onClick={() => void run(!survey.recorded)}
+            onClick={() => void run(own || !survey.recorded)}
             disabled={state === 'working'}
           >
             {ctx.t('resources.survey.button')}
@@ -787,6 +985,7 @@ function SurveyPanel({
               when: day(ctx, shown.at),
             })}
           </Text>
+          {otherArea && <Text>{ctx.t('resources.survey.otherArea', { area: homeArea })}</Text>}
           {/* 何が見つかったかを先に言い、要の限りは見せたまま、照らし方の細部はたたむ（開くと全文）。 */}
           <Text>
             {shown.candidates.length === 0

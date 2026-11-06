@@ -124,6 +124,18 @@ interface Session {
   canSurvey?: boolean;
 }
 
+/** 地図で見つけた家の場所の候補（Google の住所は、家族が確かめるために見せるだけ。残さない）。 */
+export interface HomeCandidate {
+  id: string;
+  address: string;
+  attributions?: PlaceAttribution[];
+}
+
+/** 名前だけの試用で、家の場所を入れた結果。 */
+export type HomeSetResult =
+  | { status: 'ok'; candidate?: HomeCandidate }
+  | { status: 'detail' | 'noArea' | 'limit' | 'stale' | 'failed' };
+
 /** 周りの調べの結果（何も書かない。家族が候補を確かめて家の情報に入れる）。 */
 export type SurveyRunResult =
   | { status: 'ok'; survey: SurveyShown }
@@ -1232,6 +1244,49 @@ export function useTrialSession(memberId: string | undefined) {
      * 例のお知らせを足す（Claude を呼ばない。押し直しても二度入れない）。which が change なら例の続き（延期の連絡。
      * 試用の時計が届いた時から）。足せたら見せる物を読み直す。
      */
+    /**
+     * 名前だけの試用で、家の場所を入れる：地域の欄を家に入れ、番地の欄は地域の欄と合わせて地図の照会にだけ使う
+     * （サーバーは残さない）。地図で見つけた所は候補で、確かめるまで入れない。入れたら見せる物を読み直す。
+     */
+    setHome: async (area: string, detail: string): Promise<HomeSetResult> => {
+      if (!session || !memberId) return { status: 'failed' };
+      try {
+        const response = await fetch(
+          `/api/demo/sessions/${encodeURIComponent(session.sessionId)}/home-address`,
+          { method: 'POST', headers: json, body: JSON.stringify({ memberId, area, detail }) },
+        );
+        const body = (await response.json()) as { candidate?: HomeCandidate; error?: string };
+        if (response.ok && !body.error) {
+          live.refresh();
+          return { status: 'ok', ...(body.candidate ? { candidate: body.candidate } : {}) };
+        }
+        if (body.error === 'unknownSession') setExpired(true);
+        if (body.error === 'detailInArea') return { status: 'detail' };
+        if (body.error === 'noArea') return { status: 'noArea' };
+        if (body.error === 'addressLimit') return { status: 'limit' };
+        if (body.error === 'stale') return { status: 'stale' };
+        return { status: 'failed' };
+      } catch {
+        return { status: 'failed' };
+      }
+    },
+    /** 地図で見つけた家の場所を、合っていると確かめて入れる（入れ直した後の古い候補は gone）。 */
+    confirmHome: async (candidateId: string): Promise<'ok' | 'gone' | 'failed'> => {
+      if (!session || !memberId) return 'failed';
+      try {
+        const response = await fetch(
+          `/api/demo/sessions/${encodeURIComponent(session.sessionId)}/home-address/confirm`,
+          { method: 'POST', headers: json, body: JSON.stringify({ memberId, candidateId }) },
+        );
+        if (response.ok) {
+          live.refresh();
+          return 'ok';
+        }
+        return response.status === 409 ? 'gone' : 'failed';
+      } catch {
+        return 'failed';
+      }
+    },
     addExample: async (which?: 'change'): Promise<boolean> => {
       if (!session || !memberId) return false;
       try {

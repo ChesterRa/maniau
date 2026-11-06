@@ -7,7 +7,13 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type Anthropic from '@anthropic-ai/sdk';
-import { type FetchedPage, formatDateTime, type Household, SurveyModelOutput } from '@maniau/core';
+import {
+  checkHomeArea,
+  type FetchedPage,
+  formatDateTime,
+  type Household,
+  SurveyModelOutput,
+} from '@maniau/core';
 import { ReadingError } from './extract';
 import { PRODUCT_EFFORT, PRODUCT_MODEL, productSpeed } from './model';
 
@@ -24,13 +30,17 @@ export const SURVEY_KINDS = [
   },
 ] as const;
 
-/** モデルに渡す入力。area は区や駅の粒度（番地は渡さない）。国と時区は、検索の地域の目安にだけ使う。 */
+/**
+ * モデルに渡す入力。area は区や駅の粒度（番地は渡さない）。国・時区と、地域の頭に書いてあった都道府県（region）は、
+ * 検索の地域の目安にだけ使う。
+ */
 export interface SurveyInput {
   area: string;
   kinds: readonly { kind: string; label: string }[];
   today: string;
   country: string;
   timeZone: string;
+  region?: string;
 }
 
 /**
@@ -41,12 +51,15 @@ export function surveyInputFor(household: Household, nowMs: number): SurveyInput
   const home = household.places.find((p) => p.kind === 'home');
   if (!home?.area) return 'noArea';
   const station = household.places.find((p) => p.id === home.nearStationId);
+  const checked = checkHomeArea(home.area);
+  const read = typeof checked === 'string' ? undefined : checked;
   return {
     area: station ? `${home.area}（${station.name}）` : home.area,
     kinds: SURVEY_KINDS,
     today: formatDateTime(Math.floor(nowMs / 60_000), household.timeZone).slice(0, 10),
     country: household.region,
     timeZone: household.timeZone,
+    ...(read?.prefecture ? { region: read.prefecture } : {}),
   };
 }
 
@@ -127,7 +140,7 @@ export async function readSurvey(
   client: MessagesClient,
   input: SurveyInput,
 ): Promise<SurveyResult> {
-  const { country, timeZone, ...asked } = input;
+  const { country, timeZone, region, ...asked } = input;
   const content = JSON.stringify(asked);
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content }];
   const blocks: Anthropic.ContentBlock[] = [];
@@ -153,7 +166,12 @@ export async function readSurvey(
             name: 'web_search',
             max_uses: 6,
             allowed_callers: ['direct'],
-            user_location: { type: 'approximate', country, timezone: timeZone },
+            user_location: {
+              type: 'approximate',
+              country,
+              timezone: timeZone,
+              ...(region ? { region } : {}),
+            },
           },
           {
             type: 'web_fetch_20260209',

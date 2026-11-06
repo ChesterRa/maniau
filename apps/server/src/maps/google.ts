@@ -61,6 +61,14 @@ export interface FoundPlace {
   location?: LatLng;
 }
 
+/** 住所で見つけた場所：place ID と、家族が確かめるために見せる Google の住所（見せるだけで、残さない）。 */
+export interface FoundAddress {
+  id: string;
+  address?: string;
+  /** 住所と一緒に見せなければならない、データの提供者。 */
+  attributions?: PlaceAttribution[];
+}
+
 export interface MapsClient {
   /** 場所の詳細。hours で営業時間（ふだんと照会の日から数日）、summary で名前・位置・地図の URL。 */
   place(placeId: string, want: { hours?: boolean; summary?: boolean }): Promise<PlaceDetails>;
@@ -70,6 +78,11 @@ export interface MapsClient {
   walkRoute(fromPlaceId: string, toPlaceId: string): Promise<WalkRoute | undefined>;
   /** 中心の近く（半径 m の内）で、検索語に合う場所。 */
   searchText(query: string, center: LatLng, radiusM: number, max: number): Promise<FoundPlace[]>;
+  /**
+   * 打った住所に一番合う場所：place ID と、家族が確かめる Google の住所（名前・位置は頼まない）。見つからなければ
+   * undefined。打った住所の文はこの照会にだけ使い、残さない。
+   */
+  findAddress(text: string): Promise<FoundAddress | undefined>;
 }
 
 export class MapsError extends Error {
@@ -235,6 +248,28 @@ export function googleMaps(
         distanceM: route.distanceMeters ?? 0,
         ...(route.polyline?.encodedPolyline ? { polyline: route.polyline.encodedPolyline } : {}),
         warnings: route.warnings ?? [],
+      };
+    },
+
+    async findAddress(text) {
+      const raw = (await call(
+        `${PLACES}/places:searchText`,
+        'places.id,places.formattedAddress,places.attributions',
+        { textQuery: text, languageCode: 'ja', regionCode: 'JP', pageSize: 1 },
+      )) as {
+        places?: {
+          id?: string;
+          formattedAddress?: string;
+          attributions?: { provider?: string; providerUri?: string }[];
+        }[];
+      };
+      const found = raw.places?.[0];
+      if (!found?.id) return undefined;
+      const attributions = attributionsOf(found.attributions);
+      return {
+        id: found.id,
+        ...(found.formattedAddress ? { address: found.formattedAddress } : {}),
+        ...(attributions ? { attributions } : {}),
       };
     },
 

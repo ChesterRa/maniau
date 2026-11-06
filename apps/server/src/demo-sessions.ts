@@ -6,6 +6,7 @@ import {
   type CheckedIdeas,
   type ChoicePreview,
   type Command,
+  checkHomeArea,
   checkSurvey,
   checkWayIdeas,
   type DateTime,
@@ -14,6 +15,7 @@ import {
   formatDateTime,
   type Household,
   type MemberDayReply,
+  type Place,
   type PlaceAttribution,
   type PlanResult,
   type PreviewCommand,
@@ -34,6 +36,7 @@ import {
   type UtteranceContext,
   type UtteranceRefs,
   type UtteranceReply,
+  validateHousehold,
   type WayIdeasContext,
   wayIdeasContext,
 } from '@maniau/core';
@@ -88,7 +91,7 @@ import {
 import { type PhotoInput, PhotoTooLarge, type TranscribeResult } from './reading/transcribe';
 import { buildUtteranceInput, type UtteranceResult } from './reading/utterance';
 import type { WayIdeasResult } from './reading/way-ideas';
-import { memoryStore } from './store';
+import { type HouseholdLog, memoryStore } from './store';
 import { utteranceContext } from './utterance-context';
 import { type View, viewFor } from './views';
 
@@ -188,6 +191,34 @@ export const MAX_WAY_IDEAS_PER_SESSION = 5;
 /** 一つのデモで、店の検索語を Claude に聞ける数と、地図で店を探せる数。 */
 export const MAX_STORE_KINDS_PER_SESSION = 10;
 export const MAX_STORE_SEARCHES_PER_SESSION = 20;
+/** 名前だけの試用で、住所を地図で照会できる数（入れ直しを含む）。 */
+export const MAX_HOME_ADDRESSES_PER_SESSION = 5;
+/** 住所から入れる家の場所の ID（入れ直しは、これを置き換える）。 */
+export const TRIAL_HOME_ID = 'home';
+
+/**
+ * 地図で見つけた家の場所の候補（家族が「合っている」と確かめるまで、家には入れない）。住所は見せるだけ。住所の無い
+ * 所は、家族が見分けられないので候補にしない。
+ */
+export interface HomeCandidateView {
+  id: string;
+  address: string;
+  attributions?: PlaceAttribution[];
+}
+
+export type HomeAddressOutcome =
+  /** 地域の欄だけを家に入れた。地図で見つけた所があれば、その候補（確かめるまで入れない）。 */
+  | { status: 'ok'; view: View; candidate?: HomeCandidateView }
+  /**
+   * 大人でない・名前だけの試用でない・地域の欄に番地に見える書き方がある・市区町村が読めない・数を使い切った・
+   * 後から入れ直された（この照会の結果は使わない）。
+   */
+  | { status: 'forbidden' | 'notOwn' | 'detail' | 'noArea' | 'limit' | 'stale' };
+
+export type HomeConfirmOutcome =
+  | { status: 'ok'; view: View }
+  /** 大人でない・名前だけの試用でない・候補が無い（入れ直した・もう確かめた・知らない候補）。 */
+  | { status: 'forbidden' | 'notOwn' | 'gone' };
 
 /** 品物から、地図で店を探す検索語の候補を Claude が出す（試験では偽物に替える）。 */
 export type StoreKindsReader = (what: string) => Promise<StoreKindsResult>;
@@ -349,6 +380,12 @@ interface Session {
   /** このデモで、Claude に店の検索語を聞いた数と、地図で店を探した数。 */
   storeKinds: number;
   storeSearches: number;
+  /** このデモで、住所を地図で照会した数。 */
+  homeAddresses: number;
+  /** 住所を入れた順の番号（遅れて返った前の照会で、後から入れた地域を書き替えない）。 */
+  homeSeq: number;
+  /** 地図で見つけた家の場所の候補（place ID と、その時の地域の欄）。入れ直すと消える。 */
+  homeCandidate?: { id: string; placeId: string; area: string };
   /** このデモで Claude にいま周りを調べてもらった（もらおうとした）数と、操作ごとの控え。 */
   surveys: number;
   surveyOperations: Map<string, SurveyOperation>;
@@ -435,6 +472,35 @@ function demoView(
   return { ...view, notificationPreview: notificationPreview(events, view.plan, view.household) };
 }
 
+/** 家族の大人（止めていない人）か。 */
+const isAdult = (household: Household | undefined, memberId: string) =>
+  household?.members.some((m) => m.id === memberId && m.kind === 'adult' && m.active) === true;
+
+/**
+ * 名前だけの試用の家の場所を置き換えて書き（家の情報の直しと同じ事象）、それで戻った引き受けを頼み直し、見せる物を
+ * 返す。家の情報の決まりに合わなければ invalid（何も書かない）。
+ */
+function writeHome(
+  log: HouseholdLog,
+  events: readonly DomainEvent[],
+  household: Household,
+  home: Place,
+  memberId: string,
+  sessionNow: DateTime,
+  maps: MapInputs | undefined,
+): View | 'invalid' {
+  const next: Household = {
+    ...household,
+    places: [...household.places.filter((p) => p.id !== home.id), home],
+  };
+  if (validateHousehold(next).length > 0) return 'invalid';
+  const before = computePlan(events, sessionNow, maps);
+  log.append([{ type: 'householdSet', household: next }], memberId, before.now);
+  const back = reopened(before, computePlan(log.events(), sessionNow, maps));
+  if (back.length > 0) log.append(back, 'system', before.now);
+  return demoView(log.events(), memberId, sessionNow, maps);
+}
+
 export function demoSessions(
   clock: () => number = Date.now,
   /** 試験で数の上限を小さくする。 */
@@ -518,6 +584,8 @@ export function demoSessions(
       proposals: new Map(),
       storeKinds: 0,
       storeSearches: 0,
+      homeAddresses: 0,
+      homeSeq: 0,
       surveys: 0,
       surveyOperations: new Map(),
       surveyed: new Map(),
@@ -981,6 +1049,110 @@ export function demoSessions(
       } catch {
         return { status: 'failed' };
       }
+    },
+    /**
+     * 名前だけの試用で、家の場所を入れる（入れ直しは置き換える）。家に入れるのは、家族が地域の欄（都道府県・
+     * 市区町村・町名）に打った文だけ。番地の欄は、地域の欄と合わせて地図の照会にだけ使い、残さない・ログに書かない。
+     * 地図で見つけた所は候補として返し、家族が確かめた時だけ place ID を家に入れる（confirmHome）。入れ直すと前の
+     * 候補は使えず、遅れて返った前の照会は書かない（stale）。
+     */
+    async homeAddress(
+      id: string,
+      memberId: string,
+      input: { area: string; detail: string },
+    ): Promise<HomeAddressOutcome | undefined> {
+      const session = touch(id);
+      if (!session) return undefined;
+      if (session.trial !== 'own') return { status: 'notOwn' };
+      const checked = checkHomeArea(input.area);
+      if (checked === 'detail') return { status: 'detail' };
+      if (checked === 'noCity') return { status: 'noArea' };
+      const current = await store.withHousehold(id, (log) => foldEvents(log.events()).household);
+      if (!isAdult(current, memberId)) return { status: 'forbidden' };
+      const detail = input.detail.trim();
+      const ask = deps.maps !== undefined && detail !== '';
+      if (ask && session.homeAddresses >= MAX_HOME_ADDRESSES_PER_SESSION) {
+        return { status: 'limit' };
+      }
+      const seq = ++session.homeSeq;
+      session.homeCandidate = undefined;
+      // 外に送る前に数える（失敗しても、照会した分は数える）。
+      if (ask) session.homeAddresses += 1;
+      const found = ask
+        ? await deps.maps?.findAddress(`${checked.area}${detail}`).catch(() => undefined)
+        : undefined;
+      if (!alive(id, session)) return undefined;
+      if (seq !== session.homeSeq) return { status: 'stale' };
+      const maps = await mapsOf(id);
+      if (seq !== session.homeSeq) return { status: 'stale' };
+      const written = await store.withHousehold(id, (log) => {
+        const events = log.events();
+        const household = foldEvents(events).household;
+        if (!household || !isAdult(household, memberId)) return 'forbidden' as const;
+        const home: Place = {
+          id: TRIAL_HOME_ID,
+          kind: 'home',
+          name: '家',
+          area: checked.area,
+          goods: [],
+        };
+        return writeHome(log, events, household, home, memberId, session.now, maps);
+      });
+      if (written === 'forbidden' || written === 'invalid') {
+        return { status: written === 'forbidden' ? 'forbidden' : 'noArea' };
+      }
+      // 地図の住所が無い所は、家族が確かめようがないので候補にしない（地域だけを入れた）。
+      if (!found?.address) return { status: 'ok', view: written };
+      const candidate = { id: randomUUID(), placeId: found.id, area: checked.area };
+      session.homeCandidate = candidate;
+      return {
+        status: 'ok',
+        view: written,
+        candidate: {
+          id: candidate.id,
+          address: found.address,
+          ...(found.attributions ? { attributions: found.attributions } : {}),
+        },
+      };
+    },
+    /**
+     * 地図で見つけた家の場所を、家族が「合っている」と確かめた時に、その place ID を家の場所に入れる。候補を
+     * 見せた後に入れ直した・家の地域が替わった・もう確かめた時は gone（前の画面からの確かめを入れない）。
+     */
+    async confirmHome(
+      id: string,
+      memberId: string,
+      candidateId: string,
+    ): Promise<HomeConfirmOutcome | undefined> {
+      const session = touch(id);
+      if (!session) return undefined;
+      if (session.trial !== 'own') return { status: 'notOwn' };
+      const candidate = session.homeCandidate;
+      if (!candidate || candidate.id !== candidateId) return { status: 'gone' };
+      const maps = await mapsOf(id);
+      const written = await store.withHousehold(id, (log) => {
+        const events = log.events();
+        const household = foldEvents(events).household;
+        if (!household || !isAdult(household, memberId)) return 'forbidden' as const;
+        const home = household.places.find((p) => p.id === TRIAL_HOME_ID);
+        if (session.homeCandidate !== candidate || home?.area !== candidate.area) {
+          return 'gone' as const;
+        }
+        const now = computePlan(events, session.now, maps).now;
+        return writeHome(
+          log,
+          events,
+          household,
+          { ...home, googlePlaceId: candidate.placeId, lookedUpAt: now },
+          memberId,
+          session.now,
+          maps,
+        );
+      });
+      if (written === 'forbidden' || written === 'gone') return { status: written };
+      if (written === 'invalid') return { status: 'gone' };
+      session.homeCandidate = undefined;
+      return { status: 'ok', view: written };
     },
     /** 段から新しいデモの家庭を作る。 */
     create(stage: DemoStageId): string {

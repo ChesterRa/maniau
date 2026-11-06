@@ -24,19 +24,19 @@
   <p class="sub">2026年11月4日。<a href="#en">English below</a></p>
 
   <h2>このサイトについて</h2>
-  <p>Built with Claude: Japan 2026 の応募作の公開デモです。登録はありません。家族・学校・お知らせは架空です。駅と店は実在の物を使います。</p>
+  <p>Built with Claude: Japan 2026 の応募作の公開デモです。登録はありません。家族・学校・お知らせは架空です。駅と店は実在の物を使います。名前だけの家族から始める試用では、家の場所にだけ、実在の住所を入れられます（住所のほかの家族の情報は架空にしてください）。</p>
 
   <h2>Google マップの利用</h2>
   <p>このデモは Google Maps Platform（Maps JavaScript API・Places API・Routes API）で、地図の表示、店の営業時間、駅から店までの歩く時間と道を調べます。Google マップの機能と情報の利用には、<a href="https://maps.google.com/help/terms_maps/">Google マップ／Google Earth 追加利用規約</a>と<a href="https://policies.google.com/privacy">Google プライバシーポリシー</a>が適用されます。</p>
   <ul>
-    <li>Google に送る物：架空の家族の設定にある駅と店の Google の place ID（営業時間と道のりを調べるため）。店を探す時は、あなたが「探す」を押した探す言葉をそのまま、駅の位置と一緒に送ります（探す言葉に書いた物は、名前や住所でも、そのまま送られます。入れないでください）。地図を開くと、あなたのブラウザが Google のサーバーと直接通信します（その時に Google が受け取る物は、Google の方針によります）。</li>
-    <li>家族の名前、予定、お知らせの文は、Google に送りません（あなたが探す言葉に書いた物を除きます）。</li>
-    <li>Google から受け取った営業時間、道の線、探した店の名前と住所は、その時の計算と表示に使い、保存しません。選んだ店は、place ID と家族の呼び名だけを、デモの家族の設定に入れます。計算した提案の時刻と歩く時間は、大人が引き受けた時の控えとして、店の place ID と一緒にデモのサーバーのメモリにだけ残り、デモの期限が切れると消えます。</li>
+    <li>Google に送る物：架空の家族の設定にある駅と店の Google の place ID（営業時間と道のりを調べるため）。店を探す時は、あなたが「探す」を押した探す言葉をそのまま、駅の位置と一緒に送ります（探す言葉に書いた物は、名前や住所でも、そのまま送られます。入れないでください）。名前だけの試用で家の場所を入れると、入れた住所（地域の欄と丁目・番地の欄）を、場所を探すために送ります。地図を開くと、あなたのブラウザが Google のサーバーと直接通信します（その時に Google が受け取る物は、Google の方針によります）。</li>
+    <li>家族の名前、予定、お知らせの文は、Google に送りません（あなたが探す言葉や住所の欄に書いた物を除きます）。</li>
+    <li>Google から受け取った営業時間、道の線、探した店の名前と住所は、その時の計算と表示に使い、保存しません。選んだ店は、place ID と家族の呼び名だけを、デモの家族の設定に入れます。計算した提案の時刻と歩く時間は、大人が引き受けた時の控えとして、店の place ID と一緒にデモのサーバーのメモリにだけ残り、デモの期限が切れると消えます。名前だけの試用の家の場所は、地域の欄の文（空白を除いた物）と、家族が「この場所で合っている」を押した時のその場所の place ID だけを試用に残し、丁目・番地の欄と地図の住所は残しません（試用の期限が切れると消えます）。</li>
     <li>Google から受け取った物は、Claude に送りません。</li>
   </ul>
 
   <h2>Claude（Anthropic）の利用</h2>
-  <p>「読む」「ひとこと」「やり方の案」を使うと、入れた文と、架空の家族の名前・予定・頼み事などが Anthropic の API に送られます。「探す言葉の案を Claude に聞く」を押すと、品物の名前だけが送られます。詳しくは<a href="https://github.com/ChesterRa/maniau/blob/main/docs/scope.md">詳しい動きと制限</a>の「自分の文で試す」をご覧ください。架空の文で試してください。</p>
+  <p>「読む」「ひとこと」「やり方の案」を使うと、入れた文と、架空の家族の名前・予定・頼み事などが Anthropic の API に送られます。「探す言葉の案を Claude に聞く」を押すと、品物の名前だけが送られます。「周りを調べる」を押すと、家の地域（名前だけの試用では、地域の欄に入れた文。空白は除きます）と調べる種類などが送られます。丁目・番地の欄は Claude に送りません（地域の欄には、丁目・番地・建物名・人の名前を入れないでください）。詳しくは<a href="https://github.com/ChesterRa/maniau/blob/main/docs/scope.md">詳しい動きと制限</a>の「自分の文で試す」をご覧ください。架空の文で試してください。</p>
 
   <h2>保証しないこと</h2>
   <ul>
@@ -56,19 +56,19 @@
   <p class="sub">November 4, 2026.</p>
 
   <h2>About this site</h2>
-  <p>This is the public demo of an entry to Built with Claude: Japan 2026. There is no sign-up. The family, school and notices are fictional. Stations and stores are real places.</p>
+  <p>This is the public demo of an entry to Built with Claude: Japan 2026. There is no sign-up. The family, school and notices are fictional. Stations and stores are real places. In the trial that starts from names only, where you live can be a real address (please keep other family details made up).</p>
 
   <h2>Google Maps</h2>
   <p>The demo uses Google Maps Platform (Maps JavaScript API, Places API, Routes API) to show maps and to look up store hours and walking times and routes from the station to a store. Your use of Google Maps features and content is subject to the <a href="https://maps.google.com/help/terms_maps/">Google Maps/Google Earth Additional Terms of Service</a> and the <a href="https://policies.google.com/privacy">Google Privacy Policy</a>.</p>
   <ul>
-    <li>What is sent to Google: the Google place IDs of the stations and stores in the fictional family's settings (to look up hours and walking times). When you search for a store, the search words you send with Search go as typed, together with the station's location (anything you write in them, even a name or an address, is sent as written; please don't). When you open a map, your browser talks to Google's servers directly (what Google receives then is covered by Google's policies).</li>
-    <li>Family names, schedules and notice text are not sent to Google (except anything you write in the search words).</li>
-    <li>Store hours, route lines, and the names and addresses of stores found by a search are used for that calculation and display and are not saved. For a store you pick, only its place ID and the family's name for it go into the demo family's settings. The proposal's times and walking minutes, together with the store's place ID, stay only in the demo server's memory as the record of what an adult took on, and are deleted when the demo expires.</li>
+    <li>What is sent to Google: the Google place IDs of the stations and stores in the fictional family's settings (to look up hours and walking times). When you search for a store, the search words you send with Search go as typed, together with the station's location (anything you write in them, even a name or an address, is sent as written; please don't). When you set where you live in the names-only trial, the address you entered (the area field and the block and house number field) is sent to find the spot. When you open a map, your browser talks to Google's servers directly (what Google receives then is covered by Google's policies).</li>
+    <li>Family names, schedules and notice text are not sent to Google (except anything you write in the search words or the address fields).</li>
+    <li>Store hours, route lines, and the names and addresses of stores found by a search are used for that calculation and display and are not saved. For a store you pick, only its place ID and the family's name for it go into the demo family's settings. The proposal's times and walking minutes, together with the store's place ID, stay only in the demo server's memory as the record of what an adult took on, and are deleted when the demo expires. For where you live in the names-only trial, the trial keeps only the text in the area field (spaces removed) and, when your family presses “This spot is right”, that spot's place ID; the block and house number field and the map's address are not kept (they go away when the trial expires).</li>
     <li>Nothing received from Google is sent to Claude.</li>
   </ul>
 
   <h2>Claude (Anthropic)</h2>
-  <p>When you use reading, quick updates or ideas for ways, the text you enter and the fictional family's names, plans and requests are sent to the Anthropic API. When you tap “Ask Claude for search words”, only the item name is sent. See “Try your own text” in <a href="https://github.com/ChesterRa/maniau/blob/main/docs/scope.en.md">Details and limitations</a>. Please use fictional text.</p>
+  <p>When you use reading, quick updates or ideas for ways, the text you enter and the fictional family's names, plans and requests are sent to the Anthropic API. When you tap “Ask Claude for search words”, only the item name is sent. When you tap “Look around us”, the home's area (in the names-only trial, the text in the area field, with spaces removed) and the kinds of places to look for, among other things, are sent. The block and house number field is not sent to Claude (please don't put block or house numbers, building names or people's names in the area field). See “Try your own text” in <a href="https://github.com/ChesterRa/maniau/blob/main/docs/scope.en.md">Details and limitations</a>. Please use fictional text.</p>
 
   <h2>No guarantees</h2>
   <ul>

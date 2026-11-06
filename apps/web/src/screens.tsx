@@ -48,6 +48,7 @@ import {
   type ConfirmResult,
   type Heard,
   type HearResult,
+  type HomeSetResult,
   type HouseholdPreviewResult,
   type ItemWhen,
   type NoticeInput,
@@ -216,6 +217,15 @@ export interface Ctx {
    * ことを示す（見本の家族は別の試用として始まり、今の記録は移らない）。
    */
   ownTrial?: true;
+  /**
+   * 名前だけの試用だけ：家の場所を入れる口。地域の欄は家に入れ、周りを調べる時に Claude に送る。番地の欄は地域の欄と
+   * 合わせて地図の照会にだけ使う。地図の候補は、家族が確かめた時だけ入れる。maps は地図を使うサーバーか。
+   */
+  home?: {
+    set: (area: string, detail: string) => Promise<HomeSetResult>;
+    confirm: (candidateId: string) => Promise<'ok' | 'gone' | 'failed'>;
+    maps: boolean;
+  };
   /** 空から始めた試用だけ：例のお知らせ（架空。前に用意した読み取りで足す。Claude に送らない）。 */
   example?: { title: string; add: () => Promise<boolean> };
   confirm?: (proposalId: string, operationId: string) => Promise<ConfirmResult>;

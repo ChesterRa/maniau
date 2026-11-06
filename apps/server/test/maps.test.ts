@@ -133,6 +133,10 @@ function fakeMaps(
       queries.push(query);
       return over.found ?? [];
     },
+    async findAddress() {
+      calls.push('find');
+      return undefined;
+    },
   };
 }
 
@@ -503,5 +507,33 @@ describe('結果と一緒に見せる提供者（attributions）', () => {
     const walk = await sessions.walk(sessions.create('asked'), 'store-clothing-toyosu');
     expect(walk?.station.attributions).toEqual([{ provider: '駅の提供者' }]);
     expect(walk?.store.attributions).toEqual(kept);
+  });
+});
+
+describe('住所の場所を探す', () => {
+  it('place ID と確かめる住所と提供者だけを頼み（名前・位置は頼まない）、一つだけ受ける。無ければ undefined', async () => {
+    const asked: { mask: string; body: Record<string, unknown> }[] = [];
+    let places: Record<string, unknown>[] = [
+      { id: 'g-home', formattedAddress: '日本、〒135-0016 東京都江東区東陽４丁目１１−２８' },
+    ];
+    const fake = (async (_url: string, init?: RequestInit) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      asked.push({ mask: headers['X-Goog-FieldMask'] ?? '', body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify({ places }));
+    }) as unknown as typeof fetch;
+    const client = googleMaps('fake-key', { fetch: fake });
+    expect(await client.findAddress('東京都江東区東陽4-11-28')).toEqual({
+      id: 'g-home',
+      address: '日本、〒135-0016 東京都江東区東陽４丁目１１−２８',
+    });
+    expect(asked[0]?.mask).toBe('places.id,places.formattedAddress,places.attributions');
+    expect(asked[0]?.body).toEqual({
+      textQuery: '東京都江東区東陽4-11-28',
+      languageCode: 'ja',
+      regionCode: 'JP',
+      pageSize: 1,
+    });
+    places = [];
+    expect(await client.findAddress('どこにも無い所')).toBeUndefined();
   });
 });
