@@ -610,7 +610,9 @@
   },
   "draft": {
     "ask": "Hi {{address}}, could you help?\nOn {{date}}, {{child}} has no school. Could you look after {{child}} from {{from}} to about {{to}}?",
-    "conditional": "If the plans change, there will be school that day and we won't need help.",
+    "askIf": "Hi {{address}}, could you help?\n{{child}} will have no school on {{date}} {{condition}} (not settled yet). If so, could you look after {{child}} from {{from}} to about {{to}}?",
+    "askMaybe": "Hi {{address}}, could you help?\n{{child}} may have no school on {{date}} (not settled yet). If so, could you look after {{child}} from {{from}} to about {{to}}?",
+    "conditional": "If there is school that day after all, we won't need your help.",
     "replyBy": "It would help to hear back by the evening of {{date}}.",
     "cancelHelper": "Hi {{address}}, plans changed, so we no longer need help on {{date}}. Thank you!",
     "cancelHelperUndated": "Hi {{address}}, plans changed, so we no longer need the help we asked for. Thank you!",

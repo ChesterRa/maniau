@@ -732,6 +732,38 @@ const outboundLanguage = (helper: Member): UiLanguage =>
   helper.outboundLanguage === 'en' ? 'en' : 'ja';
 
 /**
+ * 日本語の文字（ひらがな・カタカナ〔半角を含む〕・漢字〔補助面を含む〕・長音・和文の記号・全角の形）を含むか。
+ * 英語で送る文に、お知らせの日本語の言葉をそのまま入れないために見る。
+ */
+const hasJapanese = (text: string) =>
+  /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}\u30fc\u3001-\u303f\uff01-\uff60]/u.test(
+    text,
+  );
+
+/**
+ * 頼む文に書く条件（相手の言葉で。「学習発表会の実施日が12月5日（土）なら」）。札と同じく、一つの値で決まる条件
+ * だけを書く。名前（お知らせの言葉）と値は訳さないので、英語で送る相手に日本語の名前や値しか無い時は書かない
+ * （訳したふりをしない。呼ぶ側は、お知らせの条件しだいで、まだ決まっていないとだけ書く）。日付の値は相手の言葉の
+ * 日付にする。画面の言葉で作る札の条件（whenText）は使わない（画面と相手の言葉は別）。
+ */
+function outboundCondition(
+  ctx: Ctx,
+  itemIds: readonly string[],
+  lng: UiLanguage,
+  t: TFunction,
+): string | undefined {
+  const when = itemIds
+    .map((id) => ctx.items.find((l) => l.item.id === id)?.when)
+    .find((found) => found !== undefined);
+  if (!when) return undefined;
+  const value = isValidLocalDate(when.value)
+    ? formatLongDay(when.value, lng, ctx.tz)
+    : t(`answer.${when.value}`, { defaultValue: when.value });
+  if (lng === 'en' && (hasJapanese(when.label) || hasJapanese(value))) return undefined;
+  return t(when.not ? 'condition.unless' : 'condition.if', { label: when.label, value });
+}
+
+/**
  * 人に頼む時の返事の期限。ほかの取れる案のうち、決め時が最も早い物（断られた時に移る先）の前の晩。
  * 前の晩が過ぎていれば evening は無い（できるだけ早く。決め時ちょうどは、読んで動く間が無い）。
  * ほかに取れる案が無ければ、期限を作らない。頼む文と、決める画面の勧めで同じ物を使う。
@@ -801,16 +833,21 @@ export function askDraft(ctx: Ctx, task: Task): string {
     // 「すること」に書かれた日時は、上の文に書いてある。
     return parts.join('\n');
   }
+  // 条件しだいの日は、休みと言い切らない：初めの文に、分かる条件（相手の言葉で書ける物）か、まだ決まっていない
+  // ことを書き、休みにならなければお願いはなしと添える。
+  const conditional = isConditional(arrangement);
+  const condition = conditional ? outboundCondition(ctx, task.basis.itemIds, lng, t) : undefined;
   const parts = [
-    t('draft.ask', {
+    t(!conditional ? 'draft.ask' : condition ? 'draft.askIf' : 'draft.askMaybe', {
       address: helper.addressAs ?? helper.name,
       date: formatLongDay(arrangement.start, lng, ctx.tz),
       from: formatTime(arrangement.start, lng, ctx.tz),
       to: formatTime(arrangement.end, lng, ctx.tz),
       child: childLabel(ctx, arrangement.childId, t),
+      ...(condition ? { condition } : {}),
     }),
   ];
-  if (isConditional(arrangement)) parts.push(t('draft.conditional'));
+  if (conditional) parts.push(t('draft.conditional'));
   const reply = replyBy(ctx, arrangement, task.basis.optionKey);
   if (reply) {
     parts.push(
