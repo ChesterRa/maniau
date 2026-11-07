@@ -762,6 +762,16 @@ export const asksPerson = (ctx: Ctx, task: Task) =>
   helperOf(ctx, task) !== undefined &&
   (!isNeedArrangementKey(task.basis.arrangementKey) || needStepOf(ctx, task)?.cover === true);
 
+/** 置いた時刻は締切とは限らない。前に済ませる手順があれば、その順番も守る。 */
+function plannedAskTime(ctx: Ctx, task: Task, when: string): string {
+  const key = task.after?.some((step) => step.waitMin > 0)
+    ? 'card.proposal.askAfterWait'
+    : task.after?.length
+      ? 'card.proposal.askAfter'
+      : 'card.proposal.askSoon';
+  return ctx.t(key, { when });
+}
+
 function arrangementOf(ctx: Ctx, key: string | undefined): Arrangement | undefined {
   return ctx.plan.arrangements.find((a) => a.key === key);
 }
@@ -2702,6 +2712,14 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
     ? minutesBetween(task.detour.plannedArrival, task.detour.delayedArrival)
     : 0;
   const careLine = careFor(ctx, task);
+  const plannedWhen =
+    task.start && task.end
+      ? ctx.t('card.proposal.when', {
+          day: day(ctx, task.start),
+          from: time(ctx, task.start),
+          to: time(ctx, task.end),
+        })
+      : undefined;
   return (
     <Card>
       <Label tone="accent">{ctx.t('card.proposal.label')}</Label>
@@ -2711,14 +2729,10 @@ function ProposalCard({ ctx, task }: { ctx: Ctx; task: Task }) {
       {unvisited && <Text quiet>{ctx.t('decide.noHours', { place: unvisited.name })}</Text>}
       {/* 書かれた時刻の決まった作業は、置けていなくても書かれた時間を見せる（置いた時刻と同じ）。 */}
       {task.timing !== undefined && <WrittenTime ctx={ctx} task={task} />}
-      {task.timing === undefined && task.start && task.end && (
+      {task.timing === undefined && plannedWhen && (
         <div className="flex flex-col gap-1 rounded-xl bg-paper px-3 py-2.5">
           <span className="font-bold tabular-nums">
-            {ctx.t('card.proposal.when', {
-              day: day(ctx, task.start),
-              from: time(ctx, task.start),
-              to: time(ctx, task.end),
-            })}
+            {asksPerson(ctx, task) ? plannedAskTime(ctx, task, plannedWhen) : plannedWhen}
           </span>
           {/* 歩く時間は、目安の出どころがある時だけ（0 は「移動を足していない」で、駅から 0 分ではない）。 */}
           {/* 地図で調べた道のりは、行きと戻りを別に書く（目安とは書かず、出典と調べた時刻を下に添える）。 */}
@@ -3373,7 +3387,11 @@ function QuietRow({ ctx, card, last }: { ctx: Ctx; card: TodayCard; last: boolea
             <span className="text-sm text-sub tabular-nums">{writtenWhen(ctx, task)}</span>
           ) : (
             task.start && (
-              <span className="text-sm text-sub tabular-nums">{dayTime(ctx, task.start)}</span>
+              <span className="text-sm text-sub tabular-nums">
+                {asksPerson(ctx, task)
+                  ? plannedAskTime(ctx, task, dayTime(ctx, task.start))
+                  : dayTime(ctx, task.start)}
+              </span>
             )
           )}
           {condition && (

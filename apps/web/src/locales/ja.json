@@ -203,6 +203,9 @@
     "proposal": {
       "label": "おねがい",
       "when": "{{day}} {{from}}–{{to}}",
+      "askSoon": "なるべく早く（計画上の時刻：{{when}}）",
+      "askAfter": "前の手順を済ませてから、なるべく早く（計画上の時刻：{{when}}）",
+      "askAfterWait": "前の手順と待ち時間の後に、なるべく早く（計画上の時刻：{{when}}）",
       "where": "{{place}}・駅から歩いて約{{walk}}分（目安）",
       "home": "家に着くのは {{time}}（いつもより{{late}}分おそく）",
       "accept": "やります",

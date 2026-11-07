@@ -203,6 +203,9 @@
     "proposal": {
       "label": "A request for you",
       "when": "{{day}} {{from}}–{{to}}",
+      "askSoon": "As soon as possible (time in the plan: {{when}})",
+      "askAfter": "As soon as possible after the previous steps (time in the plan: {{when}})",
+      "askAfterWait": "As soon as possible after the previous steps and their waiting time (time in the plan: {{when}})",
       "where": "{{place}} · about {{walk}} min walk from the station (estimate)",
       "home": "Home at {{time}} ({{late}} min later than usual)",
       "accept": "I'll do it",

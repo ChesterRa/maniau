@@ -17,6 +17,43 @@ const headings = (html: string) =>
     .filter((h) => SECTIONS.includes(h));
 
 describe('きょうの三つ', () => {
+  it.each(['ja', 'en'] as const)(
+    '人に頼む作業は、計画上の時刻を待たず早めに頼めると示す (%s)',
+    (lang) => {
+      const ctx = ctxFor('asked', 'b', lang);
+      const found = ctx.plan.tasks.find((task) => task.titleKey === 'task.helper.ask');
+      if (!found) throw new Error('人に頼む作業が無い');
+      const task = { ...found, start: '2026-12-04T20:55+09:00', end: '2026-12-04T21:00+09:00' };
+      const early =
+        lang === 'ja' ? 'なるべく早く（計画上の時刻：' : 'As soon as possible (time in the plan:';
+      const proposal = {
+        ...ctx,
+        today: { main: [{ kind: 'proposal' as const, task }], quiet: [] },
+      };
+      expect(text(renderToStaticMarkup(<TodayScreen ctx={proposal} />))).toContain(early);
+      const accepted = { ...ctx, today: { main: [], quiet: [{ kind: 'todo' as const, task }] } };
+      expect(text(renderToStaticMarkup(<TodayScreen ctx={accepted} />))).toContain(early);
+      const dependent = {
+        ...task,
+        after: [{ taskKey: 'previous-step', waitMin: 15 }],
+      };
+      const wait = {
+        ...ctx,
+        today: { main: [], quiet: [{ kind: 'todo' as const, task: dependent }] },
+      };
+      expect(text(renderToStaticMarkup(<TodayScreen ctx={wait} />))).toContain(
+        lang === 'ja'
+          ? '前の手順と待ち時間の後に'
+          : 'after the previous steps and their waiting time',
+      );
+      const { external: _external, ...ordinary } = task;
+      const notAsk = {
+        ...ctx,
+        today: { main: [], quiet: [{ kind: 'todo' as const, task: ordinary }] },
+      };
+      expect(text(renderToStaticMarkup(<TodayScreen ctx={notAsk} />))).not.toContain(early);
+    },
+  );
   it('返事待ちと、もう一人の引き受け待ちは「頼んだこと」。今やる事が無ければ、無いと出す', () => {
     const html = renderToStaticMarkup(<TodayScreen ctx={ctxFor('asked', 'b', 'ja')} />);
     expect(headings(html)).toContain('頼んだこと');
