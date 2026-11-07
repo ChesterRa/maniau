@@ -108,10 +108,11 @@ const render = (ctx: Ctx, heard: Heard) =>
 
 it('家にあるかの答えの候補は、問いの札と同じ言葉で、要る日を添えて書く', async () => {
   expect(render(await ctxOf('ja'), reply)).toContain(
-    '白い長袖シャツはありますか？（12/5（土）までに要る）：「ない」と答える',
+    '白い長袖シャツは、家に用意できていますか？（12/5（土）までに要る）：「まだ用意できていない」と答える',
   );
   const en = render(await ctxOf('en'), reply);
-  expect(en).toContain('Do you have 白い長袖シャツ at home?');
+  expect(en).toContain('Is 白い長袖シャツ ready at home?');
+  expect(en).toContain('Not ready yet');
   expect(en).toContain('(needed by');
 });
 

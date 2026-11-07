@@ -1828,10 +1828,10 @@ function QuestionCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind
       )}
       <Row>
         <Button kind="secondary" onClick={() => answer('yes')}>
-          {ctx.t('answer.yes')}
+          {ctx.t('card.question.ready')}
         </Button>
         <Button kind="secondary" onClick={() => answer('no')}>
-          {ctx.t('answer.no')}
+          {ctx.t('card.question.notReady')}
         </Button>
       </Row>
     </Card>
@@ -5384,7 +5384,13 @@ function proposalLabel(ctx: Ctx, proposal: ShownProposal): string {
       return dated(
         ctx,
         'say.do.answer',
-        { label, value: valueText(ctx, command.value) },
+        {
+          label,
+          value:
+            requirement && (command.value === 'yes' || command.value === 'no')
+              ? ctx.t(command.value === 'yes' ? 'card.question.ready' : 'card.question.notReady')
+              : valueText(ctx, command.value),
+        },
         requirement?.by ? due(ctx, requirement.by, requirement.basis.itemIds) : undefined,
       );
     }

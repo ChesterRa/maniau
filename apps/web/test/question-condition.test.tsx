@@ -87,7 +87,7 @@ it('条件しだいの持ち物の問いには、その条件を書く', () => {
   };
   expect(ctx.today.main).toHaveLength(1);
   const shown = text(renderToStaticMarkup(<TodayScreen ctx={ctx} />));
-  expect(shown).toContain('ハンカチはありますか？');
+  expect(shown).toContain('ハンカチは、家に用意できていますか？');
   expect(shown).toContain('学習発表会の実施日が12/5（土）なら要ります（まだ決まっていません）。');
 });
 

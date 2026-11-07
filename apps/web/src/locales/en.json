@@ -182,7 +182,9 @@
     },
     "question": {
       "label": "Please tell us",
-      "atHome": "Do you have {{what}} at home?",
+      "atHome": "Is {{what}} ready at home?",
+      "ready": "Ready",
+      "notReady": "Not ready yet",
       "body": "Needed by {{by}}.",
       "source": "See the original text",
       "sourceTitled": "See the original: {{title}}",

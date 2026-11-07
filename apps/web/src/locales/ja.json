@@ -182,7 +182,9 @@
     },
     "question": {
       "label": "教えてください",
-      "atHome": "{{what}}はありますか？",
+      "atHome": "{{what}}は、家に用意できていますか？",
+      "ready": "用意できている",
+      "notReady": "まだ用意できていない",
       "body": "{{by}}までに要ります。",
       "source": "元の文を見る",
       "sourceTitled": "「{{title}}」の文を見る",
