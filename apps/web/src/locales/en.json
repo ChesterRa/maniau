@@ -865,6 +865,21 @@
     "openEmpty": "Nothing on this month’s dates is still open.",
     "conditional": "Has conditional items"
   },
+  "ics": {
+    "label": "Export to your phone calendar",
+    "body": "Only settled items go into the calendar file (.ics): events you confirmed with no condition, tasks someone accepted, requests with a recorded OK, days you chose under “Choosing the day” (only the day is settled; replies to your requests are separate), and bring or hand-in deadlines written in a notice. Candidate days, decision deadlines, pending replies, conditional items and estimated times are left out.",
+    "snapshot": "This is a one-time copy. If the plan changes later, the imported calendar does not update by itself.",
+    "button_one": "Export ({{count}} item)",
+    "button_other": "Export ({{count}} items)",
+    "none": "Nothing settled to export right now.",
+    "saved": "The .ics file is ready. Open it in your phone’s calendar app to import it.",
+    "fromNotice": "From the notice “{{title}}”",
+    "task": "{{name}}: {{what}}",
+    "request": "{{what}}: time asked of {{name}} (OK recorded)",
+    "requestPlain": "Time asked of {{name}} (OK recorded)",
+    "whenChosen": "{{what}} (day you chose; arranging it is separate)",
+    "calendarName": "Maniau"
+  },
   "missing": {
     "title": "Not found",
     "body": "This item no longer exists. Please go back to Today."

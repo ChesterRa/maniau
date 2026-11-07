@@ -78,6 +78,7 @@ import {
   minutesBetween,
 } from './format';
 import type { UiLanguage } from './i18n';
+import { IcsExportCard } from './ics-export';
 import { Attributions, GoogleMapsMark, TermsLink, WalkMap } from './maps';
 import { SayMemberDay } from './member-day';
 import { type NotUploadable, toUploadable, type Uploadable } from './photo';
@@ -4854,6 +4855,7 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
             {undatedRequests.map(showLine)}
           </Card>
         )}
+        <IcsExportCard ctx={ctx} />
       </Main>
     </>
   );
