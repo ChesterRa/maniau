@@ -23,8 +23,10 @@ it('日曜（11/29、祖母の返事待ち）：きょうから七日に、学�
 it('平日でも、きょうから始める（英語も同じ）', () => {
   const ja = text(renderToStaticMarkup(<WeekScreen ctx={ctxFor('arrived', 'b', 'ja')} />));
   expect(ja).toContain('11/25（水） – 12/1（火）');
+  expect(ja).toContain('表示する事はありません');
   const en = text(renderToStaticMarkup(<WeekScreen ctx={ctxFor('arrived', 'b', 'en')} />));
   expect(en).toContain('The 7 days after');
+  expect(en).toContain('No entries to show');
   expect(en).not.toContain('Next week');
 });
 

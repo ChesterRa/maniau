@@ -18,6 +18,42 @@ const headings = (html: string) =>
 
 describe('きょうの三つ', () => {
   it.each(['ja', 'en'] as const)(
+    '条件と手を添え、決め時を家族の計画に合わせて表示する (%s)',
+    (lang) => {
+      const ctx = ctxFor('arrived', 'b', lang);
+      const card = ctx.today.main.find((entry) => entry.kind === 'decide');
+      if (card?.kind !== 'decide' || !card.recommended?.decisionDeadline) {
+        throw new Error('決め時のある札が無い');
+      }
+      const show = (entry: typeof card) =>
+        text(
+          renderToStaticMarkup(
+            <TodayScreen ctx={{ ...ctx, today: { main: [entry], quiet: [] } }} />,
+          ),
+        );
+      const original = show(card);
+      expect(original).toContain(lang === 'ja' ? '12/5（土）なら要ります' : 'Needed if');
+      expect(original).toContain(
+        lang === 'ja'
+          ? '陽菜のことは「学童に預ける」なら'
+          : 'For 陽菜, if you choose “After-school care”:',
+      );
+      expect(original).toContain(lang === 'ja' ? '17:20ごろまで（目安）' : '5:20 PM (estimate)');
+      const changed = show({
+        ...card,
+        recommended: { ...card.recommended, decisionDeadline: '2026-12-02T19:30+09:00' },
+      });
+      expect(changed).toContain(lang === 'ja' ? '19:30ごろまで（目安）' : '7:30 PM (estimate)');
+      const withoutTime = show({
+        ...card,
+        recommended: { ...card.recommended, decisionDeadline: undefined },
+      });
+      expect(withoutTime).not.toContain(lang === 'ja' ? '決め時' : 'Decision time');
+      expect(withoutTime).toContain(lang === 'ja' ? '12/5（土）なら要ります' : 'Needed if');
+    },
+  );
+
+  it.each(['ja', 'en'] as const)(
     '人に頼む作業は、計画上の時刻を待たず早めに頼めると示す (%s)',
     (lang) => {
       const ctx = ctxFor('asked', 'b', lang);

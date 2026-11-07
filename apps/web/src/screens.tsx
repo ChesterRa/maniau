@@ -1770,13 +1770,22 @@ function DecideCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 
         }}
       />
       {recommended?.decisionDeadline && (
-        <Text>
-          {ctx.t('card.decide.body', {
-            child: childLabel(ctx, arrangement.childId),
-            deadline: dayTime(ctx, recommended.decisionDeadline),
-            option: optionTitle(ctx, recommended),
-          })}
-        </Text>
+        <div className="rounded-xl bg-accent-soft px-3 py-2">
+          <p className="text-[15px]">
+            {ctx.t('card.decide.ifOption', {
+              child: childLabel(ctx, arrangement.childId),
+              option: optionTitle(ctx, recommended),
+            })}
+          </p>
+          <p className="mt-1 text-[13px] font-bold text-accent">
+            {ctx.t('card.decide.decisionTimeLabel')}
+          </p>
+          <p className="font-round text-base leading-snug font-bold break-keep text-accent">
+            {ctx.t('card.decide.decisionTime', {
+              deadline: dayTime(ctx, recommended.decisionDeadline),
+            })}
+          </p>
+        </div>
       )}
       <Button onClick={() => ctx.go({ name: 'decide', key: arrangement.key })}>
         {ctx.t(
