@@ -2,6 +2,12 @@
 
 このリポジトリが使う、第三者のデータ・素材の出典と利用条件。依存のライブラリは `pnpm-lock.yaml` で固定し、それぞれの利用条件に従う。
 
+## Google Maps の帰属表示（`apps/web/public/google-maps-attribution.svg`）
+
+- 出典：Google の [Google Maps attribution assets](https://developers.google.com/static/maps/documentation/images/Google_Maps_Attribution_Assets.zip) に含まれる Dark Gray の SVG を、2026-11-07 に取得した。
+- 読み上げのために `<title>Google Maps</title>` を追加した。図形・色・寸法は変えていない。
+- 利用条件：[Places API の帰属表示の決まり](https://developers.google.com/maps/documentation/places/web-service/policies)に従い、Google Maps の検索結果に付ける。図柄や縦横比を変えず、定められた大きさと余白を保つ。
+
 ## 日本の国民の祝日（`packages/core/src/time/holidays-jp.ts`）
 
 - 出典：内閣府「国民の祝日について」の CSV（https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv）。2026-11-02 に取得し、2026〜2027年の分を変換した。

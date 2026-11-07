@@ -2,12 +2,17 @@
 // 調べた候補を、確かめた家の場所の近くで地図に探す：同じ名前の所（本院・分院）を住所つきで並べ、家族が同じ所を選んで
 // から、家からの徒歩を見せる（選ぶ前は出さない）。家の場所を地図で確かめていなければ探す口を出さない。候補・住所は
 // 架空（example.invalid）。偽物の口だけ（通信しない）。
-import { Household, type SurveyCandidate, type SurveyShown } from '@maniau/core';
+import {
+  Household,
+  type HouseholdPreview,
+  type SurveyCandidate,
+  type SurveyShown,
+} from '@maniau/core';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SurveyPlacesResult } from '../src/family';
 import i18n from '../src/i18n';
-import { ResourcesCard } from '../src/resources';
+import { ResourcesCard, withCandidate } from '../src/resources';
 import type { Ctx } from '../src/screens';
 import { step } from './fake-fetch';
 
@@ -71,6 +76,7 @@ const own = (googlePlaceId?: string) =>
 
 function withPlaces(household: Household, found: SurveyPlacesResult = FOUND) {
   const asked: string[] = [];
+  const looked: Household[] = [];
   const ctx = {
     lang: 'ja',
     tz: 'Asia/Tokyo',
@@ -90,10 +96,13 @@ function withPlaces(household: Household, found: SurveyPlacesResult = FOUND) {
         return found;
       },
     },
-    previewHousehold: async () => undefined,
+    previewHousehold: async (next: Household) => {
+      looked.push(next);
+      return undefined;
+    },
     go: () => undefined,
   } as unknown as Ctx;
-  return { ctx, asked };
+  return { ctx, asked, looked };
 }
 
 let host: HTMLDivElement;
@@ -132,7 +141,7 @@ describe('調べた候補を、家の近くの地図で探す', () => {
     await press('これが同じ所', 1);
     expect(text()).toContain(`家から歩いて約 25 分（地図で選んだ「${NAME}」まで）。`);
     expect(text()).toContain(
-      '地図のデータ：Google。いま地図で調べた物で、この試用には残しません。',
+      '地図のデータ：Google。地図からの名前・住所・道のりは、この試用には残しません。',
     );
     // 選んだ所は住所で見分けられる。選び違えたら、地図に聞き直さずに選び直せる。
     expect(text()).toContain(`選んだ所：${NAME}（架空の住所 2（分院））`);
@@ -143,6 +152,81 @@ describe('調べた候補を、家の近くの地図で探す', () => {
     await press('これが同じ所', 0);
     expect(text()).toContain(`家から歩いて約 11 分（地図で選んだ「${NAME}」まで）。`);
     expect(asked).toEqual(['res-aaaaaaaaaaaa']);
+  });
+
+  it('住所を見た候補を家の地図にも結ぶと選んだ場合だけ、家に加えるプレビューに ID を入れる', async () => {
+    const { ctx, looked } = withPlaces(own('g-home'));
+    await step(() => root.render(<ResourcesCard ctx={ctx} />));
+    await press('周りを調べる');
+    await press(LOOK);
+    await press('これが同じ所', 1);
+    await press('この場所を家の地図にも結ぶ');
+    expect(ctx.household.places.some((p) => p.googlePlaceId === 'g-branch')).toBe(false);
+    await press('この家での扱いを決める');
+    await press('この家の候補にする');
+    const next = looked[0];
+    expect(next?.places.find((p) => p.name === NAME)?.googlePlaceId).toBe('g-branch');
+    expect(JSON.stringify(next)).not.toContain('架空の住所 2');
+  });
+
+  it('地図に結ぶ選びをしていなければ ID を入れず、前に結んだ別の場所も上書きしない', () => {
+    const choice = {
+      use: 'candidate' as const,
+      registration: 'unsure' as const,
+      appliesTo: { kind: 'unknown' as const },
+      wayIds: [],
+    };
+    const fresh = withCandidate(own('g-home'), CANDIDATE, choice);
+    expect(fresh.places.find((p) => p.name === NAME)?.googlePlaceId).toBeUndefined();
+    const household = own('g-home');
+    household.places.push({
+      id: 'p-known',
+      kind: 'other',
+      name: NAME,
+      goods: [],
+      googlePlaceId: 'g-old',
+    });
+    const same = withCandidate(household, CANDIDATE, {
+      ...choice,
+      samePlace: true,
+      mapPlaceId: 'g-new',
+    });
+    expect(same.places.find((p) => p.id === 'p-known')?.googlePlaceId).toBe('g-old');
+  });
+
+  it('地図に結ぶ選びをした後に候補を選び直すと、前の ID を残さない', async () => {
+    const { ctx, looked } = withPlaces(own('g-home'));
+    await step(() => root.render(<ResourcesCard ctx={ctx} />));
+    await press('周りを調べる');
+    await press(LOOK);
+    await press('これが同じ所', 1);
+    await press('この場所を家の地図にも結ぶ');
+    await press('選び直す');
+    await press('これが同じ所', 0);
+    await press('この家での扱いを決める');
+    await press('この家の候補にする');
+    expect(looked[0]?.places.find((p) => p.name === NAME)?.googlePlaceId).toBeUndefined();
+  });
+
+  it('古い画面で候補を選んだ後、新しい記録のプレビューが返ったら保存させず、更新を求める', async () => {
+    const { ctx } = withPlaces(own('g-home'));
+    ctx.plan = { throughSeq: 7 } as Ctx['plan'];
+    ctx.previewHousehold = async () => ({ preview: { throughSeq: 8 } as HouseholdPreview });
+    let sent = 0;
+    ctx.send = async () => {
+      sent++;
+      return { status: 'ok' };
+    };
+    await step(() => root.render(<ResourcesCard ctx={ctx} />));
+    await press('周りを調べる');
+    await press(LOOK);
+    await press('これが同じ所', 0);
+    await press('この場所を家の地図にも結ぶ');
+    await press('この家での扱いを決める');
+    await press('この家の候補にする');
+    expect(text()).toContain(i18n.getFixedT('ja')('household.preview.stale'));
+    expect(buttons('この内容で保存')).toHaveLength(0);
+    expect(sent).toBe(0);
   });
 
   it('どれも違う時は、道のりを出さない。見つからない時はそう言う', async () => {

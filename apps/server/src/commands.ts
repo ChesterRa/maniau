@@ -26,7 +26,6 @@ import {
   localDateOf,
   type MapInputs,
   type NeedInterpretation,
-  type PlaceKind,
   type PlanResult,
   proposalSnapshot,
   repeatedNames,
@@ -2000,20 +1999,16 @@ function checkHouseholdEdit(
     const edited = next.places.find((p) => p.id === place.id);
     if (!edited || edited.kind !== place.kind) return invalid('placesLocked');
   }
-  // 足せる場所は、店・祖母の家など・施設（家・学校・駅は、家の始まりの設定で入れる）。営業時間は無くてよい（分から
-  // ない：計算は営業時間で絞らず、画面は「登録なし」と書き、お勧めを出さない）。学童と職場は、同じ直しで足す学童・
-  // 休みの手が相手にする時だけ足せる（ふだんの週の区間や地図には使わない）。
+  // 家族が場所を地図に置けるよう、家・学校・駅・学童も足せる。足しただけでは週や取れる手に結ばない。
+  // 家は一つだけ（家を探す計算が一つの家を前提とする）。既存の場所は消さず、種類も変えない。
   const added = next.careOptions.filter((o) => !current.careOptions.some((c) => c.id === o.id));
   for (const place of next.places) {
-    const newKind =
-      NEW_PLACE_KINDS.has(place.kind) ||
-      (CARE_PLACE_KINDS.has(place.kind) && added.some((o) => o.providerId === place.id));
     if (
       !placeIds.has(place.id) &&
-      (!newKind ||
-        !NEW_ID.test(place.id) ||
+      (!NEW_ID.test(place.id) ||
         memberIds.has(place.id) ||
         next.members.some((m) => m.id === place.id) ||
+        (place.kind === 'home' && next.places.filter((p) => p.kind === 'home').length > 1) ||
         place.name.trim() === '')
     ) {
       return invalid('placesLocked');
@@ -2326,9 +2321,6 @@ function helperAskAllowed(option: CareOptionTemplate, next: Household): boolean 
       .length === 1
   );
 }
-const NEW_PLACE_KINDS: ReadonlySet<PlaceKind> = new Set(['store', 'helperHome', 'other']);
-/** 足す学童・休みの手の相手としてだけ足せる場所の種類。 */
-const CARE_PLACE_KINDS: ReadonlySet<PlaceKind> = new Set(['afterSchoolCare', 'workplace']);
 /** 家族が入れる学童の一日の費用の上限（円。打ち間違いで、桁の違う代償で比べない）。 */
 const MAX_CARE_YEN = 100_000;
 

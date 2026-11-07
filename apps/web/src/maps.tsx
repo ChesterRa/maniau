@@ -4,7 +4,7 @@
 // と添える（翻訳させない）。
 import type { PlaceAttribution } from '@maniau/core';
 import { Fragment, useEffect, useRef, useState } from 'react';
-import type { WalkView } from './family';
+import type { HouseholdMapView, WalkView } from './family';
 import type { Ctx } from './screens';
 
 /** 使う所だけの、Google の地図の型（型の包みを足さない）。 */
@@ -17,11 +17,21 @@ interface GoogleMapsApi {
     Map: new (
       element: HTMLElement,
       options: object,
-    ) => { fitBounds(b: unknown, pad: number): void };
+    ) => {
+      fitBounds(b: unknown, pad: number): void;
+      panTo(point: LatLngLiteral): void;
+    };
     Polyline: new (options: object) => unknown;
     LatLngBounds: new () => { extend(point: LatLngLiteral): void };
     geometry?: { encoding: { decodePath(path: string): unknown[] } };
-    marker?: { AdvancedMarkerElement: new (options: object) => unknown };
+    marker?: {
+      AdvancedMarkerElement: new (
+        options: object,
+      ) => {
+        map: unknown;
+        addEventListener(event: string, callback: () => void): void;
+      };
+    };
   };
 }
 
@@ -133,6 +143,114 @@ export function TermsLink({ ctx }: { ctx: Ctx }) {
     >
       {ctx.t('maps.terms')}
     </a>
+  );
+}
+
+/** 家族が結んだ場所だけの地図。住所・位置は照会した画面の中だけに置く。 */
+export function HouseholdMapCanvas({
+  ctx,
+  points,
+  selected,
+  onSelect,
+}: {
+  ctx: Ctx;
+  points: HouseholdMapView['points'];
+  selected?: string;
+  onSelect: (id: string) => void;
+}) {
+  const element = useRef<HTMLElement>(null);
+  const mapRef = useRef<InstanceType<GoogleMapsApi['maps']['Map']> | undefined>(undefined);
+  const pins = useRef(new Map<string, HTMLDivElement>());
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const selectRef = useRef(onSelect);
+  selectRef.current = onSelect;
+  const [failed, setFailed] = useState(false);
+  const key = ctx.maps?.key;
+  useEffect(() => {
+    if (!key || !element.current || points.length === 0) return;
+    let cancelled = false;
+    const box = element.current;
+    const markers: { map: unknown }[] = [];
+    const onAuthFailure = () => setFailed(true);
+    setFailed(false);
+    authListeners.add(onAuthFailure);
+    loadMaps(key, ctx.lang)
+      .then((google) => {
+        if (cancelled || authFailed) {
+          if (authFailed) setFailed(true);
+          return;
+        }
+        const Marker = google.maps.marker?.AdvancedMarkerElement;
+        const first = points[0];
+        if (!Marker || !first) {
+          setFailed(true);
+          return;
+        }
+        const map = new google.maps.Map(box, {
+          center: point(first.location),
+          zoom: 15,
+          mapId: 'DEMO_MAP_ID',
+          disableDefaultUI: true,
+          zoomControl: true,
+          gestureHandling: 'cooperative',
+        });
+        mapRef.current = map;
+        const bounds = new google.maps.LatLngBounds();
+        for (const [index, place] of points.entries()) {
+          const position = point(place.location);
+          const title = ctx.household.places.find((p) => p.id === place.id)?.name ?? '';
+          // 家・学校・店を同じ形の印だけで並べると、どれがどこか分からない。番号は下の場所の一覧と対応する。
+          const pin = document.createElement('div');
+          pin.textContent = String(index + 1);
+          pin.setAttribute('aria-hidden', 'true');
+          pin.className =
+            'grid size-9 place-items-center rounded-full border-2 border-white bg-accent text-sm font-bold text-white shadow-md';
+          if (selectedRef.current === place.id) pin.classList.add('ring-4', 'ring-warn');
+          pins.current.set(place.id, pin);
+          const marker = new Marker({ map, position, title, content: pin, gmpClickable: true });
+          marker.addEventListener('gmp-click', () => selectRef.current(place.id));
+          markers.push(marker);
+          bounds.extend(position);
+        }
+        // 一か所だけなら拡大し過ぎない。二か所以上は全部入る範囲を見せる。
+        if (points.length > 1) map.fitBounds(bounds, 40);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+      authListeners.delete(onAuthFailure);
+      mapRef.current = undefined;
+      for (const marker of markers) marker.map = null;
+      pins.current.clear();
+      box.replaceChildren();
+    };
+  }, [key, ctx.lang, ctx.household.places, points]);
+
+  useEffect(() => {
+    const chosen = points.find((place) => place.id === selected);
+    for (const [id, pin] of pins.current) {
+      pin.classList.toggle('ring-4', id === selected);
+      pin.classList.toggle('ring-warn', id === selected);
+    }
+    if (chosen) mapRef.current?.panTo(point(chosen.location));
+  }, [points, selected]);
+
+  if (!key) return <p className="text-sm text-warn">{ctx.t('familyMap.mapFailed')}</p>;
+  return (
+    <>
+      {failed && <p className="text-sm text-warn">{ctx.t('familyMap.mapFailed')}</p>}
+      {/* 失敗中も寸法のある入れ物を残す。読み直した時、ここに地図を作り直せるように。 */}
+      <div className={failed ? 'h-0 overflow-hidden' : undefined} aria-hidden={failed || undefined}>
+        <section
+          ref={element}
+          aria-label={ctx.t('familyMap.mapLabel')}
+          className="h-72 w-full overflow-hidden rounded-xl bg-paper"
+        />
+      </div>
+    </>
   );
 }
 

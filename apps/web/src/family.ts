@@ -199,6 +199,34 @@ export interface WalkView {
   route: { durationSec: number; distanceM: number; polyline?: string; warnings: string[] };
 }
 
+/** 家族が結んだ場所の、その時だけの地図の位置。 */
+export interface HouseholdMapView {
+  points: {
+    id: string;
+    googlePlaceId: string;
+    location: { latitude: number; longitude: number };
+    attributions?: PlaceAttribution[];
+  }[];
+  failed: string[];
+  omitted: string[];
+}
+
+export type HouseholdMapResult =
+  | { status: 'ok'; map: HouseholdMapView }
+  | { status: 'limit' | 'stale' | 'failed' };
+
+export type HouseholdPlaceSearchResult =
+  | {
+      status: 'ok';
+      places: {
+        placeId: string;
+        name: string;
+        address: string;
+        attributions?: PlaceAttribution[];
+      }[];
+    }
+  | { status: 'limit' | 'stale' | 'gone' | 'failed' };
+
 /** 家族が入れたお知らせの文。操作 ID は、届いたか分からない時の送り直しに同じ物を使う。 */
 export interface NoticeInput {
   text: string;
@@ -944,6 +972,63 @@ export function useServerView(where: Where | undefined) {
     [kind, sessionId],
   );
 
+  /** 家の場所の地図は、画面を開いた時だけ引き、場所の位置を端末に保存しない。 */
+  const householdMap = useCallback(async (): Promise<HouseholdMapResult> => {
+    const now = current.current;
+    if (kind !== 'demo' || !sessionId || !memberId || now.key !== key || now.memberId !== memberId)
+      return { status: 'stale' };
+    try {
+      const response = await fetch(
+        `/api/demo/sessions/${sessionId}/maps/household?member=${encodeURIComponent(memberId)}`,
+        { signal: AbortSignal.timeout(READ_TIMEOUT_MS) },
+      );
+      if (!isCurrent(now.epoch)) return { status: 'stale' };
+      if (response.status === 429) return { status: 'limit' };
+      if (response.status === 409) return { status: 'stale' };
+      if (response.status === 404) setNotice('expired');
+      if (!response.ok) return { status: 'failed' };
+      const map = (await response.json()) as HouseholdMapView;
+      return isCurrent(now.epoch) ? { status: 'ok', map } : { status: 'stale' };
+    } catch {
+      return { status: 'failed' };
+    }
+  }, [kind, key, sessionId, memberId, isCurrent]);
+
+  /** 家族が入力した名前や住所から、家にある一つの場所の候補を探す。 */
+  const searchHouseholdPlace = useCallback(
+    async (placeId: string | undefined, query: string): Promise<HouseholdPlaceSearchResult> => {
+      const now = current.current;
+      if (
+        kind !== 'demo' ||
+        !sessionId ||
+        !memberId ||
+        now.key !== key ||
+        now.memberId !== memberId
+      )
+        return { status: 'stale' };
+      try {
+        const response = await fetch(`/api/demo/sessions/${sessionId}/maps/household-search`, {
+          method: 'POST',
+          headers: json,
+          body: JSON.stringify({ memberId, ...(placeId === undefined ? {} : { placeId }), query }),
+          signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+        });
+        if (!isCurrent(now.epoch)) return { status: 'stale' };
+        if (response.status === 429) return { status: 'limit' };
+        if (response.status === 409) return { status: 'stale' };
+        if (response.status === 404) return { status: 'gone' };
+        if (!response.ok) return { status: 'failed' };
+        const body = (await response.json()) as {
+          places: Extract<HouseholdPlaceSearchResult, { status: 'ok' }>['places'];
+        };
+        return isCurrent(now.epoch) ? { status: 'ok', places: body.places } : { status: 'stale' };
+      } catch {
+        return { status: 'failed' };
+      }
+    },
+    [kind, key, sessionId, memberId, isCurrent],
+  );
+
   /** 品物から、店を探す言葉の案（Claude の推定。何も書かない）。読めなければ無し。 */
   const storeKinds = useCallback(
     async (what: string): Promise<string[] | undefined> => {
@@ -1116,6 +1201,8 @@ export function useServerView(where: Where | undefined) {
     previewHousehold,
     previewChange,
     walk,
+    householdMap,
+    searchHouseholdPlace,
     storeKinds,
     searchStores,
     survey,

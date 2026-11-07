@@ -51,6 +51,8 @@ import {
   type Heard,
   type HearResult,
   type HomeSetResult,
+  type HouseholdMapResult,
+  type HouseholdPlaceSearchResult,
   type HouseholdPreviewResult,
   type ItemWhen,
   type NoticeInput,
@@ -258,6 +260,13 @@ export interface Ctx {
   maps?: {
     key?: string;
     walk: (storeId: string) => Promise<WalkView | undefined>;
+    /** 家族が場所に結んだ ID だけを、その表示の間に地図から引く。 */
+    householdMap?: () => Promise<HouseholdMapResult>;
+    /** 家族が言葉を入力し、候補の住所を確かめてから場所に結ぶ。 */
+    searchHouseholdPlace?: (
+      placeId: string | undefined,
+      query: string,
+    ) => Promise<HouseholdPlaceSearchResult>;
     search?: (query: string, stationId: string) => Promise<StoreSearchResult>;
     kinds?: (what: string) => Promise<string[] | undefined>;
   };

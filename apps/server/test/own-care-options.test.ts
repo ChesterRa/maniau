@@ -162,11 +162,10 @@ describe('家族が学童と休みの手を足す', () => {
     expect(String(option?.decisionDeadline).slice(0, 10)).toBe('2026-11-30');
   });
 
-  it('決まった形でない学童・休みの手と、手の無い学童・職場は足せない', async () => {
+  it('決まった形でない学童・休みの手は足せない', async () => {
     const app = createApp();
     const { sid, household } = await ready(app);
-    // 足す場所は、その手が指す物だけ（相手・手順の外の相手。指さない場所は、場所の決まりで先に断られ、指すのに
-    // 無い場所は、家の情報の誤りになる）。
+    // 手が指す場所を一緒に用意する（指すのに無い場所は、家の情報の誤りになる）。
     const withPlaces = (o: CareOptionTemplate) => {
       const used = new Set([o.providerId, ...o.steps.map((s) => s.external?.to)]);
       return {
@@ -197,7 +196,7 @@ describe('家族が学童と休みの手を足す', () => {
       { ...leave, watcherId: 'a2' },
       { ...leave, covers: { start: '09:00', end: '17:00' } },
     ]) {
-      // 相手を別の場所に替えた手は、手順の相手の場所が手の相手でなくなるので、場所の決まりでも断られる。
+      // 相手を別の場所に替えた手も、決まった形の手ではないので断られる。
       expect(['careOptionsLocked', 'placesLocked']).toContain(
         await save(app, sid, { ...withPlaces(option), careOptions: [option] }),
       );
@@ -207,17 +206,30 @@ describe('家族が学童と休みの手を足す', () => {
     expect(await save(app, sid, { ...withPlaces(ghost), careOptions: [ghost] })).toBe(
       'householdInvalid',
     );
-    // 手の相手にならない学童・職場は、場所だけを足せない。
-    expect(await save(app, sid, { ...household, places: [...household.places, GAKUDO] })).toBe(
-      'placesLocked',
-    );
+  });
+
+  it('学童・職場は場所だけでも足せるが、ふだんの週と見守りの手には入らない', async () => {
+    const app = createApp();
+    const { sid, household } = await ready(app);
+    const before = await view(app, sid);
     expect(
-      await save(app, sid, {
-        ...household,
-        places: [...household.places, GAKUDO, WORK],
-        careOptions: [gakudo],
-      }),
-    ).toBe('placesLocked');
+      await save(app, sid, { ...household, places: [...household.places, GAKUDO, WORK] }),
+    ).toBe('ok');
+    const after = await view(app, sid);
+    expect(after.household.places.map((p) => p.id)).toEqual(
+      expect.arrayContaining([GAKUDO.id, WORK.id]),
+    );
+    expect(after.household.routines).toEqual(before.household.routines);
+    expect(after.household.careOptions).toEqual(before.household.careOptions);
+    const { throughSeq: _beforeSeq, ...beforePlan } = before.plan;
+    const { throughSeq: _afterSeq, ...afterPlan } = after.plan;
+    expect(afterPlan).toEqual(beforePlan);
+
+    // 学童の手を足しても、手に指定していない職場が別の手として現れない。
+    expect(await save(app, sid, { ...after.household, careOptions: [gakudo] })).toBe('ok');
+    expect(arrangement(await view(app, sid))?.options.map((o) => o.templateId)).toEqual([
+      'opt-p-gakudo',
+    ]);
   });
 
   it('締切は日数（学童 1〜30 日・休み 1〜10 営業日）と分までの時刻で、家族の決まりのとおりに入れられる', async () => {

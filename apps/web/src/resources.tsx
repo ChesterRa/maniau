@@ -14,6 +14,8 @@ import type {
 import { checkHomeArea, surveyPreparation } from '@maniau/core';
 import { useState } from 'react';
 import { type HomeCandidate, operationId, type SurveyPlace } from './family';
+import { Attributions } from './maps';
+import { StalePreview } from './need';
 import { type Ctx, day, nameOf } from './screens';
 import { Button, Card, Label, Row, Text, Title } from './ui';
 import { Shown, useHouseholdSave } from './ways';
@@ -141,22 +143,35 @@ function appliesText(ctx: Ctx, household: Household, p: Preparation): string {
 
 export function ResourcesCard({ ctx }: { ctx: Ctx }) {
   const [draft, setDraft] = useState<Household>();
+  const [draftFrom, setDraftFrom] = useState<string>();
   // 調べた結果と、候補ごとの家族の選びは、直して保存した後も残す（後から登録を確かめに戻れるように。調べ直さない）。
   const [surveyShown, setSurveyShown] = useState<SurveyShown>();
   const [surveyChoices, setSurveyChoices] = useState<Record<string, CandidateChoice>>({});
   const flow = useHouseholdSave(ctx);
   const household = draft ?? ctx.household;
   const editing = draft !== undefined;
+  const begin = (next: Household) => {
+    setDraftFrom(JSON.stringify(ctx.household));
+    setDraft(next);
+  };
   const change = (update: (h: Household) => void) => {
     const next = structuredClone(household);
     update(next);
     setDraft(next);
   };
-  const save = async () => {
-    if (draft && (await flow.save(draft))) setDraft(undefined);
-  };
   const shown = draft ? flow.shownFor(draft) : undefined;
   const refused = draft ? flow.refusedFor(draft) : undefined;
+  // 前の家の情報で作った下書きと、新しい記録で計算したプレビューを混ぜて保存しない。
+  const stale =
+    draft !== undefined &&
+    (draftFrom !== JSON.stringify(ctx.household) ||
+      (shown !== undefined && shown.throughSeq !== ctx.plan?.throughSeq));
+  const save = async () => {
+    if (draft && !stale && (await flow.save(draft))) {
+      setDraft(undefined);
+      setDraftFrom(undefined);
+    }
+  };
   const unattached = household.preparations.filter(
     (p) => !household.resources.some((r) => r.id === p.resourceId),
   );
@@ -336,20 +351,26 @@ export function ResourcesCard({ ctx }: { ctx: Ctx }) {
           choices={surveyChoices}
           onChoices={setSurveyChoices}
           onAdd={(next) => {
-            setDraft(next);
+            begin(next);
             void flow.look(next);
           }}
         />
       )}
-      {editing && draft && <Shown ctx={ctx} preview={shown} refused={refused} household={draft} />}
+      {editing &&
+        draft &&
+        (stale ? (
+          <StalePreview ctx={ctx} />
+        ) : (
+          <Shown ctx={ctx} preview={shown} refused={refused} household={draft} />
+        ))}
       {(household.resources.length > 0 || household.preparations.length > 0) && (
         <Row>
           {!editing && (
-            <Button kind="secondary" onClick={() => setDraft(structuredClone(ctx.household))}>
+            <Button kind="secondary" onClick={() => begin(structuredClone(ctx.household))}>
               {ctx.t('household.edit')}
             </Button>
           )}
-          {editing && draft && !shown && (
+          {editing && draft && !shown && !stale && (
             <Button
               onClick={() => void flow.look(draft)}
               disabled={flow.busy || !ctx.previewHousehold}
@@ -357,13 +378,20 @@ export function ResourcesCard({ ctx }: { ctx: Ctx }) {
               {ctx.t('household.look')}
             </Button>
           )}
-          {editing && shown && (
+          {editing && shown && !stale && (
             <Button onClick={() => void save()} disabled={flow.busy}>
               {ctx.t('household.save')}
             </Button>
           )}
           {editing && (
-            <Button kind="secondary" onClick={() => setDraft(undefined)} disabled={flow.busy}>
+            <Button
+              kind="secondary"
+              onClick={() => {
+                setDraft(undefined);
+                setDraftFrom(undefined);
+              }}
+              disabled={flow.busy}
+            >
               {ctx.t('household.cancel')}
             </Button>
           )}
@@ -388,6 +416,8 @@ interface CandidateChoice {
   wayIds: string[];
   /** 家の情報に同じ名前の場所がある時、家族が「同じ所」と確かめたか（名前が同じだけでは同じ所と決めない）。 */
   samePlace?: true;
+  /** 名前と住所を見て、家族が家の地図にも結ぶと選んだ場所。住所と徒歩は記録しない。 */
+  mapPlaceId?: string;
 }
 
 const firstChoice: CandidateChoice = {
@@ -472,6 +502,13 @@ export function withCandidate(
       ...(place ? { placeId: place.id } : {}),
       use: choice.use,
     });
+  }
+  // 住所を見て明示的に選んだ時だけ地図に結ぶ。別の場所へ結び済みなら、ここでは上書きしない。
+  const linkedPlace = next.resources.find((r) => r.id === candidate.id)?.placeId;
+  const linked = next.places.find((p) => p.id === linkedPlace);
+  if (linked && choice.mapPlaceId && !linked.googlePlaceId) {
+    linked.googlePlaceId = choice.mapPlaceId;
+    delete linked.lookedUpAt;
   }
   const template = surveyPreparation(candidate);
   if (choice.registration === 'new' && !next.preparations.some((p) => p.id === template.id)) {
@@ -709,10 +746,16 @@ function PlacesBlock({
   ctx,
   candidateId,
   find,
+  canLink,
+  mapPlaceId,
+  onMapPlace,
 }: {
   ctx: Ctx;
   candidateId: string;
   find: (candidateId: string) => ReturnType<NonNullable<NonNullable<Ctx['survey']>['places']>>;
+  canLink: boolean;
+  mapPlaceId: string | undefined;
+  onMapPlace: (placeId: string | undefined) => void;
 }) {
   const [state, setState] = useState<PlacesState>('idle');
   const [places, setPlaces] = useState<SurveyPlace[]>([]);
@@ -720,6 +763,7 @@ function PlacesBlock({
   const look = async () => {
     setState('working');
     setPicked(undefined);
+    onMapPlace(undefined);
     const result = await find(candidateId);
     if (result.status !== 'ok') {
       setState(result.status);
@@ -730,13 +774,26 @@ function PlacesBlock({
     setPlaces(checkable);
     setState(checkable.length === 0 ? 'none' : 'shown');
   };
-  const credit = (shown: SurveyPlace[]) =>
-    ctx.t('resources.survey.places.credit', {
-      providers: [
-        'Google',
-        ...new Set(shown.flatMap((p) => (p.attributions ?? []).map((a) => a.provider))),
-      ].join(ctx.t('list.separator')),
-    });
+  const credit = (shown: SurveyPlace[]) => (
+    <span className="flex flex-wrap items-center gap-1">
+      <span className="inline-flex px-2.5 pt-2.5 pb-[5px]">
+        <img
+          src="/google-maps-attribution.svg"
+          alt="Google Maps"
+          translate="no"
+          className="h-[18px] w-auto"
+        />
+      </span>
+      <span>
+        {ctx.t('resources.survey.places.credit', {
+          providers: [
+            'Google',
+            ...new Set(shown.flatMap((p) => (p.attributions ?? []).map((a) => a.provider))),
+          ].join(ctx.t('list.separator')),
+        })}
+      </span>
+    </span>
+  );
   return (
     <div className="flex flex-col gap-1.5">
       {(state === 'idle' || state === 'failed') && (
@@ -755,6 +812,7 @@ function PlacesBlock({
               <Text>
                 {ctx.t('resources.survey.places.item', { name: p.name, address: p.address })}
               </Text>
+              <Attributions ctx={ctx} list={p.attributions} name={p.name} />
               <Row>
                 <Button kind="secondary" onClick={() => setPicked(p)}>
                   {ctx.t('resources.survey.places.same')}
@@ -784,6 +842,22 @@ function PlacesBlock({
             })}
           </Text>
           <Text quiet>{credit([picked])}</Text>
+          <Attributions ctx={ctx} list={picked.attributions} name={picked.name} />
+          {canLink && (
+            <>
+              <button
+                type="button"
+                aria-pressed={mapPlaceId === picked.placeId}
+                className={toggle(mapPlaceId === picked.placeId)}
+                onClick={() =>
+                  onMapPlace(mapPlaceId === picked.placeId ? undefined : picked.placeId)
+                }
+              >
+                {ctx.t('resources.survey.places.linkMap')}
+              </button>
+              <Text quiet>{ctx.t('resources.survey.places.linkMapHint')}</Text>
+            </>
+          )}
         </>
       )}
       {state !== 'idle' && state !== 'working' && state !== 'shown' && (
@@ -796,6 +870,7 @@ function PlacesBlock({
             kind="secondary"
             onClick={() => {
               setPicked(undefined);
+              onMapPlace(undefined);
               setState('shown');
             }}
           >
@@ -865,6 +940,9 @@ function SurveyPanel({
     // もう家に入れた候補：扱いは上で直す。登録とやり方は、ここで後から確かめられる（決める欄を開いたまま）。
     const added = household.resources.some((r) => r.id === c.id);
     const note = c.resource.notes[0];
+    const place = placeFor(household, c, choiceOf(c.id));
+    const alreadyLinked =
+      place && !place.isNew && household.places.find((p) => p.id === place.id)?.googlePlaceId;
     return (
       <div key={c.id} className="flex flex-col gap-1.5 rounded-xl bg-paper px-3 py-2.5">
         <Title>{c.resource.name}</Title>
@@ -890,7 +968,14 @@ function SurveyPanel({
         )}
         {!c.registration && <Text quiet>{ctx.t('resources.survey.registration.notRead')}</Text>}
         {survey.places && homePlaced && (
-          <PlacesBlock ctx={ctx} candidateId={c.id} find={survey.places} />
+          <PlacesBlock
+            ctx={ctx}
+            candidateId={c.id}
+            find={survey.places}
+            canLink={place !== undefined && !alreadyLinked}
+            mapPlaceId={choiceOf(c.id).mapPlaceId}
+            onMapPlace={(placeId) => choose(c.id, { mapPlaceId: placeId })}
+          />
         )}
         {!added && open !== c.id ? (
           <Row>

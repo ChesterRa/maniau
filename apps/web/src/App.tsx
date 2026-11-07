@@ -180,6 +180,12 @@ function Body(props: {
                 maps: {
                   ...(props.mapsKey ? { key: props.mapsKey } : {}),
                   walk: live.walk,
+                  ...(props.canSearchStores
+                    ? {
+                        householdMap: live.householdMap,
+                        searchHouseholdPlace: live.searchHouseholdPlace,
+                      }
+                    : {}),
                   ...(props.canSearchStores ? { search: live.searchStores } : {}),
                   ...(props.canSuggestStores ? { kinds: live.storeKinds } : {}),
                 },

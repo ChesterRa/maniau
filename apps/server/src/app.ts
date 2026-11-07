@@ -822,6 +822,42 @@ export function createApp(
         return c.json({ error: 'mapsFailed' }, 502);
     }
   });
+  // 家族が結んだ場所の位置（その場の表示だけ。端末や途中の控えにも残さない）。
+  app.get('/api/demo/sessions/:sid/maps/household', async (c) => {
+    const member = c.req.query('member');
+    if (!member) return c.json({ error: 'memberRequired' }, 400);
+    const done = await sessions.householdMap(c.req.param('sid'), member);
+    if (!done) return c.json({ error: 'unknownSession' }, 404);
+    if (done.status === 'ok') return c.json(done.map);
+    if (done.status === 'forbidden') return c.json({ error: done.status }, 403);
+    if (done.status === 'limit') return c.json({ error: done.status }, 429);
+    if (done.status === 'stale') return c.json({ error: done.status }, 409);
+    return c.json({ error: done.status }, 503);
+  });
+  // 家の場所を一つ選び、家族が入力した言葉で候補を探す。候補を見ただけでは家の情報を変えない。
+  app.post('/api/demo/sessions/:sid/maps/household-search', async (c) => {
+    const body = z
+      .object({
+        memberId: z.string().min(1),
+        placeId: z.string().min(1).optional(),
+        query: z.string().trim().min(1).max(200),
+      })
+      .safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: 'badPlaceSearch' }, 400);
+    const done = await sessions.searchHouseholdPlace(
+      c.req.param('sid'),
+      body.data.memberId,
+      body.data.placeId,
+      body.data.query,
+    );
+    if (!done) return c.json({ error: 'unknownSession' }, 404);
+    if (done.status === 'ok') return c.json({ places: done.places });
+    if (done.status === 'forbidden') return c.json({ error: done.status }, 403);
+    if (done.status === 'gone') return c.json({ error: done.status }, 404);
+    if (done.status === 'limit') return c.json({ error: done.status }, 429);
+    if (done.status === 'stale') return c.json({ error: done.status }, 409);
+    return c.json({ error: done.status }, 503);
+  });
   // 店までの徒歩の道（画面の地図に描く）。返すだけで、取っておかない。
   app.get('/api/demo/sessions/:sid/maps/walk', async (c) => {
     const storeId = c.req.query('store');

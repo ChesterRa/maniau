@@ -71,6 +71,12 @@ import {
   trialEvents,
 } from './demo';
 import type { LatLng, MapsClient, WalkRoute } from './maps/google';
+import {
+  type HouseholdMapCache,
+  type HouseholdMapView,
+  householdMap,
+  sameMapPlaces,
+} from './maps/household';
 import { mapInputsFor, withProposed } from './maps/inputs';
 import { type FoundStore, searchStores } from './maps/search';
 import { notificationPreview } from './notify-preview';
@@ -218,6 +224,9 @@ export type HomeAddressOutcome =
 
 /** 一つの試用で、調べた候補を地図で探せる数。 */
 export const MAX_SURVEY_PLACES_PER_SESSION = 20;
+/** 家の地図を開く・家の場所を探す回数（一つの試用の上限）。 */
+export const MAX_HOUSEHOLD_MAP_READS_PER_SESSION = 20;
+export const MAX_HOUSEHOLD_MAP_SEARCHES_PER_SESSION = 20;
 /** 調べた候補を探す、家からの半径（m。Google には寄せるだけ）と、見せる数。 */
 const SURVEY_PLACE_RADIUS_M = 3000;
 const SURVEY_PLACE_SHOW = 3;
@@ -413,12 +422,15 @@ interface Session {
   /** このデモで、Claude に店の検索語を聞いた数と、地図で店を探した数。 */
   storeKinds: number;
   storeSearches: number;
+  householdMapReads: number;
+  householdMapCache: HouseholdMapCache;
+  householdMapSearches: number;
   /** このデモで、住所を地図で照会した数。 */
   homeAddresses: number;
   /** 住所を入れた順の番号（遅れて返った前の照会で、後から入れた地域を書き替えない）。 */
   homeSeq: number;
   /** 地図で見つけた家の場所の候補（place ID と、その時の地域の欄）。入れ直すと消える。 */
-  homeCandidate?: { id: string; placeId: string; area: string };
+  homeCandidate?: { id: string; placeId: string; area: string; homeId: string };
   /** このデモで、調べた候補を地図で探した数。 */
   surveyPlaces: number;
   /** このデモで Claude にいま周りを調べてもらった（もらおうとした）数と、操作ごとの控え。 */
@@ -530,7 +542,11 @@ function writeHome(
     ...household,
     places: [...household.places.filter((p) => p.id !== home.id), home],
   };
-  if (validateHousehold(next).length > 0) return 'invalid';
+  if (
+    next.places.filter((p) => p.kind === 'home').length !== 1 ||
+    validateHousehold(next).length > 0
+  )
+    return 'invalid';
   const before = computePlan(events, sessionNow, maps);
   log.append([{ type: 'householdSet', household: next }], memberId, before.now);
   const back = reopened(before, computePlan(log.events(), sessionNow, maps));
@@ -579,6 +595,10 @@ export function demoSessions(
     const now = clock();
     for (const [id, session] of sessions) {
       if (now - session.touched > TTL_MS) drop(id);
+      else
+        for (const [place, entry] of session.householdMapCache) {
+          if (entry.expiresAt <= now) session.householdMapCache.delete(place);
+        }
     }
     for (const [hash, window] of linkRequests) {
       if (now - window.start >= 60_000) linkRequests.delete(hash);
@@ -621,6 +641,9 @@ export function demoSessions(
       proposals: new Map(),
       storeKinds: 0,
       storeSearches: 0,
+      householdMapReads: 0,
+      householdMapCache: new Map(),
+      householdMapSearches: 0,
       homeAddresses: 0,
       homeSeq: 0,
       surveyPlaces: 0,
@@ -995,6 +1018,95 @@ export function demoSessions(
   return {
     /** 地図を使えるか（地図の口があるサーバーだけ）。 */
     mapsEnabled: deps.maps !== undefined,
+    /** 家族が地図に結んだ場所だけを、その場で引いて返す（位置は保存しない）。 */
+    async householdMap(
+      id: string,
+      memberId: string,
+    ): Promise<
+      | { status: 'ok'; map: HouseholdMapView }
+      | { status: 'forbidden' | 'limit' | 'stale' | 'failed' }
+      | undefined
+    > {
+      const session = touch(id);
+      if (!session) return undefined;
+      const client = deps.maps;
+      if (!client) return { status: 'failed' };
+      const before = await store.withHousehold(id, (log) => foldEvents(log.events()).household);
+      if (!before || !isAdult(before, memberId)) return { status: 'forbidden' };
+      if (session.householdMapReads >= MAX_HOUSEHOLD_MAP_READS_PER_SESSION)
+        return { status: 'limit' };
+      session.householdMapReads += 1;
+      const map = await householdMap(before, client, session.householdMapCache, clock());
+      if (!alive(id, session)) return undefined;
+      const after = await store.withHousehold(id, (log) => foldEvents(log.events()).household);
+      if (!after || !isAdult(after, memberId)) return { status: 'forbidden' };
+      if (!sameMapPlaces(before, after)) return { status: 'stale' };
+      return { status: 'ok', map };
+    },
+    /** 家にある一つの場所の候補を検索。名前・住所・候補は見せるだけで、結ぶのは家族の確認後。 */
+    async searchHouseholdPlace(
+      id: string,
+      memberId: string,
+      placeId: string | undefined,
+      query: string,
+    ): Promise<
+      | {
+          status: 'ok';
+          places: {
+            placeId: string;
+            name: string;
+            address: string;
+            attributions?: PlaceAttribution[];
+          }[];
+        }
+      | { status: 'forbidden' | 'gone' | 'limit' | 'stale' | 'failed' }
+      | undefined
+    > {
+      const session = touch(id);
+      if (!session) return undefined;
+      const client = deps.maps;
+      if (!client?.searchPlaces) return { status: 'failed' };
+      const before = await store.withHousehold(id, (log) => foldEvents(log.events()).household);
+      if (!before || !isAdult(before, memberId)) return { status: 'forbidden' };
+      const target =
+        placeId === undefined ? undefined : before.places.find((place) => place.id === placeId);
+      if (placeId !== undefined && !target) return { status: 'gone' };
+      if (session.householdMapSearches >= MAX_HOUSEHOLD_MAP_SEARCHES_PER_SESSION)
+        return { status: 'limit' };
+      session.householdMapSearches += 1;
+      try {
+        const found = await client.searchPlaces(query, 5);
+        if (!alive(id, session)) return undefined;
+        const after = await store.withHousehold(id, (log) => foldEvents(log.events()).household);
+        if (!after || !isAdult(after, memberId)) return { status: 'forbidden' };
+        if (target) {
+          const current = after.places.find((place) => place.id === placeId);
+          if (
+            !current ||
+            current.name !== target.name ||
+            current.googlePlaceId !== target.googlePlaceId
+          )
+            return { status: 'stale' };
+        } else if (!sameMapPlaces(before, after)) return { status: 'stale' };
+        return {
+          status: 'ok',
+          places: found.flatMap((place) =>
+            place.address
+              ? [
+                  {
+                    placeId: place.id,
+                    name: place.name,
+                    address: place.address,
+                    ...(place.attributions ? { attributions: place.attributions } : {}),
+                  },
+                ]
+              : [],
+          ),
+        };
+      } catch {
+        return { status: 'failed' };
+      }
+    },
     /**
      * 店の駅からその店までの徒歩の道（画面の地図に描く）。家庭の店と駅の place ID で引き、返すだけで
      * 取っておかない（Google の条件）。デモが無ければ null、地図の口が無い・店が地図に結び付かない・
@@ -1114,7 +1226,8 @@ export function demoSessions(
       if (checked === 'detail') return { status: 'detail' };
       if (checked === 'noCity') return { status: 'noArea' };
       const current = await store.withHousehold(id, (log) => foldEvents(log.events()).household);
-      if (!isAdult(current, memberId)) return { status: 'forbidden' };
+      if (!current || !isAdult(current, memberId)) return { status: 'forbidden' };
+      const beforeHome = JSON.stringify(current.places.find((p) => p.kind === 'home') ?? null);
       const detail = input.detail.trim();
       const ask = deps.maps !== undefined && detail !== '';
       if (ask && session.homeAddresses >= MAX_HOME_ADDRESSES_PER_SESSION) {
@@ -1135,21 +1248,25 @@ export function demoSessions(
         const events = log.events();
         const household = foldEvents(events).household;
         if (!household || !isAdult(household, memberId)) return 'forbidden' as const;
-        const home: Place = {
-          id: TRIAL_HOME_ID,
-          kind: 'home',
-          name: '家',
-          area: checked.area,
-          goods: [],
-        };
+        const previous = household.places.find((p) => p.kind === 'home');
+        // 照会中に別の人が家を変えたら、古い画面の地域で上書きしない。
+        if (JSON.stringify(previous ?? null) !== beforeHome) return 'stale' as const;
+        const home: Place = previous
+          ? { ...previous, area: checked.area }
+          : { id: TRIAL_HOME_ID, kind: 'home', name: '家', area: checked.area, goods: [] };
+        // 地域を入れ直したら、前に確認した場所は使わない。
+        delete home.googlePlaceId;
+        delete home.lookedUpAt;
         return writeHome(log, events, household, home, memberId, session.now, maps);
       });
-      if (written === 'forbidden' || written === 'invalid') {
-        return { status: written === 'forbidden' ? 'forbidden' : 'noArea' };
+      if (written === 'forbidden' || written === 'invalid' || written === 'stale') {
+        return { status: written === 'invalid' ? 'noArea' : written };
       }
       // 地図の住所が無い所は、家族が確かめようがないので候補にしない（地域だけを入れた）。
       if (!found?.address) return { status: 'ok', view: written };
-      const candidate = { id: randomUUID(), placeId: found.id, area: checked.area };
+      const homeId = written.household.places.find((p) => p.kind === 'home')?.id;
+      if (!homeId) return { status: 'noArea' };
+      const candidate = { id: randomUUID(), placeId: found.id, area: checked.area, homeId };
       session.homeCandidate = candidate;
       return {
         status: 'ok',
@@ -1180,8 +1297,12 @@ export function demoSessions(
         const events = log.events();
         const household = foldEvents(events).household;
         if (!household || !isAdult(household, memberId)) return 'forbidden' as const;
-        const home = household.places.find((p) => p.id === TRIAL_HOME_ID);
-        if (session.homeCandidate !== candidate || home?.area !== candidate.area) {
+        const home = household.places.find((p) => p.id === candidate.homeId && p.kind === 'home');
+        if (
+          session.homeCandidate !== candidate ||
+          home?.area !== candidate.area ||
+          home.googlePlaceId !== undefined
+        ) {
           return 'gone' as const;
         }
         const now = computePlan(events, session.now, maps).now;

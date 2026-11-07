@@ -11,6 +11,7 @@ import type {
   RoutineSegment,
 } from '@maniau/core';
 import { useState } from 'react';
+import { HouseholdMapCard } from './household-map';
 import { RecordedDays } from './member-day';
 import { ResourcesCard } from './resources';
 import {
@@ -667,6 +668,7 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
         <Text quiet>{ctx.t('household.intro')}</Text>
 
         {/* 周りの資源（家族と Claude が一緒に保つ。核の層）を最初に置く。ほかの札を直している間は出さない。 */}
+        {mode === undefined && <HouseholdMapCard ctx={ctx} />}
         {mode === undefined && <ResourcesCard ctx={ctx} />}
 
         <Card>

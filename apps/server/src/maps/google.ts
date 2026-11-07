@@ -70,14 +70,19 @@ export interface FoundAddress {
 }
 
 export interface MapsClient {
-  /** 場所の詳細。hours で営業時間（ふだんと照会の日から数日）、summary で名前・位置・地図の URL。 */
-  place(placeId: string, want: { hours?: boolean; summary?: boolean }): Promise<PlaceDetails>;
+  /** 場所の詳細。location は地図用の位置、hours は営業時間、summary は名前・位置・地図の URL。 */
+  place(
+    placeId: string,
+    want: { hours?: boolean; summary?: boolean; location?: boolean },
+  ): Promise<PlaceDetails>;
   /** 徒歩の所要（秒）。キーは `${出発の place ID}>${着く place ID}`。道の無い組は入らない。 */
   walkMatrix(origins: string[], destinations: string[]): Promise<Map<string, number>>;
   /** 徒歩の道（地図に描く折れ線と注意）。 */
   walkRoute(fromPlaceId: string, toPlaceId: string): Promise<WalkRoute | undefined>;
   /** 中心の近く（半径 m の内）で、検索語に合う場所。 */
   searchText(query: string, center: LatLng, radiusM: number, max: number): Promise<FoundPlace[]>;
+  /** 場所を家族が地図に結ぶ時の候補。中心の分からない家でも探せる（位置の決め打ちはしない）。 */
+  searchPlaces?(query: string, max: number): Promise<FoundPlace[]>;
   /**
    * 打った住所に一番合う場所：place ID と、家族が確かめる Google の住所（名前・位置は頼まない）。見つからなければ
    * undefined。打った住所の文はこの照会にだけ使い、残さない。
@@ -158,8 +163,9 @@ export function googleMaps(
       const fields = [
         'id',
         // 名前・営業時間を見せる時は、一緒に見せなければならない提供者も引く。
-        ...(want.summary || want.hours ? ['attributions'] : []),
+        ...(want.summary || want.hours || want.location ? ['attributions'] : []),
         ...(want.summary ? ['displayName', 'location', 'googleMapsUri'] : []),
+        ...(want.location && !want.summary ? ['location'] : []),
         ...(want.hours
           ? ['timeZone', 'regularOpeningHours.periods', 'currentOpeningHours.periods']
           : []),
@@ -271,6 +277,33 @@ export function googleMaps(
         ...(found.formattedAddress ? { address: found.formattedAddress } : {}),
         ...(attributions ? { attributions } : {}),
       };
+    },
+
+    async searchPlaces(query, max) {
+      const raw = (await call(
+        `${PLACES}/places:searchText`,
+        'places.id,places.displayName,places.formattedAddress,places.attributions',
+        { textQuery: query, languageCode: 'ja', regionCode: 'JP', pageSize: max },
+      )) as {
+        places?: {
+          id?: string;
+          displayName?: { text?: string };
+          formattedAddress?: string;
+          attributions?: { provider?: string; providerUri?: string }[];
+        }[];
+      };
+      return (raw.places ?? []).flatMap((place) => {
+        if (!place.id || !place.formattedAddress) return [];
+        const attributions = attributionsOf(place.attributions);
+        return [
+          {
+            id: place.id,
+            name: place.displayName?.text || place.formattedAddress,
+            address: place.formattedAddress,
+            ...(attributions ? { attributions } : {}),
+          },
+        ];
+      });
     },
 
     async searchText(query, center, radiusM, max) {
