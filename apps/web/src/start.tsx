@@ -1,5 +1,5 @@
 // 初めの画面：何をするアプリか、試用であること、始め方（名前だけの家族か、見本の家族か）。用意した場面は、
-// 審査で場面を見るための入口として小さく出す。名前だけの家族には、見本の家族の成員を混ぜない。
+// 決まった日の場面を順に見るための入口として出す。名前だけの家族には、見本の家族の成員を混ぜない。
 import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TrialStartInput } from './family';
@@ -75,13 +75,6 @@ export function StartScreen(props: {
         <p className="-mt-1 text-center text-[13px] text-sub [word-break:auto-phrase]">
           {t('start.beginSub')}
         </p>
-        <Button kind="secondary" onClick={() => props.onStart({ start: 'sample' })} disabled={busy}>
-          {t('start.sample')}
-        </Button>
-        <p className="-mt-1 text-center text-[13px] text-sub [word-break:auto-phrase]">
-          {t('start.sampleSub')}
-        </p>
-        <p className="text-center text-[13px] text-sub">{t('start.note')}</p>
         <button
           type="button"
           onClick={() => props.onStart({ stage: 'arrived' })}
@@ -90,6 +83,13 @@ export function StartScreen(props: {
         >
           {t('start.stages')}
         </button>
+        <Button kind="secondary" onClick={() => props.onStart({ start: 'sample' })} disabled={busy}>
+          {t('start.sample')}
+        </Button>
+        <p className="-mt-1 text-center text-[13px] text-sub [word-break:auto-phrase]">
+          {t('start.sampleSub')}
+        </p>
+        <p className="text-center text-[13px] text-sub">{t('start.note')}</p>
       </div>
     </main>
   );
