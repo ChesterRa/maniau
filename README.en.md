@@ -4,7 +4,13 @@
 
 **An AI that reads nursery and school notices, knows the resources around your home, works out what has to be decided, by whom and by when to be ready in time, and follows each task until someone in the family takes it on. Built for dual-income families raising children. The family makes the choices and sends the messages.**
 
-**Live demo: https://maniauserver-production.up.railway.app** (no sign-up; it runs on a fictional family. For a 3-minute look, press “View prepared scenes (for judges)” on the first screen, then switch “Scene” at the top from 11/25 to 11/29 to 12/4. Other ways to try it are in the [tour of the demo](#tour-of-the-demo). What this version covers is [here](#what-this-version-covers).)
+- **For whom:** Dual-income families with a child in nursery or primary school.
+- **The problem:** After adding an event to a calendar, decisions, requests, replies and the work of handling changes still remain.
+- **How it works:** Claude reads and researches, the family checks, and code calculates decision times and tasks. A separately written verifier checks the plan and notifications before sending.
+- **How we used Claude Code:** We used a Skill to check specifications, and hooks and subagents for specific tasks ([development use](#how-we-used-claude-code-in-development)).
+- **What we checked:** Fictional family scenarios and tests that run without an API key cover decisions, follow-up and changes ([results and limits](#what-weve-checked)).
+
+**Live demo: https://maniauserver-production.up.railway.app** (no sign-up; it runs on a fictional family. The app opens in Japanese by default; tap “English” at the top right to switch. For a 3-minute look, press “View prepared scenes (for judges)” on the first screen, then switch “Scene” at the top from 11/25 to 11/29 to 12/4. Other ways to try it are in the [tour of the demo](#tour-of-the-demo). What this version covers is [here](#what-this-version-covers).)
 
 Built with Claude: Japan 2026 entry
 
@@ -98,6 +104,17 @@ Claude features used in the product:
 - **Image and PDF input:** Photos and PDFs of notices are read as they are. Before the call, input tokens are counted with the same request shape (count_tokens), and inputs that are too large are refused.
 - **Server-side web search and page fetching:** Looking around uses web_search and web_fetch (with use limits) to find and read pages, and continues responses that pause (pause_turn). Code checks that the sentence Claude cites is in the text of a fetched page.
 
+### How we used Claude Code in development
+
+| Feature or practice | Purpose | Evidence |
+|---|---|---|
+| `claude-api` Skill | Check the API's thinking and output limits and correct the comparison model's output limit | [Usage record](docs/dev/claude-usage.md) · [Comparison runner](eval/run-baseline.mjs) |
+| PreToolUse hook | Stop detectable out-of-scope paths under the home directory and `/mnt`, with permitted exceptions | [Settings](.claude/settings.json) · [Hook](.claude/hooks/guard-paths.py) · [Tests](tests/hooks/test_hooks.py) |
+| Git pre-commit hook | Check for key-like strings and copies of private material before publication | [Hook](scripts/git-hooks/pre-commit) · [Tests](tests/hooks/test_hooks.py) |
+| Independent subagent review | Look for verifier misses and false positives with a reviewer separate from the implementer | [Usage record](docs/dev/claude-usage.md) · [Verifier tests](packages/verify/test/plan.test.ts) |
+| Subagent in an isolated worktree | Fix the reference date for “tomorrow” alongside screen work; review the patch before integrating it | [Usage record](docs/dev/claude-usage.md) · [Date handling](packages/core/src/reading/output.ts) |
+| Separate evaluation role | Fix scenarios and scoring first, keeping held-out scenarios from the person adjusting the prompt | [Evaluation method and results](eval/results/g2-summary-20261104.md) |
+
 ## How it works
 
 ```mermaid
@@ -130,7 +147,7 @@ flowchart TB
 
 - Changes the family records and readings of notices are kept as events, and the plan is always recomputed from the events. What-if calculations, and quick updates or looks around that haven't been confirmed, are not recorded as events. Plans stay linked to the original notice text or to what the family said.
 - The verifier is written without importing the planning engine (a lint rule enforces this) and checks the plan independently against household information and events. What it can't check is reported as undetermined, never as “no problems”.
-- Tests run without an API key (they use Claude responses recorded from fictional material). There are more than 1,800 tests across core, the verifier, the web app and the server.
+- Tests run without an API key (they use Claude responses recorded from fictional material). On 2026-11-07, `pnpm check` passed 2,635 tests on `153cea9` plus the entry-screen and test-timeout changes: core 495, verifier 747, web 666 and server 727. Browser end-to-end tests run separately with `pnpm e2e`.
 
 ### The general core and the parts for the first area
 
