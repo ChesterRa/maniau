@@ -38,6 +38,7 @@ const input =
 function refusedKey(reason: string): string {
   if (reason === 'itemGone' || reason === 'sourceWithdrawn') return 'needGone';
   return [
+    'itemUnconfirmed',
     'needWindowMissing',
     'needWindowOvernight',
     'needMemberUnknown',

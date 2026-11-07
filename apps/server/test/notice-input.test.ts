@@ -151,6 +151,111 @@ describe('お知らせの文を入れる', () => {
     }
   });
 
+  it('書かれた日を添えると「あした」はその日から数え、確かな読み取りにする。使えない日は読まずに断り、数えない', async () => {
+    const TEXT = 'あした、体操服を持ってきてください。';
+    const calls: ExtractRequest[] = [];
+    // 手で書いた読み取り（モデルの出力ではない）：「あした」だけで日付は無い。
+    const relative: NoticeReader = async (request) => {
+      calls.push(request);
+      const [s1] = request.source.sentences.map((s) => s.id);
+      return answer(request, {
+        items: [
+          {
+            id: 'i1',
+            sentenceIds: [s1 ?? ''],
+            kind: 'belongings',
+            written: TEXT,
+            date: null,
+            writtenWeekday: 'none',
+            startTime: null,
+            endTime: null,
+            what: '体操服',
+            dayType: null,
+            deadline: null,
+            audience: null,
+            place: null,
+            relativeDay: 'tomorrow',
+            conditionNodeId: null,
+            inferred: false,
+            familyAction: false,
+            shape: 'none',
+            effects: [],
+          },
+        ],
+        unknowns: [],
+        conditions: [],
+        irrelevantSentenceIds: [],
+        ambiguities: [],
+      });
+    };
+    const app = createApp({ reader: relative });
+    // デモの時計は 11/25 19:31。
+    const { sessionId } = await session(app, 'arrived');
+    // 形の誤り・デモの時計の日より後・60 日より前は、読まずに断る（読める数も使わない）。
+    for (const writtenOn of ['11/24', '2026-02-30', '2026-11-26', '2026-09-25']) {
+      const refused = await post(app, sessionId, { memberId: 'b', text: TEXT, writtenOn });
+      expect(refused.status, writtenOn).toBe(400);
+      expect(await refused.json()).toEqual({ error: 'badWrittenOn' });
+    }
+    expect(calls).toEqual([]);
+    type Read = {
+      sourceId: string;
+      check: { sentenceIds: string[] };
+      view: {
+        sources: { id: string; writtenOn?: string }[];
+        items: { item: { id: string; evidence: string; interpretation: object } }[];
+      };
+    };
+    const itemOf = (body: Read) =>
+      body.view.items.find((i) => i.item.id === `${body.sourceId}:i1`)?.item;
+    // 前の日（11/24）に書かれた連絡帳：「あした」は 11/25。確かな読み取りで、出典に書かれた日を残す。
+    const written = (await (
+      await post(app, sessionId, { memberId: 'b', text: TEXT, writtenOn: '2026-11-24' })
+    ).json()) as Read;
+    expect(written.sourceId).toBe('u1');
+    expect(calls.map((c) => c.source.writtenOn)).toEqual(['2026-11-24']);
+    expect(written.view.sources.find((s) => s.id === 'u1')?.writtenOn).toBe('2026-11-24');
+    expect(itemOf(written)).toMatchObject({
+      evidence: 'stated',
+      interpretation: { date: '2026-11-25', relativeDay: 'tomorrow' },
+    });
+    expect(written.check.sentenceIds).toEqual([]);
+    // 書かれた日を添えない学校のお知らせ：届いた日から数えた推定にし、その文を確かめてもらう。
+    const plain = (await (
+      await post(app, sessionId, { memberId: 'b', text: TEXT })
+    ).json()) as Read;
+    expect(plain.view.sources.find((s) => s.id === plain.sourceId)).not.toHaveProperty('writtenOn');
+    expect(itemOf(plain)).toMatchObject({
+      evidence: 'inferred',
+      interpretation: { date: '2026-11-26', relativeDayFromReceived: '2026-11-25' },
+    });
+    expect(plain.check.sentenceIds).toEqual([`${plain.sourceId}#1`]);
+    // 送り手を「家族」にしても、書かれた日を添えなければ届いた日から数えて推定にする（家族からの前の日の連絡を
+    // 後で貼ることがある。11/7 見直しの反例）。
+    const family = (await (
+      await post(app, sessionId, { memberId: 'b', text: TEXT, sender: 'family' })
+    ).json()) as Read;
+    expect(itemOf(family)).toMatchObject({
+      evidence: 'inferred',
+      interpretation: { date: '2026-11-26', relativeDayFromReceived: '2026-11-25' },
+    });
+    // 同じ操作 ID で別の書かれた日を送れば断る（中身が違う）。
+    const first = await post(app, sessionId, {
+      memberId: 'b',
+      text: TEXT,
+      writtenOn: '2026-11-25',
+      operationId: 'written-same',
+    });
+    expect(first.status).toBe(200);
+    const other = await post(app, sessionId, {
+      memberId: 'b',
+      text: TEXT,
+      writtenOn: '2026-11-24',
+      operationId: 'written-same',
+    });
+    expect(other.status).toBe(409);
+  });
+
   it('一つのデモで読める数を超えたら断る。家族の大人でない人・空の文も断る', async () => {
     const app = createApp({ reader: reader() });
     const { sessionId } = await session(app, 'arrived');

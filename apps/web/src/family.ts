@@ -205,6 +205,8 @@ export interface NoticeInput {
   sender: string;
   /** 写真・PDF から書き起こし、家族が見比べて直した文なら photo。 */
   medium?: 'text' | 'photo';
+  /** お知らせが書かれた日（YYYY-MM-DD）。家族が選んだ時だけ送る。「あした」はこの日から数える。 */
+  writtenOn?: string;
   operationId: string;
 }
 
@@ -225,9 +227,9 @@ export type ReadResult =
   /**
    * limit：数・量を使い切った。busy：読んでいる途中。uncertain：返事が届かない。stale：読む間に前提が変わった。
    * lost：前に送った同じ操作の結果が、サーバーにも分からない（家族の家庭。同じ操作では送り直さない）。testOnly：
-   * 試しの家庭でないので読めない（家族の家庭）。
+   * 試しの家庭でないので読めない（家族の家庭）。badWrittenOn：書かれた日が、届いた日より後か前すぎる（読んでいない）。
    */
-  | { status: 'limit' | 'busy' | 'uncertain' | 'stale' | 'lost' | 'testOnly' }
+  | { status: 'limit' | 'busy' | 'uncertain' | 'stale' | 'lost' | 'testOnly' | 'badWrittenOn' }
   | { status: 'failed'; reason?: string };
 
 /** やり方の案を頼む（W4）。操作 ID は、返事が届かない時の送り直しに同じ物を使う。 */
@@ -653,6 +655,8 @@ export function useServerView(where: Where | undefined) {
         }
         if (DENIED.has(body.error)) setDenied(true);
         else if (body.error === 'identityChanged') setSwitched(true);
+        // 書かれた日が使えない：読んでいない（日付を選び直してもらう）。
+        if (body.error === 'badWrittenOn') return { status: 'badWrittenOn' };
         const refusal = readRefusal(body.error, body.reason);
         // 前の操作の結果が分からない：足したかもしれないので、見せる物を読み直す。
         if (refusal?.status === 'lost' || refusal?.status === 'uncertain') setReload((n) => n + 1);

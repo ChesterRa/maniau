@@ -3,6 +3,7 @@
 import {
   Command,
   Household,
+  isValidLocalDate,
   MAX_ADDRESS_DETAIL_LENGTH,
   MAX_AREA_LENGTH,
   PreviewCommand,
@@ -44,6 +45,12 @@ import { isPushEndpoint, removeSubscription, saveSubscription } from './push';
 import { checkPhoto, PhotoMediaType } from './reading/transcribe';
 import type { Store } from './store';
 import { viewFor } from './views';
+
+/**
+ * お知らせが書かれた日（YYYY-MM-DD。家族が選んだ時だけ）。形の誤りも、届いた日との照らし合わせ（未来・前すぎる）も
+ * badWrittenOn で断る（本文の他の欄の誤り badNotice と分け、画面が日付を直すよう言える）。
+ */
+const WrittenOn = z.string().max(20).optional();
 
 /** 家族の家庭の置き場所と身元（無ければ、デモだけのサーバー）。 */
 export interface FamilyBackend {
@@ -313,6 +320,7 @@ export function createApp(
     operationId: z.string().min(1).max(100),
     text: z.string().trim().min(1).max(4000),
     sender: SourceSender.default('school'),
+    writtenOn: WrittenOn,
   });
   const FamilyUtteranceBody = z.object({
     as: z.string().min(1),
@@ -350,6 +358,8 @@ export function createApp(
         return c.json({ error: 'unknownProposal' }, 404);
       case 'needGone':
         return c.json({ error: 'needGone' }, 409);
+      case 'badWrittenOn':
+        return c.json({ error: 'badWrittenOn' }, 400);
       default:
         return c.json({ error: 'readingFailed', ...(reason ? { reason } : {}) }, 502);
     }
@@ -365,6 +375,8 @@ export function createApp(
     if (body.data.as !== member.memberId) return switched(c);
     if (splitSentences(body.data.text, 'input').length === 0)
       return c.json({ error: 'badNotice' }, 400);
+    if (body.data.writtenOn !== undefined && !isValidLocalDate(body.data.writtenOn))
+      return c.json({ error: 'badWrittenOn' }, 400);
     if (!options.reader) return c.json({ error: 'readingUnavailable' }, 503);
     const recheck = async () => {
       const current = await memberOf(c, family);
@@ -917,16 +929,20 @@ export function createApp(
     sender: SourceSender.default('school'),
     // 写真・PDF から書き起こし、家族が見比べて直した文か。
     medium: z.enum(['text', 'photo']).default('text'),
+    // お知らせが書かれた日（家族が選んだ時だけ）。形は下で、届いた日との照らし合わせはデモの時計で確かめる。
+    writtenOn: WrittenOn,
   });
   app.post('/api/demo/sessions/:sid/notices', async (c) => {
     if (!reader) return c.json({ error: 'readingUnavailable' }, 503);
     const body = NoticeInput.safeParse(await c.req.json().catch(() => ({})));
     if (!body.success) return c.json({ error: 'badNotice' }, 400);
-    const { memberId, operationId, text, sender, medium } = body.data;
+    const { memberId, operationId, text, sender, medium, writtenOn } = body.data;
+    if (writtenOn !== undefined && !isValidLocalDate(writtenOn))
+      return c.json({ error: 'badWrittenOn' }, 400);
     const done = await sessions.notice(
       c.req.param('sid'),
       memberId,
-      { text, sender, medium, operationId },
+      { text, sender, medium, operationId, ...(writtenOn === undefined ? {} : { writtenOn }) },
       reader,
     );
     if (!done) return c.json({ error: 'unknownSession' }, 404);
@@ -935,6 +951,8 @@ export function createApp(
         return c.json({ view: done.view, sourceId: done.sourceId, check: done.check });
       case 'limit':
         return c.json({ error: 'readingLimit' }, 429);
+      case 'badWrittenOn':
+        return c.json({ error: 'badWrittenOn' }, 400);
       case 'busy':
         return c.json({ error: 'readingBusy' }, 429);
       case 'invalid':

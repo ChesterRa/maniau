@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { type ExtractionOutput, parseStoredExtraction, toExtraction } from '../src';
+import {
+  type ExtractionOutput,
+  parseStoredExtraction,
+  relativeDayBase,
+  type Source,
+  toExtraction,
+  writtenOnProblem,
+} from '../src';
 import { notice1, notice2 } from './fixtures/demo';
 
 // 手で書いたモデルの出力の形（モデルの出力ではない）。検査のコードの試験に使う。
@@ -351,10 +358,12 @@ describe('家族に確かめてもらう文', () => {
 });
 
 describe('「あした」「きょう」', () => {
+  // 家族が書かれた日（金曜）を入れた連絡。「あした」は、その日から数える。
   const club = {
     id: 'c1',
     version: 1,
     receivedAt: '2026-11-27T18:00+09:00',
+    writtenOn: '2026-11-27',
     sender: 'club' as const,
     language: 'ja' as const,
     medium: 'text' as const,
@@ -378,7 +387,7 @@ describe('「あした」「きょう」', () => {
     ambiguities: [],
   });
 
-  it('金曜に届いた習い事の連絡の「あした（土）」は、暦の次の日（土曜）', () => {
+  it('金曜に書かれた習い事の連絡の「あした（土）」は、暦の次の日（土曜）', () => {
     const { extraction, issues } = toExtraction(output('sat'), club, {
       priorItems: [],
       priorUnknowns: [],
@@ -432,17 +441,160 @@ describe('「あした」とモデルの日付', () => {
       priorItems: [],
       priorUnknowns: [],
     });
-    expect(issues.map((i) => i.problem)).toEqual(['relativeDayMismatch']);
+    // 書かれた日を入れていない習い事の連絡なので、届いた日から数えた推定でもある。食い違いは推定に下げない。
+    expect(issues.map((i) => i.problem)).toEqual(['relativeDayMismatch', 'relativeDayUnanchored']);
     expect(extraction.items[0]?.evidence).toBe('conflicting');
     expect(extraction.items[0]?.interpretation.date).toBe('2026-11-28');
   });
 });
 
+describe('お知らせが書かれた日（「あした」の基準）', () => {
+  // 11/24（火）の連絡帳を、次の日の夜（11/25）に入れた。
+  const TEXT = 'あした、体操服を持ってきてください。';
+  const note = (over: Partial<Source> = {}): Source => ({
+    id: 'w1',
+    version: 1,
+    receivedAt: '2026-11-25T21:00+09:00',
+    sender: 'school',
+    language: 'ja',
+    medium: 'text',
+    sentences: [{ id: 'w1#1', text: TEXT }],
+    ...over,
+  });
+  const read = (
+    source: Source,
+    over: Partial<ExtractionOutput['items'][number]> = {},
+    written = TEXT,
+  ) =>
+    toExtraction(
+      {
+        items: [
+          item({
+            id: 'i1',
+            sentenceIds: ['w1#1'],
+            kind: 'belongings',
+            written,
+            relativeDay: 'tomorrow',
+            what: '体操服',
+            ...over,
+          }),
+        ],
+        unknowns: [],
+        conditions: [],
+        irrelevantSentenceIds: [],
+        ambiguities: [],
+      },
+      source,
+      { priorItems: [], priorUnknowns: [] },
+    );
+
+  it('家族が書かれた日を入れたら、「あした」はその日から数え、確かな読み取りにする', () => {
+    const { extraction, issues } = read(note({ writtenOn: '2026-11-24' }));
+    expect(issues).toEqual([]);
+    expect(extraction.items[0]?.evidence).toBe('stated');
+    expect(extraction.items[0]?.interpretation).toMatchObject({
+      date: '2026-11-25',
+      relativeDay: 'tomorrow',
+    });
+    expect(extraction.items[0]?.interpretation).not.toHaveProperty('relativeDayFromReceived');
+    // 「きょう」は書かれた日。
+    const today = read(note({ writtenOn: '2026-11-24' }), { relativeDay: 'today' });
+    expect(today.extraction.items[0]?.interpretation.date).toBe('2026-11-24');
+    // モデルが（言いつけに反して）届いた日から数えた日付を返しても、食い違いにせず、書かれた日から数え直す。
+    const counted = read(note({ writtenOn: '2026-11-24' }), { date: '2026-11-26' });
+    expect(counted.issues).toEqual([]);
+    expect(counted.extraction.items[0]?.interpretation.date).toBe('2026-11-25');
+  });
+
+  it('書かれた日の分からない学校のお知らせは、届いた日から数えて推定にし、家族に確かめてもらう', () => {
+    const { extraction, issues } = read(note());
+    expect(issues).toEqual([
+      { problem: 'relativeDayUnanchored', ref: 'w1:i1', detail: '2026-11-25' },
+    ]);
+    expect(extraction.items[0]?.evidence).toBe('inferred');
+    expect(extraction.items[0]?.interpretation).toMatchObject({
+      date: '2026-11-26',
+      relativeDayFromReceived: '2026-11-25',
+    });
+    expect(extraction.checkSentenceIds).toEqual(['w1#1']);
+  });
+
+  it('送り手が家族でも、書かれた日を入れなければ届いた日から数えて推定にする（前の日の連絡を後で貼ることがある）', () => {
+    // 11/25 に、家族が 11/24 に送った「あした」の連絡を、書かれた日を選ばずに貼った（11/7 見直しの反例）。
+    const { extraction, issues } = read(note({ sender: 'family' }));
+    expect(issues).toEqual([
+      { problem: 'relativeDayUnanchored', ref: 'w1:i1', detail: '2026-11-25' },
+    ]);
+    expect(extraction.items[0]?.evidence).toBe('inferred');
+    expect(extraction.items[0]?.interpretation).toMatchObject({
+      date: '2026-11-26',
+      relativeDayFromReceived: '2026-11-25',
+    });
+    // 書かれた日を選べば、その日から数えて確かな読み取りにする。
+    const dated = read(note({ sender: 'family', writtenOn: '2026-11-24' }));
+    expect(dated.issues).toEqual([]);
+    expect(dated.extraction.items[0]).toMatchObject({
+      evidence: 'stated',
+      interpretation: { date: '2026-11-25' },
+    });
+  });
+
+  it('指した文に書かれた日付は取り、「あした」と照らすのは書かれた日が分かる時だけ', () => {
+    const text = 'あした（12月5日）は体操服を持ってきてください。';
+    const dated = (over: Partial<Source>) =>
+      read(note({ sentences: [{ id: 'w1#1', text }], ...over }), { date: '2026-12-05' }, text);
+    // 書かれた日が分からない：書かれた日付を取り、推定にも食い違いにもしない。
+    const unknown = dated({});
+    expect(unknown.issues).toEqual([]);
+    expect(unknown.extraction.items[0]).toMatchObject({
+      evidence: 'stated',
+      interpretation: { date: '2026-12-05' },
+    });
+    // 書かれた日（12/4）の次の日と合う：確かな読み取り。
+    expect(dated({ writtenOn: '2026-12-04', receivedAt: '2026-12-04T20:00+09:00' }).issues).toEqual(
+      [],
+    );
+    // 書かれた日（11/24）と合わない：食い違いにし、書かれた日付のまま家族に確かめてもらう。
+    const mismatch = dated({ writtenOn: '2026-11-24' });
+    expect(mismatch.issues).toEqual([
+      { problem: 'relativeDayMismatch', ref: 'w1:i1', detail: '2026-12-05' },
+    ]);
+    expect(mismatch.extraction.items[0]).toMatchObject({
+      evidence: 'conflicting',
+      interpretation: { date: '2026-12-05' },
+    });
+  });
+
+  it('書かれた日の基準と、入れた書かれた日の確かめ', () => {
+    expect(relativeDayBase(note(), 'Asia/Tokyo')).toEqual({ day: '2026-11-25', known: false });
+    // 送り手が家族でも、送り手は書かれた日の証拠にならない。
+    expect(relativeDayBase(note({ sender: 'family' }), 'Asia/Tokyo')).toEqual({
+      day: '2026-11-25',
+      known: false,
+    });
+    expect(relativeDayBase(note({ writtenOn: '2026-11-20' }), 'Asia/Tokyo')).toEqual({
+      day: '2026-11-20',
+      known: true,
+    });
+    // 届いた日は家庭の時区で決める（UTC では前の日の 23 時 30 分でも、日本では 11/25）。
+    const at = '2026-11-24T23:30+00:00';
+    expect(writtenOnProblem('2026-11-25', at, 'Asia/Tokyo')).toBeUndefined();
+    expect(writtenOnProblem('2026-11-25', at, 'UTC')).toBe('future');
+    expect(writtenOnProblem('2026-11-26', at, 'Asia/Tokyo')).toBe('future');
+    expect(writtenOnProblem('2026-09-26', at, 'Asia/Tokyo')).toBeUndefined();
+    expect(writtenOnProblem('2026-09-25', at, 'Asia/Tokyo')).toBe('tooOld');
+    expect(writtenOnProblem('2026-02-30', at, 'Asia/Tokyo')).toBe('invalid');
+    expect(writtenOnProblem('11/25', at, 'Asia/Tokyo')).toBe('invalid');
+  });
+});
+
 describe('家の人がすること（familyAction）', () => {
+  // その日の連絡帳を、書かれた日を添えて入れた（「あした」を確かな日から数える）。
   const note = {
     id: 'r1',
     version: 1,
     receivedAt: '2026-11-25T18:00+09:00',
+    writtenOn: '2026-11-25',
     sender: 'school' as const,
     language: 'ja' as const,
     medium: 'text' as const,
@@ -749,10 +901,10 @@ describe('通用の「すること」（need）の読み取り', () => {
     medium: 'text' as const,
     sentences: texts.map((text, i) => ({ id: `r3#${i + 1}`, text })),
   });
-  const read = (texts: string[], items: ExtractionOutput['items']) =>
+  const read = (texts: string[], items: ExtractionOutput['items'], writtenOn?: string) =>
     toExtraction(
       { items, unknowns: [], conditions: [], irrelevantSentenceIds: [], ambiguities: [] },
-      note(...texts),
+      { ...note(...texts), ...(writtenOn ? { writtenOn } : {}) },
       { priorItems: [], priorUnknowns: [] },
     );
 
@@ -891,7 +1043,7 @@ describe('通用の「すること」（need）の読み取り', () => {
   });
 
   it('「あしたまでに」の締切は、コードが決めた日と違えば「食い違い」にする（日付の書かれた文でも、印を付ける）', () => {
-    // 届いた日は、この組の出典の receivedAt（11/24）。
+    // 届いた日は、この組の出典の receivedAt（11/24）。家族は書かれた日に同じ日（11/24）を入れた。
     const text = 'あしたまでに地区センターの窓口で申し込んでください。';
     const base = {
       id: 'i1',
@@ -902,12 +1054,12 @@ describe('通用の「すること」（need）の読み取り', () => {
       what: '窓口での申し込み',
       shape: 'by' as const,
     };
-    // 届いた日（11/24）の次の日なら取る。
-    const right = read([text], [item({ ...base, deadline: '2026-11-25' })]);
+    // 書かれた日（11/24）の次の日なら取る。
+    const right = read([text], [item({ ...base, deadline: '2026-11-25' })], '2026-11-24');
     expect(right.issues).toEqual([]);
     expect(right.extraction.items[0]?.interpretation.deadline?.startsWith('2026-11-25')).toBe(true);
     // 別の日の締切は「食い違い」にする。
-    const wrong = read([text], [item({ ...base, deadline: '2026-11-28' })]);
+    const wrong = read([text], [item({ ...base, deadline: '2026-11-28' })], '2026-11-24');
     expect(wrong.issues).toContainEqual({
       problem: 'relativeDayMismatch',
       ref: 'r3:i1',
@@ -918,10 +1070,52 @@ describe('通用の「すること」（need）の読み取り', () => {
     // （候補の日を締切と読んでも、確かな物として通さない）。
     const withDates = '11月28日と11月26日の希望を、あしたまでにお知らせください。';
     for (const deadline of ['2026-11-28', '2026-11-25']) {
-      const candidate = read([withDates], [item({ ...base, written: withDates, deadline })]);
+      const candidate = read(
+        [withDates],
+        [item({ ...base, written: withDates, deadline })],
+        '2026-11-24',
+      );
       expect(candidate.extraction.items[0]?.evidence).toBe('conflicting');
       expect(candidate.extraction.checkSentenceIds).toEqual(['r3#1']);
     }
+  });
+
+  it('「あしたまでに」の締切は、書かれた日から数える。書かれた日が分からなければ、届いた日から数えて確かめてもらう', () => {
+    const text = 'あしたの17時までに地区センターの窓口で申し込んでください。';
+    const base = {
+      id: 'i1',
+      sentenceIds: ['r3#1'],
+      kind: 'need' as const,
+      written: text,
+      relativeDay: 'tomorrow' as const,
+      what: '窓口での申し込み',
+      shape: 'by' as const,
+      // モデルは届いた時刻（11/24）だけを見て、その次の日を締切にする。
+      deadline: '2026-11-25T17:00+09:00',
+    };
+    // 前の日（11/23）の連絡帳を 11/24 に入れた：締切は 11/24 の 17 時（書かれた時刻はそのまま）。確かな読み取り。
+    const yesterday = read([text], [item(base)], '2026-11-23');
+    expect(yesterday.issues).toEqual([]);
+    expect(yesterday.extraction.items[0]).toMatchObject({
+      evidence: 'stated',
+      interpretation: { deadline: '2026-11-24T17:00+09:00' },
+    });
+    expect(yesterday.extraction.items[0]?.interpretation).not.toHaveProperty(
+      'relativeDayFromReceived',
+    );
+    // 書かれた日を入れていない学校のお知らせ：届いた日から数えた締切を推定にし、その文を確かめてもらう。
+    const unknown = read([text], [item(base)]);
+    expect(unknown.issues).toEqual([
+      { problem: 'relativeDayUnanchored', ref: 'r3:i1', detail: '2026-11-24' },
+    ]);
+    expect(unknown.extraction.items[0]).toMatchObject({
+      evidence: 'inferred',
+      interpretation: {
+        deadline: '2026-11-25T17:00+09:00',
+        relativeDayFromReceived: '2026-11-24',
+      },
+    });
+    expect(unknown.extraction.checkSentenceIds).toEqual(['r3#1']);
   });
 
   it('形の足りない need は事項を残し、その文を家族に確かめてもらう（時刻を作らない・別の形に変えない）', () => {

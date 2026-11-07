@@ -28,6 +28,12 @@ export const Source = z.object({
   id: Id,
   version: z.number().int().positive(),
   receivedAt: DateTime,
+  /**
+   * お知らせが書かれた日（連絡帳の日付）。家族が入れた時だけ。「あした」「きょう」は、この日から数える（写真を
+   * 撮った・入れた日ではない。02-foundation §8）。無ければ書かれた日は分からない（届いた日から数えた日付を、家族に
+   * 確かめてもらう。送り手が家族でも同じ）。前に記録した出典には無い。
+   */
+  writtenOn: LocalDate.optional(),
   sender: SourceSender,
   senderPlaceId: Id.optional(),
   /** 原文の言葉。 */
@@ -108,8 +114,14 @@ export const Interpretation = z.object({
   audience: z.string().optional(),
   /** 書かれた場所（例：若洲のグラウンド）。 */
   place: z.string().optional(),
-  /** 「あした」「きょう」のように書かれていた時。日付はコードが、出典の日から決める。 */
+  /** 「あした」「きょう」のように書かれていた時。日付はコードが、出典の書かれた日から決める。 */
   relativeDay: z.enum(['today', 'tomorrow']).optional(),
+  /**
+   * 書かれた日が分からないので、「あした」「きょう」を届いた（家族が入れた）日から数えた時の、その日。日付は推定
+   * （evidence は inferred）で、家族が確かめるまで計画に入れない。画面は、この日から数えたと示し、書かれた日が
+   * 違えば日付を直してもらう。読み取りだけが付ける。
+   */
+  relativeDayFromReceived: LocalDate.optional(),
   /**
    * 家の人がすること（音読カードのサイン、丸つけ、お茶当番、配車）。宿題（homework）と当番（duty）で、
    * これがある物だけを家族の作業にする。子どもだけでする宿題や子の当番には無い（読んだだけ）。

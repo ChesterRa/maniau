@@ -125,6 +125,56 @@ describe('事項の時刻・名前の直しと、一件だけ外す', () => {
     expect(await h.violations()).toEqual([]);
   });
 
+  it('まだ確かめていない事項は、名前・時刻だけの直しでは確かにせず断る。日付を確かめた後は直せる', async () => {
+    // 延期の後の 12/8 の発表（n1:i4）を、書かれた日を入れずに入れた「あした」の読み取り（届いた日から数えた推定）にする。
+    const unanchored = (events: ReturnType<typeof demoEvents>) =>
+      events.map((event) => {
+        if (event.type !== 'modelOutputRecorded' || event.call !== 'extract') return event;
+        const output = event.output as {
+          items?: { id: string; evidence: string; interpretation: object }[];
+        };
+        if (!output.items?.some((item) => item.id === 'n1:i4')) return event;
+        return {
+          ...event,
+          output: {
+            ...output,
+            items: output.items.map((item) =>
+              item.id !== 'n1:i4'
+                ? item
+                : {
+                    ...item,
+                    evidence: 'inferred',
+                    interpretation: {
+                      ...item.interpretation,
+                      relativeDay: 'tomorrow',
+                      relativeDayFromReceived: '2026-12-07',
+                    },
+                  },
+            ),
+          },
+        } as typeof event;
+      });
+    const h = setup('postponed', '2026-12-04T18:10+09:00', unanchored);
+    const before = (await h.view()).items.find((entry) => entry.item.id === 'n1:i4');
+    expect(before?.trusted).toBe(false);
+    const date = before?.item.interpretation.date;
+    if (!date) throw new Error('日付が無い');
+    // 名前だけの直し：見る所でも、記録でも断る（確かめていない日付を、確かにしない）。
+    const rename = {
+      type: 'correctItem' as const,
+      itemId: 'n1:i4',
+      interpretation: { what: '1年生の発表（直した）' },
+    };
+    expect(await h.look(rename)).toMatchObject({ reason: 'itemUnconfirmed' });
+    expect(await h.run(rename)).toMatchObject({ status: 'invalid', reason: 'itemUnconfirmed' });
+    expect((await h.view()).items.find((entry) => entry.item.id === 'n1:i4')?.trusted).toBe(false);
+    // 同じ日のままで日付を確かめると確かになり、その後は名前を直せる。
+    expect((await h.save({ ...rename, interpretation: { date } })).result.status).toBe('ok');
+    expect((await h.view()).items.find((entry) => entry.item.id === 'n1:i4')?.trusted).toBe(true);
+    expect((await h.save(rename)).result.status).toBe('ok');
+    expect(await h.violations()).toEqual([]);
+  });
+
   it('一件だけ外す：頼んだ後に振替休業日を外すと、外す前に取り消しの連絡が要ると見え、外すと依頼は要らなくなる', async () => {
     // 祖母に 12/7 を頼んで返事を待つ段。12/7 の振替休業日（n1:i6）だけを「うちに関係ない」と外す。
     const h = setup('chase', '2026-11-29T21:00+09:00');

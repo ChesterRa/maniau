@@ -15,9 +15,11 @@ import {
 } from '../schema/source';
 import {
   addDays,
+  type DateTime,
   formatDateTime,
   isValidDateTime,
   isValidLocalDate,
+  type LocalDate,
   localDateOf,
   toEpochMinutes,
   weekdayOf,
@@ -122,6 +124,12 @@ export interface ReadingIssue {
     | 'weekdayMismatch'
     /** 「あした」「きょう」から決めた日付と、モデルの日付が違う。 */
     | 'relativeDayMismatch'
+    /**
+     * 日付が「あした」「きょう」だけから来るのに、お知らせが書かれた日が分からない（家族が書かれた日を入れなかった。
+     * 送り手が家族でも同じ）。届いた日から数えて推定とし、家族に確かめてもらう（前の日の連絡帳を後で撮った時などは
+     * 一日ずれる）。detail は数えた日（届いた日）。
+     */
+    | 'relativeDayUnanchored'
     | 'badTime'
     | 'badCondition'
     | 'unknownEffectTarget'
@@ -154,6 +162,40 @@ export interface ReadingContext {
   priorUnknowns: readonly Unknown[];
   /** 家族の時区（「あした」を日付にする時の、届いた日を決める）。無ければ Asia/Tokyo。 */
   timeZone?: string;
+}
+
+/** 家族が入れる書かれた日は、届いた日からこの日数より前にしない（入れ間違いとして断る）。 */
+export const WRITTEN_ON_MAX_DAYS_BEFORE = 60;
+
+/**
+ * 「あした」「きょう」を数える基準の日（02-foundation §8）。お知らせが書かれた日で、写真を撮った・入れた日ではない。
+ * - 家族が書かれた日（writtenOn）を入れた時は、その日（確か）。
+ * - 入れていなければ、書かれた日は分からない。届いた日を仮に使い（known は false）、そこから決めた日付は家族に確かめて
+ *   もらう。送り手が家族でも同じ（家族からの前の日の連絡を後で貼ることがあり、送り手は書かれた日の証拠にならない。
+ *   11/7 見直しの反例）。
+ */
+export function relativeDayBase(
+  source: Pick<Source, 'receivedAt' | 'writtenOn'>,
+  timeZone: string,
+): { day: LocalDate; known: boolean } {
+  if (source.writtenOn !== undefined) return { day: source.writtenOn, known: true };
+  return { day: localDateOf(toEpochMinutes(source.receivedAt), timeZone), known: false };
+}
+
+/**
+ * 家族が入れた書かれた日を、届いた時と照らす。実在しない日、届いた日（家庭の時区）より後の日、届いた日から
+ * WRITTEN_ON_MAX_DAYS_BEFORE 日より前の日は使わない（入れ間違い）。使えれば undefined。
+ */
+export function writtenOnProblem(
+  writtenOn: string,
+  receivedAt: DateTime,
+  timeZone: string,
+): 'invalid' | 'future' | 'tooOld' | undefined {
+  if (!isValidLocalDate(writtenOn)) return 'invalid';
+  const receivedOn = localDateOf(toEpochMinutes(receivedAt), timeZone);
+  if (writtenOn > receivedOn) return 'future';
+  if (writtenOn < addDays(receivedOn, -WRITTEN_ON_MAX_DAYS_BEFORE)) return 'tooOld';
+  return undefined;
 }
 
 /**
@@ -238,6 +280,11 @@ export function toExtraction(
     }
   }
 
+  const tz = context.timeZone ?? 'Asia/Tokyo';
+  // 「あした」「きょう」の基準の日（書かれた日）と、届いた日。モデルは届いた時刻（receivedAt）だけを見て読むので、
+  // モデルが相対の言い方から作った日付は、届いた日から数えた日のはず。
+  const base = relativeDayBase(source, tz);
+  const receivedOn = localDateOf(toEpochMinutes(source.receivedAt), tz);
   const items: Item[] = [];
   const seen = new Set<string>();
   for (const raw of output.items) {
@@ -277,35 +324,56 @@ export function toExtraction(
         .map((s) => s.text)
         .join(''),
     );
-    // 「あした」は、出典が届いた日の次の日（暦どおり。習い事の金曜の連絡の「あした」は土曜）。
-    // 「きょう」は届いた日。書かれた曜日と食い違えば、下で「食い違い」にして家族に確かめてもらう。
+    // 「あした」は、基準の日（お知らせが書かれた日）の次の日（暦どおり。習い事の金曜の連絡の「あした」は土曜）。
+    // 「きょう」は基準の日。書かれた曜日と食い違えば、下で「食い違い」にして家族に確かめてもらう。
     const relativeDay = raw.relativeDay === 'none' ? undefined : raw.relativeDay;
-    const tz = context.timeZone ?? 'Asia/Tokyo';
-    const receivedOn = localDateOf(toEpochMinutes(source.receivedAt), tz);
-    // 相対の言い方があれば、日付はコードが決める。モデルが別の日付を返したら、取らずに「食い違い」にする
-    // （プロンプトで date を空にさせても、守られるとは限らないため）。
-    const relativeDate =
-      relativeDay === 'tomorrow'
-        ? addDays(receivedOn, 1)
-        : relativeDay === 'today'
-          ? receivedOn
-          : null;
-    if (relativeDate !== null && raw.date !== null && raw.date !== relativeDate) {
-      issues.push({ problem: 'relativeDayMismatch', ref: id, detail: raw.date });
-      evidence = 'conflicting';
+    const offset = relativeDay === 'tomorrow' ? 1 : 0;
+    const relativeDate = relativeDay === undefined ? null : addDays(base.day, offset);
+    const modelDate = relativeDay === undefined ? null : addDays(receivedOn, offset);
+    const mentioned = writtenDates(cited);
+    // 書かれた日の分からないまま、届いた日から数えた日付を使ったか（家族に確かめてもらう）。
+    let unanchored = false;
+    let date = raw.date;
+    if (relativeDate !== null) {
+      const readDate = raw.date;
+      if (readDate !== null && mentioned.some((m) => sameDay(m, readDate))) {
+        // 指した文に書かれた日付は取る。「あした」と照らすのは、基準の日が確かな時だけ（書かれた日が分からない
+        // 時に、基準の違いを食い違いとしない）。
+        if (base.known && readDate !== relativeDate) {
+          issues.push({ problem: 'relativeDayMismatch', ref: id, detail: readDate });
+          evidence = 'conflicting';
+        }
+      } else {
+        // 日付は相対の言い方だけから来る：コードが基準の日から決める。モデルが日付を返していれば、届いた日から
+        // 数えた日のはずで、違えば取らずに「食い違い」にする（プロンプトで date を空にさせても、守られるとは
+        // 限らないため）。
+        if (readDate !== null && readDate !== modelDate) {
+          issues.push({ problem: 'relativeDayMismatch', ref: id, detail: readDate });
+          evidence = 'conflicting';
+        }
+        date = relativeDate;
+        if (!base.known) unanchored = true;
+      }
     }
-    // 締切も同じ：相対の言い方だけで日付の書かれていない文（「あしたまでに」）では、締切の日はコードの日のはず。
-    // 違えば取らずに「食い違い」にする（日付が書かれていれば、下の日付の照らし合わせが締切も見る）。
-    if (
-      relativeDate !== null &&
-      raw.deadline !== null &&
-      raw.deadline.slice(0, 10) !== relativeDate &&
-      writtenDates(cited).length === 0
-    ) {
-      issues.push({ problem: 'relativeDayMismatch', ref: id, detail: raw.deadline });
-      evidence = 'conflicting';
+    // 締切も同じ：相対の言い方だけで日付の書かれていない文（「あしたまでに」）では、締切の日はコードが基準の日から
+    // 決める（書かれた時刻は、そのまま）。モデルの日は届いた日から数えたはずで、違えば「食い違い」にし、締切は読みの
+    // まま残す（家族が元の文と比べて直す）。日付が書かれていれば、下の日付の照らし合わせが締切も見る。
+    let readDeadline = raw.deadline;
+    if (relativeDate !== null && raw.deadline !== null && mentioned.length === 0) {
+      if (raw.deadline.slice(0, 10) !== modelDate) {
+        issues.push({ problem: 'relativeDayMismatch', ref: id, detail: raw.deadline });
+        evidence = 'conflicting';
+      } else {
+        readDeadline = `${relativeDate}${raw.deadline.slice(10)}`;
+        if (!base.known) unanchored = true;
+      }
     }
-    const date = relativeDate ?? raw.date;
+    // 書かれた日が分からなければ、届いた日から数えた日付を推定にし、家族に確かめてもらう（確かめるまで計画に
+    // 入れない）。食い違いは、そのまま食い違いにする。
+    if (unanchored) {
+      issues.push({ problem: 'relativeDayUnanchored', ref: id, detail: base.day });
+      if (evidence !== 'conflicting') evidence = 'inferred';
+    }
     const writtenWeekday =
       raw.writtenWeekday === 'none' ? undefined : WEEKDAYS.indexOf(raw.writtenWeekday) + 1;
     if (date !== null && writtenWeekday !== undefined && weekdayOf(date) !== writtenWeekday) {
@@ -365,36 +433,35 @@ export function toExtraction(
     // 日だけで読んだ締切（時刻を付けていない）は、指した文に時刻らしい書き方が無い時だけ、確かめを求めない。
     // 有れば読み落としかもしれない（「17:00までに」を日だけで読むと、日の終わりまでに緩む）。時刻の書き方は数え
     // 切れないので、無いとは言えない：見つかる書き方だけは見落とさない。
-    const readDayOnly = raw.deadline !== null && isValidLocalDate(raw.deadline);
+    const readDayOnly = readDeadline !== null && isValidLocalDate(readDeadline);
     const timeLike =
       clocks.size > 0 || citedTexts.some((text) => TIME_WORDS.test(text.normalize('NFKC')));
     const deadlineDayOnly =
-      raw.deadline !== null && (readDayOnly || !written(raw.deadline.slice(11, 16)));
+      readDeadline !== null && (readDayOnly || !written(readDeadline.slice(11, 16)));
     // 締切の時刻が確かでない：書かれていない時刻を落とした、または日だけで読んだのに文に時刻らしい書き方がある。
     // 日だけの締切は、その日の朝を目安にする（早めに出す側に寄せる）。「すること」（need）は、お知らせから読んだ
     // 物を家族が確かめるまで計画に入れない（エンジン）ので、ここでは読みを残して、確かめる画面に見せる。
     const unsureTime = deadlineDayOnly && (!readDayOnly || timeLike);
     const deadline =
-      raw.deadline === null
+      readDeadline === null
         ? null
         : !deadlineDayOnly
-          ? raw.deadline
-          : formatDateTime(zonedToEpochMinutes(raw.deadline.slice(0, 10), '08:00', tz), tz);
+          ? readDeadline
+          : formatDateTime(zonedToEpochMinutes(readDeadline.slice(0, 10), '08:00', tz), tz);
     // 落とした時刻（始まり・終わり・締切）は、その文を家族に確かめてもらう。時刻の書き方は数え切れない
     // （「午後八時」「夕方まで」）ので、見つからないことを「書かれていない」証拠にしない。
     const unwritten = [
       startTime === raw.startTime ? null : raw.startTime,
       endTime === raw.endTime ? null : raw.endTime,
       // 締切の「すること」は、原文から確かめた締切なら、モデルの付けた時刻を落としても確かめを求めない。
-      unsureTime ? raw.deadline : null,
+      unsureTime ? readDeadline : null,
     ].filter((t) => t !== null);
     if (unwritten.length > 0) {
       issues.push({ problem: 'unwrittenTime', ref: id, detail: unwritten.join(',') });
     }
-    // 指した文に「12月5日」「8日」「12/5」と書かれていれば、モデルの日付と期限の日は、そのどれかと合うはず
-    // （曜日の同じ別の週に読み違えるのを、曜日の検査は見つけない）。合っても、正しく読めたとまでは言えない。
-    const mentioned = writtenDates(cited);
-    const read = [date, raw.deadline?.slice(0, 10) ?? null].filter((d) => d !== null);
+    // 指した文に「12月5日」「8日」「12/5」と書かれていれば（上の mentioned）、モデルの日付と期限の日は、そのどれかと
+    // 合うはず（曜日の同じ別の週に読み違えるのを、曜日の検査は見つけない）。合っても、正しく読めたとまでは言えない。
+    const read = [date, readDeadline?.slice(0, 10) ?? null].filter((d) => d !== null);
     const unmentioned = read.find((d) => !mentioned.some((m) => sameDay(m, d)));
     if (mentioned.length > 0 && unmentioned !== undefined) {
       issues.push({ problem: 'dateMismatch', ref: id, detail: unmentioned });
@@ -441,6 +508,7 @@ export function toExtraction(
         ...(raw.audience === null ? {} : { audience: raw.audience }),
         ...(raw.place === null ? {} : { place: raw.place }),
         ...(relativeDay === undefined ? {} : { relativeDay }),
+        ...(unanchored ? { relativeDayFromReceived: base.day } : {}),
         // 家の人がすることは、宿題と当番の物だけを使う（ほかの種類に付いても、作業は作らない）。
         ...(raw.familyAction && (raw.kind === 'homework' || raw.kind === 'duty')
           ? { familyAction: true as const }

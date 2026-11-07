@@ -101,6 +101,7 @@ import {
 } from './ui';
 import { appendHeard, useVoice } from './voice';
 import { openWhen, WhenList } from './when';
+import { UnanchoredNote, WrittenOnField, writtenOnUsable } from './written-on';
 
 /** 押した後に、きょうの上に一行で出す結果（送ったと記録した・返事を記録した）。次に画面を移るまで出す。 */
 export type TodayDone = 'sent' | 'replyYes' | 'replyNo';
@@ -2459,6 +2460,8 @@ function NeedCheckCard({
       <Label tone="warn">{ctx.t('card.needCheck.label')}</Label>
       <Title>{requirement.what}</Title>
       <Text>{ctx.t('card.needCheck.read', { when: readNeedWhen(ctx, item.interpretation) })}</Text>
+      {/* 書かれた日が分からないまま「あした」を入れた日から数えた時は、その訳を日時の隣に出す。 */}
+      {!live.trusted && <UnanchoredNote ctx={ctx} item={item} />}
       <ReadingShown ctx={ctx} live={live} />
       {!requirement.live && <Text>{ctx.t('card.needCheck.notLive')}</Text>}
       {past && <Text>{ctx.t('card.needCheck.past')}</Text>}
@@ -5793,6 +5796,8 @@ function NoticeInputCard({
 }) {
   const [text, setText] = useState('');
   const [sender, setSender] = useState('school');
+  // お知らせが書かれた日（選んだ時だけ送る。「あした」の基準）。
+  const [writtenOn, setWrittenOn] = useState<string | undefined>();
   const [state, setState] = useState<'idle' | 'reading' | ReadResult['status']>('idle');
   // 写真・PDF から書き起こした時：見比べる写真（端末の中の一時の URL だけ。どこにも残さない）と、文の欄の
   // 文がその写真から来たか。この二つと文は、書き起こせた時だけ一緒に替える（失敗・送り直しの間は、前の
@@ -5896,11 +5901,13 @@ function NoticeInputCard({
       text,
       sender,
       medium: fromPhoto ? 'photo' : 'text',
+      ...(writtenOn === undefined ? {} : { writtenOn }),
       operationId: operation.current,
     });
     if (result.status === 'ok') {
       operation.current = undefined;
       setText('');
+      setWrittenOn(undefined);
       clearPhoto();
       setPhotoState('idle');
       setState('idle');
@@ -5934,6 +5941,13 @@ function NoticeInputCard({
           ))}
         </select>
       </label>
+      {/* 「あした」の基準。選ばなければ入れた日から数える（デモの時計か、いまの時刻を、この欄に出す）。 */}
+      <WrittenOnField
+        ctx={ctx}
+        value={writtenOn}
+        disabled={busy}
+        onChange={(next) => change(() => setWrittenOn(next))}
+      />
       {ctx.transcribe && (
         <div className="flex flex-col gap-1">
           <label
@@ -6021,9 +6035,6 @@ function NoticeInputCard({
         </MoreLink>
       )}
       <Text quiet>
-        {ctx.t(ctx.trialInput ? 'input.clockTrial' : 'input.clock', { now: dayTime(ctx, ctx.now) })}
-      </Text>
-      <Text quiet>
         {ctx.t(
           ctx.trialInput
             ? 'input.privacyTrial'
@@ -6038,6 +6049,7 @@ function NoticeInputCard({
         state === 'stale' ||
         state === 'lost' ||
         state === 'testOnly' ||
+        state === 'badWrittenOn' ||
         state === 'failed') && (
         <Text>
           {ctx.t(state === 'limit' && ctx.trialInput ? 'input.limitTrial' : `input.${state}`)}
@@ -6048,7 +6060,10 @@ function NoticeInputCard({
           {ctx.t('input.tooLong', { count: count(text.length), max: count(MAX_NOTICE_CHARS) })}
         </Text>
       )}
-      <Button onClick={() => void submit()} disabled={busy || tooLong || text.trim().length === 0}>
+      <Button
+        onClick={() => void submit()}
+        disabled={busy || tooLong || text.trim().length === 0 || !writtenOnUsable(ctx, writtenOn)}
+      >
         {ctx.t(state === 'reading' ? 'input.reading' : 'input.submit')}
       </Button>
     </Card>

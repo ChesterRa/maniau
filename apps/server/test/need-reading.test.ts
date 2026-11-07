@@ -405,6 +405,87 @@ describe('お知らせから読んだ「すること」', () => {
     expect(view.plan.arrangements.filter((a) => a.kind === 'need')).toEqual([]);
   });
 
+  it('書かれた日の分からない「あしたまでに」の need は、名前だけの直しでは確かにせず、締切を添えた直しで確かめる', async () => {
+    const TEXT = 'あしたまでに地区センターの窓口で申し込んでください。';
+    const unanchoredReader: NoticeReader = async (request) => {
+      const [s1] = request.source.sentences.map((s) => s.id);
+      if (!s1) throw new Error('文が無い');
+      return {
+        output: {
+          items: [
+            {
+              ...blank,
+              id: 'i1',
+              sentenceIds: [s1],
+              kind: 'need',
+              written: TEXT,
+              relativeDay: 'tomorrow',
+              // 届いた日（11/25）から数えた「あした」。書かれた日は入れていない。
+              deadline: '2026-11-26',
+              what: '窓口での申し込み',
+              place: '地区センターの窓口',
+              shape: 'by',
+            },
+          ],
+          unknowns: [],
+          conditions: [],
+          irrelevantSentenceIds: [],
+          ambiguities: [],
+        },
+        model: 'test-model',
+        promptVersion: 'test',
+        inputHash: `test-${request.source.id}`,
+        usage: { input_tokens: 0, output_tokens: 0 },
+      };
+    };
+    const app = createApp({ reader: unanchoredReader });
+    const made = await app.request('/api/demo/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ stage: 'arrived' }),
+    });
+    const { sessionId } = (await made.json()) as { sessionId: string };
+    const posted = await app.request(`/api/demo/sessions/${sessionId}/notices`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ memberId: 'b', operationId: 'op-1', text: TEXT, sender: 'other' }),
+    });
+    expect(posted.status).toBe(200);
+    const { sourceId } = (await posted.json()) as { sourceId: string };
+    const itemId = `${sourceId}:i1`;
+    const view = await viewOf(app, sessionId, 'b');
+    const read = view.items.find((e) => e.item.id === itemId)?.item as
+      | { interpretation?: object }
+      | undefined;
+    expect(read?.interpretation).toMatchObject({ relativeDayFromReceived: '2026-11-25' });
+    expect(needCards(view, 'needCheck')).toEqual(['窓口での申し込み']);
+    const seen = { throughSeq: view.plan.throughSeq };
+    // 名前だけの直しは断る（推定の締切を確かにしない）。
+    expect(
+      await send(app, sessionId, 'b', 'rename-1', {
+        type: 'correctItem',
+        itemId,
+        interpretation: { what: '窓口での申込' },
+        seen,
+      }),
+    ).toMatchObject({ status: 'invalid', reason: 'itemUnconfirmed' });
+    expect(needCards(await viewOf(app, sessionId, 'b'), 'needCheck')).toEqual(['窓口での申し込み']);
+    // 締切を添えた直しは確かめになる（同じ日のままでも）。
+    expect(
+      await send(app, sessionId, 'b', 'fix-1', {
+        type: 'correctItem',
+        itemId,
+        interpretation: {
+          what: '窓口での申込',
+          deadline: '2026-11-26T08:00+09:00',
+          deadlineDayOnly: true,
+        },
+        seen,
+      }),
+    ).toMatchObject({ status: 'ok' });
+    expect(needCards(await viewOf(app, sessionId, 'b'), 'needCheck')).toEqual([]);
+  });
+
   it('「あしたまでに」の締切を別の日に読んだ need は、計画に入れず、その文を確かめてもらう（日付はコードが決める）', async () => {
     const TEXT = 'あしたまでに地区センターの窓口で申し込んでください。';
     const relativeReader: NoticeReader = async (request) => {
@@ -965,5 +1046,138 @@ describe('お知らせから読んだ「すること」', () => {
     expect(await run()).toMatchObject({ status: 'invalid', reason: 'readingUnshown' });
     // 題があれば見分けられる。
     expect(await run('運動会だより')).toMatchObject({ status: 'ok' });
+  });
+});
+
+describe('確かめていない締切の事項の直し（「すること」でない締切）', () => {
+  /** 締切の事項を一つ返す読み取りで、届いた日 11/25 に、書かれた日を選ばずにお知らせを入れる。 */
+  async function deadlineSession(
+    text: string,
+    read: { date: string | null; deadline: string },
+    kind: 'deadline' | 'submission' = 'deadline',
+  ) {
+    const deadlineReader: NoticeReader = async (request) => {
+      const [s1] = request.source.sentences.map((s) => s.id);
+      if (!s1) throw new Error('文が無い');
+      return {
+        output: {
+          items: [
+            {
+              ...blank,
+              id: 'i1',
+              sentenceIds: [s1],
+              kind,
+              written: text,
+              relativeDay: 'tomorrow',
+              what: '申込',
+              ...read,
+            },
+          ],
+          unknowns: [],
+          conditions: [],
+          irrelevantSentenceIds: [],
+          ambiguities: [],
+        },
+        model: 'test-model',
+        promptVersion: 'test',
+        inputHash: `test-${request.source.id}`,
+        usage: { input_tokens: 0, output_tokens: 0 },
+      };
+    };
+    const app = createApp({ reader: deadlineReader });
+    const made = await app.request('/api/demo/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ stage: 'arrived' }),
+    });
+    const { sessionId } = (await made.json()) as { sessionId: string };
+    const posted = await app.request(`/api/demo/sessions/${sessionId}/notices`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ memberId: 'b', operationId: 'op-1', text, sender: 'school' }),
+    });
+    expect(posted.status).toBe(200);
+    const { sourceId } = (await posted.json()) as { sourceId: string };
+    return { app, sessionId, itemId: `${sourceId}:i1` };
+  }
+
+  /** 画面と同じ：変わる事を見てから、見た物を添えて記録する。見る所で断られたら、その理由を返す。 */
+  async function save(app: App, sessionId: string, operationId: string, command: object) {
+    const looked = await app.request(`/api/demo/sessions/${sessionId}/change-preview`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ memberId: 'b', command }),
+    });
+    const body = (await looked.json()) as {
+      preview?: { seen: string; throughSeq: number };
+      error?: string;
+    };
+    if (!body.preview) return { status: 'refused', reason: body.error };
+    return send(app, sessionId, 'b', operationId, {
+      ...command,
+      seen: { throughSeq: body.preview.throughSeq, changes: body.preview.seen },
+    });
+  }
+
+  it.each(['deadline', 'submission'] as const)(
+    '行事の日と「あしたまでに」の締切が別の日の物は、行事の日を確かめても締切まで確かにしない（%s。11/7 見直しの反例）',
+    async (kind) => {
+      const { app, sessionId, itemId } = await deadlineSession(
+        '12月7日の行事の申込は、あしたまでにお願いします。',
+        { date: '2026-12-07', deadline: '2026-11-26' },
+        kind,
+      );
+      // 行事の日（12/7）だけを同じ日のまま確かめる直しは断る（締切 11/26 は、入れた日から数えた推定かもしれない）。
+      expect(
+        await send(app, sessionId, 'b', 'confirm-event-day', {
+          type: 'correctItem',
+          itemId,
+          interpretation: { date: '2026-12-07' },
+        }),
+      ).toMatchObject({ status: 'invalid', reason: 'itemUnconfirmed' });
+      // 見る所でも同じ理由で断る。
+      expect(
+        await save(app, sessionId, 'look-event-day', {
+          type: 'correctItem',
+          itemId,
+          interpretation: { date: '2026-12-07' },
+        }),
+      ).toMatchObject({ status: 'refused', reason: 'itemUnconfirmed' });
+      // 締切を添えた直しは受ける（家族が締切の日を入れた）。
+      expect(
+        await save(app, sessionId, 'fix-deadline', {
+          type: 'correctItem',
+          itemId,
+          interpretation: { date: '2026-12-07', deadline: '2026-11-26T17:00+09:00' },
+        }),
+      ).toMatchObject({ status: 'ok' });
+    },
+  );
+
+  it('日付と締切が同じ「あした」の日の物は、その日付を確かめると締切も確かになる', async () => {
+    const { app, sessionId, itemId } = await deadlineSession('あしたまでに申し込んでください。', {
+      date: null,
+      deadline: '2026-11-26',
+    });
+    const before = await viewOf(app, sessionId, 'b');
+    const read = before.items.find((e) => e.item.id === itemId)?.item as
+      | { interpretation?: { date?: string; relativeDayFromReceived?: string } }
+      | undefined;
+    expect(read?.interpretation).toMatchObject({
+      date: '2026-11-26',
+      relativeDayFromReceived: '2026-11-25',
+    });
+    expect(
+      await save(app, sessionId, 'confirm-day', {
+        type: 'correctItem',
+        itemId,
+        interpretation: { date: '2026-11-26' },
+      }),
+    ).toMatchObject({ status: 'ok' });
+    const after = await viewOf(app, sessionId, 'b');
+    const confirmed = after.items.find((e) => e.item.id === itemId)?.item as
+      | { evidence?: string }
+      | undefined;
+    expect(confirmed?.evidence).toBe('confirmed');
   });
 });

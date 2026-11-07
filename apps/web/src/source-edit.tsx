@@ -1,16 +1,35 @@
 // お知らせの原文と読み取った日を見比べて直す。保存の前にはサーバーの計算で変わる事を見る。
 import {
+  formatDateTime,
   type Item,
   isValidLocalDate,
+  localDateOf,
+  localTimeOf,
   type SaveablePreview,
   type Source,
+  toEpochMinutes,
   weekdayOf,
+  zonedToEpochMinutes,
 } from '@maniau/core';
 import { useState } from 'react';
 import { formatDay } from './format';
 import { PreviewBlock, StalePreview, usePreviewSave } from './need';
 import type { Ctx } from './screens';
 import { Button, Label, Row, Text } from './ui';
+import { UnanchoredNote } from './written-on';
+
+/**
+ * 「あしたまでに」のように、日付と締切を同じ「あした」から決めた事項の、日付を直した後の締切（同じ日へ動かし、
+ * 時刻はそのまま）。締切を古い日に残すと、計画は古い締切を使う。そうでない事項・日付を変えない時は無し。
+ */
+function movedDeadline(ctx: Ctx, item: Item, date: string): string | undefined {
+  const { relativeDay, date: before, deadline } = item.interpretation;
+  if (relativeDay === undefined || before === undefined || deadline === undefined) return undefined;
+  if (!isValidLocalDate(date) || date === before) return undefined;
+  const at = toEpochMinutes(deadline);
+  if (localDateOf(at, ctx.tz) !== before) return undefined;
+  return formatDateTime(zonedToEpochMinutes(date, localTimeOf(at, ctx.tz), ctx.tz), ctx.tz);
+}
 
 const input =
   'min-h-11 rounded-xl border-[1.5px] border-btn-line bg-white px-2.5 text-base text-ink';
@@ -41,10 +60,11 @@ function DateEdit({
   const [opened, setOpened] = useState(item.interpretation.date);
   const moved = opened !== item.interpretation.date;
   const flow = usePreviewSave(ctx);
+  const deadline = movedDeadline(ctx, item, date);
   const command: SaveablePreview = {
     type: 'correctItem',
     itemId: item.id,
-    interpretation: { date },
+    interpretation: { date, ...(deadline === undefined ? {} : { deadline }) },
   };
   const shown = flow.shownFor(command);
   const refused = flow.refusedFor(command);
@@ -413,10 +433,20 @@ export function SourceEdits({ ctx, source }: { ctx: Ctx; source: Source }) {
   const excluded = ctx.excludedSources?.get(source.id);
   // 家族が直接書いた「すること」は読み取りではない。専用の画面から直す・要らなくする。
   if (!excluded && !ctx.readings.some((reading) => reading.sourceId === source.id)) return null;
-  // 日付を直す：日付の欄のある事項と、日の要る種類（行事・日の変更・テスト）。締切の日から置く事項（締切の欄が
-  // ある締切）は、日付の欄を直してもよていは動かないので出さず、まだ直せないと書く。
-  const dueOnly = (entry: (typeof ctx.items)[number]) =>
-    entry.item.kind === 'deadline' && entry.item.interpretation.deadline !== undefined;
+  // 日付を直す：日付の欄のある事項と、日の要る種類（行事・日の変更・テスト）。出さない物（締切はここではまだ
+  // 直せないと書く）：
+  // - 締切の日から置く締切の事項（日付の欄を直しても、よていは動かない）。ただし「あしたまでに」のように日付と締切を
+  //   同じ「あした」から決め、同じ日にある物は、日付を直すと締切も同じ日へ動く（movedDeadline）ので出す（書かれた日の
+  //   読み違いを、ここで直せるように）。
+  // - まだ確かめていない事項で、締切が日付と別の日の物（持ち物・提出物も）。日付を確かめても、締切の日を確かめた
+  //   ことにはならない（「12月7日の行事の出欠票は、あしたまでに」。11/7 見直しの反例）。サーバーも同じ直しを断る。
+  const dueOnly = (entry: (typeof ctx.items)[number]) => {
+    const { kind, interpretation: i } = entry.item;
+    if (i.deadline === undefined) return false;
+    const due = localDateOf(toEpochMinutes(i.deadline), ctx.tz);
+    if (kind === 'deadline') return !(i.relativeDay !== undefined && due === i.date);
+    return !entry.trusted && due !== i.date;
+  };
   const editable = ctx.items.filter(
     (entry) =>
       entry.item.sourceId === source.id &&
@@ -433,9 +463,30 @@ export function SourceEdits({ ctx, source }: { ctx: Ctx; source: Source }) {
   const current = ctx.items.filter(
     (entry) => entry.item.sourceId === source.id && entry.item.kind !== 'need' && entry.live,
   );
+  // まだ確かめていない事項（推定・食い違い・読み直した後）は、時刻・名前の直しに出さない。直しは事項を確かめた
+  // ことにするので、確かめていない日付まで確かにしてしまう（「あした」を入れた日から数えた日付など。11/7 見直しの
+  // 反例）。日付を確かめてから（同じ日のままでも保存できる）直してもらう。一件だけ外すことはできる。
+  const unconfirmed = current.filter(({ trusted }) => !trusted);
+  // 書かれた日が分からないまま「あした」「きょう」を入れた日から数え、まだ確かめていない事項の訳（同じ言い方・
+  // 同じ日の物は一つにまとめる）。日付を直す所の上に、開かなくても見えるように出す。
+  const unanchored = [
+    ...new Map(
+      editable
+        .filter(
+          ({ item, trusted }) =>
+            !trusted && item.interpretation.relativeDayFromReceived !== undefined,
+        )
+        .map(({ item }) => [
+          `${item.interpretation.relativeDay}:${item.interpretation.relativeDayFromReceived}`,
+          item,
+        ]),
+    ).values(),
+  ];
   return (
     <div className="flex flex-col gap-2">
       {excluded && <Text>{ctx.t(`sourceFix.discard.excluded.${excluded}`)}</Text>}
+      {!excluded &&
+        unanchored.map((item) => <UnanchoredNote key={item.id} ctx={ctx} item={item} />)}
       {!excluded && editable.length > 0 && (
         <details>
           <summary className="min-h-11 cursor-pointer font-bold text-accent">
@@ -464,9 +515,12 @@ export function SourceEdits({ ctx, source }: { ctx: Ctx; source: Source }) {
           <div className="flex flex-col gap-2">
             <Label tone="sub">{ctx.t('sourceFix.item.compare')}</Label>
             {deadlines.length > 0 && <Text quiet>{ctx.t('sourceFix.item.deadlineDate')}</Text>}
-            {current.map(({ item }) => (
-              <TimeEdit key={item.id} ctx={ctx} item={item} />
-            ))}
+            {unconfirmed.length > 0 && <Text>{ctx.t('sourceFix.item.unconfirmed')}</Text>}
+            {current
+              .filter(({ trusted }) => trusted)
+              .map(({ item }) => (
+                <TimeEdit key={item.id} ctx={ctx} item={item} />
+              ))}
           </div>
         </details>
       )}

@@ -213,6 +213,41 @@ describe('お知らせから読んだ「すること」の確かめ', () => {
     expect(host.textContent).toContain('読み落としたかもしれない所');
   });
 
+  it.each(['ja', 'en'] as const)(
+    '札：書かれた日が分からず「あしたまでに」を入れた日から数えた読み取りには、その訳を出す (%s)',
+    async (lang) => {
+      const unanchored = {
+        ...needItem('n9:i5', {
+          deadline: '2026-11-26T08:00+09:00',
+          deadlineDayOnly: true,
+          date: '2026-11-26',
+          relativeDay: 'tomorrow',
+          relativeDayFromReceived: '2026-11-25',
+          what: '窓口での申し込み',
+          shape: 'by',
+        }),
+        evidence: 'inferred' as const,
+      };
+      const t = i18n.getFixedT(lang);
+      const { ctx } = materials([unanchored]);
+      await step(() => root.render(<TodayScreen ctx={{ ...ctx, lang, t }} />));
+      expect(host.textContent).toContain(
+        lang === 'ja'
+          ? '「あした」を、入れた日（11/25（水））から数えました。お知らせが書かれた日が違えば、日付を直してください。'
+          : '“Tomorrow” was counted from the day the notice was entered (Wed 11/25).',
+      );
+      // 書かれた日から数えた読み取りには出さない。
+      const anchored = materials([EXCHANGE]);
+      await step(() => root.render(<TodayScreen ctx={{ ...anchored.ctx, lang, t }} />));
+      expect(host.textContent).toContain(
+        lang === 'ja' ? '読み取りを確かめる' : 'Check the reading',
+      );
+      expect(host.textContent).not.toContain(
+        lang === 'ja' ? '入れた日（' : 'the day the notice was entered',
+      );
+    },
+  );
+
   it('札：読み取りの日時が過ぎた時と、今の答えで要らない時も出し、そう添える。「うちには要らない」で外せる', async () => {
     const pastItem = needItem('n9:i5', {
       date: '2026-11-20',

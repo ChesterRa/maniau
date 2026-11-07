@@ -1015,6 +1015,43 @@ function expand({ plan, state, events }: Now, context: CommandContext, command: 
       if (Object.keys(command.interpretation).length === 0) {
         return { status: 'invalid', reason: 'nothingToCorrect' };
       }
+      // まだ確かめていない事項（「すること」でない物。推定・食い違い・直した後に読み直した物）は、日付を添えた直しで
+      // だけ確かめる。締切のある物（締切の事項・持ち物・提出物）は、締切が添えた日付と別の日なら、締切も添える。
+      // 直しは事項を確かめたことにするので、時刻・名前だけの直しや、行事の日だけの確かめで、確かめていない日付・締切
+      // まで確かにしない（「あした」を入れた日から数えた日付、「12月7日の行事の申込は、あしたまでに」の締切など。
+      // 11/7 見直しの反例）。
+      if (
+        item.kind !== 'need' &&
+        (!(item.evidence === 'stated' || item.evidence === 'confirmed') ||
+          awaitingConfirmation(state, item))
+      ) {
+        const date = command.interpretation.date;
+        const deadline = item.interpretation.deadline;
+        const dueDay =
+          deadline === undefined
+            ? undefined
+            : localDateOf(toEpochMinutes(deadline), state.household?.timeZone ?? 'Asia/Tokyo');
+        if (
+          date === undefined ||
+          (dueDay !== undefined && command.interpretation.deadline === undefined && date !== dueDay)
+        )
+          return { status: 'invalid', reason: 'itemUnconfirmed' };
+      }
+      // 読み取りの「すること」も同じ：書かれた日が分からず、届いた日から数えた日付（relativeDayFromReceived）を、まだ
+      // 確かめていない間は、その日付（窓は date、締切は deadline）を添えた直しでだけ確かめる（名前だけの直しで、推定の
+      // 日付まで確かにしない。直しの画面はいつも日付を添えるが、命令は欄の一部だけでも受けるため。11/7 見直しの反例）。
+      if (noticeNeed && item.interpretation.relativeDayFromReceived !== undefined) {
+        const shape = command.interpretation.shape ?? item.interpretation.shape;
+        const dated =
+          shape === 'window'
+            ? command.interpretation.date !== undefined
+            : shape === 'by'
+              ? command.interpretation.deadline !== undefined
+              : command.interpretation.date !== undefined ||
+                command.interpretation.deadline !== undefined;
+        if (!dated && awaitingConfirmation(state, item))
+          return { status: 'invalid', reason: 'itemUnconfirmed' };
+      }
       // 子と元の日が分からない旧い依頼を、日を直しただけで現実に取り消された物にしない。
       // 控え自体の無い依頼は、どの事項に結ぶかも分からないので同じく断る。
       if (

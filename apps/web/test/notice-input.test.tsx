@@ -246,6 +246,87 @@ describe('お知らせの文を入れる', () => {
     }
   });
 
+  it('書かれた日は選んだ時だけ送る：「きのう」はデモの時計の前の日、もう一度押すと選ばない、読めたら戻す', async () => {
+    const { ctx, reads } = setup(OK);
+    await step(() => root.render(<SourcesScreen ctx={ctx} />));
+    expect(host.textContent).toContain('このお知らせが書かれた日');
+    // 選ぶ前は、選ばなければデモの時計の日から数えると示す。
+    expect(host.textContent).toContain('選ばなければデモの時計');
+    const choice = (label: string) =>
+      [...host.querySelectorAll('fieldset button')].find((b) => b.textContent === label) as
+        | HTMLButtonElement
+        | undefined;
+    const date = host.querySelector('fieldset input[type="date"]') as HTMLInputElement;
+    // 選べる日は、デモの時計の日（11/25）から 60 日前まで。
+    expect([date.min, date.max]).toEqual(['2026-09-26', '2026-11-25']);
+    const area = host.querySelector('textarea') as HTMLTextAreaElement;
+    await step(() => type(area, '（架空）あした、体操服を持ってきてください。'));
+    // 「きょう」を押して、もう一度押すと選ばないに戻る（送らない）。
+    await step(() => choice('きょう')?.click());
+    expect(choice('きょう')?.getAttribute('aria-pressed')).toBe('true');
+    await step(() => choice('きょう')?.click());
+    expect(choice('きょう')?.getAttribute('aria-pressed')).toBe('false');
+    expect(date.value).toBe('');
+    await step(() => choice('きのう')?.click());
+    expect(date.value).toBe('2026-11-24');
+    expect(host.textContent).toContain('「あした」「きょう」などは、11/24（火）から数えます。');
+    await step(() => button()?.click());
+    expect(reads).toEqual([
+      {
+        text: '（架空）あした、体操服を持ってきてください。',
+        sender: 'school',
+        medium: 'text',
+        writtenOn: '2026-11-24',
+        operationId: expect.any(String),
+      },
+    ]);
+    // 読めたら、次のお知らせのために選びを戻す。
+    expect(choice('きのう')?.getAttribute('aria-pressed')).toBe('false');
+    expect(date.value).toBe('');
+  });
+
+  it('書かれた日は日付でも選べ、範囲の外の日では読み取りを押せない。サーバーが断った時は選び直すよう出す', async () => {
+    const answers: ReadResult[] = [{ status: 'badWrittenOn' }, OK];
+    const { ctx, reads } = setup(OK);
+    const read = async (input: NoticeInput) => {
+      reads.push(input);
+      return answers.shift() ?? OK;
+    };
+    await step(() => root.render(<SourcesScreen ctx={{ ...ctx, read }} />));
+    await step(() => type(host.querySelector('textarea') as HTMLTextAreaElement, '（架空）'));
+    const date = host.querySelector('fieldset input[type="date"]') as HTMLInputElement;
+    const enter = (value: string) => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(date, value);
+      date.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    // デモの時計の日より後の日は使えない（送らない）。
+    await step(() => enter('2026-11-26'));
+    expect(host.textContent).toContain(
+      '書かれた日は、9/26（土）から11/25（水）までの日を選んでください。',
+    );
+    expect(button()?.disabled).toBe(true);
+    await step(() => enter('2026-11-20'));
+    expect(button()?.disabled).toBe(false);
+    await step(() => button()?.click());
+    expect(reads.map((r) => r.writtenOn)).toEqual(['2026-11-20']);
+    expect(host.textContent).toContain('選んだ書かれた日は使えません');
+    // 選び直すと、新しい操作で送る。
+    await step(() => enter('2026-11-19'));
+    await step(() => button()?.click());
+    expect(reads.map((r) => r.writtenOn)).toEqual(['2026-11-20', '2026-11-19']);
+    expect(reads[1]?.operationId).not.toBe(reads[0]?.operationId);
+  });
+
+  it('英語の画面でも、書かれた日の欄と、選ばない時の数え方を出す', async () => {
+    const { ctx } = setup(OK);
+    await step(() =>
+      root.render(<SourcesScreen ctx={{ ...ctx, lang: 'en', t: i18n.getFixedT('en') }} />),
+    );
+    expect(host.textContent).toContain('Day this notice was written');
+    expect(host.textContent).toContain('counted from the demo clock’s day');
+    expect(host.textContent).not.toMatch(/\binput\.[a-z]/);
+  });
+
   it('原文の文ごとに、計画に入れたか・よていに出すか・読んだだけか・確かめてほしいかを示す', async () => {
     const source = {
       id: 'u1',

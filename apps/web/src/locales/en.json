@@ -753,6 +753,10 @@
     "escortOn": {
       "to": "Drop-off is needed (marked not needed this time)",
       "from": "Pick-up is needed (marked not needed this time)"
+    },
+    "unanchored": {
+      "tomorrow": "“Tomorrow” was counted from the day the notice was entered ({{day}}). If the notice was written on a different day, correct the date.",
+      "today": "“Today” was taken to be the day the notice was entered ({{day}}). If the notice was written on a different day, correct the date."
     }
   },
   "condition": {
@@ -998,13 +1002,22 @@
     "busy": "Another reading is in progress. Please wait a moment and press again.",
     "uncertain": "We couldn't tell the result (no reply came, or recording stopped partway). Press again to check the earlier reading (if it was already added, it won't be added twice; if it wasn't read, it will be read again).",
     "failed": "It couldn't be read. Please check the text and try again.",
-    "clock": "Words like “tomorrow” are read against the demo clock ({{now}}).",
+    "clock": "Words like “tomorrow” are counted from the day the notice was written. If you don’t choose one, they’re counted from the demo clock’s day ({{now}}), and you’ll be asked to check the date later.",
     "stale": "While reading, items read earlier changed (corrected, confirmed, etc.). Please press \"Read it\" again. Your text is still here.",
     "privacyTrial": "This is a trial household. Use fictional text only. Your text, recorded items (including family statements), and open questions go to Anthropic’s Claude API. Names in the text are included; household settings are not sent. Read text stays in this household’s records.",
     "limitTrial": "Can't read right now (the text is too long, or the limit was reached; the limit resets at 9:00 Japan time).",
     "lost": "We can't tell whether your earlier reading finished (the server may have stopped partway). Check the plan and the notice list; if it isn't there, press \"Read it\" again (it will be a new reading).",
     "testOnly": "Reading with Claude isn't available for this household (trial households only).",
-    "clockTrial": "Words like “tomorrow” are read against the current time ({{now}}).",
+    "clockTrial": "Words like “tomorrow” are counted from the day the notice was written. If you don’t choose one, they’re counted from today ({{now}}), and you’ll be asked to check the date later.",
+    "writtenOn": {
+      "label": "Day this notice was written",
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "date": "Choose the day it was written",
+      "chosen": "Words like “tomorrow” and “today” are counted from {{day}}.",
+      "problem": "Choose a written day from {{oldest}} to {{today}}."
+    },
+    "badWrittenOn": "The written day you chose can’t be used (it’s after the day you entered the notice, or too long before). Choose the written day again, then press \"Read it\".",
     "sample": "Insert a sample notice (fictional)",
     "privacyFictional": "Use fictional text only. Your text, this demo’s recorded items (including family statements), and open questions go to Anthropic’s Claude API. Text is kept in server memory; demos unused for over 12 hours are periodically deleted.",
     "photoPrivacyFictional": "Use fictional photos and PDFs only. As soon as you choose one, it is sent to Anthropic’s Claude API to check its size and transcribe it. The app does not keep photos."
@@ -1431,6 +1444,7 @@
       "waysReset": "You will need to choose the ways again."
     },
     "refused": {
+      "itemUnconfirmed": "This item’s date hasn’t been checked yet, so the name or time alone can’t be corrected. Check the date first (in “Correct a date read from this notice” on the notice screen, or on the check card; you can keep the same date).",
       "needWindowMissing": "Enter the date and the start and end times.",
       "needWindowOvernight": "Make the end later than the start on the same day (times across midnight are not supported yet).",
       "needMemberUnknown": "Choose who it is for from your family.",
@@ -2222,6 +2236,7 @@
       "open": "Fix the time or name",
       "compare": "Compare the original text above with the time and name that were read.",
       "deadlineDate": "Deadline dates and times can’t be corrected here yet. If one was misread, remove that item from the plan.",
+      "unconfirmed": "Items not yet checked can’t be corrected here. First check the date in “Correct a date read from this notice” (you can save the same date). If it was misread, you can take just that item out of the plan.",
       "read": "Name read: {{what}}",
       "readTime": "Time: {{start}}–{{end}}",
       "noTime": "No time was read.",

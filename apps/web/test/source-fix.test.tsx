@@ -367,6 +367,146 @@ describe('お知らせの直し', () => {
     expect(looked).toEqual([]);
   });
 
+  it.each(['ja', 'en'] as const)(
+    '書かれた日が分からず「あしたまでに」を入れた日から数えた事項は、訳を出し、日付を直すと締切も同じ日へ動かす (%s)',
+    async (lang) => {
+      const { ctx: base, looked } = context(lang);
+      // 前の日の連絡帳を、書かれた日を入れずに 11/25 に入れた（確かめるまで計画に入れない推定）。
+      const relative = {
+        id: 'n1:i2',
+        sourceId: 'n1',
+        sentenceIds: ['n1#1'],
+        kind: 'submission',
+        written: 'あしたまでに、音読カードを出してください。',
+        evidence: 'inferred',
+        interpretation: {
+          date: '2026-11-26',
+          deadline: '2026-11-26T08:00+09:00',
+          deadlineDayOnly: true,
+          relativeDay: 'tomorrow',
+          relativeDayFromReceived: '2026-11-25',
+          what: '音読カード',
+        },
+        effects: [],
+      } as const;
+      const ctx = {
+        ...base,
+        items: [{ item: relative, live: true, conditional: false, trusted: false }],
+      } as unknown as Ctx;
+      await step(() => root.render(<SourcesScreen ctx={ctx} sourceId="n1" />));
+      // 日付を直す所を開かなくても、訳が見える。
+      expect(host.textContent).toContain(
+        lang === 'ja'
+          ? '「あした」を、入れた日（11/25（水））から数えました。'
+          : '“Tomorrow” was counted from the day the notice was entered (Wed 11/25).',
+      );
+      const input = host.querySelector<HTMLInputElement>('input[type=date]');
+      if (!input) throw Error('日付欄が無い');
+      // 書かれた日が 11/24 なら、「あした」は 11/25。締切も同じ日の朝へ動かす（時刻はそのまま）。
+      await step(() => enter(input, '2026-11-25'));
+      await step(() => button(ctx.t('sourceFix.look'))?.click());
+      expect(looked[0]).toEqual({
+        type: 'correctItem',
+        itemId: 'n1:i2',
+        interpretation: { date: '2026-11-25', deadline: '2026-11-25T08:00+09:00' },
+      });
+    },
+  );
+
+  it('「あしたまでに」から決めた締切の事項も日付を直す所に出し、締切を同じ日へ動かす（締切の欄だけの締切とは分ける）', async () => {
+    const { ctx: base, looked } = context();
+    const relative = {
+      id: 'n1:i2',
+      sourceId: 'n1',
+      sentenceIds: ['n1#1'],
+      kind: 'deadline',
+      written: 'あしたまでに、申込書を出してください。',
+      evidence: 'inferred',
+      interpretation: {
+        date: '2026-11-26',
+        deadline: '2026-11-26T08:00+09:00',
+        deadlineDayOnly: true,
+        relativeDay: 'tomorrow',
+        relativeDayFromReceived: '2026-11-25',
+        what: '申込書',
+      },
+      effects: [],
+    } as const;
+    const ctx = {
+      ...base,
+      items: [{ item: relative, live: true, conditional: false, trusted: false }],
+    } as unknown as Ctx;
+    await step(() => root.render(<SourcesScreen ctx={ctx} sourceId="n1" />));
+    expect(host.textContent).toContain('「あした」を、入れた日（11/25（水））から数えました。');
+    // 「締切の日付はここでは直せない」とは言わない（直せるので）。
+    expect(host.textContent).not.toContain(ctx.t('sourceFix.item.deadlineDate'));
+    const input = host.querySelector<HTMLInputElement>('input[type=date]');
+    if (!input) throw Error('日付欄が無い');
+    await step(() => enter(input, '2026-11-25'));
+    await step(() => button(ctx.t('sourceFix.look'))?.click());
+    expect(looked[0]).toEqual({
+      type: 'correctItem',
+      itemId: 'n1:i2',
+      interpretation: { date: '2026-11-25', deadline: '2026-11-25T08:00+09:00' },
+    });
+  });
+
+  it.each(['deadline', 'submission'] as const)(
+    '行事の日と「あしたまでに」の締切が別の日の、確かめていない事項は、日付を直す所に出さない（%s）',
+    async (kind) => {
+      const { ctx: base } = context();
+      const mixed = {
+        id: 'n1:i2',
+        sourceId: 'n1',
+        sentenceIds: ['n1#1'],
+        kind,
+        written: '12月7日の行事の申込は、あしたまでにお願いします。',
+        evidence: 'conflicting',
+        interpretation: {
+          date: '2026-12-07',
+          deadline: '2026-11-26T08:00+09:00',
+          deadlineDayOnly: true,
+          relativeDay: 'tomorrow',
+          what: '申込',
+        },
+        effects: [],
+      } as const;
+      const ctx = {
+        ...base,
+        items: [{ item: mixed, live: true, conditional: false, trusted: false }],
+      } as unknown as Ctx;
+      await step(() => root.render(<SourcesScreen ctx={ctx} sourceId="n1" />));
+      expect(host.querySelector('input[type=date]')).toBeNull();
+      expect(host.textContent).toContain(ctx.t('sourceFix.item.deadlineDate'));
+      expect(host.textContent).toContain(ctx.t('sourceFix.item.unconfirmed'));
+    },
+  );
+
+  it('確かめた事項や、「あした」から決めていない事項の日付を直しても、締切は送らない', async () => {
+    const { ctx: base, looked } = context();
+    const dated = {
+      ...base.items[0]?.item,
+      id: 'n1:i3',
+      kind: 'submission',
+      interpretation: { date: '2026-12-07', deadline: '2026-12-07T08:00+09:00' },
+    };
+    const ctx = {
+      ...base,
+      items: [{ item: dated, live: true, conditional: false, trusted: true }],
+    } as unknown as Ctx;
+    await step(() => root.render(<SourcesScreen ctx={ctx} sourceId="n1" />));
+    expect(host.textContent).not.toContain('入れた日（');
+    const input = host.querySelector<HTMLInputElement>('input[type=date]');
+    if (!input) throw Error('日付欄が無い');
+    await step(() => enter(input, '2026-12-08'));
+    await step(() => button('変わることを見る')?.click());
+    expect(looked[0]).toEqual({
+      type: 'correctItem',
+      itemId: 'n1:i3',
+      interpretation: { date: '2026-12-08' },
+    });
+  });
+
   it('原文と読み取った日を見せ、別の日に直す時はその日で見直してから保存する', async () => {
     const { ctx, looked, sent } = context();
     await step(() => root.render(<SourcesScreen ctx={ctx} sourceId="n1" />));
@@ -891,6 +1031,24 @@ describe('お知らせの直し', () => {
       });
     },
   );
+
+  it('まだ確かめていない事項は時刻・名前の直しに出さず、先に日付を確かめるよう書く（一件だけ外すことはできる）', async () => {
+    const { ctx } = withEvent();
+    const [entry] = ctx.items;
+    if (!entry) throw Error('事項が無い');
+    const unsure = { ...ctx, items: [{ ...entry, trusted: false }] };
+    await step(() => root.render(<SourcesScreen ctx={unsure} sourceId="n1" />));
+    const edit = section('時刻・名前を直す');
+    expect(edit?.textContent).toContain(
+      'まだ確かめていない事項は、ここでは直せません。先に「読み取った日付を直す」で日付を確かめてください',
+    );
+    expect(edit?.querySelectorAll('input').length).toBe(0);
+    // 日付を確かめる所と、一件だけ外す所には出る。
+    expect(section('読み取った日付を直す')?.querySelector('input[type=date]')).not.toBeNull();
+    expect(
+      section('一件だけ計画から外す')?.querySelectorAll('input[type=radio]').length,
+    ).toBeGreaterThan(0);
+  });
 
   it('条件が合わず今の計画に無い事項は、日付の欄にだけ出し、時刻・名前の直しと外す欄には出さない', async () => {
     const { ctx } = withEvent();

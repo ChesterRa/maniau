@@ -389,6 +389,78 @@ describe('家族の家庭の文字の読み取り', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('書かれた日は家庭の時区の今日と照らして断り、使える日は出典に残して「あした」をその日から数える', async () => {
+    const TEXT = 'あした、体操服を持ってきてください。';
+    const calls: ExtractRequest[] = [];
+    // 手で書いた読み取り（モデルの出力ではない）：「あした」だけで日付は無い。
+    const reader: NoticeReader = async (request) => {
+      calls.push(request);
+      return {
+        output: {
+          items: [
+            {
+              id: 'i1',
+              sentenceIds: [request.source.sentences[0]?.id ?? ''],
+              kind: 'belongings',
+              written: TEXT,
+              date: null,
+              writtenWeekday: 'none',
+              startTime: null,
+              endTime: null,
+              what: '体操服',
+              dayType: null,
+              deadline: null,
+              audience: null,
+              place: null,
+              relativeDay: 'tomorrow',
+              conditionNodeId: null,
+              inferred: false,
+              familyAction: false,
+              shape: 'none',
+              effects: [],
+            },
+          ],
+          unknowns: [],
+          conditions: [],
+          irrelevantSentenceIds: [],
+          ambiguities: [],
+        },
+        model: 'test-model',
+        promptVersion: 'test',
+        inputHash: 'test',
+        usage: { input_tokens: 0, output_tokens: 0 },
+      };
+    };
+    const t = await setup({ reader });
+    // 家庭の時計は 11/25 19:40（日本）。それより後の日・60 日より前・形の誤りは、外へ送らずに断る。
+    for (const writtenOn of ['2026-11-26', '2026-09-25', 'yesterday']) {
+      const refused = await t.call('/api/notices', 'b', {
+        ...notice(`bad-${writtenOn}`, TEXT),
+        writtenOn,
+      });
+      expect(refused.status, writtenOn).toBe(400);
+      expect(refused.body.error).toBe('badWrittenOn');
+    }
+    expect(calls).toHaveLength(0);
+    const read = await t.call('/api/notices', 'b', {
+      ...notice('written-yesterday', TEXT),
+      writtenOn: '2026-11-24',
+    });
+    expect(read.status).toBe(200);
+    expect(calls.map((c) => c.source.writtenOn)).toEqual(['2026-11-24']);
+    // 保存した事象（敏感な中身を分けて置き、戻した物）にも、書かれた日が残る。
+    const stored = (await t.all()).find(
+      (e) => e.type === 'noticeReceived' && e.source.id === read.body.sourceId,
+    );
+    expect(stored?.type === 'noticeReceived' ? stored.source.writtenOn : undefined).toBe(
+      '2026-11-24',
+    );
+    // 前の日に書かれた連絡帳の「あした」は、入れた日（11/25）。確かな読み取り。
+    expect(
+      read.body.view.items.find((entry) => entry.item.id === `${read.body.sourceId}:i1`)?.item,
+    ).toMatchObject({ evidence: 'stated', interpretation: { date: '2026-11-25' } });
+  });
+
   it('読み取り中の別の変更はロックせず受け、古い前提の結果は足さない', async () => {
     const pending = gated(makeReader());
     const t = await setup({ reader: pending.read });

@@ -25,6 +25,7 @@ import {
   type WayIdeasContext,
   WayIdeasOutput,
   wayIdeasContext,
+  writtenOnProblem,
 } from '@maniau/core';
 import { computePlan, currentItems, foldEvents } from '@maniau/core/engine';
 import { and, count, eq, gte, like } from 'drizzle-orm';
@@ -68,7 +69,9 @@ type Failure =
         | 'limit'
         | 'uncertain'
         | 'gone'
-        | 'needGone';
+        | 'needGone'
+        /** 書かれた日が使えない（届いた日より後か、前すぎる）。読まず、数えない。 */
+        | 'badWrittenOn';
     }
   | { status: 'failed'; reason: string };
 
@@ -97,6 +100,8 @@ interface Input {
 
 interface NoticeInput extends Input {
   sender: SourceSender;
+  /** お知らせが書かれた日（YYYY-MM-DD。家族が選んだ時だけ）。「あした」はこの日から数える。 */
+  writtenOn?: string;
 }
 
 interface StoredProposal {
@@ -437,8 +442,24 @@ export function familyInput(options: FamilyInputOptions) {
     recheck: Recheck,
   ): Promise<FamilyNoticeResult> {
     const key = operationKey(member, input.operationId);
-    const digest = sha256Of({ kind: 'notice', text: input.text, sender: input.sender });
+    // 書かれた日も中身に数える（無ければ前と同じ要約。undefined の欄は要約に入らない）。
+    const digest = sha256Of({
+      kind: 'notice',
+      text: input.text,
+      sender: input.sender,
+      writtenOn: input.writtenOn,
+    });
     const sourceId = sourceIdFor(member, input.operationId);
+    // 書かれた日は、家庭の時区の今日（届いた日）と照らす。使えなければ、予約せず外へも送らない。
+    if (
+      input.writtenOn !== undefined &&
+      writtenOnProblem(
+        input.writtenOn,
+        nowIn(member.timeZone, options.clock?.()),
+        member.timeZone,
+      ) !== undefined
+    )
+      return { status: 'badWrittenOn' };
     const reserved = await reserve(member, key, digest, (events, at) => {
       const state = foldEvents(events);
       const title = titleOf(input.text);
@@ -446,6 +467,7 @@ export function familyInput(options: FamilyInputOptions) {
         id: sourceId,
         version: 1,
         receivedAt: at,
+        ...(input.writtenOn === undefined ? {} : { writtenOn: input.writtenOn }),
         sender: input.sender,
         language: /[\u3040-\u30ff\u4e00-\u9fff]/.test(input.text) ? 'ja' : 'en',
         medium: 'text',
@@ -525,6 +547,7 @@ export function familyInput(options: FamilyInputOptions) {
       const { extraction } = toExtraction(output, request.source, {
         priorItems: request.priorItems,
         priorUnknowns: request.priorUnknowns,
+        timeZone: member.timeZone,
       });
       if (!(await recheck())) {
         await finish(member, key, digest, 'forbidden');

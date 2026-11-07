@@ -39,6 +39,7 @@ import {
   validateHousehold,
   type WayIdeasContext,
   wayIdeasContext,
+  writtenOnProblem,
 } from '@maniau/core';
 import { computePlan, currentItems, foldEvents } from '@maniau/core/engine';
 import {
@@ -328,6 +329,11 @@ export interface NoticeInput {
   sender: SourceSender;
   /** 写真・PDF から書き起こし、家族が見比べて直した文なら photo。 */
   medium?: Source['medium'];
+  /**
+   * お知らせが書かれた日（YYYY-MM-DD。家族が選んだ時だけ）。「あした」はこの日から数える。届いた日（家庭の
+   * 時区）より後と、WRITTEN_ON_MAX_DAYS_BEFORE 日より前は断る。
+   */
+  writtenOn?: string;
   /** 画面が付ける操作の ID。届いたか分からない時の送り直しで、二度読まない・二度足さない。 */
   operationId: string;
 }
@@ -336,6 +342,8 @@ export type NoticeResult =
   | { status: 'ok'; view: View; sourceId: string; check: ReadCheck }
   /** このデモで読める数・量、または今日このサーバー（のこのプロセス）で読める数を使い切った。 */
   | { status: 'limit' }
+  /** 書かれた日が使えない（届いた日より後か、前すぎる）。読まず、数えない。 */
+  | { status: 'badWrittenOn' }
   /** このデモで読んでいる途中か、サーバー全体で読む数がいっぱい。少し待てば読める。 */
   | { status: 'busy' }
   /** 使う人がこの家族の大人でない。 */
@@ -453,6 +461,8 @@ function contextOf(events: readonly DomainEvent[], memberId: string, fallback: D
   return {
     at:
       state.clock === undefined ? fallback : formatDateTime(state.clock, state.household.timeZone),
+    // 届いた日（書かれた日の確かめと、「あした」の基準）を決める家庭の時区。
+    timeZone: state.household.timeZone,
     items: currentItems(state).map((c) => c.item),
     unknowns: [...state.extractions.values()]
       .filter((e) => !state.withdrawnSources.has(e.sourceId))
@@ -688,12 +698,19 @@ export function demoSessions(
     // 前提を取る間にデモが消えたら、外に送らない（結果を返せないのに、送らないように）。
     if (!alive(id, session)) return undefined;
     if (!prior) return { status: 'invalid' };
+    // 書かれた日は、デモの時計の届いた日（家庭の時区）と照らす。使えなければ読まない。
+    if (
+      input.writtenOn !== undefined &&
+      writtenOnProblem(input.writtenOn, prior.at, prior.timeZone) !== undefined
+    )
+      return { status: 'badWrittenOn' };
     const sourceId = `u${session.readings}`;
     const title = titleOf(input.text);
     const source: Source = {
       id: sourceId,
       version: 1,
       receivedAt: prior.at,
+      ...(input.writtenOn === undefined ? {} : { writtenOn: input.writtenOn }),
       sender: input.sender,
       language: languageOf(input.text),
       medium: input.medium ?? 'text',
@@ -714,6 +731,7 @@ export function demoSessions(
       ({ extraction } = toExtraction(result.output, source, {
         priorItems: prior.items,
         priorUnknowns: prior.unknowns,
+        timeZone: prior.timeZone,
       }));
     } catch (error) {
       // 形の合わない出力（検査に通らない物）も、読めなかったとして何も足さない。
@@ -1541,8 +1559,17 @@ export function demoSessions(
     ): Promise<NoticeResult | undefined> {
       const session = touch(id);
       if (!session) return undefined;
+      // 書かれた日も中身に数える（同じ操作 ID で別の日を送れば断る）。無い時は前と同じ要約。
       const digest = createHash('sha256')
-        .update(JSON.stringify([memberId, input.sender, input.text, input.medium ?? 'text']))
+        .update(
+          JSON.stringify([
+            memberId,
+            input.sender,
+            input.text,
+            input.medium ?? 'text',
+            ...(input.writtenOn === undefined ? [] : [input.writtenOn]),
+          ]),
+        )
         .digest('hex');
       // 同じ操作の送り直しは、数の上限より先に見る（最後の一回の返事が届かなかった時も、結果を返す）。
       const previous = session.operations.get(input.operationId);
@@ -1580,7 +1607,11 @@ export function demoSessions(
       session.operations.set(input.operationId, { digest, state: 'reading' });
       try {
         const result = await readNotice(id, session, memberId, input, digest, read);
-        if (result?.status === 'invalid' || result?.status === 'limit') {
+        if (
+          result?.status === 'invalid' ||
+          result?.status === 'limit' ||
+          result?.status === 'badWrittenOn'
+        ) {
           session.readings -= 1;
           if (daily.day === day) daily.count -= 1;
         }
