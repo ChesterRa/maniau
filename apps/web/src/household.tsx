@@ -172,9 +172,13 @@ function sourceText(ctx: Ctx, place: Place): string | undefined {
 export function deadlineText(ctx: Ctx, rule: DeadlineRule): string {
   switch (rule.type) {
     case 'daysBefore':
-      return ctx.t('household.ways.daysBefore', { days: rule.days, at: rule.at });
+      return ctx.t('household.ways.daysBefore', { count: rule.days, days: rule.days, at: rule.at });
     case 'businessDaysBefore':
-      return ctx.t('household.ways.businessDaysBefore', { days: rule.days, at: rule.at });
+      return ctx.t('household.ways.businessDaysBefore', {
+        count: rule.days,
+        days: rule.days,
+        at: rule.at,
+      });
     case 'weekdayOfPreviousWeek':
       return ctx.t('household.ways.previousWeek', {
         weekday: weekdayName(ctx, rule.weekday),
