@@ -53,6 +53,7 @@ import {
   isValidDateTime,
   type LocalDate,
   localDateOf,
+  NEXT_DAY_WORDS,
   toEpochMinutes,
   zonedToEpochMinutes,
 } from '../time';
@@ -286,14 +287,11 @@ export function escortFrameOf(state: EngineState, item: Item): EscortFrame | und
   return { childId: child.id, legs };
 }
 
-/** 次の日を言う言葉（終わりが次の日かもしれない）。 */
-const NEXT_DAY = /翌日|翌朝|翌晩|次の日|次の朝|明朝|next day|following day/i;
-
 /** 事項の引用か、指した元の文（引用は文の一部のことがある）に、次の日を言う言葉があるか。 */
 function nextDayWritten(state: EngineState, item: Item): boolean {
   const sentences = state.sources.get(item.sourceId)?.sentences ?? [];
   const cited = sentences.filter((s) => item.sentenceIds.includes(s.id)).map((s) => s.text);
-  return [item.written, ...cited].some((text) => NEXT_DAY.test(text));
+  return [item.written, ...cited].some((text) => NEXT_DAY_WORDS.test(text));
 }
 
 /**

@@ -19,6 +19,7 @@ import {
   isValidLocalDate,
   localDateOf,
   type Member,
+  NEXT_DAY_WORDS,
   needStep,
   type OptionPlan,
   type PlanResult,
@@ -42,6 +43,7 @@ import {
 } from '@maniau/core';
 import type { TFunction } from 'i18next';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { MonthView, ViewSwitch } from './calendar';
 import { ChoiceClock } from './choice-clock';
 import { CareOptionAddCard, FactsCard } from './facts';
 import {
@@ -4133,19 +4135,111 @@ function requestId(): string {
 // ── よてい ──────────────────────────────
 
 type WeekSource = { sourceId: string; title: string; highlight: string[] };
-type WeekLine = {
+/** よていの一行の種類（お知らせの行事・作業・外へのお願い・手の決め時・子を見る手の欠け）。 */
+export type ScheduleKind = 'event' | 'task' | 'request' | 'deadline' | 'care' | 'when';
+/**
+ * 暦の印の色。attention＝要る事が決まっていない・確かめてほしい、deadline＝手の決め時、waiting＝返事の記録待ち、
+ * proposed＝まだ引き受けていない作業、candidate＝いつにするかの候補の日（まだ決めていない）、settled＝引き受け済みの
+ * 作業・OK の返事の記録、event＝お知らせの行事・決めた日。条件しだいは色でなく conditional で別に持つ（引き受けや
+ * 返事の状態と同時に成り立つので、どちらかで隠さない。11/7 見直しの指摘）。
+ */
+export type ScheduleTone =
+  | 'attention'
+  | 'deadline'
+  | 'waiting'
+  | 'proposed'
+  | 'candidate'
+  | 'settled'
+  | 'event';
+export type WeekLine = {
   key: string;
+  kind: ScheduleKind;
+  tone: ScheduleTone;
+  /** 条件しだいの事（条件が成り立たなければ要らない）。 */
+  conditional?: boolean;
   text: string;
   status?: string;
   attention?: boolean;
   sources?: WeekSource[];
+  /** この行から続ける所（決める・いつにするか）。行けない行には付けない。 */
+  action?: { label: string; route: Route };
 };
 
-export function WeekScreen({ ctx }: { ctx: Ctx }) {
+/**
+ * 行事・テストの書かれた時刻の読み方（よていの行と暦の書き出しで同じ物を使う）。読み取りは始まりの日と、始まり・
+ * 終わりの時刻だけを持つので、終わりの日はエンジンの決め方（endOf）と同じに見る：終わりが始まりより後で、引用・
+ * 元の文に「翌日」などが無い時だけ同じ日。ほかは終わりの日を決めず、元の文で確かめてもらう（9:00 から翌日 10:00
+ * までを、同じ日の 9:00–10:00 にしない。終わりの時刻が無い「22:00 から翌朝まで」も同じ。11/7 見直しの指摘）。
+ * - none：時刻が書かれていない（その日の予定）。
+ * - unsure：始まりが分からない（読み落としたかもしれない・終わりだけ書かれている）。
+ * - from：始まりは分かる。endUnsure は、終わりを読み落としたか、終わりの日を決められない時。
+ * - span：同じ日の始まりと終わり。
+ */
+export type ItemTimes =
+  | { kind: 'none' }
+  | { kind: 'unsure' }
+  | { kind: 'from'; start: string; endUnsure: boolean }
+  | { kind: 'span'; start: string; end: string };
+
+export function itemTimes(ctx: Pick<Ctx, 'sources'>, item: Item): ItemTimes {
+  const { startTime, endTime, startTimeUnconfirmed, endTimeUnconfirmed } = item.interpretation;
+  if (startTimeUnconfirmed) return { kind: 'unsure' };
+  if (!startTime) return endTime || endTimeUnconfirmed ? { kind: 'unsure' } : { kind: 'none' };
+  if (endTimeUnconfirmed) return { kind: 'from', start: startTime, endUnsure: true };
+  const sentences = ctx.sources.get(item.sourceId)?.sentences ?? [];
+  const cited = sentences.filter((s) => item.sentenceIds.includes(s.id)).map((s) => s.text);
+  const nextDay = [item.written, ...cited].some((text) => NEXT_DAY_WORDS.test(text));
+  // 終わりの時刻が無くても、「翌朝まで」のように次の日に及ぶと書かれていれば、終わりを確かめてもらう（エンジンも
+  // 迎えの日を決めない。core の escort の試験と同じ場面。11/7 見直しの指摘）。
+  if (!endTime) return { kind: 'from', start: startTime, endUnsure: nextDay };
+  return endTime > startTime && !nextDay
+    ? { kind: 'span', start: startTime, end: endTime }
+    : { kind: 'from', start: startTime, endUnsure: true };
+}
+
+/** 事項の締切（書かれた物だけ）。time は時刻まで書かれた時（日だけの締切の朝 8:00 は目安なので false）。 */
+export function itemDeadline(item: Item): { at: string; time: boolean } | undefined {
+  const deadline = item.interpretation.deadline;
+  if (deadline === undefined) return undefined;
+  return { at: deadline, time: item.interpretation.deadlineDayOnly !== true };
+}
+
+/**
+ * 事項をよていに置く日。締切の事項は、締切の日（日付の欄が無く、締切の欄だけの読み取りもある。11/7 見直しの
+ * 指摘）。ほかは書かれた日付。
+ */
+export function itemDay(ctx: Pick<Ctx, 'tz'>, item: Item): string | undefined {
+  const deadline = item.kind === 'deadline' ? itemDeadline(item) : undefined;
+  return deadline ? localDate(deadline.at, ctx.tz) : item.interpretation.date;
+}
+
+/**
+ * 持ち物・提出物の期限が、お知らせに書かれた締切か（時刻まで・日だけ）、こちらの目安か（使う日・行事の日の朝
+ * 8:00。エンジンが間に合わなくならない側で置く）。計画の by は、書かれた締切がある時だけ、その締切（エンジン）。
+ */
+export function prepDeadline(ctx: Ctx, requirement: Requirement): 'time' | 'day' | 'estimate' {
+  const written = ctx.items.find(
+    ({ item }) =>
+      requirement.basis.itemIds.includes(item.id) && item.interpretation.deadline !== undefined,
+  )?.item.interpretation;
+  if (!written) return 'estimate';
+  return written.deadlineDayOnly ? 'day' : 'time';
+}
+
+/**
+ * よていの行を組む。日・週・月の見え方で同じ物を使い、計画の写しを別に持たない（11/7 作り手 c97aed20：月の暦を
+ * 足すため、WeekScreen の中から外へ出した）。
+ */
+export function scheduleLines(ctx: Ctx) {
   const today = localDate(ctx.now, ctx.tz);
-  // きょうから七日と、その後の七日（暦の週にしない。日曜の夜に、終わる週の空の日を並べない）。
-  const days = Array.from({ length: 7 }, (_, i) => addDaysIso(today, i));
-  const later = Array.from({ length: 7 }, (_, i) => addDaysIso(today, i + 7));
+  // 条件しだいの事は、月の格子の点線だけでなく、行そのものにも書く（週の行・未定の一覧で落とさない。11/7 見直しの
+  // 指摘）。状態の文がある行はその後ろに足し、無い行は「条件しだい」だけを書く。
+  const withConditional = (conditional: boolean, status?: string): string | undefined =>
+    !conditional
+      ? status
+      : status
+        ? ctx.t('week.statusConditional', { status })
+        : ctx.t('week.conditionalOnly');
   // 決め時を出す手：お勧め・予備と、返事を待つ間は、選んでいない手のうち次に消える物（断られた時の次の手）。
   const deadlineKeys = new Set<string>();
   for (const arrangement of ctx.plan.arrangements) {
@@ -4256,15 +4350,24 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
     if (task.timeUnconfirmed) status = ctx.t('week.statusTimeUnconfirmed', { status });
     if (task.turnUnconfirmed) status = ctx.t('week.statusTurnUnconfirmed', { status });
     if (isBackup(task.basis)) status = ctx.t('week.statusBackup', { status });
+    const attention =
+      task.reconfirm === true ||
+      task.timeUnconfirmed === true ||
+      task.turnUnconfirmed === true ||
+      needsOwner(task);
     return {
       key: `task:${task.key}`,
+      kind: 'task',
+      conditional: basisItems.some((item) => item.conditional),
+      tone:
+        attention || basisItems.some((item) => !item.trusted)
+          ? 'attention'
+          : task.commitment === 'accepted'
+            ? 'settled'
+            : 'proposed',
       text,
       status,
-      attention:
-        task.reconfirm === true ||
-        task.timeUnconfirmed === true ||
-        task.turnUnconfirmed === true ||
-        needsOwner(task),
+      attention,
       sources: sourcesFor(task.basis.itemIds),
     };
   };
@@ -4315,6 +4418,14 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
       status = ctx.t('week.statusBackup', { status });
     return {
       key: `request:${request.requestId}`,
+      kind: 'request',
+      conditional: request.conditional === true,
+      // 前のお願いに OK の記録があっても、時間の変更の返事を待つ間は「待ち」にする。
+      tone: request.needsCheck
+        ? 'attention'
+        : request.state === 'confirmed' && !waitingForChange
+          ? 'settled'
+          : 'waiting',
       text,
       status,
       attention: request.needsCheck === true,
@@ -4326,13 +4437,50 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
   const linesFor = (date: string) => {
     const lines: WeekLine[] = [];
     for (const { item, live, conditional, trusted, when: condition } of ctx.items) {
-      if (!live || item.interpretation.date !== date) continue;
-      if (item.kind === 'event' || item.kind === 'dayChange' || item.kind === 'test') {
-        const what = item.interpretation.what ?? item.written;
+      if (!live || itemDay(ctx, item) !== date) continue;
+      const due = item.kind === 'deadline';
+      if (due || item.kind === 'event' || item.kind === 'dayChange' || item.kind === 'test') {
+        const written = item.interpretation.what ?? item.written;
+        // お知らせの締切（申し込みなど）は、何の締切か分かるよう頭に書く（11/7：よていに出していなかった）。
+        // 時刻は書かれた時だけ書く（日だけの締切の朝 8:00 は目安）。
+        const deadline = itemDeadline(item);
+        // 行事・テストは、書かれた始まり（と、同じ日と読める終わり）を書く。終わりを作らない。始まりや終わりの
+        // 日時を決められない時は、元の文で確かめてもらう（時刻が書かれていないとは言わない）。
+        const clock = (at: string) =>
+          time(ctx, formatDateTime(zonedToEpochMinutes(date, at, ctx.tz), ctx.tz));
+        const times: ItemTimes =
+          item.kind === 'event' || item.kind === 'test' ? itemTimes(ctx, item) : { kind: 'none' };
+        const what = due
+          ? deadline?.time
+            ? ctx.t('week.prepBy', {
+                what: ctx.t('week.prep.deadline', { what: written }),
+                time: time(ctx, deadline.at),
+              })
+            : ctx.t('week.prep.deadline', { what: written })
+          : times.kind === 'unsure'
+            ? ctx.t('week.itemTimeUnsure', { what: written })
+            : times.kind === 'span'
+              ? ctx.t('week.itemSpan', {
+                  what: written,
+                  from: clock(times.start),
+                  to: clock(times.end),
+                })
+              : times.kind === 'from'
+                ? ctx.t(times.endUnsure ? 'week.itemEndUnsure' : 'week.itemFrom', {
+                    what: written,
+                    from: clock(times.start),
+                  })
+                : written;
+        // 時刻を決められない行事は、確かめる事として印を付ける（月の印・未定の一覧で落とさない。事項の確かさ
+        // trusted とは別。11/7 見直しの指摘）。
+        const timeUnsure = times.kind === 'unsure' || (times.kind === 'from' && times.endUnsure);
         const when = whenText(ctx, condition) ?? ctx.t('say.conditional');
         // 確かでない予定を、決まった予定と同じ形で見せない。確かめていない上に条件しだいなら、両方を書く。
         lines.push({
           key: `item:${item.id}`,
+          kind: 'event',
+          tone: !trusted || timeUnsure ? 'attention' : 'event',
+          conditional,
           text: !trusted
             ? conditional
               ? ctx.t('week.unconfirmedConditional', { what, when })
@@ -4340,8 +4488,121 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
             : conditional
               ? ctx.t('week.conditional', { what, when })
               : what,
-          attention: !trusted || conditional,
+          attention: !trusted || conditional || timeUnsure,
           sources: sourcesFor([item.id]),
+        });
+      }
+    }
+    // 持ち物・提出物：日付はお知らせの行事から計画が出す（延期すれば動く）。家にあるか・買ったかを添える。
+    for (const requirement of ctx.plan.requirements) {
+      if (!requirement.live) continue;
+      if (requirement.kind !== 'belongings' && requirement.kind !== 'submission') continue;
+      const at = requirement.by ?? requirement.date;
+      if (!at || localDate(at, ctx.tz) !== date) continue;
+      const ready =
+        requirement.kind === 'belongings' &&
+        (requirement.atHome === 'yes' || requirement.bought === true);
+      const status =
+        requirement.kind !== 'belongings'
+          ? undefined
+          : requirement.bought
+            ? ctx.t('week.bringBought')
+            : requirement.atHome === 'yes'
+              ? ctx.t('week.bringAtHome')
+              : requirement.atHome === 'no'
+                ? ctx.t('week.bringMissing')
+                : ctx.t('week.bringUnknown');
+      const what = ctx.t(`week.prep.${requirement.kind}`, { what: requirement.what });
+      // 時刻は、お知らせに書かれた締切の時だけ書く。書かれていない朝（8:00）はこちらの目安で、書かれた時刻として
+      // 見せない（01-model「日付の書き方」。11/7 見直しの指摘）。
+      const stated = prepDeadline(ctx, requirement);
+      lines.push({
+        key: `prep:${requirement.key}`,
+        kind: 'event',
+        conditional: requirement.conditional === true,
+        tone: requirement.kind === 'belongings' ? (ready ? 'settled' : 'attention') : 'event',
+        text: !requirement.by
+          ? what
+          : stated === 'time'
+            ? ctx.t('week.prepBy', { what, time: time(ctx, requirement.by) })
+            : stated === 'day'
+              ? ctx.t('week.prepByDay', { what })
+              : ctx.t('week.prepEstimate', { what }),
+        status: withConditional(requirement.conditional === true, status),
+        attention: requirement.kind === 'belongings' && !ready,
+        sources: sourcesFor(requirement.basis.itemIds),
+      });
+    }
+    // いつにするか：決めた日はその日に出す（日を決めても、やり方が決まっていなければ決まったとは言わない）。
+    // 決めていなければ、候補の日を候補として出す（確かな日に見せない。11/7 見直しの反例）。
+    for (const requirement of ctx.plan.requirements) {
+      if (!requirement.live || requirement.kind !== 'need' || !requirement.when) continue;
+      const when = requirement.when;
+      const action = {
+        label: ctx.t('week.openWhen'),
+        route: { name: 'when', key: requirement.key } as Route,
+      };
+      const sources = sourcesFor(requirement.basis.itemIds);
+      const span = (candidate: (typeof when.candidates)[number]) =>
+        candidate.start && candidate.end
+          ? ctx.t('week.whenSpan', {
+              from: time(ctx, candidate.start),
+              to: time(ctx, candidate.end),
+            })
+          : '';
+      const chosen = when.chosen
+        ? when.candidates.find((candidate) => candidate.id === when.chosen?.candidateId)
+        : undefined;
+      const conditional = requirement.conditional === true;
+      if (chosen) {
+        if (chosen.date !== date) continue;
+        const arrangement = ctx.plan.arrangements.find(
+          (entry) => entry.live && entry.requirementKey === requirement.key,
+        );
+        const stale = when.chosen?.stale === true;
+        // 決めた日が、記録した手が離せない時間と重なる（きょうの「いつにするか」と同じ。重ならないとは言わない）。
+        const busy = chosen.unavailable !== undefined;
+        const noWay = arrangement !== undefined && arrangement.inUseOptionKey === undefined;
+        lines.push({
+          key: `when:${requirement.key}`,
+          kind: 'when',
+          tone: stale || busy || noWay ? 'attention' : 'event',
+          conditional,
+          text: ctx.t('week.whenChosen', { what: requirement.what, span: span(chosen) }),
+          status: withConditional(
+            conditional,
+            ctx.t(
+              stale
+                ? 'week.statusWhenStale'
+                : busy
+                  ? 'week.statusWhenBusy'
+                  : noWay
+                    ? 'week.statusWhenNoWay'
+                    : 'week.statusWhenChosen',
+            ),
+          ),
+          attention: stale || busy || noWay,
+          sources,
+          action,
+        });
+        continue;
+      }
+      for (const candidate of when.candidates) {
+        if (candidate.date !== date) continue;
+        lines.push({
+          key: `when:${requirement.key}:${candidate.id}`,
+          kind: 'when',
+          tone: 'candidate',
+          conditional,
+          text: ctx.t('week.whenCandidate', { what: requirement.what, span: span(candidate) }),
+          status: withConditional(
+            conditional,
+            ctx.t(
+              candidate.unavailable ? 'week.statusWhenCandidateBusy' : 'week.statusWhenCandidate',
+            ),
+          ),
+          sources,
+          action,
         });
       }
     }
@@ -4361,8 +4622,22 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
           arrangement.kind === 'purchase'
             ? ctx.plan.tasks.find((t) => t.key === option.taskKeys[0])
             : undefined;
+        // 決める画面へ続けるのは、子の居場所と「すること」だけ。買い物は決める画面を持たない（子の居場所の画面に
+        // 入れない。11/7 見直しの反例）。買う作業は、その日の作業の行と、きょうの札で引き受ける。
+        const route: Route | undefined =
+          arrangement.kind === 'need'
+            ? { name: 'need', key: arrangement.key }
+            : arrangement.kind === 'childCare'
+              ? { name: 'decide', key: arrangement.key }
+              : undefined;
+        const conditional = arrangement.conditional === true;
         lines.push({
           key: `deadline:${option.key}`,
+          kind: 'deadline',
+          tone: 'deadline',
+          conditional,
+          status: withConditional(conditional),
+          ...(route ? { action: { label: ctx.t('week.openDecide'), route } } : {}),
           text: ctx.t('week.deadline', {
             option: buy ? taskTitle(ctx, buy) : optionTitle(ctx, option),
           }),
@@ -4373,18 +4648,94 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
         });
       }
     }
+    // 子を見る手：選んだ手がまだ無い日と、今使う手でも見てもらえない時間を、その日に出す。返事待ちはお願いの行が示す。
+    // 手を選んだことを「見てもらえる」とは言わない（inUseOptionKey は返事待ちの間も付く。11/7 見直しの指摘）。
+    for (const arrangement of ctx.plan.arrangements) {
+      if (!arrangement.live || arrangement.kind !== 'childCare') continue;
+      if (localDate(arrangement.start, ctx.tz) !== date) continue;
+      const child = nameOf(ctx.household, arrangement.childId) || ctx.t('week.child');
+      const sources = sourcesFor(
+        ctx.plan.requirements.find((entry) => entry.key === arrangement.requirementKey)?.basis
+          .itemIds ?? [],
+      );
+      const withCondition = (status: string) =>
+        arrangement.conditional ? ctx.t('week.statusConditional', { status }) : status;
+      if (arrangement.inUseOptionKey === undefined) {
+        lines.push({
+          key: `care:${arrangement.key}`,
+          kind: 'care',
+          tone: 'attention',
+          conditional: arrangement.conditional === true,
+          action: {
+            label: ctx.t('week.openDecide'),
+            route: { name: 'decide', key: arrangement.key },
+          },
+          text: ctx.t('week.careUnchosen', {
+            child,
+            from: time(ctx, arrangement.start),
+            to: time(ctx, arrangement.end),
+          }),
+          status: withCondition(
+            ctx.t(
+              arrangement.status === 'infeasible' ? 'week.statusCareNone' : 'week.statusCareChoose',
+            ),
+          ),
+          attention: true,
+          sources,
+        });
+        continue;
+      }
+      // 今の手で受け持てない・確かめられない時間（「だれも見ない」とは言わない。11/7 見直しの指摘）。
+      const uncovered = careNotCovered(ctx, arrangement);
+      if (uncovered) {
+        lines.push({
+          key: `care:${arrangement.key}:gaps`,
+          kind: 'care',
+          tone: 'attention',
+          conditional: arrangement.conditional === true,
+          action: {
+            label: ctx.t('week.openDecide'),
+            route: { name: 'decide', key: arrangement.key },
+          },
+          text: ctx.t(
+            uncovered.unusable
+              ? 'week.careUnusable'
+              : uncovered.unknown
+                ? 'week.careUnsure'
+                : 'week.careNotCovered',
+            { child, option: uncovered.option, gaps: uncovered.gaps },
+          ),
+          status: withCondition(ctx.t('week.statusCareGap')),
+          attention: true,
+          sources,
+        });
+      }
+    }
     return lines;
   };
-  const laterWithLines = later
-    .map((date) => ({ date, lines: linesFor(date) }))
-    .filter((entry) => entry.lines.length > 0);
-  const showLine = (line: WeekLine) => (
-    <span key={line.key} className="flex flex-col gap-0.5 py-1">
+  return { today, linesFor, unplacedTasks, undatedRequests };
+}
+export type ScheduleLines = ReturnType<typeof scheduleLines>;
+
+/** よていの一行：文、状態、元の文へ戻る口。週と月で同じ形。 */
+export function ScheduleLine({ ctx, line }: { ctx: Ctx; line: WeekLine }) {
+  return (
+    <span className="flex flex-col gap-0.5 py-1">
       <span className="text-base leading-snug break-words">{line.text}</span>
       {line.status && (
         <span className={`text-sm font-bold ${line.attention ? 'text-warn' : 'text-sub'}`}>
           {line.status}
         </span>
+      )}
+      {/* 決める・いつにするかへ、この行から続ける（行けない行には出さない）。 */}
+      {line.action && (
+        <button
+          type="button"
+          className="min-h-10 self-start rounded-lg border border-accent-line px-3 text-left text-[15px] font-bold text-accent"
+          onClick={() => line.action && ctx.go(line.action.route)}
+        >
+          {line.action.label}
+        </button>
       )}
       {line.sources?.map((source) => (
         <button
@@ -4403,66 +4754,92 @@ export function WeekScreen({ ctx }: { ctx: Ctx }) {
       ))}
     </span>
   );
+}
+
+export function WeekScreen({ ctx }: { ctx: Ctx }) {
+  // 週（きょうから七日と、その後の七日）と、月の暦を切り替える。始めは週（すぐ動く事を先に）。
+  const [view, setView] = useState<'week' | 'month'>('week');
+  const schedule = scheduleLines(ctx);
+  const { today, linesFor, unplacedTasks, undatedRequests } = schedule;
+  // きょうから七日と、その後の七日（暦の週にしない。日曜の夜に、終わる週の空の日を並べない）。
+  const days = Array.from({ length: 7 }, (_, i) => addDaysIso(today, i));
+  const later = Array.from({ length: 7 }, (_, i) => addDaysIso(today, i + 7));
+  const laterWithLines = later
+    .map((date) => ({ date, lines: linesFor(date) }))
+    .filter((entry) => entry.lines.length > 0);
+  const showLine = (line: WeekLine) => <ScheduleLine key={line.key} ctx={ctx} line={line} />;
   return (
     <>
       <Header
-        eyebrow={`${day(ctx, days[0] ?? today)} – ${day(ctx, days[6] ?? today)}`}
+        eyebrow={
+          view === 'week'
+            ? `${day(ctx, days[0] ?? today)} – ${day(ctx, days[6] ?? today)}`
+            : ctx.t('calendar.eyebrow')
+        }
         title={ctx.t('week.title')}
       />
       <Main>
-        <Text quiet>{ctx.t('week.guide')}</Text>
-        <Card className="gap-0 px-1.5 py-2">
-          {days.map((date) => {
-            const lines = linesFor(date);
-            const isToday = date === today;
-            return (
-              <div
-                key={date}
-                className={`flex gap-3 rounded-[14px] px-2.5 py-2 ${isToday ? 'bg-accent-soft' : ''}`}
-              >
-                <span className="flex w-12 flex-none flex-col items-center leading-tight">
-                  <span className="font-round text-xl font-bold tabular-nums">
-                    {Number(date.slice(8))}
-                  </span>
-                  <span className="text-[13px] text-sub">
-                    {day(ctx, date)
-                      .replace(/^.*（|）$/g, '')
-                      .replace(/^\w+ .*$/, (s) => s.split(' ')[0] ?? s)}
-                  </span>
-                  {isToday && (
-                    <span className="text-xs font-bold text-accent">{ctx.t('week.today')}</span>
-                  )}
-                </span>
-                <span className="flex min-w-0 flex-1 flex-col justify-center">
-                  {lines.length === 0 ? (
-                    <span className="text-[15px] text-sub">{ctx.t('week.none')}</span>
-                  ) : (
-                    lines.map(showLine)
-                  )}
-                </span>
-              </div>
-            );
-          })}
-        </Card>
-        <Card className="gap-0.5">
-          <Label tone="sub">{ctx.t('week.later')}</Label>
-          {laterWithLines.length === 0 ? (
-            <Text quiet>{ctx.t('week.none')}</Text>
-          ) : (
-            laterWithLines.map((d, index, all) => (
-              <Pair
-                key={d.date}
-                left={day(ctx, d.date)}
-                right={
-                  <span className="flex flex-col items-start text-left">
-                    {d.lines.map(showLine)}
-                  </span>
-                }
-                last={index === all.length - 1}
-              />
-            ))
-          )}
-        </Card>
+        <ViewSwitch ctx={ctx} view={view} onView={setView} />
+        {view === 'month' ? (
+          <MonthView ctx={ctx} schedule={schedule} />
+        ) : (
+          <>
+            <Text quiet>{ctx.t('week.guide')}</Text>
+            <Card className="gap-0 px-1.5 py-2">
+              {days.map((date) => {
+                const lines = linesFor(date);
+                const isToday = date === today;
+                return (
+                  <div
+                    key={date}
+                    className={`flex gap-3 rounded-[14px] px-2.5 py-2 ${isToday ? 'bg-accent-soft' : ''}`}
+                  >
+                    <span className="flex w-12 flex-none flex-col items-center leading-tight">
+                      <span className="font-round text-xl font-bold tabular-nums">
+                        {Number(date.slice(8))}
+                      </span>
+                      <span className="text-[13px] text-sub">
+                        {day(ctx, date)
+                          .replace(/^.*（|）$/g, '')
+                          .replace(/^\w+ .*$/, (s) => s.split(' ')[0] ?? s)}
+                      </span>
+                      {isToday && (
+                        <span className="text-xs font-bold text-accent">{ctx.t('week.today')}</span>
+                      )}
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col justify-center">
+                      {lines.length === 0 ? (
+                        <span className="text-[15px] text-sub">{ctx.t('week.none')}</span>
+                      ) : (
+                        lines.map(showLine)
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </Card>
+            <Card className="gap-0.5">
+              <Label tone="sub">{ctx.t('week.later')}</Label>
+              {laterWithLines.length === 0 ? (
+                <Text quiet>{ctx.t('week.none')}</Text>
+              ) : (
+                laterWithLines.map((d, index, all) => (
+                  <Pair
+                    key={d.date}
+                    left={day(ctx, d.date)}
+                    right={
+                      <span className="flex flex-col items-start text-left">
+                        {d.lines.map(showLine)}
+                      </span>
+                    }
+                    last={index === all.length - 1}
+                  />
+                ))
+              )}
+            </Card>
+          </>
+        )}
+        {/* 時刻を決めていない作業と、日を出せないお願いは、週でも月でも出す（月で見る時に落とさない）。 */}
         {unplacedTasks.length > 0 && (
           <Card>
             <Label tone="sub">{ctx.t('week.unplacedTitle')}</Label>

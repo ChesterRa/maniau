@@ -103,6 +103,12 @@ export function minutesBetween(a: DateTime, b: DateTime): number {
   return toEpochMinutes(b) - toEpochMinutes(a);
 }
 
+/**
+ * 次の日を言う言葉（書かれた終わりが次の日かもしれない：「9:00から翌日10:00まで」）。エンジンの終わりの日の
+ * 決め方と、画面の見せ方で同じ物を使う。
+ */
+export const NEXT_DAY_WORDS = /翌日|翌朝|翌晩|次の日|次の朝|明朝|next day|following day/i;
+
 /** 祝日のデータの範囲の外の日を問うた時に投げる。呼ぶ側は「まだ判断できない」にする。 */
 export class HolidayDataOutOfRange extends Error {
   constructor(readonly date: LocalDate) {
