@@ -817,12 +817,12 @@ export function DemoBar(props: {
 }) {
   const { t } = useTranslation();
   return (
-    <div className="mx-3 mt-2 flex flex-col gap-2 rounded-2xl border-[1.5px] border-dashed border-warn/60 bg-card px-3 py-2 text-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="font-bold text-warn">
+    <div className="mx-2 mt-2 flex flex-col gap-1 rounded-xl border border-line bg-card px-2 py-2 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-x-1">
+        <span className="text-[13px] font-semibold text-sub">
           {props.clock ? t('demo.clock', { time: props.clock }) : t('demo.label')}
         </span>
-        <span className="flex gap-x-3">
+        <span className="flex gap-x-2">
           <button type="button" onClick={props.onRestart} className="min-h-9 text-accent underline">
             {t('demo.restart')}
           </button>
@@ -869,10 +869,8 @@ export function DemoBar(props: {
       {/* 場面ごとの見どころ（初めて見る人が、どこを見ればよいか分かるように）。用意した状態の説明で、操作や
           時計を進めると変わるので、「場面のはじめ」と示す。 */}
       {props.stages.includes(props.stage) && (
-        <p className="leading-snug text-sub">
-          <span className="me-1.5 rounded bg-warn-soft px-1 font-bold text-warn">
-            {t('demo.guideLead')}
-          </span>
+        <p className="border-t border-line pt-1 leading-snug text-sub">
+          <span className="me-1.5 font-bold">{t('demo.guideLead')}</span>
           {t(`demo.guide.${props.stage}`)}
         </p>
       )}
