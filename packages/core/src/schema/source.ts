@@ -144,12 +144,18 @@ export const CorrectedInterpretation = Interpretation.extend({
 });
 export type CorrectedInterpretation = z.infer<typeof CorrectedInterpretation>;
 
-/** 直しを解釈に重ねる（null の「だれのため」は外す）。 */
+/**
+ * 直しを解釈に重ねる（null の「だれのため」は外す）。家族が始まり・終わりの時刻を入れたら、読み取りの「その時刻を
+ * 読み落としたかもしれない」印（startTimeUnconfirmed・endTimeUnconfirmed）を外す（家族が元の文で確かめて入れた
+ * 時刻なので。直した後も確かめを求め続けない。名前だけの直しでは外さない）。
+ */
 export function applyCorrection(
   base: Interpretation,
   correction: CorrectedInterpretation,
 ): Interpretation {
   const { forMemberId, ...rest } = { ...base, ...correction };
+  if (correction.startTime !== undefined) delete rest.startTimeUnconfirmed;
+  if (correction.endTime !== undefined) delete rest.endTimeUnconfirmed;
   return forMemberId === null || forMemberId === undefined ? rest : { ...rest, forMemberId };
 }
 

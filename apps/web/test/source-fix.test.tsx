@@ -334,6 +334,39 @@ describe('お知らせの直し', () => {
     },
   );
 
+  it('日付の欄を開いた後にもう一人が日付を直したら、前の日付を直しとして見せず、入れ直してもらう', async () => {
+    const { ctx, looked } = context();
+    await step(() => root.render(<SourcesScreen ctx={ctx} sourceId="n1" />));
+    const [entry] = ctx.items;
+    if (!entry) throw Error('事項が無い');
+    const moved = {
+      ...ctx,
+      items: [
+        {
+          ...entry,
+          item: {
+            ...entry.item,
+            interpretation: { ...entry.item.interpretation, date: '2026-12-14' },
+          },
+        },
+      ],
+    } as Ctx;
+    await step(() => root.render(<SourcesScreen ctx={moved} sourceId="n1" />));
+    const edit = [...host.querySelectorAll('details')].find((d) =>
+      d.querySelector('summary')?.textContent?.includes('読み取った日付を直す'),
+    );
+    expect(edit?.textContent).toContain('この事項は、開いた後に直されました。');
+    const look = () =>
+      [...(edit?.querySelectorAll('button') ?? [])].find(
+        (b) => b.textContent === '変わることを見る',
+      );
+    expect(look()?.disabled).toBe(true);
+    await step(() => button('今の内容を入れ直す')?.click());
+    expect(edit?.querySelector<HTMLInputElement>('input[type=date]')?.value).toBe('2026-12-14');
+    expect(edit?.textContent).not.toContain('この事項は、開いた後に直されました。');
+    expect(looked).toEqual([]);
+  });
+
   it('原文と読み取った日を見せ、別の日に直す時はその日で見直してから保存する', async () => {
     const { ctx, looked, sent } = context();
     await step(() => root.render(<SourcesScreen ctx={ctx} sourceId="n1" />));
@@ -683,4 +716,190 @@ describe('お知らせの直し', () => {
       ]);
     },
   );
+
+  // 11/7 体検：画面が日付の直ししか出していなかった。時刻・名前の直しと、一件だけ外すことを足した。
+  function withEvent(
+    lang: 'ja' | 'en' = 'ja',
+    times: { startTime?: string; endTime?: string } = {},
+  ) {
+    const made = context(lang);
+    const event = {
+      ...item,
+      kind: 'event',
+      written: '1年生の発表は9時20分からです。',
+      interpretation: {
+        date: '2026-12-05',
+        startTime: '09:20',
+        what: '1年生の発表',
+        ...times,
+      },
+    };
+    const ctx = {
+      ...made.ctx,
+      items: [{ item: event, live: true, conditional: false, trusted: true }],
+    };
+    return { ...made, ctx: ctx as unknown as Ctx };
+  }
+  const section = (summary: string) =>
+    [...host.querySelectorAll('details')].find((d) =>
+      d.querySelector('summary')?.textContent?.includes(summary),
+    );
+
+  it('時刻と名前を直す：変わることを見てから記録し、変えた欄だけを送る', async () => {
+    const { ctx, looked, sent } = withEvent();
+    await step(() => root.render(<SourcesScreen ctx={ctx} sourceId="n1" />));
+    const edit = section('時刻・名前を直す');
+    expect(edit?.textContent).toContain('読み取った名前：1年生の発表');
+    expect(edit?.textContent).toContain('時刻：09:20–');
+    const start = edit?.querySelector<HTMLInputElement>('input[type=time]');
+    if (!start) throw Error('時刻の欄が無い');
+    await step(() => enter(start, '10:00'));
+    const look = [...(edit?.querySelectorAll('button') ?? [])].find(
+      (b) => b.textContent === '変わることを見る',
+    );
+    await step(() => look?.click());
+    expect(looked).toContainEqual({
+      type: 'correctItem',
+      itemId: 'n1:i1',
+      interpretation: { startTime: '10:00' },
+    });
+    await step(() => button('この内容で記録する')?.click());
+    expect(sent).toContainEqual({
+      type: 'correctItem',
+      itemId: 'n1:i1',
+      interpretation: { startTime: '10:00' },
+      seen: { throughSeq: 7, changes: 'shown-hash' },
+    });
+  });
+
+  it('終わりが始まりより前なら、理由を出して見ることも記録もさせない', async () => {
+    const { ctx, looked } = withEvent();
+    await step(() => root.render(<SourcesScreen ctx={ctx} sourceId="n1" />));
+    const edit = section('時刻・名前を直す');
+    const [start, end] = [...(edit?.querySelectorAll<HTMLInputElement>('input[type=time]') ?? [])];
+    if (!start || !end) throw Error('時刻の欄が無い');
+    await step(() => enter(start, '10:00'));
+    await step(() => enter(end, '09:00'));
+    expect(edit?.textContent).toContain('終わりは、始まりより後にしてください（日をまたぐ');
+    const look = [...(edit?.querySelectorAll('button') ?? [])].find(
+      (b) => b.textContent === '変わることを見る',
+    );
+    expect(look?.disabled).toBe(true);
+    expect(looked).toEqual([]);
+  });
+
+  it('読み取った欄は空にできない：結びを空にして始まりを替える・名前を空にして時刻を替えると、見ることも記録もさせない', async () => {
+    const { ctx, looked } = withEvent('ja', { startTime: '10:00', endTime: '12:00' });
+    await step(() => root.render(<SourcesScreen ctx={ctx} sourceId="n1" />));
+    const edit = section('時刻・名前を直す');
+    const [start, end] = [...(edit?.querySelectorAll<HTMLInputElement>('input[type=time]') ?? [])];
+    const name = edit?.querySelector<HTMLInputElement>('input:not([type])');
+    if (!start || !end || !name) throw Error('欄が無い');
+    const look = () =>
+      [...(edit?.querySelectorAll('button') ?? [])].find(
+        (b) => b.textContent === '変わることを見る',
+      );
+    // 10–12 を、始まり 13:00・終わり空に：前の終わり 12:00 が残るので、記録させない。
+    await step(() => enter(start, '13:00'));
+    await step(() => enter(end, ''));
+    expect(edit?.textContent).toContain('読み取った時刻や名前を、空にはできません。');
+    expect(look()?.disabled).toBe(true);
+    // 終わりを戻しても、始まり 13:00 は前の終わり 12:00 より後：順が逆なので記録させない。
+    await step(() => enter(end, '12:00'));
+    expect(edit?.textContent).toContain('終わりは、始まりより後にしてください（日をまたぐ');
+    expect(look()?.disabled).toBe(true);
+    // 名前だけを空にして時刻を正しく替えても、記録させない。
+    await step(() => enter(end, '14:00'));
+    await step(() => enter(name, ''));
+    expect(edit?.textContent).toContain('読み取った時刻や名前を、空にはできません。');
+    expect(look()?.disabled).toBe(true);
+    // 名前を入れれば見られる（変えた欄だけを送る）。
+    await step(() => enter(name, '1年生の発表'));
+    expect(look()?.disabled).toBe(false);
+    await step(() => look()?.click());
+    expect(looked).toContainEqual({
+      type: 'correctItem',
+      itemId: 'n1:i1',
+      interpretation: { startTime: '13:00', endTime: '14:00' },
+    });
+  });
+
+  it('見た後に記録が進んだら見せ直し、開いた後にもう一人が直した事項は、前の値を直しとして送らない', async () => {
+    const { ctx, looked } = withEvent();
+    await step(() => root.render(<SourcesScreen ctx={ctx} sourceId="n1" />));
+    const edit = () => section('時刻・名前を直す');
+    const start = edit()?.querySelector<HTMLInputElement>('input[type=time]');
+    if (!start) throw Error('時刻の欄が無い');
+    await step(() => enter(start, '10:00'));
+    const look = () =>
+      [...(edit()?.querySelectorAll('button') ?? [])].find(
+        (b) => b.textContent === '変わることを見る',
+      );
+    await step(() => look()?.click());
+    expect(button('この内容で記録する')).toBeDefined();
+    // 見た後に、もう一人の記録で計画の版が進んだ：前の見た物で記録させない。
+    const later = { ...ctx, plan: { ...ctx.plan, throughSeq: 8 } } as Ctx;
+    await step(() => root.render(<SourcesScreen ctx={later} sourceId="n1" />));
+    expect(host.textContent).toContain('この画面を開いた後に家族の記録が変わりました。');
+    expect(button('この内容で記録する')).toBeUndefined();
+    // もう一人が同じ事項の名前を直した：開いた時の値を直しとして送らず、入れ直してもらう。
+    const [entry] = ctx.items;
+    if (!entry) throw Error('事項が無い');
+    const renamed = {
+      ...later,
+      items: [
+        {
+          ...entry,
+          item: {
+            ...entry.item,
+            interpretation: { ...entry.item.interpretation, what: '1年生の発表（直された）' },
+          },
+        },
+      ],
+    } as Ctx;
+    await step(() => root.render(<SourcesScreen ctx={renamed} sourceId="n1" />));
+    expect(edit()?.textContent).toContain('この事項は、開いた後に直されました。');
+    expect(look()?.disabled).toBe(true);
+    await step(() => button('今の内容を入れ直す')?.click());
+    expect(edit()?.querySelector<HTMLInputElement>('input:not([type])')?.value).toBe(
+      '1年生の発表（直された）',
+    );
+    expect(edit()?.textContent).not.toContain('この事項は、開いた後に直されました。');
+    expect(looked).toHaveLength(1);
+  });
+
+  it.each(['ja', 'en'] as const)(
+    '一件だけ外す：理由を選び、変わることを見てから外す（お知らせごと外すのとは別）(%s)',
+    async (lang) => {
+      const { ctx, looked, sent } = withEvent(lang);
+      await step(() => root.render(<SourcesScreen ctx={ctx} sourceId="n1" />));
+      const remove = section(ctx.t('sourceFix.item.dismissOpen'));
+      expect(remove?.textContent).toContain(ctx.t('sourceFix.item.dismissNote'));
+      const misread = remove?.querySelector<HTMLInputElement>('input[type=radio][value=misread]');
+      await step(() => misread?.click());
+      const look = [...(remove?.querySelectorAll('button') ?? [])].find(
+        (b) => b.textContent === ctx.t('sourceFix.look'),
+      );
+      await step(() => look?.click());
+      expect(looked).toContainEqual({ type: 'dismissItem', itemId: 'n1:i1', reason: 'misread' });
+      await step(() => button(ctx.t('sourceFix.item.dismissSave'))?.click());
+      expect(sent).toContainEqual({
+        type: 'dismissItem',
+        itemId: 'n1:i1',
+        reason: 'misread',
+        seen: { throughSeq: 7, changes: 'shown-hash' },
+      });
+    },
+  );
+
+  it('条件が合わず今の計画に無い事項は、日付の欄にだけ出し、時刻・名前の直しと外す欄には出さない', async () => {
+    const { ctx } = withEvent();
+    const [entry] = ctx.items;
+    if (!entry) throw Error('事項が無い');
+    const inactive = { ...ctx, items: [{ ...entry, live: false }] };
+    await step(() => root.render(<SourcesScreen ctx={inactive} sourceId="n1" />));
+    expect(section('読み取った日付を直す')?.textContent).toContain('条件が合わないため');
+    expect(section('時刻・名前を直す')).toBeUndefined();
+    expect(section('一件だけ計画から外す')).toBeUndefined();
+  });
 });

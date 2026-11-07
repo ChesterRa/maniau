@@ -2203,6 +2203,30 @@
       "label": "Correct date",
       "save": "Record this date"
     },
+    "item": {
+      "open": "Fix the time or name",
+      "compare": "Compare the original text above with the time and name that were read.",
+      "deadlineDate": "Deadline dates and times can’t be corrected here yet. If one was misread, remove that item from the plan.",
+      "read": "Name read: {{what}}",
+      "readTime": "Time: {{start}}–{{end}}",
+      "noTime": "No time was read.",
+      "nameLabel": "Name",
+      "startLabel": "Starts",
+      "endLabel": "Ends",
+      "badOrder": "The end must be later than the start (an end time past midnight can’t be set here).",
+      "noClear": "A time or name that was read can’t be left empty. Enter the correct value.",
+      "moved": "This item was changed after you opened it. Load the current details, then make your change.",
+      "reload": "Load the current details",
+      "save": "Record this",
+      "dismissOpen": "Remove one item from the plan",
+      "reason": "Why remove it",
+      "reasons": {
+        "notOurs": "Not for our family",
+        "misread": "Read wrongly"
+      },
+      "dismissNote": "Only this one item leaves the plan (it is not treated as the event being called off). Requests you already sent will be checked to see if they are still needed. You cannot undo this.",
+      "dismissSave": "Remove this item"
+    },
     "discard": {
       "open": "Remove this notice from the plan",
       "body": "This does not mean the event was cancelled. You will need to check whether requests already sent are still needed.",

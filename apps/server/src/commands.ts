@@ -1813,8 +1813,12 @@ export function previewedInput(
     case 'dismissItem': {
       if (state !== undefined) {
         const item = itemsOf(state).find((i) => i.id === command.itemId);
+        // 「すること」でない事項を外す時は、先に見た物（changes）を添えた時だけ、見た物と今を比べる（元の文の画面は
+        // 見てから外す。見ずに外す前からの道〔確かめの札など〕は、これまでどおり）。
         if (
-          (command.type === 'dismissItem' && item?.kind !== 'need') ||
+          (command.type === 'dismissItem' &&
+            item?.kind !== 'need' &&
+            command.seen?.changes === undefined) ||
           (item?.kind === 'need' && awaitingConfirmation(state, item))
         )
           return undefined;

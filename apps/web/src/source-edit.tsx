@@ -8,12 +8,19 @@ import {
 } from '@maniau/core';
 import { useState } from 'react';
 import { formatDay } from './format';
-import { PreviewBlock, usePreviewSave } from './need';
+import { PreviewBlock, StalePreview, usePreviewSave } from './need';
 import type { Ctx } from './screens';
 import { Button, Label, Row, Text } from './ui';
 
 const input =
   'min-h-11 rounded-xl border-[1.5px] border-btn-line bg-white px-2.5 text-base text-ink';
+
+/**
+ * 見た変化が、今の画面の計画と違う版の物なら、見せ直す（もう一人の変更の後に、前の画面の入力で記録しない。
+ * ほかの画面と同じ。11/7 見直しの指摘）。
+ */
+const isStale = (ctx: Ctx, shown?: { throughSeq: number }) =>
+  shown !== undefined && shown.throughSeq !== ctx.plan.throughSeq;
 
 function DateEdit({
   ctx,
@@ -29,6 +36,10 @@ function DateEdit({
   links: { label?: string; value: string }[];
 }) {
   const [date, setDate] = useState(item.interpretation.date ?? '');
+  // 欄を開いた時の日付。その後にもう一人が同じ事項の日付を直したら、前の日付を直しとして送らない（入れ直す。
+  // 時刻・名前の直しと同じ。11/7 見直しの指摘）。
+  const [opened, setOpened] = useState(item.interpretation.date);
+  const moved = opened !== item.interpretation.date;
   const flow = usePreviewSave(ctx);
   const command: SaveablePreview = {
     type: 'correctItem',
@@ -37,6 +48,7 @@ function DateEdit({
   };
   const shown = flow.shownFor(command);
   const refused = flow.refusedFor(command);
+  const stale = isStale(ctx, shown);
   const linked = links.length > 0 && date !== item.interpretation.date;
   const wrongWeekday =
     isValidLocalDate(date) &&
@@ -46,7 +58,8 @@ function DateEdit({
     isValidLocalDate(date) &&
     (date !== item.interpretation.date || !trusted) &&
     !linked &&
-    !wrongWeekday;
+    !wrongWeekday &&
+    !moved;
   return (
     <div className="flex flex-col gap-2 rounded-xl bg-paper px-3 py-3">
       <Text>{item.written}</Text>
@@ -59,6 +72,20 @@ function DateEdit({
       </Text>
       {!live && <Text quiet>{ctx.t('sourceFix.date.inactive')}</Text>}
       {!trusted && <Text>{ctx.t('sourceFix.date.unconfirmed')}</Text>}
+      {moved && (
+        <div className="flex flex-col gap-2" role="status">
+          <Text>{ctx.t('sourceFix.item.moved')}</Text>
+          <Button
+            kind="secondary"
+            onClick={() => {
+              setDate(item.interpretation.date ?? '');
+              setOpened(item.interpretation.date);
+            }}
+          >
+            {ctx.t('sourceFix.item.reload')}
+          </Button>
+        </div>
+      )}
       {wrongWeekday && (
         <div role="status">
           <Text>{ctx.t('sourceFix.date.weekdayMismatch')}</Text>
@@ -104,6 +131,8 @@ function DateEdit({
             </Button>
           )}
         </div>
+      ) : stale ? (
+        <StalePreview ctx={ctx} />
       ) : (
         <PreviewBlock
           ctx={ctx}
@@ -112,7 +141,7 @@ function DateEdit({
         />
       )}
       <Row>
-        {shown ? (
+        {shown && !stale ? (
           <Button disabled={flow.busy || !valid} onClick={() => void flow.save(command)}>
             {ctx.t('sourceFix.date.save')}
           </Button>
@@ -139,6 +168,7 @@ function DiscardEdit({ ctx, source }: { ctx: Ctx; source: Source }) {
   };
   const shown = flow.shownFor(command);
   const refused = flow.refusedFor(command);
+  const stale = isStale(ctx, shown);
   return (
     <div className="flex flex-col gap-2 rounded-xl bg-paper px-3 py-3">
       <Text>{ctx.t('sourceFix.discard.body')}</Text>
@@ -163,6 +193,8 @@ function DiscardEdit({ ctx, source }: { ctx: Ctx; source: Source }) {
       </fieldset>
       {refused === 'legacyRequestUnclear' ? (
         <Text>{ctx.t('sourceFix.discard.legacy')}</Text>
+      ) : stale ? (
+        <StalePreview ctx={ctx} />
       ) : (
         <PreviewBlock
           ctx={ctx}
@@ -171,7 +203,7 @@ function DiscardEdit({ ctx, source }: { ctx: Ctx; source: Source }) {
         />
       )}
       <Row>
-        {shown ? (
+        {shown && !stale ? (
           <Button disabled={flow.busy} onClick={() => void flow.save(command)}>
             {ctx.t('sourceFix.discard.save')}
           </Button>
@@ -190,16 +222,216 @@ function DiscardEdit({ ctx, source }: { ctx: Ctx; source: Source }) {
 }
 
 /** 原文を残したまま、読み取った日を直す・入れ間違えたお知らせを外す。 */
+/** 時刻の形（HH:MM）。 */
+const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * 読み取った時刻と名前を直す（11/7 体検：画面が日付の直ししか出していなかった。サーバーはどの欄の直しも受ける）。
+ * 日付の直しは上の DateEdit（条件や曜日の確かめがあるので分ける）。保存の前にサーバーの計算で変わる事を見る。
+ */
+function TimeEdit({ ctx, item }: { ctx: Ctx; item: Item }) {
+  const read = item.interpretation;
+  const [start, setStart] = useState(read.startTime ?? '');
+  const [end, setEnd] = useState(read.endTime ?? '');
+  const [what, setWhat] = useState(read.what ?? '');
+  // 欄を開いた時の読み取り。その後にもう一人が同じ事項を直したら、前の値を「直した」として送らない（入れ直す）。
+  const [opened, setOpened] = useState(read);
+  const moved =
+    opened.startTime !== read.startTime ||
+    opened.endTime !== read.endTime ||
+    opened.what !== read.what;
+  const reload = () => {
+    setStart(read.startTime ?? '');
+    setEnd(read.endTime ?? '');
+    setWhat(read.what ?? '');
+    setOpened(read);
+  };
+  const flow = usePreviewSave(ctx);
+  const timed = item.kind === 'event' || item.kind === 'test';
+  const changed: { startTime?: string; endTime?: string; what?: string } = {};
+  if (timed && start !== (read.startTime ?? '') && start !== '') changed.startTime = start;
+  if (timed && end !== (read.endTime ?? '') && end !== '') changed.endTime = end;
+  if (what.trim() !== '' && what.trim() !== (read.what ?? '')) changed.what = what.trim();
+  const command: SaveablePreview = {
+    type: 'correctItem',
+    itemId: item.id,
+    interpretation: changed,
+  };
+  const shown = flow.shownFor(command);
+  const refused = flow.refusedFor(command);
+  const stale = isStale(ctx, shown);
+  const startOk = start === '' || TIME.test(start);
+  const endOk = end === '' || TIME.test(end);
+  // 読み取った欄を空にはできない（送るのは入れた値だけで、空にした欄は前の値のまま残る。画面と記録を食い違わせ
+  // ない。11/7 見直しの指摘）。順の確かめは、記録される値（入れた値、無ければ前の値）で。
+  const cleared =
+    (timed && read.startTime !== undefined && start === '') ||
+    (timed && read.endTime !== undefined && end === '') ||
+    (read.what !== undefined && what.trim() === '');
+  const from = start || read.startTime || '';
+  const to = end || read.endTime || '';
+  const ordered = !(from && to && TIME.test(from) && TIME.test(to)) || to > from;
+  const valid =
+    Object.keys(changed).length > 0 && startOk && endOk && ordered && !cleared && !moved;
+  return (
+    <div className="flex flex-col gap-2 rounded-xl bg-paper px-3 py-3">
+      <Text>{item.written}</Text>
+      <Text quiet>
+        {ctx.t('sourceFix.item.read', { what: read.what ?? item.written })}
+        {timed &&
+          ` ${
+            read.startTime
+              ? ctx.t('sourceFix.item.readTime', {
+                  start: read.startTime,
+                  end: read.endTime ?? '',
+                })
+              : ctx.t('sourceFix.item.noTime')
+          }`}
+      </Text>
+      <label className="flex flex-col gap-1">
+        {ctx.t('sourceFix.item.nameLabel')}
+        <input className={input} value={what} onChange={(e) => setWhat(e.target.value)} />
+      </label>
+      {timed && (
+        <div className="flex flex-wrap gap-3">
+          <label className="flex flex-col gap-1">
+            {ctx.t('sourceFix.item.startLabel')}
+            <input
+              className={input}
+              type="time"
+              value={start}
+              onChange={(e) => setStart(e.target.value)}
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            {ctx.t('sourceFix.item.endLabel')}
+            <input
+              className={input}
+              type="time"
+              value={end}
+              onChange={(e) => setEnd(e.target.value)}
+            />
+          </label>
+        </div>
+      )}
+      {moved && (
+        <div className="flex flex-col gap-2" role="status">
+          <Text>{ctx.t('sourceFix.item.moved')}</Text>
+          <Button kind="secondary" onClick={reload}>
+            {ctx.t('sourceFix.item.reload')}
+          </Button>
+        </div>
+      )}
+      {cleared && <Text>{ctx.t('sourceFix.item.noClear')}</Text>}
+      {!ordered && <Text>{ctx.t('sourceFix.item.badOrder')}</Text>}
+      {stale ? (
+        <StalePreview ctx={ctx} />
+      ) : (
+        <PreviewBlock
+          ctx={ctx}
+          {...(shown ? { preview: shown } : {})}
+          {...(refused ? { refused } : {})}
+        />
+      )}
+      <Row>
+        {shown && !stale ? (
+          <Button disabled={flow.busy || !valid} onClick={() => void flow.save(command)}>
+            {ctx.t('sourceFix.item.save')}
+          </Button>
+        ) : (
+          <Button
+            disabled={flow.busy || !valid || !ctx.previewChange}
+            onClick={() => void flow.look(command)}
+          >
+            {ctx.t('sourceFix.look')}
+          </Button>
+        )}
+      </Row>
+    </div>
+  );
+}
+
+/**
+ * 読み取った事項を一件だけ計画から外す（うちには関係ない・読み取りが違う）。お知らせごと外すのとは別。行事が取り消さ
+ * れたとは扱わない。保存の前に変わる事（要らなくなる引き受け・取り消しの連絡など）を見る。
+ */
+function ItemDismiss({ ctx, item }: { ctx: Ctx; item: Item }) {
+  const [reason, setReason] = useState<'notOurs' | 'misread'>('notOurs');
+  const flow = usePreviewSave(ctx);
+  const command: SaveablePreview = { type: 'dismissItem', itemId: item.id, reason };
+  const shown = flow.shownFor(command);
+  const refused = flow.refusedFor(command);
+  const stale = isStale(ctx, shown);
+  return (
+    <div className="flex flex-col gap-2 rounded-xl bg-paper px-3 py-3">
+      <Text>{item.written}</Text>
+      <fieldset className="flex flex-col gap-1">
+        <legend className="text-sm font-bold text-sub">{ctx.t('sourceFix.item.reason')}</legend>
+        {(['notOurs', 'misread'] as const).map((value) => (
+          <label key={value} className="flex min-h-11 items-center gap-2">
+            <input
+              type="radio"
+              name={`dismiss-${item.id}`}
+              value={value}
+              className="size-5 accent-accent"
+              checked={reason === value}
+              onChange={() => setReason(value)}
+            />
+            {ctx.t(`sourceFix.item.reasons.${value}`)}
+          </label>
+        ))}
+      </fieldset>
+      <Text quiet>{ctx.t('sourceFix.item.dismissNote')}</Text>
+      {stale ? (
+        <StalePreview ctx={ctx} />
+      ) : (
+        <PreviewBlock
+          ctx={ctx}
+          {...(shown ? { preview: shown } : {})}
+          {...(refused ? { refused } : {})}
+        />
+      )}
+      <Row>
+        {shown && !stale ? (
+          <Button disabled={flow.busy} onClick={() => void flow.save(command)}>
+            {ctx.t('sourceFix.item.dismissSave')}
+          </Button>
+        ) : (
+          <Button
+            disabled={flow.busy || !ctx.previewChange}
+            onClick={() => void flow.look(command)}
+          >
+            {ctx.t('sourceFix.look')}
+          </Button>
+        )}
+      </Row>
+    </div>
+  );
+}
+
 export function SourceEdits({ ctx, source }: { ctx: Ctx; source: Source }) {
   const excluded = ctx.excludedSources?.get(source.id);
   // 家族が直接書いた「すること」は読み取りではない。専用の画面から直す・要らなくする。
   if (!excluded && !ctx.readings.some((reading) => reading.sourceId === source.id)) return null;
+  // 日付を直す：日付の欄のある事項と、日の要る種類（行事・日の変更・テスト）。締切の日から置く事項（締切の欄が
+  // ある締切）は、日付の欄を直してもよていは動かないので出さず、まだ直せないと書く。
+  const dueOnly = (entry: (typeof ctx.items)[number]) =>
+    entry.item.kind === 'deadline' && entry.item.interpretation.deadline !== undefined;
   const editable = ctx.items.filter(
-    ({ item }) =>
-      item.sourceId === source.id &&
-      item.kind !== 'need' &&
-      (item.interpretation.date !== undefined ||
-        ['event', 'dayChange', 'test'].includes(item.kind)),
+    (entry) =>
+      entry.item.sourceId === source.id &&
+      entry.item.kind !== 'need' &&
+      !dueOnly(entry) &&
+      (entry.item.interpretation.date !== undefined ||
+        ['event', 'dayChange', 'test'].includes(entry.item.kind)),
+  );
+  const deadlines = ctx.items.filter(
+    (entry) => entry.item.sourceId === source.id && entry.live && dueOnly(entry),
+  );
+  // 時刻・名前の直しと一件だけ外すのは、今の計画に入っている事項（日付の無い持ち物・締切も。11/7 見直しの指摘）。
+  // 条件が合わない事項の日付は、読み違いかもしれないので日付の欄に残す。外した一件は、見せる物に来ない。
+  const current = ctx.items.filter(
+    (entry) => entry.item.sourceId === source.id && entry.item.kind !== 'need' && entry.live,
   );
   return (
     <div className="flex flex-col gap-2">
@@ -220,6 +452,32 @@ export function SourceEdits({ ctx, source }: { ctx: Ctx; source: Source }) {
                 trusted={trusted}
                 links={dateLinks ?? []}
               />
+            ))}
+          </div>
+        </details>
+      )}
+      {!excluded && current.length > 0 && (
+        <details>
+          <summary className="min-h-11 cursor-pointer font-bold text-accent">
+            {ctx.t('sourceFix.item.open')}
+          </summary>
+          <div className="flex flex-col gap-2">
+            <Label tone="sub">{ctx.t('sourceFix.item.compare')}</Label>
+            {deadlines.length > 0 && <Text quiet>{ctx.t('sourceFix.item.deadlineDate')}</Text>}
+            {current.map(({ item }) => (
+              <TimeEdit key={item.id} ctx={ctx} item={item} />
+            ))}
+          </div>
+        </details>
+      )}
+      {!excluded && current.length > 0 && (
+        <details>
+          <summary className="min-h-11 cursor-pointer font-bold text-accent">
+            {ctx.t('sourceFix.item.dismissOpen')}
+          </summary>
+          <div className="flex flex-col gap-2">
+            {current.map(({ item }) => (
+              <ItemDismiss key={item.id} ctx={ctx} item={item} />
             ))}
           </div>
         </details>

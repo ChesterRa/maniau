@@ -234,13 +234,20 @@ describe('計画に入っている「すること」を要らないにする', (
 });
 
 describe('ほかの事項と、まだ確かめていない読み取り', () => {
-  it('「すること」でない事項は、この見せ方を使わない（今の札の確かめのまま）', async () => {
+  it('「すること」でない事項も、外す前に変わることを見られる。見た物を添えた時は今と比べ、添えない前からの道はそのまま', async () => {
     const app = await setup();
     const other = itemsOf(foldEvents(await app.events())).find((i) => i.kind !== 'need');
     if (!other) throw new Error('「すること」でない事項が無い');
+    const command = { type: 'dismissItem', itemId: other.id, reason: 'notOurs' } as const;
+    const shown = await app.preview(command);
+    if ('reason' in shown) throw new Error(`見られない：${shown.reason}`);
+    // 見た物が今と違えば書かない（もう一人の変更・時が進んで変わった結果を、黙って書かない）。
     expect(
-      await app.preview({ type: 'dismissItem', itemId: other.id, reason: 'notOurs' }),
-    ).toMatchObject({ status: 'invalid', reason: 'previewNeedOnly' });
+      await app.run({ ...command, seen: { throughSeq: shown.throughSeq, changes: 'stale' } }),
+    ).toMatchObject({ status: 'conflict', reason: 'consequencesChanged' });
+    expect(itemsOf(foldEvents(await app.events())).some((i) => i.id === other.id)).toBe(true);
+    // 見ずに外す前からの道（確かめの札など）は、これまでどおり書ける。
+    expect(await app.run(command)).toMatchObject({ status: 'ok' });
   });
 
   it('まだ確かめていない読み取りの「すること」は、見せた番号だけで直せる（直すと計画に入る）', async () => {
