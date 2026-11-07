@@ -140,6 +140,7 @@ describe('お知らせから読んだ「すること」の確かめ', () => {
     expect(host.textContent).toContain('読み取りを確かめる');
     expect(host.textContent).toContain('13:00〜14:00、だれかが要る');
     expect(host.textContent).toContain('終わりの時刻は読み取れていません');
+    expect(host.textContent).toContain('「直す」で終わりの時刻を入れると');
     expect(host.textContent).toContain(WRITTEN);
     // 形のそろわない読み取り（終わりが無い）には、「合っている」を出さない（直してもらう）。
     expect(buttons('合っている')).toHaveLength(1);

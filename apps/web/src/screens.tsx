@@ -2511,6 +2511,10 @@ function NeedCheckCard({
       <Label tone="warn">{ctx.t('card.needCheck.label')}</Label>
       <Title>{requirement.what}</Title>
       <Text>{ctx.t('card.needCheck.read', { when: readNeedWhen(ctx, item.interpretation) })}</Text>
+      {confirmable &&
+        item.interpretation.shape === 'window' &&
+        item.interpretation.startTime &&
+        !item.interpretation.endTime && <Text>{ctx.t('card.needCheck.addEnd')}</Text>}
       {/* 書かれた日が分からないまま「あした」を入れた日から数えた時は、その訳を日時の隣に出す。 */}
       {!live.trusted && <UnanchoredNote ctx={ctx} item={item} />}
       <ReadingShown ctx={ctx} live={live} />

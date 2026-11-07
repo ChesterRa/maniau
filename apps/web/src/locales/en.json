@@ -389,6 +389,7 @@
       "read": "Read as: {{when}}",
       "window": "someone is needed on {{day}}, {{from}}–{{to}}",
       "windowNoEnd": "someone is needed on {{day}} from {{from}} (no end time read)",
+      "addEnd": "Use “Fix” to enter an end time so that period can be considered in the plan. Other details may also need checking.",
       "windowNoTime": "someone is needed on {{day}} (no times read)",
       "noDate": "someone is needed during a time (no date read)",
       "by": "get it done by {{by}}",
