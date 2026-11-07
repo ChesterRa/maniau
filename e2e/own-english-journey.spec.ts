@@ -10,7 +10,7 @@ test('英語で始め、見本を開いて見守りの未確認に答える', as
   await mkdir(output, { recursive: true });
   await page.goto('/');
   await page.getByRole('button', { name: 'English', exact: true }).click();
-  await expect(page.getByText('Turn school notices into a family plan')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Don’t leave the planning in one person’s head.' })).toBeVisible();
   await page.getByRole('button', { name: 'Start', exact: true }).click();
   await expect(page.getByText('Use made-up nicknames', { exact: false })).toBeVisible();
   await page.getByLabel('What should we call you?').fill('Adult A');

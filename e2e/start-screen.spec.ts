@@ -4,6 +4,9 @@ for (const language of ['ja', 'en'] as const) {
   test(`${language}：用意した場面の入口は携帯の最初の画面にあり、場面を開ける`, async ({ page }) => {
     await page.goto('/');
     if (language === 'en') await page.getByRole('button', { name: 'English', exact: true }).click();
+    await expect(page.getByRole('heading', {
+      name: language === 'ja' ? '段取りを、ひとりの頭に残さない。' : 'Don’t leave the planning in one person’s head.',
+    })).toBeVisible();
     const button = page.getByRole('button', {
       name: language === 'ja' ? '用意した場面で見る（審査の方へ）' : 'View prepared scenes (for judges)',
       exact: true,

@@ -67,14 +67,14 @@
     "leave": "Back to start"
   },
   "start": {
-    "headline": "Turn school notices into a family plan",
-    "body": "maniau shows what to decide by when and who does what, and keeps following up until someone in the family takes it on. Your family makes the choices.",
+    "headline": "Don’t leave the planning in one person’s head.",
+    "body": "From school and nursery notices, Maniau shows what to decide by when and who does what, and follows up until someone in the family takes it on. Your family makes the choices.",
     "steps": {
       "input": "Add a notice",
       "inputSub": "Take a photo, paste, or speak",
       "decide": "Decide and ask",
       "decideSub": "Your family makes the choice",
-      "follow": "maniau follows up",
+      "follow": "Maniau follows up",
       "followSub": "Record the reply, and see the next step"
     },
     "begin": "Start",
