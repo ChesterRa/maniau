@@ -752,6 +752,7 @@ function Screen({ ctx, route }: { ctx: Ctx; route: Route }) {
           ctx={ctx}
           {...(route.sourceId ? { sourceId: route.sourceId } : {})}
           {...(route.highlight ? { highlight: route.highlight } : {})}
+          {...(route.openDate ? { openDate: true } : {})}
         />
       );
   }

@@ -84,7 +84,7 @@ import { IcsExportCard } from './ics-export';
 import { Attributions, GoogleMapsMark, TermsLink, WalkMap } from './maps';
 import { SayMemberDay } from './member-day';
 import { type NotUploadable, toUploadable, type Uploadable } from './photo';
-import { SourceEdits } from './source-edit';
+import { dateEditable, SourceEdits } from './source-edit';
 import { StoreSearch } from './stores';
 import {
   Button,
@@ -159,7 +159,7 @@ export type Route =
       text?: string;
     }
   | { name: 'week' }
-  | { name: 'sources'; sourceId?: string; highlight?: string[] };
+  | { name: 'sources'; sourceId?: string; highlight?: string[]; openDate?: boolean };
 
 export interface Ctx {
   plan: PlanResult;
@@ -1064,6 +1064,16 @@ export function cancelTwin(ctx: Ctx, request: ExternalRequest): boolean {
 
 export function TodayScreen({ ctx, done }: { ctx: Ctx; done?: TodayDone }) {
   const { main, quiet } = ctx.today;
+  // 日付を確かめるまで計画に入らない事項も、元の文で直せる物は見落とさない。
+  // 「すること」は別の確かめの札があるので、日付の欄と同じ選び方で重複を避ける。
+  const unconfirmedDates = ctx.items.filter(
+    (entry) =>
+      !entry.trusted &&
+      dateEditable(ctx, entry) &&
+      ctx.sources.has(entry.item.sourceId) &&
+      !ctx.excludedSources?.has(entry.item.sourceId) &&
+      ctx.readings.some((reading) => reading.sourceId === entry.item.sourceId),
+  );
   // 初めは三つまで見せ、残りは押せば全部出す（隠したままにしない）。
   const [all, setAll] = useState(false);
   const shown = all ? main : main.slice(0, 3);
@@ -1097,9 +1107,31 @@ export function TodayScreen({ ctx, done }: { ctx: Ctx; done?: TodayDone }) {
             {ctx.t(`today.done.${done}`)}
           </p>
         )}
+        {unconfirmedDates.length > 0 && (
+          <Card>
+            <Label tone="warn">{ctx.t('today.checkDates.label')}</Label>
+            <Title>{ctx.t('today.checkDates.title')}</Title>
+            <Text>{ctx.t('today.checkDates.body')}</Text>
+            {unconfirmedDates.map(({ item }) => (
+              <MoreLink
+                key={item.id}
+                onClick={() =>
+                  ctx.go({
+                    name: 'sources',
+                    sourceId: item.sourceId,
+                    highlight: item.sentenceIds,
+                    openDate: true,
+                  })
+                }
+              >
+                {ctx.t('today.checkDates.open', { what: item.interpretation.what ?? item.written })}
+              </MoreLink>
+            ))}
+          </Card>
+        )}
         {ctx.changes && <ChangeCard ctx={ctx} change={ctx.changes} />}
         {fresh && <StartCard ctx={ctx} />}
-        {!fresh && !now && !ctx.changes && (
+        {!fresh && !now && unconfirmedDates.length === 0 && !ctx.changes && (
           <Card tone="accent">
             <Title>{ctx.t('today.nothing')}</Title>
             <Text quiet>{ctx.t('today.nothingBody')}</Text>
@@ -4881,7 +4913,12 @@ function addDaysIso(date: string, days: number): string {
 
 // ── 取り込んだお知らせ ──────────────────────────────
 
-export function SourcesScreen(props: { ctx: Ctx; sourceId?: string; highlight?: string[] }) {
+export function SourcesScreen(props: {
+  ctx: Ctx;
+  sourceId?: string;
+  highlight?: string[];
+  openDate?: boolean;
+}) {
   const { ctx } = props;
   const sources = [...ctx.sources.values()].sort((a, b) =>
     b.receivedAt.localeCompare(a.receivedAt),
@@ -5008,7 +5045,7 @@ export function SourcesScreen(props: { ctx: Ctx; sourceId?: string; highlight?: 
                       : ctx.t('sources.handWritten')}
                 </Text>
               )}
-              <SourceEdits ctx={ctx} source={source} />
+              <SourceEdits ctx={ctx} source={source} openDate={props.openDate === true} />
             </Card>
           );
         })}

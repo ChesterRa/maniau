@@ -6,6 +6,7 @@ import type { NoticeReader } from '../../src/demo-sessions';
 export const NOTICE_A = '2026年12月7日（月）は休校です。';
 export const NOTICE_B = '2026年12月14日（月）は休校です。';
 export const NOTICE_POSTPONED = '学習発表会は12月8日（火）に延期します。';
+export const NOTICE_RELATIVE = 'あした、運動靴を持ってきてください。';
 
 export function trialReader() {
   const calls: { sourceId: string; text: string }[] = [];
@@ -14,6 +15,7 @@ export function trialReader() {
     const text = sentences.map((sentence) => sentence.text).join('');
     calls.push({ sourceId: request.source.id, text });
     const postponed = text === NOTICE_POSTPONED;
+    const relative = text === NOTICE_RELATIVE;
     const date =
       text === NOTICE_A
         ? '2026-12-07'
@@ -23,24 +25,25 @@ export function trialReader() {
             ? '2026-12-08'
             : undefined;
     const sentenceId = sentences[0]?.id;
-    if (!date || !sentenceId || sentences.length !== 1) throw new Error('試験対象でない文');
+    if ((!date && !relative) || !sentenceId || sentences.length !== 1)
+      throw new Error('試験対象でない文');
     const output = ExtractionOutput.parse({
       items: [
         {
           id: 'i1',
           sentenceIds: [sentenceId],
-          kind: postponed ? 'event' : 'dayChange',
+          kind: relative ? 'belongings' : postponed ? 'event' : 'dayChange',
           written: text,
-          date,
-          writtenWeekday: postponed ? 'tue' : 'mon',
+          date: date ?? null,
+          writtenWeekday: relative ? 'none' : postponed ? 'tue' : 'mon',
           startTime: null,
           endTime: null,
-          what: postponed ? '学習発表会' : '休校',
-          dayType: postponed ? null : 'noSchool',
+          what: relative ? '運動靴' : postponed ? '学習発表会' : '休校',
+          dayType: relative || postponed ? null : 'noSchool',
           deadline: null,
           audience: null,
           place: null,
-          relativeDay: 'none',
+          relativeDay: relative ? 'tomorrow' : 'none',
           conditionNodeId: null,
           inferred: false,
           familyAction: false,

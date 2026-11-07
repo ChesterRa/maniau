@@ -11,7 +11,7 @@ import {
   weekdayOf,
   zonedToEpochMinutes,
 } from '@maniau/core';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { formatDay } from './format';
 import { PreviewBlock, StalePreview, usePreviewSave } from './need';
 import type { Ctx } from './screens';
@@ -83,6 +83,9 @@ function DateEdit({
   return (
     <div className="flex flex-col gap-2 rounded-xl bg-paper px-3 py-3">
       <Text>{item.written}</Text>
+      {!trusted && item.interpretation.what && (
+        <Text>{ctx.t('sourceFix.item.read', { what: item.interpretation.what })}</Text>
+      )}
       <Text quiet>
         {item.interpretation.date
           ? ctx.t('sourceFix.date.read', {
@@ -429,34 +432,52 @@ function ItemDismiss({ ctx, item }: { ctx: Ctx; item: Item }) {
   );
 }
 
-export function SourceEdits({ ctx, source }: { ctx: Ctx; source: Source }) {
+// 日付を直す：日付の欄のある事項と、日の要る種類（行事・日の変更・テスト）。出さない物（締切はここではまだ
+// 直せないと書く）：
+// - 締切の日から置く締切の事項（日付の欄を直しても、よていは動かない）。ただし「あしたまでに」のように日付と締切を
+//   同じ「あした」から決め、同じ日にある物は、日付を直すと締切も同じ日へ動く（movedDeadline）ので出す（書かれた日の
+//   読み違いを、ここで直せるように）。
+// - まだ確かめていない事項で、締切が日付と別の日の物（持ち物・提出物も）。日付を確かめても、締切の日を確かめた
+//   ことにはならない（「12月7日の行事の出欠票は、あしたまでに」。11/7 見直しの反例）。サーバーも同じ直しを断る。
+function dueOnly(ctx: Ctx, entry: Ctx['items'][number]): boolean {
+  const { kind, interpretation: i } = entry.item;
+  if (i.deadline === undefined) return false;
+  const due = localDateOf(toEpochMinutes(i.deadline), ctx.tz);
+  if (kind === 'deadline') return !(i.relativeDay !== undefined && due === i.date);
+  return !entry.trusted && due !== i.date;
+}
+
+/** 元の文の日付の欄で確かめられる事項。きょうの入口も同じ決まりで選ぶ。 */
+export function dateEditable(ctx: Ctx, entry: Ctx['items'][number]): boolean {
+  return (
+    entry.item.kind !== 'need' &&
+    !dueOnly(ctx, entry) &&
+    (entry.item.interpretation.date !== undefined ||
+      ['event', 'dayChange', 'test'].includes(entry.item.kind))
+  );
+}
+
+export function SourceEdits({
+  ctx,
+  source,
+  openDate = false,
+}: {
+  ctx: Ctx;
+  source: Source;
+  openDate?: boolean;
+}) {
+  const dateRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (openDate) dateRef.current?.scrollIntoView?.({ block: 'start' });
+  }, [openDate]);
   const excluded = ctx.excludedSources?.get(source.id);
   // 家族が直接書いた「すること」は読み取りではない。専用の画面から直す・要らなくする。
   if (!excluded && !ctx.readings.some((reading) => reading.sourceId === source.id)) return null;
-  // 日付を直す：日付の欄のある事項と、日の要る種類（行事・日の変更・テスト）。出さない物（締切はここではまだ
-  // 直せないと書く）：
-  // - 締切の日から置く締切の事項（日付の欄を直しても、よていは動かない）。ただし「あしたまでに」のように日付と締切を
-  //   同じ「あした」から決め、同じ日にある物は、日付を直すと締切も同じ日へ動く（movedDeadline）ので出す（書かれた日の
-  //   読み違いを、ここで直せるように）。
-  // - まだ確かめていない事項で、締切が日付と別の日の物（持ち物・提出物も）。日付を確かめても、締切の日を確かめた
-  //   ことにはならない（「12月7日の行事の出欠票は、あしたまでに」。11/7 見直しの反例）。サーバーも同じ直しを断る。
-  const dueOnly = (entry: (typeof ctx.items)[number]) => {
-    const { kind, interpretation: i } = entry.item;
-    if (i.deadline === undefined) return false;
-    const due = localDateOf(toEpochMinutes(i.deadline), ctx.tz);
-    if (kind === 'deadline') return !(i.relativeDay !== undefined && due === i.date);
-    return !entry.trusted && due !== i.date;
-  };
   const editable = ctx.items.filter(
-    (entry) =>
-      entry.item.sourceId === source.id &&
-      entry.item.kind !== 'need' &&
-      !dueOnly(entry) &&
-      (entry.item.interpretation.date !== undefined ||
-        ['event', 'dayChange', 'test'].includes(entry.item.kind)),
+    (entry) => entry.item.sourceId === source.id && dateEditable(ctx, entry),
   );
   const deadlines = ctx.items.filter(
-    (entry) => entry.item.sourceId === source.id && entry.live && dueOnly(entry),
+    (entry) => entry.item.sourceId === source.id && entry.live && dueOnly(ctx, entry),
   );
   // 時刻・名前の直しと一件だけ外すのは、今の計画に入っている事項（日付の無い持ち物・締切も。11/7 見直しの指摘）。
   // 条件が合わない事項の日付は、読み違いかもしれないので日付の欄に残す。外した一件は、見せる物に来ない。
@@ -488,7 +509,7 @@ export function SourceEdits({ ctx, source }: { ctx: Ctx; source: Source }) {
       {!excluded &&
         unanchored.map((item) => <UnanchoredNote key={item.id} ctx={ctx} item={item} />)}
       {!excluded && editable.length > 0 && (
-        <details>
+        <details open={openDate || undefined} ref={dateRef}>
           <summary className="min-h-11 cursor-pointer font-bold text-accent">
             {ctx.t('sourceFix.date.open')}
           </summary>

@@ -157,7 +157,13 @@
       "approval": "{{to}} approved it"
     },
     "agreedBackup": "Held as a backup",
-    "decideDay": "Find a day that works for everyone"
+    "decideDay": "Find a day that works for everyone",
+    "checkDates": {
+      "label": "Check dates",
+      "title": "Some dates need checking",
+      "body": "These readings stay out of the plan until their dates are checked. Compare them with the original notice.",
+      "open": "Check the date for “{{what}}”"
+    }
   },
   "card": {
     "decide": {
@@ -2220,7 +2226,7 @@
       "read": "Date read: {{date}}",
       "missing": "No date was read.",
       "inactive": "This item is not currently in the plan because its condition is not met.",
-      "unconfirmed": "This content has not been checked yet.",
+      "unconfirmed": "This content has not been checked yet. Recording the date also treats this item’s content as confirmed. Compare the reading with the original notice.",
       "legacy": "An earlier request is missing its recorded details, so this date cannot be corrected here. Check the actual request with the recipient too.",
       "weekdayMismatch": "The date does not match the weekday that was read. Check the date and weekday in the original notice.",
       "weekdayHelp": "If the weekday was read incorrectly, select that reason under “Remove this notice from the plan”, add it again and check the reading. Reading it again also uses a reading.",

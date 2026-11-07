@@ -121,6 +121,74 @@ function enter(input: HTMLInputElement, value: string) {
 
 describe('お知らせの直し', () => {
   it.each(['ja', 'en'] as const)(
+    '推定の日付をきょうに出し、元の文の日付を直す欄を開く (%s)',
+    async (lang) => {
+      const { ctx: base, looked } = context(lang);
+      const routes: unknown[] = [];
+      const relative = {
+        id: 'n1:i2',
+        sourceId: 'n1',
+        sentenceIds: ['n1#1'],
+        kind: 'belongings',
+        written: 'あした運動靴を持ってきてください。',
+        evidence: 'inferred',
+        effects: [],
+        interpretation: {
+          date: '2026-11-26',
+          relativeDay: 'tomorrow',
+          relativeDayFromReceived: '2026-11-25',
+          what: '運動靴',
+        },
+      } as const;
+      const ctx = {
+        ...base,
+        items: [{ item: relative, live: true, conditional: false, trusted: false }],
+        go: (route: unknown) => routes.push(route),
+      } as unknown as Ctx;
+      await step(() => root.render(<TodayScreen ctx={ctx} />));
+      expect(host.textContent).toContain(ctx.t('today.checkDates.title'));
+      expect(host.textContent).not.toContain(ctx.t('today.nothing'));
+      expect(host.textContent).not.toContain(ctx.t('today.now'));
+      await step(() => button(ctx.t('today.checkDates.open', { what: '運動靴' }))?.click());
+      expect(routes).toEqual([
+        {
+          name: 'sources',
+          sourceId: 'n1',
+          highlight: ['n1#1'],
+          openDate: true,
+        },
+      ]);
+      await step(() => root.render(<SourcesScreen ctx={ctx} sourceId="n1" openDate />));
+      const section = [...host.querySelectorAll('details')].find((d) =>
+        d.querySelector('summary')?.textContent?.includes(ctx.t('sourceFix.date.open')),
+      );
+      expect(section?.open).toBe(true);
+      expect(section?.textContent).toContain(ctx.t('sourceFix.item.read', { what: '運動靴' }));
+      expect(section?.textContent).toContain(ctx.t('sourceFix.date.unconfirmed'));
+      expect(section?.querySelector<HTMLInputElement>('input[type=date]')?.value).toBe(
+        '2026-11-26',
+      );
+      await step(() => button(ctx.t('sourceFix.look'))?.click());
+      expect(looked).toContainEqual({
+        type: 'correctItem',
+        itemId: 'n1:i2',
+        interpretation: { date: '2026-11-26' },
+      });
+      await step(() =>
+        root.render(
+          <TodayScreen
+            ctx={{
+              ...ctx,
+              items: [{ item: relative, live: true, conditional: false, trusted: true }],
+            }}
+          />,
+        ),
+      );
+      expect(host.textContent).not.toContain(ctx.t('today.checkDates.title'));
+    },
+  );
+
+  it.each(['ja', 'en'] as const)(
     '送った画面の後で担当の記録が更新された時、記録できない理由と次の連絡先を示す (%s)',
     async (lang) => {
       const { ctx: base } = context(lang);
