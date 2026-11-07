@@ -50,6 +50,7 @@ All screens show the fictional demo family.
 ## What this version covers
 
 - It is for families with one child.
+- For a closure over several days, reading may capture only the first and last dates, leaving the days between out of the plan. Check each day and add the arrangements you need individually.
 - The public demo and the names-only trial let you move the clock apart from the real date and time. Records are kept in server memory and are deleted after a period without use.
 - There is not yet a self-service way for a family to set up a long-term household and have both adults join it from their own phones. Family mode (identity checks, storage and notifications) is turned on by someone who sets it up, and it hasn't been checked in a real family's daily life; whether notifications reach a real iPhone hasn't been tested.
 - Places added from looking around can be used in household information and in ways to handle things to do, but they don't yet become child-care options (asking someone, after-school care, taking the day off).
