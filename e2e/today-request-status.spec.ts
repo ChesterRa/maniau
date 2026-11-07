@@ -14,13 +14,18 @@ test('前の日への OK は、日が変わると確かめ待ちになる', asyn
   const api = `http://127.0.0.1:18797/api/demo/sessions/${sessionId}`;
   const send = async (memberId: string, operationId: string, command: unknown) => {
     const response = await request.post(`${api}/commands`, { data: { memberId, operationId, command } });
-    expect(response.status()).toBe(200);
-    expect((await response.json()).result.status).toBe('ok');
+    const body = await response.json();
+    expect(response.status(), JSON.stringify(body.result)).toBe(200);
+    expect(body.result.status).toBe('ok');
   };
   await send('b', 'status-reply', { type: 'recordReply', requestId: 'r-grandma', reply: 'yes' });
-  await send('a', 'status-date', {
+  const change = {
     type: 'correctItem', itemId: 'n1:i6', interpretation: { date: '2026-12-14', writtenWeekday: 1 },
-  });
+  };
+  const previewResponse = await request.post(`${api}/change-preview`, { data: { memberId: 'a', command: change } });
+  expect(previewResponse.status()).toBe(200);
+  const { preview } = await previewResponse.json();
+  await send('a', 'status-date', { ...change, seen: { throughSeq: preview.throughSeq, changes: preview.seen } });
   const view = await (await request.get(`${api}/view?member=b`)).json();
   expect(view.plan.requests.find((entry: { requestId: string }) => entry.requestId === 'r-grandma'))
     .toMatchObject({ state: 'confirmed', live: true, needsCheck: true });

@@ -12,6 +12,7 @@ test('「すること」を足し、やり方を選んで、頼んだ後の返�
     'true',
   );
   await page.getByRole('button', { name: 'することを足す' }).click();
+  await page.getByRole('button', { name: '時間を決めてだれかが要る時は、詳しく入れる' }).click();
   await page.getByLabel('言ったこと（そのまま）').fill(
     '陽菜が熱っぽいので、あしたは8時から18時まで、だれか家にいてほしい',
   );
@@ -38,12 +39,12 @@ test('「すること」を足し、やり方を選んで、頼んだ後の返�
   // ここで実際のプレビュー応答を待ち、読み込み失敗で選べない退行も見つける。
   const grandma = page.getByRole('button', { name: /^祖母に来てもらう/ });
   const care = page.getByRole('button', { name: /^病児保育に預ける/ });
-  await expect(grandma).toContainText('選んだら');
-  await expect(care).toContainText('選んだら');
+  await expect(grandma.locator('..')).toContainText('選んだら');
+  await expect(care.locator('..')).toContainText('選んだら');
   await expect(grandma).toBeEnabled();
   await expect(care).toBeEnabled();
-  await expect(grandma).toContainText('20:55');
-  await expect(care).toContainText('20:50');
+  await expect(grandma.locator('..')).toContainText('20:55');
+  await expect(care.locator('..')).toContainText('20:50');
   await expect(page.getByText('「選んだら」を読めませんでした。', { exact: false })).toHaveCount(0);
   await grandma.click();
 

@@ -26,8 +26,9 @@ test('引き受けた買い物は、日時とともに自分のやることに�
   const view = async (member: string) => (await request.get(`${api}/view?member=${member}`)).json();
   const send = async (memberId: string, operationId: string, command: unknown) => {
     const response = await request.post(`${api}/commands`, { data: { memberId, operationId, command } });
-    expect(response.status()).toBe(200);
-    expect((await response.json()).result.status).toBe('ok');
+    const body = await response.json();
+    expect(response.status(), JSON.stringify(body.result)).toBe(200);
+    expect(body.result.status).toBe('ok');
   };
 
   const before = await view('b');
@@ -70,13 +71,18 @@ test('締切後に持ち物が無いと分かった時も、家族に今の状�
   const view = async (member: string) => (await request.get(`${api}/view?member=${member}`)).json();
   const send = async (memberId: string, operationId: string, command: unknown) => {
     const response = await request.post(`${api}/commands`, { data: { memberId, operationId, command } });
-    expect(response.status()).toBe(200);
-    expect((await response.json()).result.status).toBe('ok');
+    const body = await response.json();
+    expect(response.status(), JSON.stringify(body.result)).toBe(200);
+    expect(body.result.status).toBe('ok');
   };
 
-  await send('b', 'bring-correct-date', {
+  const change = {
     type: 'correctItem', itemId: 'n1:i5', interpretation: { date: '2026-12-05' },
-  });
+  };
+  const previewResponse = await request.post(`${api}/change-preview`, { data: { memberId: 'b', command: change } });
+  expect(previewResponse.status()).toBe(200);
+  const { preview } = await previewResponse.json();
+  await send('b', 'bring-correct-date', { ...change, seen: { throughSeq: preview.throughSeq, changes: preview.seen } });
   const corrected = await view('b');
   await send('b', 'bring-yes', {
     type: 'answer', unknownId: 'u-atHome:n1:i5', value: 'yes',

@@ -29,7 +29,9 @@ test('英語で始め、見本を開いて見守りの未確認に答える', as
   await page.getByRole('radio', { name: 'As usual' }).check();
   await page.getByRole('button', { name: 'See what this changes' }).click();
   await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Add someone you can ask' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add a way to cover the day' })).toBeVisible();
+  await page.getByRole('button', { name: 'Add a way to cover the day' }).click();
+  await expect(page.getByLabel('Their nickname')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1280);
   expect(await (await request.get('http://127.0.0.1:18798/__count')).json()).toEqual({ calls: 0 });
 });

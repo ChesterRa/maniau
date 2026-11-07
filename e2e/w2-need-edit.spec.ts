@@ -11,6 +11,7 @@ test('送った「すること」の直し・取り消しを、変わること�
   await page.getByRole('button', { name: '用意した場面で見る（審査の方へ）' }).click();
   await page.getByRole('combobox', { name: '場面' }).selectOption('arrived');
   await page.getByRole('button', { name: 'することを足す' }).click();
+  await page.getByRole('button', { name: '時間を決めてだれかが要る時は、詳しく入れる' }).click();
   await page.getByLabel('言ったこと（そのまま）').fill(
     '陽菜が熱っぽいので、あしたは8時から18時まで、だれか家にいてほしい',
   );

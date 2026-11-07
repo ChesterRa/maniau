@@ -15,7 +15,8 @@ test('候補のある用件を直す前に、答えとやり方が使えなく�
   expect(oldWhen.answers.length).toBeGreaterThan(0);
   await page.getByRole('button', { name: 'クラブの練習：答えを集めています（候補 2 つ）' }).click();
   await page.getByRole('button', { name: '中身を直す' }).click();
-  await expect(page.getByText(/候補の日を替える時は/)).toBeVisible();
+  await expect(page.getByText(/日と時刻は「いつにするか」の候補が持つので、ここでは直せません/)).toBeVisible();
+  await expect(page.getByText(/「候補の日を直す」で直せます/)).toBeVisible();
   await expect(page.locator('input[type=date], input[type=time]')).toHaveCount(0);
   const preview = page.getByRole('button', { name: 'この変更で変わることを見る' });
   await expect(preview).toBeDisabled();

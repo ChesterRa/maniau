@@ -39,20 +39,20 @@ test('決める・選び直す・取り消しを伝える主線', async ({ page,
 
   // 3–4. 一つのおすすめ、祖母の返事の期限、それぞれを選んだ後の見通し。
   await expect(page.getByText('おすすめ', { exact: true })).toHaveCount(1);
-  await expect(school).toContainText('選んだら');
-  await expect(school).toContainText('学童の申込書を書く');
+  await expect(school.locator('..')).toContainText('選んだら');
+  await expect(school.locator('..')).toContainText('学童の申込書を書く');
   await show(school);
   await shot('04-recommendation');
-  await expect(grandma).toContainText('11/29（日）の夜までに返事');
-  await expect(grandma).toContainText('返事を待ちます');
+  await expect(grandma.locator('..')).toContainText('11/29（日）の夜までに返事');
+  await expect(grandma.locator('..')).toContainText('返事を待ちます');
   await show(grandma);
   await shot('05-grandma');
 
   // 5. 一日進むと、彩ではなく健太への提案になる。
   await page.getByRole('button', { name: '+1日', exact: true }).click();
   await expect(page.getByText('デモの時計 11/26', { exact: false })).toBeVisible();
-  await expect(school).toContainText('健太さんに作業を提案します');
-  await expect(school).toContainText('11/30（月） 17:20');
+  await expect(school.locator('..')).toContainText('健太さんに作業を提案します');
+  await expect(school.locator('..')).toContainText('11/30（月） 17:20');
   await show(school);
   await shot('06-next-day');
 
@@ -63,8 +63,8 @@ test('決める・選び直す・取り消しを伝える主線', async ({ page,
   await shot('07-waiting');
   await page.getByRole('button', { name: 'ほかの手も見る・選び直す' }).click();
   await expect(school).toBeEnabled();
-  await expect(school).toContainText('健太さんに作業を提案します');
-  await expect(school).toContainText('取り消しを伝える作業が出ます');
+  await expect(school.locator('..')).toContainText('健太さんに作業を提案します');
+  await expect(school.locator('..')).toContainText('取り消しを伝える作業が出ます');
   await show(school);
   await shot('08-change-preview');
   await school.click();

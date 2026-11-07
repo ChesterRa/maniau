@@ -12,6 +12,7 @@ test('選べるやり方が無い時、頼める人と方法を足して本命�
 
   // 架空の家族が、今回に合う方法をまだ選んでいない「すること」を足す。
   await page.getByRole('button', { name: 'することを足す' }).click();
+  await page.getByRole('button', { name: '時間を決めてだれかが要る時は、詳しく入れる' }).click();
   await page.getByLabel('言ったこと（そのまま）').fill('明日8時から18時まで見守りをお願いしたい。');
   await page.getByLabel('何を（短く）').fill('明日の見守り');
   await page.getByLabel('日', { exact: true }).fill('2026-11-26');
@@ -50,7 +51,7 @@ test('選べるやり方が無い時、頼める人と方法を足して本命�
   await page.getByRole('button', { name: 'この変更で変わることを見る' }).click();
   await page.getByRole('button', { name: 'このやり方で保存' }).click();
   const primary = page.getByRole('button', { name: /^近所の人に見守りを頼む/ });
-  await expect(primary).toContainText('選んだら');
+  await expect(primary.locator('..')).toContainText('選んだら');
   await expect(primary).toBeEnabled();
   await primary.click();
 
