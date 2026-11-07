@@ -386,7 +386,8 @@ describe('お知らせの文を入れる', () => {
     } as unknown as Ctx;
     await step(() => root.render(<SourcesScreen ctx={ctx} />));
     const line = (text: string) =>
-      [...host.querySelectorAll('p')].find((p) => p.textContent?.startsWith(text))?.textContent;
+      [...host.querySelectorAll('p')].find((p) => p.textContent?.startsWith(text))?.parentElement
+        ?.textContent;
     expect(line('12月3日')).toContain('よていに出します');
     expect(line('音読カード')).toContain('読んだだけ（まだ知らせません）');
     expect(line('よろしく')).toBe('よろしくお願いします。');
@@ -475,7 +476,7 @@ describe('お知らせの文を入れる', () => {
     } as unknown as Ctx;
     await step(() => root.render(<SourcesScreen ctx={ctx} />));
     const line = (text: string) =>
-      [...host.querySelectorAll('p')].find((p) => p.textContent?.startsWith(text));
+      [...host.querySelectorAll('p')].find((p) => p.textContent?.startsWith(text))?.parentElement;
     expect(line('12月13日 お茶当番')?.textContent).toContain('ほかの家の当番として読みました');
     expect(line('来週は給食当番')?.textContent).toContain('読んだだけ（まだ知らせません）');
     expect(line('12月27日 お茶当番')?.textContent).not.toContain('ほかの家の当番');

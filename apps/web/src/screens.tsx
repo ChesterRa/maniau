@@ -5003,62 +5003,66 @@ export function SourcesScreen(props: {
                   // 読んだ日付も並べ、原文と見比べられるようにする。
                   const dates = read?.dates.map((d) => day(ctx, d)) ?? [];
                   return (
-                    <p
+                    <div
                       key={sentence.id}
-                      className={`rounded-lg px-1.5 text-base leading-relaxed ${highlight.has(sentence.id) ? 'bg-bag font-bold' : ''} ${status === 'check' ? 'border-l-4 border-warn' : ''}`}
+                      className={`rounded-lg px-1.5 py-1 ${highlight.has(sentence.id) ? 'bg-bag font-bold' : ''} ${status === 'check' ? 'border-l-4 border-warn' : ''}`}
                     >
-                      {sentence.text}
-                      {status && (
-                        <span
-                          className={`ml-1.5 whitespace-nowrap text-xs font-bold ${STATUS_TONE[status]}`}
-                        >
-                          {dates.length > 0
-                            ? ctx.t('sources.statusOn', {
-                                status: ctx.t(`sources.status.${status}`),
-                                dates: new Intl.ListFormat(ctx.lang).format(dates),
-                              })
-                            : ctx.t(`sources.status.${status}`)}
-                        </span>
-                      )}
-                      {/* ほかの家の番の事項ごとに直せるようにする（同じ文のほかの事項を計画に入れていても。
+                      <p className="whitespace-pre-wrap break-words text-base leading-relaxed">
+                        {sentence.text}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        {status && (
+                          <span
+                            className={`max-w-full rounded-md bg-paper px-1.5 py-0.5 text-[13px] font-bold break-words ${STATUS_TONE[status]}`}
+                          >
+                            {dates.length > 0
+                              ? ctx.t('sources.statusOn', {
+                                  status: ctx.t(`sources.status.${status}`),
+                                  dates: new Intl.ListFormat(ctx.lang).format(dates),
+                                })
+                              : ctx.t(`sources.status.${status}`)}
+                          </span>
+                        )}
+                        {/* ほかの家の番の事項ごとに直せるようにする（同じ文のほかの事項を計画に入れていても。
                           「うちの番ではない」の押し違いも、ここから戻す）。 */}
-                      {read?.others.map(({ itemId, audience }) => (
-                        <button
-                          key={itemId}
-                          type="button"
-                          onClick={() =>
-                            void ctx.send({
-                              type: 'stateTurn',
-                              itemId,
-                              ours: true,
-                              seen: { throughSeq: ctx.plan.throughSeq },
-                            })
-                          }
-                          className="ml-1.5 min-h-11 text-xs font-bold text-accent underline"
-                        >
-                          {ctx.t('sources.ours', { audience })}
-                        </button>
-                      ))}
-                      {/* 「今回は要らない」と言った送り迎えも、ここから言い直せる（押し違い・予定の変更）。 */}
-                      {read?.escortsOff.map(({ itemId, leg }) => (
-                        <button
-                          key={`${itemId}:${leg}`}
-                          type="button"
-                          onClick={() =>
-                            void ctx.send({
-                              type: 'stateEscort',
-                              itemId,
-                              leg,
-                              needed: true,
-                              seen: { throughSeq: ctx.plan.throughSeq },
-                            })
-                          }
-                          className="ml-1.5 min-h-11 text-xs font-bold text-accent underline"
-                        >
-                          {ctx.t(leg === 'to' ? 'sources.escortOn.to' : 'sources.escortOn.from')}
-                        </button>
-                      ))}
-                    </p>
+                        {read?.others.map(({ itemId, audience }) => (
+                          <button
+                            key={itemId}
+                            type="button"
+                            onClick={() =>
+                              void ctx.send({
+                                type: 'stateTurn',
+                                itemId,
+                                ours: true,
+                                seen: { throughSeq: ctx.plan.throughSeq },
+                              })
+                            }
+                            className="min-h-11 text-xs font-bold text-accent underline"
+                          >
+                            {ctx.t('sources.ours', { audience })}
+                          </button>
+                        ))}
+                        {/* 「今回は要らない」と言った送り迎えも、ここから言い直せる（押し違い・予定の変更）。 */}
+                        {read?.escortsOff.map(({ itemId, leg }) => (
+                          <button
+                            key={`${itemId}:${leg}`}
+                            type="button"
+                            onClick={() =>
+                              void ctx.send({
+                                type: 'stateEscort',
+                                itemId,
+                                leg,
+                                needed: true,
+                                seen: { throughSeq: ctx.plan.throughSeq },
+                              })
+                            }
+                            className="min-h-11 text-xs font-bold text-accent underline"
+                          >
+                            {ctx.t(leg === 'to' ? 'sources.escortOn.to' : 'sources.escortOn.from')}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   );
                 })}
               </div>
