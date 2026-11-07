@@ -590,14 +590,19 @@ export function householdPreviewLines(
       ctx.t('household.preview.conflict', { options: optionList(ctx, changes.conflicts) }),
     );
   }
+  if (lines.length === 0 && preview.unverified.length > 0) {
+    lines.push(ctx.t('household.preview.none'));
+  }
   if (preview.issues.length > 0) {
     lines.push(ctx.t('household.preview.issues', { count: preview.issues.length }));
   }
-  // 道のりを確かめられない点は、家族に一つの意味で伝わるので、何かを言う（例：架空の店に替えた時）。ほかの
-  // 決まりは、名前を家族に見せず、数だけ言う。
+  // 道のりと、必要な子の見守りを確かめられない点は、家族に意味を伝える。ほかの決まりも省かず数を残す。
   const route = preview.unverified.filter((code) => ROUTE_UNVERIFIED.has(code));
   if (route.length > 0) lines.push(ctx.t('household.preview.unverifiedRoute'));
-  const others = preview.unverified.length - route.length;
+  const care = preview.unverified.filter((code) => code === 'required_arrangement_missing');
+  if (care.length > 0)
+    lines.push(ctx.t('household.preview.unverifiedCare', { count: care.length }));
+  const others = preview.unverified.length - route.length - care.length;
   if (others > 0) lines.push(ctx.t('household.preview.unverified', { count: others }));
   return lines;
 }

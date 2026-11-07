@@ -168,7 +168,7 @@ describe('うちのこと', () => {
     const text = host.textContent ?? '';
     expect(text).toContain('この変更で変わること');
     expect(text).toContain('の決め時：');
-    expect(text).toContain('確かめきれない点が1件あります');
+    expect(text).toContain('必要な子の見守りが手配できているか、1件確かめられません');
     await step(() => button('この内容で保存')?.click());
     expect(sent).toEqual([
       {

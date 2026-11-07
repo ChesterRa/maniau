@@ -1307,8 +1307,10 @@
       "conflict": "Ways that would clash with other tasks: {{options}}",
       "issues_one": "The check found {{count}} new problem.",
       "issues_other": "The check found {{count}} new problems.",
-      "unverified_one": "{{count}} point couldn't be checked.",
-      "unverified_other": "{{count}} points couldn't be checked.",
+      "unverified_one": "A separate check could not verify {{count}} part of the plan. The details aren't shown here yet. This does not mean it is known to be correct. Check the household information and related plans.",
+      "unverified_other": "A separate check could not verify {{count}} parts of the plan. The details aren't shown here yet. This does not mean they are known to be correct. Check the household information and related plans.",
+      "unverifiedCare_one": "For {{count}} case, the check couldn't confirm that the child's care is arranged. Check the care plan on Today.",
+      "unverifiedCare_other": "For {{count}} cases, the check couldn't confirm that the child's care is arranged. Check the care plan on Today.",
       "unverifiedRoute": "The route to a place hasn’t been checked (times are estimates).",
       "rechoose": "“{{what}}”: a way it uses changed, so its ways need to be chosen again.",
       "preparation": {
