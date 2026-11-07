@@ -184,23 +184,7 @@ export function ResourcesCard({ ctx }: { ctx: Ctx }) {
     const ways = household.ways.filter((w) => w.requires?.includes(p.id));
     return (
       <div key={p.id} className="flex flex-col gap-1 rounded-xl bg-paper px-3 py-2.5">
-        <Text>{ctx.t('resources.preparation.title', { name: p.name })}</Text>
-        {p.source && <Text quiet>{sourceLine(ctx, p.source)}</Text>}
-        {editing ? (
-          <AppliesChoice
-            ctx={ctx}
-            household={household}
-            value={p.appliesTo}
-            onChange={(next) =>
-              change((h) => {
-                const target = h.preparations.find((x) => x.id === p.id);
-                if (target) target.appliesTo = next;
-              })
-            }
-          />
-        ) : (
-          <Text quiet>{appliesText(ctx, household, p)}</Text>
-        )}
+        <p className="font-bold">{ctx.t('resources.preparation.title', { name: p.name })}</p>
         {!editing && (
           <Text>
             {ctx.t(`resources.preparation.state.${p.state}`)}
@@ -229,6 +213,22 @@ export function ResourcesCard({ ctx }: { ctx: Ctx }) {
             ))}
           </div>
         )}
+        {editing ? (
+          <AppliesChoice
+            ctx={ctx}
+            household={household}
+            value={p.appliesTo}
+            onChange={(next) =>
+              change((h) => {
+                const target = h.preparations.find((x) => x.id === p.id);
+                if (target) target.appliesTo = next;
+              })
+            }
+          />
+        ) : (
+          <Text quiet>{appliesText(ctx, household, p)}</Text>
+        )}
+        {p.source && <Text quiet>{sourceLine(ctx, p.source)}</Text>}
         {editing ? (
           <label className="flex flex-wrap items-center gap-2">
             <span className="text-sub">{ctx.t('resources.preparation.validUntil')}</span>
@@ -270,17 +270,10 @@ export function ResourcesCard({ ctx }: { ctx: Ctx }) {
   };
 
   const resourceBlock = (r: Resource) => (
-    <div key={r.id} className="flex flex-col gap-1.5">
+    <div key={r.id} className="flex flex-col gap-1.5 rounded-xl border border-line px-3 py-3">
       <Title>{r.name}</Title>
       {r.area && <Text quiet>{ctx.t('resources.area', { area: r.area })}</Text>}
-      {r.notes.map((note) => (
-        <div key={`${note.text}-${note.source.url ?? note.source.kind}`} className="flex flex-col">
-          <Text>{note.text}</Text>
-          <Text quiet>{sourceLine(ctx, note.source)}</Text>
-          <SourceLink ctx={ctx} source={note.source} />
-        </div>
-      ))}
-      {!editing && <Text>{ctx.t(`resources.use.${r.use}`)}</Text>}
+      {!editing && <p className="font-bold">{ctx.t(`resources.use.${r.use}`)}</p>}
       {editing && (
         <div className="flex flex-wrap gap-1.5">
           {USES.map((u) => (
@@ -302,6 +295,13 @@ export function ResourcesCard({ ctx }: { ctx: Ctx }) {
         </div>
       )}
       {household.preparations.filter((p) => p.resourceId === r.id).map(preparationBlock)}
+      {r.notes.map((note) => (
+        <div key={`${note.text}-${note.source.url ?? note.source.kind}`} className="flex flex-col">
+          <Text quiet>{note.text}</Text>
+          <Text quiet>{sourceLine(ctx, note.source)}</Text>
+          <SourceLink ctx={ctx} source={note.source} />
+        </div>
+      ))}
     </div>
   );
 
@@ -313,13 +313,6 @@ export function ResourcesCard({ ctx }: { ctx: Ctx }) {
       )}
       {household.resources.map(resourceBlock)}
       {/* 家の店で、まだ扱いを決めていない店：直す時に、家族が扱いを選ぶと、その店の資源を作る（一つの店に一つ）。 */}
-      {!editing && stores.length > 0 && (
-        <Text quiet>
-          {ctx.t('resources.stores.hint', {
-            names: stores.map((p) => p.name).join(ctx.t('list.separator')),
-          })}
-        </Text>
-      )}
       {editing &&
         stores.map((p) => (
           <div key={p.id} className="flex flex-col gap-1.5">
@@ -341,7 +334,22 @@ export function ResourcesCard({ ctx }: { ctx: Ctx }) {
           </div>
         ))}
       {unattached.map(preparationBlock)}
+      {!editing && (household.resources.length > 0 || household.preparations.length > 0) && (
+        <Row>
+          <Button kind="secondary" onClick={() => begin(structuredClone(ctx.household))}>
+            {ctx.t('resources.edit')}
+          </Button>
+        </Row>
+      )}
+      {!editing && stores.length > 0 && (
+        <Text quiet>
+          {ctx.t('resources.stores.hint', {
+            names: stores.map((p) => p.name).join(ctx.t('list.separator')),
+          })}
+        </Text>
+      )}
       <Text quiet>{ctx.t('resources.used')}</Text>
+      <Text quiet>{ctx.t('resources.usedConfirm')}</Text>
       {!editing && ctx.home && <HomePanel ctx={ctx} home={ctx.home} />}
       {!editing && ctx.survey && (
         <SurveyPanel
@@ -363,14 +371,9 @@ export function ResourcesCard({ ctx }: { ctx: Ctx }) {
         ) : (
           <Shown ctx={ctx} preview={shown} refused={refused} household={draft} />
         ))}
-      {(household.resources.length > 0 || household.preparations.length > 0) && (
+      {editing && (household.resources.length > 0 || household.preparations.length > 0) && (
         <Row>
-          {!editing && (
-            <Button kind="secondary" onClick={() => begin(structuredClone(ctx.household))}>
-              {ctx.t('household.edit')}
-            </Button>
-          )}
-          {editing && draft && !shown && !stale && (
+          {draft && !shown && !stale && (
             <Button
               onClick={() => void flow.look(draft)}
               disabled={flow.busy || !ctx.previewHousehold}
@@ -378,23 +381,21 @@ export function ResourcesCard({ ctx }: { ctx: Ctx }) {
               {ctx.t('household.look')}
             </Button>
           )}
-          {editing && shown && !stale && (
+          {shown && !stale && (
             <Button onClick={() => void save()} disabled={flow.busy}>
               {ctx.t('household.save')}
             </Button>
           )}
-          {editing && (
-            <Button
-              kind="secondary"
-              onClick={() => {
-                setDraft(undefined);
-                setDraftFrom(undefined);
-              }}
-              disabled={flow.busy}
-            >
-              {ctx.t('household.cancel')}
-            </Button>
-          )}
+          <Button
+            kind="secondary"
+            onClick={() => {
+              setDraft(undefined);
+              setDraftFrom(undefined);
+            }}
+            disabled={flow.busy}
+          >
+            {ctx.t('household.cancel')}
+          </Button>
         </Row>
       )}
     </Card>

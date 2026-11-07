@@ -85,13 +85,18 @@ afterEach(async () => {
   host.remove();
 });
 
-/** 見出しで始まる札の「直す」（札の並びの順に頼らない）。 */
-const editIn = (label: string) =>
+const editLabels = {
+  人: '習い事の送り迎えを直す',
+  ふだんの一週間: 'ふだんの一週間を直す',
+  場所と店: '店の営業時間を直す',
+} as const;
+/** 見出しで始まる札の操作（札の並びの順に頼らない）。 */
+const editIn = (label: keyof typeof editLabels) =>
   [
     ...([...host.querySelectorAll('section')]
       .find((section) => section.textContent?.startsWith(label))
       ?.querySelectorAll('button') ?? []),
-  ].find((b) => b.textContent === '直す');
+  ].find((b) => b.textContent === editLabels[label]);
 const button = (text: string) =>
   [...host.querySelectorAll('button')].find((b) => b.textContent === text);
 
@@ -144,12 +149,12 @@ describe('うちのこと', () => {
     };
     const { ctx, sent, looked } = ctxWith({ preview });
     await step(() => root.render(<HouseholdScreen ctx={ctx} />));
-    // 「取れる手」の札の「直す」（札の並びの順に頼らない）。
+    // 「取れる手」の札の操作を、札の並びの順に頼らずに探す。
     const waysCard = [...host.querySelectorAll('section')].find((section) =>
       section.textContent?.startsWith('取れる手'),
     );
     const edit = [...(waysCard?.querySelectorAll('button') ?? [])].find(
-      (b) => b.textContent === '直す',
+      (b) => b.textContent === '取れる手を直す',
     );
     await step(() => edit?.click());
     const days = [...host.querySelectorAll('input[type="number"]')] as HTMLInputElement[];
@@ -227,7 +232,7 @@ describe('うちのこと', () => {
         section.textContent?.startsWith('取れる手'),
       );
     const edit = [...(waysCard()?.querySelectorAll('button') ?? [])].find(
-      (b) => b.textContent === '直す',
+      (b) => b.textContent === '取れる手を直す',
     );
     await step(() => edit?.click());
     /** 取れる手の一つの欄（名前で探す）。 */
@@ -258,7 +263,7 @@ describe('うちのこと', () => {
     await step(() => root.render(<HouseholdScreen ctx={saved} />));
     expect(block('学童に預ける')?.textContent).toContain('使えないとした手です');
     const again = [...(waysCard()?.querySelectorAll('button') ?? [])].find(
-      (b) => b.textContent === '直す',
+      (b) => b.textContent === '取れる手を直す',
     );
     await step(() => again?.click());
     expect(toggle('学童に預ける', 'この手は使えない')).toBeUndefined();
@@ -345,7 +350,7 @@ describe('うちのこと', () => {
       section.textContent?.startsWith('取れる手'),
     );
     const edit = [...(waysCard?.querySelectorAll('button') ?? [])].find(
-      (b) => b.textContent === '直す',
+      (b) => b.textContent === '取れる手を直す',
     );
     await step(() => edit?.click());
     const field = (label: string) => {

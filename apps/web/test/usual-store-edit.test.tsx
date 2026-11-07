@@ -47,7 +47,7 @@ describe('「周りの資源」の店の扱い', () => {
       if (!button) throw new Error(`押す物が無い：${label}`);
       await step(() => button.click());
     };
-    await press(t('household.edit'));
+    await press(t('resources.edit'));
     expect(host.textContent).toContain(t('resources.stores.kind'));
     // 扱いを決めた資源（病児保育室・店 A）の後に、扱いを決めていない店が並ぶ。最後の店が B。
     const usual = [...host.querySelectorAll('button')].filter(

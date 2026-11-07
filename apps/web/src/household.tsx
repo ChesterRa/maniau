@@ -725,14 +725,14 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
               ))}
             </>
           )}
-          <Text quiet>{ctx.t('household.people.used')}</Text>
           {mode === undefined && children.length > 0 && (
             <Row>
               <Button kind="secondary" onClick={() => edit('people')}>
-                {ctx.t('household.edit')}
+                {ctx.t('household.people.edit')}
               </Button>
             </Row>
           )}
+          <Text quiet>{ctx.t('household.people.used')}</Text>
         </Card>
 
         <Card>
@@ -870,14 +870,16 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
               ))}
             </div>
           )}
-          <Text quiet>{ctx.t('household.week.used')}</Text>
           {mode === undefined && (
             <Row>
               <Button kind="secondary" onClick={() => edit('week')}>
-                {ctx.t('household.edit')}
+                {ctx.t('household.week.edit')}
               </Button>
             </Row>
           )}
+          <Text quiet>{ctx.t('household.week.used')}</Text>
+          <Text quiet>{ctx.t('household.week.usedCare')}</Text>
+          <Text quiet>{ctx.t('household.week.usedEdges')}</Text>
           {mode === undefined && <RecordedDays ctx={ctx} />}
         </Card>
 
@@ -930,14 +932,14 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
                 ))}
             </div>
           ))}
-          <Text quiet>{ctx.t('household.places.used')}</Text>
           {mode === undefined && stores.length > 0 && (
             <Row>
               <Button kind="secondary" onClick={() => edit('places')}>
-                {ctx.t('household.edit')}
+                {ctx.t('household.places.edit')}
               </Button>
             </Row>
           )}
+          <Text quiet>{ctx.t('household.places.used')}</Text>
         </Card>
 
         <Card>
@@ -1056,14 +1058,14 @@ export function HouseholdScreen({ ctx }: { ctx: Ctx }) {
               {costText(ctx, way) && <Text quiet>{costText(ctx, way)}</Text>}
             </div>
           ))}
-          <Text quiet>{ctx.t('household.ways.used')}</Text>
           {mode === undefined && (
             <Row>
               <Button kind="secondary" onClick={() => edit('ways')}>
-                {ctx.t('household.edit')}
+                {ctx.t('household.ways.edit')}
               </Button>
             </Row>
           )}
+          <Text quiet>{ctx.t('household.ways.used')}</Text>
         </Card>
 
         {mode === undefined && <WaysCard ctx={ctx} />}

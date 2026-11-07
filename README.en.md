@@ -322,7 +322,7 @@ The demo doesn't send notifications. Instead, on Today, the demo bar at the top 
 **See what's around us:** tap “Family” at the bottom, then go to “Around us”.
 
 - “Look around us” shows what Claude found when it searched the real web once, on 2026-11-05, around the demo home (Toyosu, Koto ward), saved for the demo: for each candidate, a link to the page it read, Claude's summary, and its reading on advance registration (the full page text and separate quote fields were not saved; a summary may contain the page's words or sentences). Open “Decide how your family treats it” on a candidate, check how to treat it and the advance registration, then press “Add as a candidate for us” to see what would change before saving; you can then copy an existing way to use that place. “Ask Claude to look again now” works up to 3 times per demo and 30 times a day per server (on a server with a reading key).
-- With “Edit”, you can mark each store as usual, candidate or don't use. In scene 2, setting the usual store (the clothing store near Toyosu Station) to candidate shows, before you save, that the shirt errand moves to the other (made-up) store.
+- With “Edit resources”, you can mark each store as usual, candidate or don't use. In scene 2, setting the usual store (the clothing store near Toyosu Station) to candidate shows, before you save, that the shirt errand moves to the other (made-up) store.
 
 To have Claude read a notice, tap “Notices” at the bottom, then “Insert a sample notice (fictional)”, then “Read it” (on a server with a reading key).
 

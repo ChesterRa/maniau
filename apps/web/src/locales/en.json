@@ -1165,12 +1165,12 @@
   "household": {
     "title": "Our family",
     "intro": "This is the family information Maniau calculates with. When you edit it, you can see what would change before you save, using the same calculation.",
-    "edit": "Edit",
     "look": "See what changes",
     "save": "Save these changes",
     "cancel": "Cancel",
     "people": {
       "label": "People",
+      "edit": "Edit lesson drop-off and pick-up",
       "used": "Used to decide whom to propose tasks to and whom to notify.",
       "escortHelp": "For events in notices from lessons and clubs, choose for each child whether an adult takes them there (drop-off) and brings them back (pick-up). Maniau makes drop-off and pick-up tasks around the event only for what you choose (it doesn’t guess at ones that aren’t written). For an event where you already decided for that one time (for example, “not needed this time”), that decision is used instead.",
       "escortManyChildren": "In a household with two or more children, Maniau can’t yet tell which child a lesson notice is for, so it doesn’t make drop-off/pick-up tasks yet (the rules you choose are kept).",
@@ -1193,9 +1193,12 @@
     },
     "week": {
       "label": "A usual week",
+      "edit": "Edit the usual week",
       "summary_one": "{{name}} ({{count}} day)",
       "summary_other": "{{name}} ({{count}} days)",
-      "used": "Used to find when tasks can fit, and when the child needs someone to look after them. Only “Home” blocks count as time someone can look after the child (if you work from home and can't, mark it “Work”). Before the first block and after the last block of a day, we count the person as at home.",
+      "used": "Used to find when tasks can fit, and when the child needs someone to look after them.",
+      "usedCare": "Only “Home” blocks count as time someone can look after the child (if you work from home and can't, mark it “Work”).",
+      "usedEdges": "Before the first block and after the last block of a day, we count the person as at home.",
       "noDay": "No plan is registered for this day.",
       "start": "Start",
       "end": "End",
@@ -1213,6 +1216,7 @@
     },
     "places": {
       "label": "Places and shops",
+      "edit": "Edit shop hours",
       "used": "Used for stops on the way and whether a shop is open in time.",
       "noHours": "No opening hours registered",
       "everyDay": "Every day {{range}}",
@@ -1239,6 +1243,7 @@
     },
     "ways": {
       "label": "Ways to cover",
+      "edit": "Edit ways to cover",
       "used": "Used for each way's decision time (counted back from its deadline) and for the order we recommend.",
       "daysBefore_one": "By {{at}}, {{count}} day before",
       "daysBefore_other": "By {{at}}, {{count}} days before",
@@ -1853,8 +1858,10 @@
   },
   "resources": {
     "label": "Around us",
+    "edit": "Edit resources",
     "none": "Nothing yet.",
-    "used": "Facilities and services near home that your family added, and what must be done before using them (such as registering in advance). You enter whether it’s done (research alone never marks it done). Options needing an advance step not confirmed as done are not recommended.",
+    "used": "Facilities and services near home that your family added, and what must be done before using them (such as registering in advance).",
+    "usedConfirm": "You enter whether it’s done (research alone never marks it done). Options needing an advance step not confirmed as done are not recommended.",
     "area": "Area: {{area}}",
     "source": {
       "demo": "Source: a made-up rule for the demo (not a real page)",
@@ -1986,7 +1993,7 @@
       "noArea": "The home has no area entered, so we can’t look.",
       "failed": "Couldn’t look around. Please try again a little later.",
       "linkFirst": "To add it as a prerequisite, first choose that registration is needed or is the same as one you have.",
-      "added": "Already in your household information (change how you treat it with “Edit” above).",
+      "added": "Already in your household information (change how you treat it with “Edit resources” above).",
       "update": "Confirm registration and prerequisites",
       "samePlace": "It’s the same place as “{{name}}” in our household information",
       "samePlaceNot": "Unless you confirm it’s the same place, it’s added without a place (it can’t be who you ask or where you go in a way).",
@@ -2024,7 +2031,7 @@
       }
     },
     "stores": {
-      "hint": "You can also mark your stores ({{names}}) as usual or not used with “Edit”. If you have a usual store, shopping goes there (even if another store is on the way sooner).",
+      "hint": "You can also mark your stores ({{names}}) as usual or not used with “Edit resources”. If you have a usual store, shopping goes there (even if another store is on the way sooner).",
       "kind": "One of your stores (not decided yet)"
     }
   },
