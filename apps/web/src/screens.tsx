@@ -42,7 +42,7 @@ import {
   zonedToEpochMinutes,
 } from '@maniau/core';
 import type { TFunction } from 'i18next';
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { MonthView, ViewSwitch } from './calendar';
 import { ChoiceClock } from './choice-clock';
 import { CareOptionAddCard, FactsCard } from './facts';
@@ -1117,6 +1117,41 @@ export function TodayScreen({ ctx, done }: { ctx: Ctx; done?: TodayDone }) {
             {ctx.t(`today.done.${done}`)}
           </p>
         )}
+        {ctx.changes && <ChangeCard ctx={ctx} change={ctx.changes} />}
+        {fresh && <StartCard ctx={ctx} />}
+        {!fresh && !now && unconfirmedDates.length === 0 && !ctx.changes && (
+          <Card tone="accent">
+            <Title>{ctx.t('today.nothing')}</Title>
+            <Text quiet>{ctx.t('today.nothingBody')}</Text>
+          </Card>
+        )}
+        {now && <SectionTitle>{ctx.t('today.now')}</SectionTitle>}
+        {/* 残りの件数は見出しの直後に出す（長い札の後ろまで読まないと、まだあると分からないので）。 */}
+        {main.length > shown.length && (
+          <MoreLink onClick={() => setAll(true)}>
+            {ctx.t('today.more', { count: main.length - shown.length })}
+          </MoreLink>
+        )}
+        {shown.map((card) => (
+          <CardView key={cardKey(card)} ctx={ctx} card={card} />
+        ))}
+        {mine.length > 0 && (
+          <Card>
+            <div className="flex flex-col">
+              {mine.map((card, index) => (
+                <QuietRow
+                  key={cardKey(card)}
+                  ctx={ctx}
+                  card={card}
+                  last={index === mine.length - 1}
+                />
+              ))}
+            </div>
+          </Card>
+        )}
+        {/* いつにするかの決まっていない「すること」（日を決める事が残る）は、今やることの終わりに置く。 */}
+        <WhenList ctx={ctx} />
+        {/* 日付を確かめていない読み取り（計画にはまだ入れていない）は、今やることの札の後に置く。 */}
         {unconfirmedDates.length > 0 && (
           <Card>
             <Label tone="warn">{ctx.t('today.checkDates.label')}</Label>
@@ -1139,39 +1174,6 @@ export function TodayScreen({ ctx, done }: { ctx: Ctx; done?: TodayDone }) {
             ))}
           </Card>
         )}
-        {ctx.changes && <ChangeCard ctx={ctx} change={ctx.changes} />}
-        {fresh && <StartCard ctx={ctx} />}
-        {!fresh && !now && unconfirmedDates.length === 0 && !ctx.changes && (
-          <Card tone="accent">
-            <Title>{ctx.t('today.nothing')}</Title>
-            <Text quiet>{ctx.t('today.nothingBody')}</Text>
-          </Card>
-        )}
-        {now && <SectionTitle>{ctx.t('today.now')}</SectionTitle>}
-        {shown.map((card) => (
-          <CardView key={cardKey(card)} ctx={ctx} card={card} />
-        ))}
-        {main.length > shown.length && (
-          <MoreLink onClick={() => setAll(true)}>
-            {ctx.t('today.more', { count: main.length - shown.length })}
-          </MoreLink>
-        )}
-        {mine.length > 0 && (
-          <Card>
-            <div className="flex flex-col">
-              {mine.map((card, index) => (
-                <QuietRow
-                  key={cardKey(card)}
-                  ctx={ctx}
-                  card={card}
-                  last={index === mine.length - 1}
-                />
-              ))}
-            </div>
-          </Card>
-        )}
-        {/* いつにするかの決まっていない「すること」（日を決める事が残る）は、今やることの終わりに置く。 */}
-        <WhenList ctx={ctx} />
         {asked.length > 0 && (
           <>
             <SectionTitle>{ctx.t('today.asked')}</SectionTitle>
@@ -2434,20 +2436,28 @@ export function ReadingShown({ ctx, live }: { ctx: Ctx; live: Ctx['items'][numbe
 }
 
 /**
- * 読み取りを確かめる・直す時の元の文。初めはお知らせの全文を見せ、読み取りが指した文を太字にする（指す文はモデルが
- * 選ぶので、指さなかった文に日時や条件を変える所〔「登校前にお願いします」〕があっても見落とさない）。長ければ、
- * 指した文と前後の一文にたためる。
+ * 読み取りを確かめる・直す時の元の文。読み取りが指した文を太字にする。短いお知らせは初めから全文を見せる（指す文は
+ * モデルが選ぶので、指さなかった文に日時や条件を変える所〔「登校前にお願いします」〕があっても見落とさない）。
+ * 確かめる札では、長いお知らせ（BRIEF_OVER 文より多い）を、指した文と前後の一文から始め、全文は引用の前の
+ * 一押しで開く（全文が何画面も続き、確かめる釦が見えなくなるのを避ける）。直す画面は、いつも全文から。
  */
+const BRIEF_OVER = 8;
+
 export function NoticeText({
   source,
   cited,
   t,
+  startBrief = false,
 }: {
   source: Source | undefined;
   cited: readonly string[];
   t: TFunction;
+  /** 長いお知らせを、指した文と前後から始めるか（確かめる札だけ。直す画面は全文から）。 */
+  startBrief?: boolean;
 }) {
-  const [brief, setBrief] = useState(false);
+  const [brief, setBrief] = useState(
+    () => startBrief && (source?.sentences?.length ?? 0) > BRIEF_OVER && cited.length > 0,
+  );
   const sentences = source?.sentences ?? [];
   if (sentences.length === 0) return null;
   const marked = new Set(cited);
@@ -2456,18 +2466,16 @@ export function NoticeText({
       marked.has(sentence.id) ? [index - 1, index, index + 1] : [],
     ),
   );
-  const shown = sentences.filter((_, index) => !brief || near.has(index));
+  const shown = sentences
+    .map((sentence, index) => ({ sentence, index }))
+    .filter(({ index }) => !brief || near.has(index));
   const gap = source?.language === 'ja' ? '' : ' ';
+  // 絞った時は、省いた所に「…」を置く（離れた二つの文が、続いた文に見えないように）。
+  const cut = (index: number, before: number) => brief && index > before + 1;
+  const last = shown.at(-1)?.index ?? sentences.length - 1;
+  // 絞る・全文に戻す一押しは、引用の前に置く（絞って見せている事が、読む前に分かるように）。
   return (
     <>
-      <Quote>
-        {shown.map((sentence, index) => (
-          <span key={sentence.id} className={marked.has(sentence.id) ? 'font-bold' : 'text-sub'}>
-            {index > 0 ? gap : ''}
-            {sentence.text}
-          </span>
-        ))}
-      </Quote>
       {brief ? (
         <MoreLink onClick={() => setBrief(false)}>
           {t('card.needCheck.wholeNotice', { count: sentences.length - shown.length })}
@@ -2478,6 +2486,21 @@ export function NoticeText({
           <MoreLink onClick={() => setBrief(true)}>{t('card.needCheck.brief')}</MoreLink>
         )
       )}
+      <Quote>
+        {shown.map(({ sentence, index }, at) => {
+          const skipped = cut(index, at === 0 ? -1 : (shown[at - 1]?.index ?? -1));
+          return (
+            <Fragment key={sentence.id}>
+              {skipped && <span className="text-sub">{at > 0 ? gap : ''}…</span>}
+              <span className={marked.has(sentence.id) ? 'font-bold' : 'text-sub'}>
+                {at > 0 || skipped ? gap : ''}
+                {sentence.text}
+              </span>
+            </Fragment>
+          );
+        })}
+        {cut(sentences.length, last) && <span className="text-sub">{gap}…</span>}
+      </Quote>
     </>
   );
 }
@@ -2529,7 +2552,7 @@ function NeedCheckCard({
       <ReadingShown ctx={ctx} live={live} />
       {!requirement.live && <Text>{ctx.t('card.needCheck.notLive')}</Text>}
       {past && <Text>{ctx.t('card.needCheck.past')}</Text>}
-      <NoticeText source={source} cited={item.sentenceIds} t={ctx.t} />
+      <NoticeText source={source} cited={item.sentenceIds} t={ctx.t} startBrief />
       {flagged && <Text>{ctx.t('card.needCheck.flagged')}</Text>}
       <Text quiet>{ctx.t('card.needCheck.body')}</Text>
       {failed !== undefined && (
@@ -2551,13 +2574,24 @@ function NeedCheckCard({
           </Button>
         </Row>
       )}
-      <MoreLink onClick={() => void send({ type: 'dismissItem', itemId, reason: 'misread', seen })}>
-        {ctx.t('card.needCheck.misread')}
-      </MoreLink>
-      <MoreLink onClick={() => void send({ type: 'dismissItem', itemId, reason: 'notOurs', seen })}>
-        {ctx.t('card.needCheck.notOurs')}
-      </MoreLink>
-      <Text quiet>{ctx.t('card.needCheck.misreadNote')}</Text>
+      {/* 外す二つは、たたんだ一行から開く（いつもの道は「合っている」「直す」の二つにする）。確かめも直しも
+          出せない読み取りでは、外すのが唯一の道なので、開いて出す。 */}
+      <details className="text-base" open={!confirmable}>
+        <summary className="min-h-11 cursor-pointer py-2 font-bold text-accent">
+          {ctx.t('card.needCheck.dismissOpen')}
+        </summary>
+        <MoreLink
+          onClick={() => void send({ type: 'dismissItem', itemId, reason: 'misread', seen })}
+        >
+          {ctx.t('card.needCheck.misread')}
+        </MoreLink>
+        <MoreLink
+          onClick={() => void send({ type: 'dismissItem', itemId, reason: 'notOurs', seen })}
+        >
+          {ctx.t('card.needCheck.notOurs')}
+        </MoreLink>
+        <Text quiet>{ctx.t('card.needCheck.misreadNote')}</Text>
+      </details>
     </Card>
   );
 }
@@ -4944,6 +4978,54 @@ function addDaysIso(date: string, days: number): string {
 
 // ── 取り込んだお知らせ ──────────────────────────────
 
+/** これより多い文のお知らせは、お知らせの画面でたたんで始める（学校だよりの表などで、頁が何画面も続かないように）。 */
+const LONG_NOTICE = 15;
+
+/** 取り込んだお知らせ一つ。たたんだ時は、届いた時と題と「原文と読み取りを見る」だけを出す。 */
+function SourceCard(props: {
+  ctx: Ctx;
+  title: string;
+  received: string;
+  open: boolean;
+  count: number;
+  /** たたんだ時に添える、このお知らせから読んだ事項の名（読み取りの結果。題は写真の一行目のことがあるので）。 */
+  read: readonly string[];
+  toToday?: () => void;
+  check?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(props.open);
+  const { ctx } = props;
+  return (
+    <Card>
+      <Label tone="sub">{props.received}</Label>
+      <Title>{props.title}</Title>
+      {props.check && <Text>{props.check}</Text>}
+      {props.toToday && (
+        <Button kind="secondary" onClick={props.toToday}>
+          {ctx.t('sources.toToday')}
+        </Button>
+      )}
+      {!open && props.read.length > 0 && (
+        <Text quiet>
+          {ctx.t('sources.readItems', {
+            items: props.read.slice(0, 3).join(ctx.t('sources.readItemsJoin')),
+            count: Math.max(0, props.read.length - 3),
+          })}
+        </Text>
+      )}
+      {/* 開く・たたむは同じ釦で切り替える（押した後も、キーボードの位置と開いているかの状態が残るように）。
+          初めから開いている短いお知らせには出さない。 */}
+      {!props.open && (
+        <MoreLink onClick={() => setOpen(!open)} expanded={open}>
+          {open ? ctx.t('sources.close') : ctx.t('sources.open', { count: props.count })}
+        </MoreLink>
+      )}
+      {open && props.children}
+    </Card>
+  );
+}
+
 export function SourcesScreen(props: {
   ctx: Ctx;
   sourceId?: string;
@@ -4951,9 +5033,15 @@ export function SourcesScreen(props: {
   openDate?: boolean;
 }) {
   const { ctx } = props;
-  const sources = [...ctx.sources.values()].sort((a, b) =>
-    b.receivedAt.localeCompare(a.receivedAt),
-  );
+  // 新しい順。同じ時刻（試しの時計は止まっている）は、届いた順（出典の並び）の後の物を先にする。
+  const sources = [...ctx.sources.values()]
+    .map((source, order) => ({ source, order }))
+    .sort(
+      (a, b) =>
+        toEpochMinutes(b.source.receivedAt) - toEpochMinutes(a.source.receivedAt) ||
+        b.order - a.order,
+    )
+    .map(({ source }) => source);
   const shown = props.sourceId ? sources.filter((s) => s.id === props.sourceId) : sources;
   const highlight = new Set(props.highlight ?? []);
   const input = ctx.read ? (
@@ -4980,28 +5068,65 @@ export function SourcesScreen(props: {
             <Text quiet>{ctx.t('sources.gone')}</Text>
           </Card>
         )}
-        {shown.map((source) => {
+        {shown.map((source, index) => {
           const reading = ctx.readings.find((r) => r.sourceId === source.id);
           const check = new Set(reading?.check ?? []);
           const statusOf = sentenceStatus(ctx, source.id);
+          // 文ごとの札の言葉（文ごとに出す。どの文の札かが分かるように）。
+          const labels = source.sentences.map((sentence) => {
+            const read = statusOf(sentence.id);
+            const status: keyof typeof STATUS_TONE | undefined = check.has(sentence.id)
+              ? 'check'
+              : read?.status;
+            const dates = read?.dates.map((d) => day(ctx, d)) ?? [];
+            const text = !status
+              ? undefined
+              : dates.length > 0
+                ? ctx.t('sources.statusOn', {
+                    status: ctx.t(`sources.status.${status}`),
+                    dates: new Intl.ListFormat(ctx.lang).format(dates),
+                  })
+                : ctx.t(`sources.status.${status}`);
+            return { read, status, text };
+          });
           return (
-            <Card key={source.id}>
-              <Label tone="sub">
-                {ctx.t('sources.received', { at: dayTime(ctx, source.receivedAt) })}
-              </Label>
-              <Title>{source.title ?? ctx.t('sources.untitled')}</Title>
+            <SourceCard
+              key={source.id}
+              ctx={ctx}
+              title={source.title ?? ctx.t('sources.untitled')}
+              received={ctx.t('sources.received', { at: dayTime(ctx, source.receivedAt) })}
+              // 一覧では、いちばん新しいお知らせだけを開く（古いお知らせの原文で頁が長くならないように）。長い
+              // お知らせ（LONG_NOTICE 文より多い）は、読み取った事項の名と「原文と読み取りを見る」から始める。元の文を
+              // 指して開いた時（きょうの「元の文を見る」・日付を確かめる）は、全文を開く。
+              open={
+                (props.sourceId !== undefined || index === 0) &&
+                (source.sentences.length <= LONG_NOTICE ||
+                  props.openDate === true ||
+                  highlight.size > 0)
+              }
+              count={source.sentences.length}
+              // 読み終えた直後に開く画面では、次の一歩（きょう）を原文の前に置く（たたんでいても見せる）。
+              toToday={props.sourceId ? () => ctx.go({ name: 'today' }) : undefined}
+              // 確かめてほしい文の知らせは、たたんでいても出す（開かないと要確認に気づけない事が無いように）。
+              check={
+                reading?.checkAll
+                  ? ctx.t('sources.checkAll')
+                  : check.size > 0
+                    ? ctx.t('sources.check', { count: check.size })
+                    : undefined
+              }
+              read={[
+                ...new Set(
+                  ctx.items
+                    .filter(({ item }) => item.sourceId === source.id)
+                    .map(({ item }) => item.interpretation.what ?? item.written),
+                ),
+              ]}
+            >
               {source.medium === 'photo' && <Text quiet>{ctx.t('sources.fromPhoto')}</Text>}
-              {reading?.checkAll ? (
-                <Text>{ctx.t('sources.checkAll')}</Text>
-              ) : (
-                check.size > 0 && <Text>{ctx.t('sources.check', { count: check.size })}</Text>
-              )}
               <div className="flex flex-col gap-1">
-                {source.sentences.map((sentence) => {
-                  const read = statusOf(sentence.id);
-                  const status = check.has(sentence.id) ? 'check' : read?.status;
-                  // 読んだ日付も並べ、原文と見比べられるようにする。
-                  const dates = read?.dates.map((d) => day(ctx, d)) ?? [];
+                {source.sentences.map((sentence, at) => {
+                  const { read, status, text } = labels[at] ?? {};
                   return (
                     <div
                       key={sentence.id}
@@ -5015,12 +5140,7 @@ export function SourcesScreen(props: {
                           <span
                             className={`max-w-full rounded-md bg-paper px-1.5 py-0.5 text-[13px] font-bold break-words ${STATUS_TONE[status]}`}
                           >
-                            {dates.length > 0
-                              ? ctx.t('sources.statusOn', {
-                                  status: ctx.t(`sources.status.${status}`),
-                                  dates: new Intl.ListFormat(ctx.lang).format(dates),
-                                })
-                              : ctx.t(`sources.status.${status}`)}
+                            {text}
                           </span>
                         )}
                         {/* ほかの家の番の事項ごとに直せるようにする（同じ文のほかの事項を計画に入れていても。
@@ -5066,11 +5186,6 @@ export function SourcesScreen(props: {
                   );
                 })}
               </div>
-              {props.sourceId && (
-                <Button kind="secondary" onClick={() => ctx.go({ name: 'today' })}>
-                  {ctx.t('sources.toToday')}
-                </Button>
-              )}
               {reading && (
                 <Text quiet>
                   {reading.origin === 'live'
@@ -5081,7 +5196,7 @@ export function SourcesScreen(props: {
                 </Text>
               )}
               <SourceEdits ctx={ctx} source={source} openDate={props.openDate === true} />
-            </Card>
+            </SourceCard>
           );
         })}
         {props.sourceId && input}
@@ -6111,16 +6226,7 @@ function NoticeInputCard({
         placeholder={ctx.t('input.placeholder')}
         className="w-full rounded-lg border border-line bg-card p-3 text-base leading-relaxed"
       />
-      {voice.button && <div className="flex flex-wrap items-center gap-2">{voice.button}</div>}
-      {voice.status}
-      {/* 使えない時は、上の説明がキーボードのマイクを案内する。 */}
-      {voice.supported && voice.note}
-      {/* デモだけ：初めて試す人が文を用意しなくてよいように、架空のお知らせを欄に入れる（読み取りは押した時だけ）。 */}
-      {!ctx.trialInput && text.length === 0 && !busy && (
-        <MoreLink onClick={() => change(() => setText(SAMPLE_NOTICE))}>
-          {ctx.t('input.sample')}
-        </MoreLink>
-      )}
+      {/* 文の欄の直後に、送り先の説明と「読み取る」を置く（書き起こした後の次の一手を近くに）。話す・例文は後ろ。 */}
       <Text quiet>
         {ctx.t(
           ctx.trialInput
@@ -6153,6 +6259,16 @@ function NoticeInputCard({
       >
         {ctx.t(state === 'reading' ? 'input.reading' : 'input.submit')}
       </Button>
+      {voice.button && <div className="flex flex-wrap items-center gap-2">{voice.button}</div>}
+      {voice.status}
+      {/* 使えない時は、上の説明がキーボードのマイクを案内する。 */}
+      {voice.supported && voice.note}
+      {/* デモだけ：初めて試す人が文を用意しなくてよいように、架空のお知らせを欄に入れる（読み取りは押した時だけ）。 */}
+      {!ctx.trialInput && text.length === 0 && !busy && (
+        <MoreLink onClick={() => change(() => setText(SAMPLE_NOTICE))}>
+          {ctx.t('input.sample')}
+        </MoreLink>
+      )}
     </Card>
   );
 }

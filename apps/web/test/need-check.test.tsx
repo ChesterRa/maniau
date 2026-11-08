@@ -104,6 +104,17 @@ afterEach(async () => {
 const buttons = (label: string) =>
   [...host.querySelectorAll('button')].filter((b) => b.textContent?.trim() === label);
 const button = (label: string) => buttons(label)[0];
+/** 外す二つをたたんだ一行（札ごとに一つ）。家族と同じく、一行を押して開いてから外す。 */
+const dismissPanels = () =>
+  [...host.querySelectorAll('details')].filter(
+    (d) => d.querySelector('summary')?.textContent === '違う・うちには要らない時',
+  );
+async function openDismiss(at = 0) {
+  const panel = dismissPanels()[at];
+  expect(panel?.open).toBe(false);
+  await step(() => panel?.querySelector('summary')?.click());
+  expect(panel?.open).toBe(true);
+}
 function enter(element: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value')?.set;
   setter?.call(element, value);
@@ -148,6 +159,7 @@ describe('お知らせから読んだ「すること」の確かめ', () => {
     await step(() => button('合っている')?.click());
     expect(sent).toEqual([{ type: 'confirmItem', itemId: 'n9:i1', seen: { throughSeq: 7 } }]);
     answer = { status: 'conflict', reason: 'itemChanged' };
+    await openDismiss(1);
     await step(() => buttons('読み取りが違う（外す）')[1]?.click());
     expect(sent[1]).toEqual({
       type: 'dismissItem',
@@ -274,6 +286,7 @@ describe('お知らせから読んだ「すること」の確かめ', () => {
     await step(() => root.render(<TodayScreen ctx={notLive} />));
     expect(host.textContent).toContain('読み取りの日時は、もう過ぎています');
     expect(host.textContent).toContain('今の答えでは、要らないことになっています');
+    await openDismiss();
     await step(() => button('うちには要らない（外す）')?.click());
     expect(sent).toEqual([
       { type: 'dismissItem', itemId: 'n9:i5', reason: 'notOurs', seen: { throughSeq: 7 } },
@@ -329,6 +342,8 @@ describe('お知らせから読んだ「すること」の確かめ', () => {
     expect(host.textContent).toContain('見分けられる形で見せられないので、確かめられません');
     expect(buttons('合っている')).toHaveLength(0);
     expect(buttons('直す')).toHaveLength(0);
+    // 外すのが唯一の道なので、たたまずに開いて出す。
+    expect(dismissPanels()[0]?.open).toBe(true);
     await step(() => button('読み取りが違う（外す）')?.click());
     expect(sent).toEqual([
       { type: 'dismissItem', itemId: 'n9:i1', reason: 'misread', seen: { throughSeq: 7 } },

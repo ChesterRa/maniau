@@ -105,11 +105,12 @@ export function Row({ children }: { children: ReactNode }) {
   return <div className="flex flex-wrap gap-2.5 [&>button]:min-w-[7rem]">{children}</div>;
 }
 
-export function MoreLink(props: { children: ReactNode; onClick: () => void }) {
+export function MoreLink(props: { children: ReactNode; onClick: () => void; expanded?: boolean }) {
   return (
     <button
       type="button"
       onClick={props.onClick}
+      aria-expanded={props.expanded}
       className="inline-flex min-h-10 items-center gap-0.5 self-start text-left font-bold text-accent"
     >
       {props.children}
