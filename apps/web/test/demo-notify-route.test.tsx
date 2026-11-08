@@ -85,9 +85,7 @@ it('「きょう」に出し、「うち」へ移ると出さず、「きょう�
   await step(() =>
     take(calls, (c) => c.url.startsWith('/api/demo/sessions/s1/view')).respond(200, view),
   );
-  expect(summary()).toBe(
-    '知らせの候補（まだ送っていないとした時。デモでは送りません）：彩さんへ 1 件',
-  );
+  expect(summary()).toBe('知らせの候補（デモでは送りません）：彩さんへ 1 件');
 
   await press('うち');
   expect(summary()).toBeNull();

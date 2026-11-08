@@ -40,23 +40,23 @@
     },
     "guideLead": "At the start",
     "guide": {
-      "arrived": "A school-event notice has created child care for 陽菜 on 12/7 and a shirt to prepare. Tap “Choose how to arrange care” to compare each option's decision deadline and what happens if you choose it.",
-      "asked": "彩 asked おばあちゃん and is waiting for the reply. 健太 has a task to buy the shirt at a shop on the way home (the store your family marked usual). Switch “Viewing as” to 彩 to try “What if they say no?”. Under “Around us” in Family, your family reviews places Claude found nearby and decides how each store is used.",
-      "chase": "おばあちゃん hasn't replied, and the after-school care deadline is close. On 彩's screen, Maniau asks whether to hold a backup, and “What if they say no?” shows the calculation if the answer is no.",
-      "backup": "After-school care is held as a backup. If おばあちゃん says no, the plan moves on to it (see “What if they say no?” on 彩's screen).",
-      "postponed": "A postponement notice means child care on 12/7 is no longer needed. The cancellations to send are split between the two adults.",
-      "when": "Both parents are out one afternoon, so the family is choosing between 12/12 and 12/13 for someone to watch Hina. Compare answers from Grandma (Aya asked by phone) and Ms. Sato next door (answered by link), see whose answers can change it, and the deadline to ask. Open it from “Choosing the day” on Today.",
-      "club": "Choose the club practice day: 12/12 or 12/19. The coach is required, and at least 6 people. 12/12 needs one more; 12/19 depends on the coach. Make a new link and answer in another tab to see the table change.",
-      "busy": "健太 recorded busy time on 12/19, 9:30–10:30 (an online meeting at home). The 12/19 practice candidate now shows an “overlaps” line (answers and counts stay as they are). Open that day from the list in Family and remove it, and the line goes away. It also changes where tasks go: in the “11/26 Errand on the way home” scene, add 18:30–19:30 on 11/26 for 健太 and look — the shirt purchase moves to 11/27."
+      "arrived": "A notice created child care for 陽菜 on 12/7 and a shirt to prepare. Tap “Choose how to arrange care” to compare each option's decision deadline.",
+      "asked": "彩 asked おばあちゃん and is waiting for the reply. 健太 has an errand on the way home. Under “Around us” in Family, see places Claude found nearby.",
+      "chase": "No reply yet, and the after-school care deadline is close. 彩's screen asks whether to hold a backup, and “What if they say no?” shows the calculation if the answer is no.",
+      "backup": "After-school care is held as a backup. If おばあちゃん says no, the plan moves on to it (“What if they say no?” on 彩's screen).",
+      "postponed": "The postponement makes care on 12/7 unnecessary; the cancellations to send are split between the two adults.",
+      "when": "Choose 12/12 or 12/13 for someone to watch 陽菜 (open it from “Choosing the day” on Today).",
+      "club": "Choose the club practice day: 12/12 or 12/19 (the coach is required, at least 6 people).",
+      "busy": "健太 recorded busy time on 12/19, 9:30–10:30, so the 12/19 practice candidate shows an “overlaps” line."
     },
     "notify": {
-      "summary": "Notifications if not yet sent (the demo sends none): {{list}}",
+      "summary": "Notifications (the demo sends none): {{list}}",
       "item_one": "{{count}} to {{name}}",
       "item_other": "{{count}} to {{name}}",
       "itemBlocked_one": "{{count}} stopped by the verifier",
       "itemBlocked_other": "{{count}} stopped by the verifier",
       "itemBlockedAll": "all held by the verifier",
-      "note": "Held overnight until morning, and passed through the verifier's gate.",
+      "note": "These assume nothing has been sent yet. Held overnight until morning, and passed through the verifier's gate.",
       "now": "To {{name}}: “{{text}}”",
       "morning": "To {{name}} (held for the night until {{time}}): “{{text}}”",
       "none": "{{name}}: none",
@@ -73,9 +73,9 @@
       "input": "Add a notice",
       "inputSub": "Take a photo, paste, or speak",
       "decide": "Decide and ask",
-      "decideSub": "Your family makes the choice",
+      "decideSub": "Compare deadlines, get a draft to send",
       "follow": "Maniau follows up",
-      "followSub": "Record the reply, and see the next step"
+      "followSub": "Record replies, see the next step"
     },
     "begin": "Start",
     "beginSub": "Start with names and try the example notice.",
@@ -83,6 +83,7 @@
     "sampleSub": "Compare options and deadlines with a sample family.",
     "note": "No sign-up. Apart from the address, keep family details and notices made up; to look around, you can enter a real address. Temporary records.",
     "stages": "View prepared scenes (for judges)",
+    "stagesSub": "Switch between 8 moments of a fictional family and compare the two adults’ screens.",
     "expired": "Your previous trial could not be found. Please start again.",
     "failed": "Couldn’t start. Check your connection and try again.",
     "family": {

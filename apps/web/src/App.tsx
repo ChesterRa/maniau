@@ -570,9 +570,10 @@ function ClockButtons({
 }) {
   const { t } = useTranslation();
   if (!onAdvance) return null;
+  // デモの時計の行に並べる。「時計を進める」は読み上げ用の名にし、見た目は「+1時間」「+1日」だけにする。
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="text-sub">{t('demo.advance')}</span>
+    <fieldset className="flex items-center gap-1.5">
+      <legend className="sr-only">{t('demo.advance')}</legend>
       {(
         [
           [60, 'demo.plusHour'],
@@ -584,12 +585,12 @@ function ClockButtons({
           type="button"
           onClick={() => onAdvance(minutes)}
           disabled={busy}
-          className="min-h-9 rounded-lg border border-line bg-card px-3 font-bold disabled:opacity-50"
+          className="min-h-9 rounded-lg border border-line bg-card px-2.5 font-bold disabled:opacity-50"
         >
           {t(label)}
         </button>
       ))}
-    </div>
+    </fieldset>
   );
 }
 
@@ -817,31 +818,23 @@ export function DemoBar(props: {
 }) {
   const { t } = useTranslation();
   return (
-    <div className="mx-2 mt-2 flex flex-col gap-1 rounded-xl border border-line bg-card px-2 py-2 text-sm">
-      <div className="flex flex-wrap items-center justify-between gap-x-1">
+    // 携帯の初めの画面をデモの操作で埋めないよう、時計と進めるボタン、場面とやり直し、使う人と言葉を、それぞれ一行にする。
+    <div className="mx-2 mt-2 flex flex-col gap-1 rounded-xl border border-line bg-card px-2 py-1.5 text-sm">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="text-[13px] font-semibold text-sub">
           {props.clock ? t('demo.clock', { time: props.clock }) : t('demo.label')}
         </span>
-        <span className="flex gap-x-2">
-          <button type="button" onClick={props.onRestart} className="min-h-9 text-accent underline">
-            {t('demo.restart')}
-          </button>
-          {props.onLeave && (
-            <button type="button" onClick={props.onLeave} className="min-h-9 text-accent underline">
-              {t('demo.leave')}
-            </button>
-          )}
-        </span>
+        <ClockButtons onAdvance={props.onAdvance} busy={props.advancing === true} />
       </div>
-      <ClockButtons onAdvance={props.onAdvance} busy={props.advancing === true} />
-      <div className="flex flex-wrap items-center gap-2">
-        {/* 狭い画面でも、場面の長い名前で枠の外へはみ出さない（選ぶ物は端末のまま）。 */}
-        <label className="flex min-w-0 max-w-full items-center gap-1">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        {/* 「場面」は README の手順が指す目印なので見せる。狭い画面では、長い名を切ってでも、やり直しと同じ行に
+            置く（選ぶ一覧は端末のまま全文）。 */}
+        <label className="flex min-w-0 max-w-full flex-[1_1_180px] items-center gap-1">
           <span className="shrink-0 text-sub">{t('demo.stage')}</span>
           <select
             value={props.stage}
             onChange={(e) => props.onStage(e.target.value)}
-            className="min-h-9 min-w-0 max-w-full flex-1 truncate rounded-lg border border-line bg-card px-2"
+            className="min-h-9 min-w-0 max-w-full flex-1 truncate rounded-lg border border-line bg-card px-2 text-[13px]"
           >
             {props.stages.map((id) => (
               <option key={id} value={id}>
@@ -850,6 +843,15 @@ export function DemoBar(props: {
             ))}
           </select>
         </label>
+        <button
+          type="button"
+          onClick={props.onRestart}
+          className="min-h-9 text-[13px] text-accent underline"
+        >
+          {t('demo.restart')}
+        </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
         <Switcher
           label={t('adult.label')}
           options={props.adults}
@@ -858,6 +860,7 @@ export function DemoBar(props: {
         />
         <Switcher
           label={t('language.label')}
+          quietLabel
           options={[
             { value: 'ja', label: '日本語' },
             { value: 'en', label: 'English' },
@@ -868,10 +871,24 @@ export function DemoBar(props: {
       </div>
       {/* 場面ごとの見どころ（初めて見る人が、どこを見ればよいか分かるように）。用意した状態の説明で、操作や
           時計を進めると変わるので、「場面のはじめ」と示す。 */}
-      {props.stages.includes(props.stage) && (
-        <p className="border-t border-line pt-1 leading-snug text-sub">
-          <span className="me-1.5 font-bold">{t('demo.guideLead')}</span>
-          {t(`demo.guide.${props.stage}`)}
+      {/* 初めの画面へ戻るのはまれなので、案内の終わりに小さく置き、場面の名を切らずに見せる幅を残す。 */}
+      {(props.stages.includes(props.stage) || props.onLeave) && (
+        <p className="border-t border-line pt-1 text-[13px] leading-snug text-sub">
+          {props.stages.includes(props.stage) && (
+            <>
+              <span className="me-1.5 font-bold">{t('demo.guideLead')}</span>
+              {t(`demo.guide.${props.stage}`)}
+            </>
+          )}
+          {props.onLeave && (
+            <button
+              type="button"
+              onClick={props.onLeave}
+              className="ms-2 inline-block whitespace-nowrap py-1 text-accent underline"
+            >
+              {t('demo.leave')}
+            </button>
+          )}
         </p>
       )}
       {props.notifications}
@@ -881,6 +898,8 @@ export function DemoBar(props: {
 
 function Switcher(props: {
   label: string;
+  /** 選ぶ物の名だけで分かる時（「日本語」「English」）は、見える名を省き、読み上げの名にだけ残す。 */
+  quietLabel?: boolean;
   options: { value: string; label: string }[];
   value: string | undefined;
   onChange: (value: string) => void;
@@ -888,7 +907,7 @@ function Switcher(props: {
   return (
     <fieldset className="flex items-center gap-1">
       <legend className="sr-only">{props.label}</legend>
-      <span className="text-sub">{props.label}</span>
+      {!props.quietLabel && <span className="text-sub">{props.label}</span>}
       <div className="flex rounded-full border border-line bg-card p-0.5">
         {props.options.map((o) => (
           <button

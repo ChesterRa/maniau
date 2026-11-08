@@ -83,6 +83,9 @@ export function StartScreen(props: {
         >
           {t('start.stages')}
         </button>
+        <p className="-mt-2 text-center text-[13px] text-sub [word-break:auto-phrase]">
+          {t('start.stagesSub')}
+        </p>
         <Button kind="secondary" onClick={() => props.onStart({ start: 'sample' })} disabled={busy}>
           {t('start.sample')}
         </Button>
