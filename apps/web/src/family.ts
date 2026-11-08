@@ -426,6 +426,11 @@ const json = { 'content-type': 'application/json' };
 const COMMAND_TIMEOUT_MS = 20_000;
 /** 読み取りの返事を待つ長さ（Claude が読むので、命令より長い）。 */
 const READ_TIMEOUT_MS = 120_000;
+/**
+ * 決める画面の「選んだら」を待つ長さ（サーバーが書き込まずに計算するだけで、ふだんは 1 秒ほど）。配備の切り替えの間などに
+ * 返事が来ないまま止まると、読み取りの長さ（2 分）を待たせてしまうので、短く切って「もう一度読む」を出す。
+ */
+const PREVIEW_TIMEOUT_MS = 20_000;
 /** Claude がいま周りを調べる時の待ち（検索と頁の読み取りを何度かするので、読み取りより長い）。 */
 const SURVEY_TIMEOUT_MS = 300_000;
 
@@ -943,7 +948,7 @@ export function useServerView(where: Where | undefined) {
           ? `/api/demo/sessions/${sessionId}/preview?member=${encodeURIComponent(memberId)}&${query}`
           : `/api/preview?as=${encodeURIComponent(memberId)}&${query}`;
       try {
-        const response = await fetch(url, { signal: AbortSignal.timeout(READ_TIMEOUT_MS) });
+        const response = await fetch(url, { signal: AbortSignal.timeout(PREVIEW_TIMEOUT_MS) });
         if (!response.ok || !isCurrent(now.epoch)) return undefined;
         const body = (await response.json()) as { previews?: ChoicePreview[] };
         return isCurrent(now.epoch) ? body.previews : undefined;
