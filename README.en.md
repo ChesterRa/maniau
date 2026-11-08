@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://maniauserver-production.up.railway.app"><b>Open the live demo</b></a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="#see-it-in-3-minutes">See it in 3 minutes</a>
+  <a href="#try-it-in-3-minutes">Try it in 3 minutes</a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
   <a href="README.md">日本語</a>
 </p>
@@ -26,7 +26,7 @@ When a notice arrives from nursery or school, putting the event in a calendar do
 | **Not covered** | The statutory leave for caring for a child (子の看護等休暇) does not cover attending a school observation day or a sports day, though an employer may choose to include them ([Ministry of Health, Labour and Welfare Q&A](https://jsite.mhlw.go.jp/shiga-roudoukyoku/content/contents/002519187.pdf#page=5), Japanese) |
 | **Make-up holidays** | When a Saturday school event turns the following weekday into a school holiday, a family may need to arrange care or adjust work for that day |
 
-The maker is also a parent raising children in Japan.
+The maker is also a parent raising children in Japan. We also ran four real notices from the maker’s family through Maniau, from photo import to the Today screen (their content is not in this repository). Transcription and reading went through for all four. After reading one long notice, the results screen went from about nine phone screens to about two once the original text was collapsed.
 
 <br>
 
@@ -35,6 +35,8 @@ The maker is also a parent raising children in Japan.
 <p align="center"><img src="docs/images/deadlines.jpg" width="100%" alt="A time band from today, Nov 25, to the possible make-up holiday on Dec 7. After-school care closes first, around 17:20 on Mon Nov 30, and is highlighted; taking a day off closes around Wed Dec 2, and asking grandma around Fri Dec 4"></p>
 
 For options it can calculate, Maniau estimates the last time to decide (the decision deadline) from the household’s information. It shows which option closes next and what to decide by then, and follows up until someone takes it on.
+
+For example, in the sample family, the after-school care deadline, around 17:20 on Mon Nov 30, comes from the household data. Applications are due by 18:30 on Monday of the previous week and are handed in at pickup (5 minutes). Writing the form takes 10 minutes and can only be done at home or at work. On Mondays, 健太 finishes work at 17:30, travels to the after-school club (no writing on the way), and picks up from 17:55 to 18:05. So the form is written at work from 17:20 to 17:30 and handed in from 18:00 to 18:05; 17:20, the latest start for writing, is the decision deadline (an estimate).
 
 | ① Read | ② Compare deadlines | ③ Follow up | ④ Clean up after a change |
 |:-:|:-:|:-:|:-:|
@@ -61,6 +63,8 @@ The same mechanism can settle a date from candidate days and people’s answers,
 <br>
 
 ## What makes it different
+
+Tools that pull events and items out of notices already exist (we reviewed public materials for about 30 products; see the [prior-systems survey](docs/research/03-prior-systems.md), in Japanese). Maniau connects what comes after: each option’s decision deadline, asking, replies, and cleanup after changes. We have not yet compared products against that same combination.
 
 **1. Code computes the deadlines.**
 Claude reads and researches; code works out dates, decision deadlines and when each task fits. You can trace “why by this day” back to the original sentence and the family’s usual week.
@@ -156,7 +160,7 @@ The model reads, looks around, infers unstated preparations, and explains. Date 
 
 <br>
 
-## See it in 3 minutes
+## Try it in 3 minutes
 
 1. Open the [live demo](https://maniauserver-production.up.railway.app) and press “View prepared scenes (for judges)” on the first screen (no sign-up). The app opens in Japanese; tap “English” at the top to switch.
 2. Switch “Scene” at the top from **11/25 → 11/29 → 12/4**. Use “Viewing as” to compare the two adults’ screens (健太 and 彩).
@@ -168,10 +172,13 @@ Other ways to try it (your own family, the sample family, choosing a day) are in
 
 ## Claude and Claude Code
 
-**In the product:** the six calls — reading notices, transcribing photos and PDFs, quick updates, ideas for ways, store search words, and looking around — default to Claude Opus 5.5. Five return structured outputs with a defined schema (Zod); looking around uses server-side web_search and web_fetch to find and read pages. Code checks that the sentence Claude cites is in the text of a page it read.
+**In the product:** the six calls — reading notices, transcribing photos and PDFs, quick updates, ideas for ways, store search words, and looking around — default to Claude Opus 5.5. Five return structured outputs with a defined schema (Zod); looking around uses server-side web_search and web_fetch to find and read pages. Code checks that the sentence Claude cites is in the text of a page it read. Reading, which a family waits for on screen, can run in fast mode via an environment variable (in local runs: 13 and 14 seconds for two fictional texts at standard speed, 3.6 seconds for one example notice in fast mode; the inputs and run counts differ, so this is a rough guide).
 
 **In development:** we built Maniau mainly with Claude Code.
 
+- **A run with real notices:** Claude Code drove a phone-width browser through four real notices from the maker’s family, from import to Today, and measured how long the screens were; we then shortened the long-notice screens (their content is not in this repository).
+- **The demo video** was also recorded by Claude Code from the app, assembled in code, and checked by measuring frame changes and audio gaps (some screen details changed after recording; no image-generating AI was used).
+- **Hard-to-reverse choices** were made by having two agents think independently before comparing answers, which settled storage, sign-in, and minute-level task placement.
 - **Subagents** researched six fields in parallel before building, and reviewed the verifier without being given the author’s own conclusions, finding 7 misses and 3 false alarms, each reproduced by a test.
 - **Hooks** stop tool use on out-of-scope paths, such as those under the home directory, when they can detect them (some forms can’t be detected, so we don’t rely on them alone), and check for key-like strings and copies of private material before each commit.
 - **The claude-api Skill’s documentation** was used to check Opus 5.5’s thinking, effort and structured-output limits, and we found we had capped the comparison model’s (a strong Claude on its own) output unfairly low.
@@ -221,7 +228,7 @@ Why we chose each, and what worked and what didn’t, are in the [record of how 
 These are checks on a small number of fictional cases. We don't claim a general accuracy rate, or that Maniau is better or worse than a model. Counts, costs and conditions are in the [record of how Claude is used](docs/dev/claude-usage.md) (Japanese), and comparison summaries are in [eval/results](eval/results).
 
 - **Comparison with a strong Claude:** the strong Claude solved many of the cases. The checks it missed clustered around “saying so when it can't decide” and “not treating something unconfirmed as confirmed”. We place the difference not in “the model can't solve it” but in state that can be checked and in how later changes are handled.
-- **Tests:** run without an API key. On 2026-11-08, on `1fc525c`, `pnpm check` passed 2,650 tests and the browser end-to-end tests (`pnpm e2e`) passed 39.
+- **Tests:** run without an API key. On 2026-11-08, on `5d1e9db`, the 2,672 tests in `pnpm check` and the 51 browser end-to-end tests (`pnpm e2e`) passed.
 - **Screens:** the main flows have been walked through at phone width (390px) in Japanese and English. A real iPhone and whether notifications actually arrive have not been checked yet.
 
 <details>
@@ -232,7 +239,7 @@ These are checks on a small number of fictional cases. We don't claim a general 
 - **Comparison with a strong Claude** (the evaluator fixed the cases, expected results and scoring in advance, and the person tuning prompts never saw the held-out cases): the strong Claude solved many of the cases. The checks it missed clustered around “saying so when it can't decide” and “not treating something unconfirmed as confirmed”; in one further case, all 6 of its answers somewhere stated something unchecked as a definite negative (an observation outside the scored checks). Maniau replayed the facts the family had confirmed from its records; on the 3 comparable held-out cases it met 11 of 12 checks (1 was undetermined because it wasn't checked on screen), and the verifier found no violations (the inputs differ, so this is not a like-for-like comparison). We place the difference not in “the model can't solve it” but in state that can be checked and in how later changes are handled.
 - **Looking around:** The saved survey read 7 pages, produced 6 candidates and dropped none (about $0.54). The evaluation on held-out cases was too small to say Maniau is better than a general model, and is recorded that way.
 - **Looking around from where you live:** We ran it once end to end with the real map and Claude, using a public building's address (a ward office). The map returned a spot to check, and the survey produced 7 candidates (from the ward's and the social welfare council's pages; about $0.51, on the version before the city hint was removed). Searching the map by a candidate's name sometimes brought up other facilities (one sick-child care room's name returned three other rooms nearby), so the walk from home is shown only after your family picks the same place.
-- **Tests:** On 2026-11-08, `pnpm check` passed 2,650 tests on `1fc525c`: core 495, verifier 747, web 681 and server 727. The browser end-to-end tests (`pnpm e2e`) passed 39 on the same version.
+- **Tests:** On 2026-11-08, on `5d1e9db`, the same checks as `pnpm check` (lint, types and tests) passed 2,672 tests: core 495, verifier 747, web 703 and server 727. The browser end-to-end tests (`pnpm e2e`) passed 51 on the same version.
 - **Screens:** The main flows have been walked through at phone width (390px) in Japanese and English. A real iPhone and whether notifications actually arrive have not been checked yet.
 
 </details>
