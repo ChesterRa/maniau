@@ -7,6 +7,8 @@
 <p align="center">
   <a href="https://maniauserver-production.up.railway.app"><b>Open the live demo</b></a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="https://youtu.be/krMv7eith68"><b>Video (2:57)</b></a>
+  &nbsp;&nbsp;·&nbsp;&nbsp;
   <a href="#try-it-in-3-minutes">Try it in 3 minutes</a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
   <a href="README.md">日本語</a>
@@ -175,6 +177,8 @@ The model reads, looks around, infers unstated preparations, and explains. Date 
 <br>
 
 ## Try it in 3 minutes
+
+The [demo video (2:57)](https://youtu.be/krMv7eith68) walks through the whole flow. To try the live demo:
 
 1. Open the [live demo](https://maniauserver-production.up.railway.app) and press “View prepared scenes (for judges)” on the first screen (no sign-up). The app opens in Japanese; tap “English” at the top to switch.
 2. Switch “Scene” at the top from **11/25 → 11/29 → 12/4**. Use “Viewing as” to compare the two adults’ screens (健太 and 彩).

@@ -7,6 +7,8 @@
 <p align="center">
   <a href="https://maniauserver-production.up.railway.app"><b>公開デモを開く</b></a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="https://youtu.be/krMv7eith68"><b>動画（2 分 57 秒）</b></a>
+  &nbsp;&nbsp;·&nbsp;&nbsp;
   <a href="#3-分で試す">3 分で試す</a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
   <a href="README.en.md">English</a>
@@ -175,6 +177,8 @@ flowchart TB
 <br>
 
 ## 3 分で試す
+
+[デモの動画（2 分 57 秒）](https://youtu.be/krMv7eith68)で、流れを通して見られます。公開デモで試す時は、次の三つです。
 
 1. [公開デモ](https://maniauserver-production.up.railway.app)を開き、最初の画面で「用意した場面で見る（審査の方へ）」を押します（登録なし）。
 2. 画面上部の「場面」を **11/25 → 11/29 → 12/4** と切り替えます。「使う人」で、二人の大人（健太・彩）の画面を見比べられます。
