@@ -388,6 +388,7 @@
       "action": "Open",
       "waiting": "A request is waiting for a reply. It does not count as covered until you record “They said OK”."
     },
+    "audienceRead": "For (as read): {{audience}}",
     "needCheck": {
       "label": "Check the reading",
       "read": "Read as: {{when}}",

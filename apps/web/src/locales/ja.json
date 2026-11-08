@@ -388,6 +388,7 @@
       "action": "開く",
       "waiting": "返事を待っている依頼があります。「OK だった」を記録するまで、受け持ったとは数えません。"
     },
+    "audienceRead": "対象（読み取り）：{{audience}}",
     "needCheck": {
       "label": "読み取りを確かめる",
       "read": "読み取り：{{when}}",

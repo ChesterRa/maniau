@@ -172,6 +172,17 @@ describe('お知らせから読んだ「すること」の確かめ', () => {
     expect(went).toEqual([{ name: 'needFix', itemId: 'n9:i2' }]);
   });
 
+  it('札：読み取りの対象を「読み取り」と書いて一行で見せる（対象を読んでいなければ出さない）', async () => {
+    const withAudience = {
+      ...EXCHANGE,
+      interpretation: { ...EXCHANGE.interpretation, audience: '1年生' },
+    };
+    await step(() => root.render(<TodayScreen ctx={materials([withAudience]).ctx} />));
+    expect(host.textContent).toContain('対象（読み取り）：1年生');
+    await step(() => root.render(<TodayScreen ctx={materials([EXCHANGE]).ctx} />));
+    expect(host.textContent).not.toContain('対象（読み取り）');
+  });
+
   it('札と直す画面：お知らせの全文を見せ、指した文を太字にする（指さなかった文の条件を見落とさない）。たたむこともできる', async () => {
     const { ctx } = materials([{ ...EXCHANGE, sentenceIds: ['n9#1'] }]);
     const long = {

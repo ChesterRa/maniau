@@ -1798,6 +1798,25 @@ function DecideCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 
   );
 }
 
+/**
+ * お知らせの読み取りが書いた対象（例：1年生）を、一行で見せる（うちの子の物かを、元の文を開く前に見分けられる
+ * ように）。モデルの読みなので「読み取り」と書き、対象で隠したり外したりはしない（外すのは家族）。根拠が
+ * 二つ以上なら、読んだ対象を全部並べる（一つ目だけを全部の対象に見せない）。読んだ対象が無ければ出さない。
+ */
+function AudienceLine({ ctx, items }: { ctx: Ctx; items: readonly Item[] }) {
+  const audiences = [
+    ...new Set(items.map((item) => item.interpretation.audience?.trim() ?? '').filter(Boolean)),
+  ];
+  if (audiences.length === 0) return null;
+  return (
+    <Text quiet>
+      {ctx.t('card.audienceRead', {
+        audience: new Intl.ListFormat(ctx.lang).format(audiences),
+      })}
+    </Text>
+  );
+}
+
 function QuestionCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind: 'question' }> }) {
   const { question, requirement } = card;
   // どのお知らせの物か（元の文へ戻れる。同じ品物を同じ日に求めるお知らせが二つあっても、札を見分けられる）。
@@ -1828,6 +1847,14 @@ function QuestionCard({ ctx, card }: { ctx: Ctx; card: Extract<TodayCard, { kind
           by: requirement?.by ? due(ctx, requirement.by, requirement.basis.itemIds) : '',
         })}
       </Text>
+      {requirement && (
+        <AudienceLine
+          ctx={ctx}
+          items={ctx.items
+            .filter((l) => requirement.basis.itemIds.includes(l.item.id))
+            .map((l) => l.item)}
+        />
+      )}
       {item && (
         <MoreLink
           onClick={() =>
@@ -2543,6 +2570,7 @@ function NeedCheckCard({
       <Label tone="warn">{ctx.t('card.needCheck.label')}</Label>
       <Title>{requirement.what}</Title>
       <Text>{ctx.t('card.needCheck.read', { when: readNeedWhen(ctx, item.interpretation) })}</Text>
+      <AudienceLine ctx={ctx} items={[item]} />
       {confirmable &&
         item.interpretation.shape === 'window' &&
         item.interpretation.startTime &&
