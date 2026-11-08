@@ -77,6 +77,46 @@ it('元の文：確かめる札（startBrief）の長いお知らせだけ指し
   expect(full).toContain(first);
 });
 
+it.each([
+  ['ja', '写真・PDFの書き起こしです（元のファイルはアプリに残していません）。'],
+  ['en', "Transcribed from a photo or PDF (the original file isn't kept in the app)."],
+] as const)('%s：写真・PDF の書き起こしには、引用の前に出どころを示す', (lang, label) => {
+  const { ctx, sourceId } = longCtx(30);
+  const source = ctx.sources.get(sourceId);
+  if (!source) throw new Error('お知らせが無い');
+  const t = ctxFor('arrived', 'b', lang).t;
+  const cited = [`${sourceId}:x10`];
+  for (const startBrief of [true, false]) {
+    const photo = renderToStaticMarkup(
+      <NoticeText
+        source={{ ...source, medium: 'photo' }}
+        cited={cited}
+        t={t}
+        startBrief={startBrief}
+      />,
+    );
+    const text = renderToStaticMarkup(
+      <NoticeText
+        source={{ ...source, medium: 'text' }}
+        cited={cited}
+        t={t}
+        startBrief={startBrief}
+      />,
+    );
+    const photoText = photo.replaceAll('&#x27;', "'");
+    const plainText = text.replaceAll('&#x27;', "'");
+    expect(photoText).toContain(label);
+    expect(photoText.indexOf(label)).toBeLessThan(photoText.indexOf('<blockquote'));
+    expect(plainText).not.toContain(label);
+  }
+  const sources = new Map(ctx.sources);
+  sources.set(sourceId, { ...source, medium: 'photo' });
+  const sourceScreen = renderToStaticMarkup(
+    <SourcesScreen ctx={{ ...ctx, lang, t, sources }} sourceId={sourceId} highlight={cited} />,
+  ).replaceAll('&#x27;', "'");
+  expect(sourceScreen).toContain(label);
+});
+
 it('元の文：絞った引用は、省いた所に「…」を置き、離れた二つの文を続いた文に見せない', () => {
   const { ctx, sourceId, first } = longCtx(40);
   const source = ctx.sources.get(sourceId);

@@ -746,7 +746,7 @@
     "snapBody": "Photograph school handouts or the contact notebook and they appear here (in the demo, you can see the notices that arrived).",
     "received": "Arrived {{at}}",
     "untitled": "(Untitled)",
-    "fromPhoto": "Transcribed from a photo (the photo isn't kept).",
+    "fromPhoto": "Transcribed from a photo or PDF (the original file isn't kept in the app).",
     "recorded": "Read by Claude ({{model}})",
     "handWritten": "Using a hand-written correct reading",
     "gone": "This notice was deleted.",

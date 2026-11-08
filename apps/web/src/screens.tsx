@@ -2503,6 +2503,7 @@ export function NoticeText({
   // 絞る・全文に戻す一押しは、引用の前に置く（絞って見せている事が、読む前に分かるように）。
   return (
     <>
+      {source?.medium === 'photo' && <Text quiet>{t('sources.fromPhoto')}</Text>}
       {brief ? (
         <MoreLink onClick={() => setBrief(false)}>
           {t('card.needCheck.wholeNotice', { count: sentences.length - shown.length })}
