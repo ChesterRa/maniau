@@ -1962,6 +1962,7 @@
     "survey": {
       "button": "Look around us",
       "decide": "Decide how your family treats it",
+      "manage": "Check registration and ways to use it",
       "again": "Ask Claude to look again now (about a minute)",
       "intro": "Claude searches the web for places near home that can look after your children or lend a hand (sick-child care, temporary childcare, family support) and reads their pages. Only what your family decides to add goes into your household information.",
       "working": "Looking… (when Claude looks now, it takes about a minute)",

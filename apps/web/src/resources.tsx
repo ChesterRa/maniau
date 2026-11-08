@@ -17,7 +17,7 @@ import { type HomeCandidate, operationId, type SurveyPlace } from './family';
 import { Attributions } from './maps';
 import { StalePreview } from './need';
 import { type Ctx, day, nameOf } from './screens';
-import { Button, Card, Label, Row, Text, Title } from './ui';
+import { Button, Card, Label, MoreLink, Row, Text, Title } from './ui';
 import { Shown, useHouseholdSave } from './ways';
 
 const USES = ['usual', 'candidate', 'notUsed'] as const;
@@ -907,7 +907,7 @@ function SurveyPanel({
   onAdd: (next: Household) => void;
 }) {
   const [state, setState] = useState<SurveyState>('idle');
-  // 決める欄を開いている候補（一度に一つ）。まだ家に入れていない候補は、まず何が見つかったかだけを見せる。
+  // 決める欄を開いている候補（一度に一つ）。入れた候補は、登録ややり方を確かめる時に開く。
   const [open, setOpen] = useState<string>();
   const survey = ctx.survey;
   if (!survey) return null;
@@ -938,7 +938,7 @@ function SurveyPanel({
     .join(ctx.t('resources.applies.joiner'));
 
   const candidateBlock = (c: SurveyCandidate) => {
-    // もう家に入れた候補：扱いは上で直す。登録とやり方は、ここで後から確かめられる（決める欄を開いたまま）。
+    // もう家に入れた候補：入っていることと Claude の読みは見せ、登録とやり方の欄は必要な時に開く。
     const added = household.resources.some((r) => r.id === c.id);
     const note = c.resource.notes[0];
     const place = placeFor(household, c, choiceOf(c.id));
@@ -978,7 +978,18 @@ function SurveyPanel({
             onMapPlace={(placeId) => choose(c.id, { mapPlaceId: placeId })}
           />
         )}
-        {!added && open !== c.id ? (
+        {added ? (
+          <>
+            <Text quiet>{ctx.t('resources.survey.added')}</Text>
+            <MoreLink
+              expanded={open === c.id}
+              onClick={() => setOpen(open === c.id ? undefined : c.id)}
+            >
+              {ctx.t('resources.survey.manage')}
+            </MoreLink>
+            {open === c.id && decideForm(c)}
+          </>
+        ) : open !== c.id ? (
           <Row>
             <Button kind="secondary" onClick={() => setOpen(c.id)}>
               {ctx.t('resources.survey.decide')}
@@ -1003,9 +1014,7 @@ function SurveyPanel({
     const bases = copyBases(household, c);
     return (
       <>
-        {added ? (
-          <Text>{ctx.t('resources.survey.added')}</Text>
-        ) : (
+        {!added && (
           <>
             <span className="text-sub">{ctx.t('resources.survey.use')}</span>
             <div className="flex flex-wrap gap-1.5">

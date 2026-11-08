@@ -116,14 +116,64 @@ const click = async (host: HTMLElement, text: string, index = 0) => {
   if (!button) throw new Error(`押す物が無い：${text}`);
   await step(() => button.click());
 };
-/** 調べを開いて、まだ家に入れていない候補の決める欄を開く（入れた候補は、はじめから開いている）。 */
+/** 調べを開いて、候補の決める欄を開く。 */
 const survey = async (host: HTMLElement) => {
   await click(host, '周りを調べる');
-  const open = buttons(host, 'この家での扱いを決める')[0];
+  const open =
+    buttons(host, 'この家での扱いを決める')[0] ?? buttons(host, '登録ややり方を確かめる')[0];
   if (open) await step(() => open.click());
 };
 
 describe('周りを調べる', () => {
+  it.each([
+    [
+      'ja',
+      '周りを調べる',
+      '登録ややり方を確かめる',
+      '要る（確かめた）',
+      'Claude の読み：使う前に事前の登録が要る',
+    ],
+    [
+      'en',
+      'Look around us',
+      'Check registration and ways to use it',
+      'Needed (I checked)',
+      'Claude’s reading: you must register in advance',
+    ],
+  ] as const)(
+    '%s：入れた候補の読みと出典を残し、登録の欄を開いて確かめられる',
+    async (lang, look, manage, needed, reading) => {
+      const { ctx, looked } = withSurvey(lang);
+      const current = addedHousehold('candidate');
+      const before = structuredClone(current);
+      const host = document.createElement('div');
+      const root = createRoot(host);
+      await step(() => root.render(<ResourcesCard ctx={{ ...ctx, household: current }} />));
+      await click(host, look);
+      const toggle = buttons(host, manage)[0];
+      const candidate = toggle?.closest('div.rounded-xl.bg-paper');
+      expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+      expect(candidate?.textContent).toContain(reading);
+      expect(
+        candidate?.querySelector('a[href="https://example.invalid/sick-care"]'),
+      ).not.toBeNull();
+      expect(buttons(host, needed)).toHaveLength(0);
+
+      await click(host, manage);
+      expect(toggle?.getAttribute('aria-expanded')).toBe('true');
+      await click(host, needed);
+      expect(buttons(host, needed)[0]?.getAttribute('aria-pressed')).toBe('true');
+      await click(host, manage);
+      expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+      expect(buttons(host, needed)).toHaveLength(0);
+      await click(host, manage);
+      expect(buttons(host, needed)[0]?.getAttribute('aria-pressed')).toBe('true');
+      expect(looked).toEqual([]);
+      expect(current).toEqual(before);
+      await step(() => root.unmount());
+    },
+  );
+
   it('まだ入れていない候補は、何が見つかったかを先に見せ、決める欄は押した時だけ開く', async () => {
     const { ctx } = withSurvey('ja');
     const host = document.createElement('div');
