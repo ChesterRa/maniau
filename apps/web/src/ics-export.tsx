@@ -26,10 +26,22 @@ const TIME = /^\d{2}:\d{2}$/;
 export function firmEvents(ctx: Ctx): IcsEvent[] {
   const today = localDate(ctx.now, ctx.tz);
   const events: IcsEvent[] = [];
+  // 書かれていた（stated）事項でも、読み取りが「確かめてほしい」と指した文（または出典の全体）から読んだ物は、
+  // 家族が確かめる・直す（confirmed）まで、行事・持ち物・作業・決めた日の書き出しに使わない（画面では「要確認」と
+  // 出しているのに、暦では確かな予定に見えないように）。OK の記録がある頼み事は、相手が OK と言った時間という
+  // 記録した事実なので、元の文の確かめとは別に書き出す。
+  const flagged = (item: (typeof ctx.items)[number]['item']) => {
+    if (item.evidence === 'confirmed') return false;
+    const reading = ctx.readings.find((r) => r.sourceId === item.sourceId);
+    return (
+      reading?.checkAll === true ||
+      item.sentenceIds.some((id) => reading?.check?.includes(id) === true)
+    );
+  };
   const trusted = (ids: readonly string[]) =>
     ids.every((id) => {
       const entry = ctx.items.find(({ item }) => item.id === id);
-      return entry?.live === true && entry.trusted && !entry.conditional;
+      return entry?.live === true && entry.trusted && !entry.conditional && !flagged(entry.item);
     });
   // お知らせの行事・日の変更・テスト・締切：確かめ済みで条件の無い物。時刻の読み方はよていと同じ（itemTimes）：
   // 始まりが分からない行事は書き出さず（終日の予定にしない。時刻が書かれていないとは言えない）、終わりの日を
@@ -37,6 +49,7 @@ export function firmEvents(ctx: Ctx): IcsEvent[] {
   for (const { item, live, trusted: sure, conditional } of ctx.items) {
     if (!live || !sure || conditional) continue;
     if (!['event', 'dayChange', 'test', 'deadline'].includes(item.kind)) continue;
+    if (flagged(item)) continue;
     const times: ItemTimes =
       item.kind === 'event' || item.kind === 'test' ? itemTimes(ctx, item) : { kind: 'none' };
     if (times.kind === 'unsure') continue;
@@ -136,7 +149,7 @@ export function firmEvents(ctx: Ctx): IcsEvent[] {
     );
     return ctx.items.every(
       ({ item, live, trusted: sure, conditional }) =>
-        !sources.has(item.sourceId) || !live || (sure && !conditional),
+        !sources.has(item.sourceId) || !live || (sure && !conditional && !flagged(item)),
     );
   };
   for (const requirement of ctx.plan.requirements) {

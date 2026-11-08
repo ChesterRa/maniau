@@ -80,6 +80,17 @@ it('お知らせに書かれた持ち物の締切は書き出す（時刻まで�
   );
   expect(day).toMatchObject({ summary: '持ち物：白い長袖シャツ', date: '2026-12-07' });
   expect(day?.start).toBeUndefined();
+  // 持ち物の元の文を「確かめてほしい」と指していれば、家族が確かめるまで締切も書き出さない。
+  const ctx = written('2026-12-07T17:00+09:00');
+  const shirt = ctx.items.find((entry) => entry.item.kind === 'belongings');
+  if (!shirt) throw new Error('持ち物が無い');
+  const flaggedCtx: Ctx = {
+    ...ctx,
+    readings: ctx.readings.map((r) =>
+      r.sourceId === shirt.item.sourceId ? { ...r, check: [...shirt.item.sentenceIds] } : r,
+    ),
+  };
+  expect(firmEvents(flaggedCtx).some((e) => e.uid.startsWith('prep-'))).toBe(false);
 });
 
 it('いつにするかで決めた日は書き出す（決めた後に答えが変わった・手が離せない時間と重なる・条件しだいは入れない）', () => {
@@ -211,6 +222,52 @@ it('締切の欄だけの読み取りも書き出し（時刻があれば時刻�
   expect(events[1]?.start).toBeUndefined();
 });
 
+it('「要確認」の文から読んだ行事は、家族が確かめるまで書き出さない（書かれていた事項でも）', () => {
+  const base = ctxFor('postponed', 'b', 'ja');
+  const [first] = base.items;
+  const [reading] = base.readings;
+  if (!first || !reading) throw new Error('事項か読み取りが無い');
+  const entry = (id: string, sentenceId: string, evidence: 'stated' | 'confirmed') => ({
+    ...first,
+    live: true,
+    trusted: true,
+    conditional: false,
+    item: {
+      ...first.item,
+      id,
+      kind: 'event' as const,
+      evidence,
+      sourceId: 'n9',
+      sentenceIds: [sentenceId],
+      written: '架空の文',
+      interpretation: { what: `行事 ${id}`, date: '2026-12-12', startTime: '10:00' },
+    },
+  });
+  const ctx = (check: string[], checkAll = false): Ctx => ({
+    ...base,
+    plan: { ...base.plan, requirements: [], arrangements: [], tasks: [], requests: [] },
+    readings: [{ ...reading, sourceId: 'n9', check, checkAll }],
+    items: [
+      entry('n9:i1', 'n9:s1', 'stated'),
+      entry('n9:i2', 'n9:s2', 'stated'),
+      entry('n9:i3', 'n9:s1', 'confirmed'),
+    ],
+  });
+  // s1 を確かめてほしい：書かれていただけの i1 は出さず、家族が確かめた i3 と、指されていない i2 は出す。
+  expect(firmEvents(ctx(['n9:s1'])).map((e) => e.uid)).toEqual([
+    'item-n9:i2@maniau',
+    'item-n9:i3@maniau',
+  ]);
+  // 全体を確かめてほしい時は、確かめた物だけ。
+  expect(firmEvents(ctx([], true)).map((e) => e.uid)).toEqual(['item-n9:i3@maniau']);
+  // 指す文が無ければ、今までどおり全部出す。
+  expect(firmEvents(ctx([])).map((e) => e.uid)).toEqual([
+    'item-n9:i1@maniau',
+    'item-n9:i2@maniau',
+    'item-n9:i3@maniau',
+  ]);
+});
+
 it('引き受けた作業は書き出し、まだ引き受けていない・確かめを待つ作業は書き出さない', () => {
   const events = firmEvents(
     withPlan(
@@ -270,6 +327,24 @@ it('OK の記録がある頼み事だけを書き出す（返事待ち・条件�
   expect(events.map((e) => e.uid)).toEqual([`request-${confirmed.requestId}@maniau`]);
   expect(events[0]?.summary).toMatch(/に頼んだ時間（OK の記録あり）$/);
   expect(events[0]?.start).toBe(Date.parse(confirmed.window.start));
+});
+
+it('OK の記録がある頼み事は、元のお知らせに「要確認」の文があっても書き出す（相手が OK と言った時間は記録した事実）', () => {
+  const backup = ctxFor('backup', 'b', 'ja');
+  const confirmed = backup.plan.requests.find((r) => r.live && r.state === 'confirmed');
+  if (!confirmed?.window) throw new Error('OK の記録がある依頼が無い');
+  const settled = { ...confirmed, conditional: false };
+  const basisItems = backup.items.filter(({ item }) => confirmed.basis.itemIds.includes(item.id));
+  expect(basisItems.length).toBeGreaterThan(0);
+  const ctx: Ctx = {
+    ...withPlan([], [settled]),
+    items: basisItems,
+    readings: backup.readings.map((r) => ({
+      ...r,
+      check: basisItems.flatMap(({ item }) => item.sentenceIds),
+    })),
+  };
+  expect(firmEvents(ctx).map((e) => e.uid)).toContain(`request-${confirmed.requestId}@maniau`);
 });
 
 it('終わりの日を決められない行事は始まりだけを書き出し（同じ日の範囲にしない）、終わりだけの行事は書き出さない', () => {
