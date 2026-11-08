@@ -1469,14 +1469,7 @@ function CardView({ ctx, card }: { ctx: Ctx; card: TodayCard }) {
     case 'cancel':
       return <CancelCard ctx={ctx} task={card.task} request={card.request} />;
     case 'backup':
-      return (
-        <BackupCard
-          ctx={ctx}
-          arrangement={card.arrangement}
-          option={card.option}
-          waitingFor={card.waitingFor}
-        />
-      );
+      return <BackupCard ctx={ctx} arrangement={card.arrangement} option={card.option} />;
     case 'decide':
       return <DecideCard ctx={ctx} card={card} />;
     case 'proposal':
@@ -3000,14 +2993,8 @@ function UnownedCard({
   );
 }
 
-export function BackupCard(props: {
-  ctx: Ctx;
-  arrangement: Arrangement;
-  option: OptionPlan;
-  /** 返事を待っている頼み事（あれば「断られたら？」を出す。「断られたら？」の画面の中では出さない）。 */
-  waitingFor?: ExternalRequest;
-}) {
-  const { ctx, arrangement, option, waitingFor } = props;
+export function BackupCard(props: { ctx: Ctx; arrangement: Arrangement; option: OptionPlan }) {
+  const { ctx, arrangement, option } = props;
   const other = otherAdult(ctx.household, ctx.me.id);
   // 予備として押さえ、作業を担当に提案する。この札は作業ごとの時刻・場所を見せていないので、
   // 引き受けは、担当の人が中身を見せる提案の札で、作業ごとに行う（自分でやる時も同じ）。
@@ -3084,11 +3071,7 @@ export function BackupCard(props: {
       <MoreLink onClick={() => ctx.go(decideRoute(arrangement))}>
         {ctx.t('card.backup.all')}
       </MoreLink>
-      {waitingFor && (
-        <MoreLink onClick={() => ctx.go({ name: 'whatIf', requestId: waitingFor.requestId })}>
-          {ctx.t('whatIf.link')}
-        </MoreLink>
-      )}
+      {/* 「断られたら？」は、同じ画面の「頼んだこと」の返事の釦の下に一つだけ置く（同じ入口を二つ並べない）。 */}
     </Card>
   );
 }
@@ -3531,6 +3514,21 @@ export function useChoicePreviews(
   return { reading, ...(previews ? { previews } : {}), reread };
 }
 
+/** 手が無い時は開いて始め、足した後も「足しました」の札を保つ。 */
+function CareOptionSection({ ctx, hasOptions }: { ctx: Ctx; hasOptions: boolean }) {
+  const [open, setOpen] = useState(!hasOptions);
+  return (
+    <details open={!hasOptions || open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary
+        className={hasOptions ? 'min-h-11 cursor-pointer py-2 font-bold text-accent' : 'hidden'}
+      >
+        {ctx.t('careAdd.label')}
+      </summary>
+      <CareOptionAddCard ctx={ctx} />
+    </details>
+  );
+}
+
 export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey: string }) {
   const arrangement = arrangementOf(ctx, arrangementKey);
   // 通用の「すること」は、この画面（子の居場所の文）で決めさせない（「すること」の画面で決める）。
@@ -3612,8 +3610,15 @@ export function DecideScreen({ ctx, arrangementKey }: { ctx: Ctx; arrangementKey
           </MoreLink>
         )}
         <OptionChooser ctx={ctx} arrangement={arrangement} />
-        {/* 子の居場所は、頼める人・学童・休みを足して手を増やせる（取れる手が無い家庭も、ここから進める）。 */}
-        {arrangement.kind === 'childCare' && <CareOptionAddCard ctx={ctx} />}
+        {/* 子の居場所だけ、頼める人・学童・休みを足して手を増やせる（取れる手が無い家庭も、ここから進める）。
+            手配を切り替えた時は、その手配の手の有無から始める。 */}
+        {arrangement.kind === 'childCare' && (
+          <CareOptionSection
+            key={arrangement.key}
+            ctx={ctx}
+            hasOptions={arrangement.options.length > 0}
+          />
+        )}
       </Main>
     </>
   );
@@ -3772,6 +3777,16 @@ export function previewLines(ctx: Ctx, preview: ChoicePreview): string[] {
   const lines: string[] = [];
   const arrangement = arrangementOf(ctx, preview.arrangementKey);
   const option = arrangement?.options.find((o) => o.key === preview.optionKey);
+  // 子の居場所で、札に出す決め時と選んだ後の決め時が同じ時だけ、同じ内容の繰り返しを省く。
+  const deadline =
+    arrangement?.kind === 'childCare' && option && !option.expired
+      ? option.decisionDeadline
+      : undefined;
+  const sameDeadline =
+    deadline !== undefined &&
+    preview.decisionDeadline !== undefined &&
+    toEpochMinutes(deadline) === toEpochMinutes(preview.decisionDeadline);
+  const displayedHolder = option ? deadlineHolder(option, preview) : undefined;
   // 重ならずに置けない（時刻を置かずに残す）手と、検証器が見つけた新しい違反（選ぶと起きる物）を先に書く。
   if (preview.conflicts.length > 0) {
     lines.push(ctx.t('decide.then.conflict', { options: optionList(ctx, preview.conflicts) }));
@@ -3797,8 +3812,16 @@ export function previewLines(ctx: Ctx, preview: ChoicePreview): string[] {
       first.assigneeId === ctx.me.id
         ? ctx.t('decide.then.you')
         : ctx.t('decide.person', { name: nameOf(ctx.household, first.assigneeId) });
+    // 最初の作業をする人と時刻が、選んだ後の担当と札の決め時にそろう場合だけ、時刻は札の行に任せる。
+    const repeated =
+      sameDeadline &&
+      first.start !== undefined &&
+      first.assigneeId !== undefined &&
+      first.assigneeId === preview.assigneeId &&
+      (displayedHolder === undefined || displayedHolder === first.assigneeId) &&
+      toEpochMinutes(first.start) === toEpochMinutes(deadline);
     lines.push(
-      first.start
+      first.start && !repeated
         ? ctx.t('decide.then.first', { who, what, when: dayTime(ctx, first.start) })
         : ctx.t('decide.then.firstUntimed', { who, what }),
     );
@@ -3808,7 +3831,7 @@ export function previewLines(ctx: Ctx, preview: ChoicePreview): string[] {
     if (first.external) lines.push(ctx.t('decide.then.waitReply'));
   }
   // 決め時は、大人の誰かが間に合う最後。自分の分が先に過ぎる時は、後まで間に合う人を添える。
-  if (preview.later) {
+  if (preview.later && !(sameDeadline && displayedHolder)) {
     lines.push(
       ctx.t('decide.then.later', {
         name: ctx.t('decide.person', { name: nameOf(ctx.household, preview.later.memberId) }),
@@ -4022,7 +4045,11 @@ function OptionRow({
           onClick={onChoose}
           disabled={!choosableNow}
           aria-label={ctx.t('decide.goNamed', { option: optionTitle(ctx, option) })}
-          className="flex min-h-[54px] w-full scroll-mb-28 items-center justify-center rounded-2xl bg-accent px-3.5 font-round text-lg font-bold text-white active:bg-accent-dark disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className={`flex min-h-[54px] w-full scroll-mb-28 items-center justify-center rounded-2xl px-3.5 font-round text-lg font-bold disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+            arrangement.kind !== 'childCare' || recommended
+              ? 'bg-accent text-white active:bg-accent-dark'
+              : 'border-[1.5px] border-btn-line bg-white text-ink active:bg-paper'
+          }`}
         >
           {ctx.t('decide.go')}
         </button>

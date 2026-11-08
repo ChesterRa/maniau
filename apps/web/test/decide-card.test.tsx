@@ -3,8 +3,10 @@
 import type { ChoicePreview } from '@maniau/core';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import { demoEvents } from '../../server/src/demo';
+import { previewChoices } from '../../server/src/preview';
 import { ChoiceClock } from '../src/choice-clock';
-import { DecideScreen, deadlineHolder, previewLines } from '../src/screens';
+import { type Ctx, DecideScreen, deadlineHolder, previewLines } from '../src/screens';
 import { ctxFor } from './ctx';
 
 const care = 'arr:childCare:n1:i6:c';
@@ -39,6 +41,102 @@ describe('決める画面の札', () => {
     expect(shown).toContain('Until each choice disappears');
     expect(shown).toContain('You can change your choice later');
     expect(shown).toContain('Go with this');
+  });
+
+  it('取れる手を足す入口は、子の見守りの決める画面だけに出す（買い物の決める画面には出さない）', () => {
+    const ctx = ctxFor('arrived', 'b', 'ja');
+    const purchase = ctx.plan.arrangements.find((a) => a.kind === 'purchase');
+    if (!purchase) throw new Error('買い物の手配が無い');
+    const shop = text(
+      renderToStaticMarkup(<DecideScreen ctx={ctx} arrangementKey={purchase.key} />),
+    );
+    expect(shop).not.toContain('取れる手を足す');
+    const child = text(renderToStaticMarkup(<DecideScreen ctx={ctx} arrangementKey={care} />));
+    expect(child).toContain('取れる手を足す');
+  });
+
+  it('子の見守りでは、おすすめだけを塗り、ほかは枠にする（おすすめが無ければすべて枠）', () => {
+    const ctx = ctxFor('arrived', 'b', 'ja');
+    const buttons = (value: Ctx) => {
+      const html = renderToStaticMarkup(<DecideScreen ctx={value} arrangementKey={care} />);
+      return (html.match(/<button[^>]*>/g) ?? []).filter(
+        (button) => button.includes('aria-label=') && button.includes('これに決める'),
+      );
+    };
+    const shown = buttons(ctx);
+    expect(shown.length).toBeGreaterThan(1);
+    expect(shown.filter((button) => button.includes(' bg-accent '))).toHaveLength(1);
+    expect(shown.filter((button) => button.includes(' bg-white '))).toHaveLength(shown.length - 1);
+    const withoutRecommendation = {
+      ...ctx,
+      plan: {
+        ...ctx.plan,
+        arrangements: ctx.plan.arrangements.map((a) =>
+          a.key === care ? { ...a, recommendedOptionKey: undefined } : a,
+        ),
+      },
+    } as Ctx;
+    expect(buttons(withoutRecommendation).every((button) => button.includes(' bg-white '))).toBe(
+      true,
+    );
+  });
+
+  it('子の見守りの決め時と同じ人・同じ分の繰り返しだけを省く', () => {
+    const ctx = ctxFor('arrived', 'b', 'ja');
+    const arrangement = ctx.plan.arrangements.find((a) => a.key === care);
+    if (!arrangement) throw new Error('手配が無い');
+    const previews = previewChoices(demoEvents('arrived'), { memberId: 'b', now: ctx.now }, care);
+    const school = previews?.find((p) => p.optionKey.endsWith(':opt-gakudo'));
+    const leave = previews?.find((p) => p.optionKey.endsWith(':opt-leave-a'));
+    if (!school?.later || !leave?.steps[0]?.start || !leave.decisionDeadline)
+      throw new Error('案の見通しが無い');
+
+    const schoolOption = arrangement.options.find((o) => o.key === school.optionKey);
+    expect(schoolOption && deadlineHolder(schoolOption, school)).toBe(school.later.memberId);
+    const schoolLines = previewLines(ctx, school);
+    // 自分の先の時刻は残し、決め時の行と同じもう一人の時刻だけを省く。
+    expect(schoolLines.some((line) => line.includes('17:05'))).toBe(true);
+    expect(schoolLines.some((line) => line.includes('健太さんなら'))).toBe(false);
+    const differentLater = {
+      ...school,
+      later: { ...school.later, start: '2026-11-30T17:21+09:00' },
+    };
+    expect(previewLines(ctx, differentLater).some((line) => line.includes('17:21'))).toBe(true);
+
+    const leaveLines = previewLines(ctx, leave);
+    expect(leaveLines.some((line) => line.includes('会社に休みを伝える'))).toBe(true);
+    expect(leaveLines.some((line) => line.includes('17:25'))).toBe(false);
+    // 人・分・選んだ後の決め時が違うか不明なら、省かない。
+    const first = leave.steps[0];
+    const otherPerson = {
+      ...leave,
+      steps: [{ ...first, assigneeId: 'b' }, ...leave.steps.slice(1)],
+    };
+    expect(previewLines(ctx, otherPerson).some((line) => line.includes('17:25'))).toBe(true);
+    const otherDeadlineHolder = {
+      ...leave,
+      later: { memberId: 'b', start: leave.decisionDeadline },
+    };
+    expect(previewLines(ctx, otherDeadlineHolder).some((line) => line.includes('17:25'))).toBe(
+      true,
+    );
+    const otherMinute = {
+      ...leave,
+      steps: [{ ...first, start: '2026-12-02T17:24+09:00' }, ...leave.steps.slice(1)],
+    };
+    expect(previewLines(ctx, otherMinute).some((line) => line.includes('17:24'))).toBe(true);
+    const unknownAfter = { ...leave, decisionDeadline: undefined };
+    expect(previewLines(ctx, unknownAfter).some((line) => line.includes('17:25'))).toBe(true);
+    const needCtx = {
+      ...ctx,
+      plan: {
+        ...ctx.plan,
+        arrangements: ctx.plan.arrangements.map((a) =>
+          a.key === care ? { ...a, kind: 'need', needShape: 'window' } : a,
+        ),
+      },
+    } as Ctx;
+    expect(previewLines(needCtx, leave).some((line) => line.includes('17:25'))).toBe(true);
   });
 
   it('「選んだら」を、最初の一手・ほかの作業の数・取り消し・動く作業の文にする', () => {

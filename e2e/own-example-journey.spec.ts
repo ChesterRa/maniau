@@ -52,11 +52,16 @@ test('例から、分からない見守りを聞く', async ({ page, request }) 
   await page.getByRole('button', { name: '記録する', exact: true }).click();
   await expect(page.getByRole('button', { name: '取れる手を足す' })).toBeVisible();
   await page.getByRole('button', { name: '取れる手を足す' }).click();
+  const addSummary = page.locator('summary').filter({ hasText: '取れる手を足す' });
+  await expect(addSummary).toBeHidden();
+  await expect(page.getByLabel('頼める人の呼び名')).toBeVisible();
   await page.getByLabel('頼める人の呼び名').fill('サトウ');
   await expect(page.getByRole('button', { name: 'これで変わることを見る' })).toBeDisabled();
   await page.getByLabel('頼むのは').selectOption('3');
   await page.getByRole('button', { name: 'これで変わることを見る' }).click();
   await page.getByRole('button', { name: '「サトウ」を足す' }).click();
+  await expect(addSummary).toBeVisible();
+  await expect(addSummary.locator('..')).toHaveAttribute('open', '');
   await expect(page.getByText('「サトウ」を足しました', { exact: false })).toBeVisible();
   const withHelper = await (await request.get(`http://127.0.0.1:18797/api/demo/sessions/${sessionId}/view?member=a1`)).json();
   expect(withHelper.household.careOptions[0]?.deadline).toEqual({ type: 'daysBefore', days: 3, at: '21:00' });
