@@ -2,6 +2,8 @@
   <img src="docs/images/hero.en.jpg" width="100%" alt="Maniau. Don’t leave the planning in one person’s head. Three phone screens: comparing each option’s decision deadline, asking whether to hold after-school care as a backup while no reply has been recorded, and cleaning up arrangements no longer needed after a postponement">
 </p>
 
+<p align="center"><b>From school and nursery notices, Maniau shows when to decide and what to do next, then helps working families follow up and handle changes.</b></p>
+
 <p align="center">
   <a href="https://maniauserver-production.up.railway.app"><b>Open the live demo</b></a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
@@ -20,13 +22,13 @@ When a notice arrives from nursery or school, putting the event in a calendar do
 
 **Maniau** (まにあう, “to make it in time”) is an AI that helps a family share that planning. While there are still choices, it shows where things will stop working out and what to do next, and it follows up until someone in the family takes it on. The family chooses how to cover care and sends the messages.
 
+The maker is also a parent raising children in Japan. We also ran four real notices from the maker’s family through Maniau, from photo import to the Today screen, and fixed some of the issues we found (their content is not in this repository). For example, prompted by this run, we checked fictional examples and the code and found that items from sentences the reading had marked “Check” could be exported to the phone calendar before the family confirmed them; now they are held back until confirmed. For one long notice, collapsing the original text cut the results screen from about nine phone screens to about two. Next, the maker’s family will use Maniau at home first, and other families will be asked to try it after those results.
+
 | | Schools in Japan and working parents |
 |:--|:--|
 | **7.4%** | Of the 25,928 after-school care (gakudō) clubs open on weekdays, 1,912 stay open until 19:01 or later ([Children and Families Agency survey](https://www.cfa.go.jp/assets/contents/node/basic_page/field_ref_resources/69799c33-85cb-44f6-8c70-08ed3a292ab5/c253a682/20251222_policies_kosodateshien_houkago-jidou_80.pdf#page=11), as of 2025-05-01, Japanese) |
 | **Not covered** | The statutory leave for caring for a child (子の看護等休暇) does not cover attending a school observation day or a sports day, though an employer may choose to include them ([Ministry of Health, Labour and Welfare Q&A](https://jsite.mhlw.go.jp/shiga-roudoukyoku/content/contents/002519187.pdf#page=5), Japanese) |
 | **Make-up holidays** | When a Saturday school event turns the following weekday into a school holiday, a family may need to arrange care or adjust work for that day |
-
-The maker is also a parent raising children in Japan. We also ran four real notices from the maker’s family through Maniau, from photo import to the Today screen (their content is not in this repository). Transcription and reading went through for all four. After reading one long notice, the results screen went from about nine phone screens to about two once the original text was collapsed.
 
 <br>
 
@@ -34,9 +36,21 @@ The maker is also a parent raising children in Japan. We also ran four real noti
 
 <p align="center"><img src="docs/images/deadlines.jpg" width="100%" alt="A time band from today, Nov 25, to the possible make-up holiday on Dec 7. After-school care closes first, around 17:20 on Mon Nov 30, and is highlighted; taking a day off closes around Wed Dec 2, and asking grandma around Fri Dec 4"></p>
 
-For options it can calculate, Maniau estimates the last time to decide (the decision deadline) from the household’s information. It shows which option closes next and what to decide by then, and follows up until someone takes it on.
+For options it can calculate (such as after-school care, asking grandma, or taking a day off), Maniau estimates the last time to decide (the decision deadline) from the household’s information. It shows which option closes next and what to decide by then, and follows up until someone takes it on.
 
-For example, in the sample family, the after-school care deadline, around 17:20 on Mon Nov 30, comes from the household data. Applications are due by 18:30 on Monday of the previous week and are handed in at pickup (5 minutes). Writing the form takes 10 minutes and can only be done at home or at work. On Mondays, 健太 finishes work at 17:30, travels to the after-school club (no writing on the way), and picks up from 17:55 to 18:05. So the form is written at work from 17:20 to 17:30 and handed in from 18:00 to 18:05; 17:20, the latest start for writing, is the decision deadline (an estimate).
+For example, in the sample family, the decision deadline for after-school care comes out as around 17:20 on Mon Nov 30. Code works it back from the application deadline, the time needed to write and hand in the form, and 健太’s Monday work, travel and pickup; it is an estimate.
+
+<details>
+<summary><b>Why around 17:20?</b></summary>
+
+<br>
+
+- Applications are due by 18:30 on Monday of the previous week and are handed in at pickup (5 minutes).
+- Writing the form takes 10 minutes and can only be done at home or at work.
+- On Mondays, 健太 finishes work at 17:30, travels to the after-school club (no writing on the way), and picks up from 17:55 to 18:05.
+- So the form is written at work from 17:20 to 17:30 and handed in from 18:00 to 18:05; 17:20, the latest start for writing, is the decision deadline (an estimate).
+
+</details>
 
 | ① Read | ② Compare deadlines | ③ Follow up | ④ Clean up after a change |
 |:-:|:-:|:-:|:-:|
@@ -73,7 +87,7 @@ Claude reads and researches; code works out dates, decision deadlines and when e
 Who took a task on, whether a reply was recorded, and whom to tell what after plans change all stay in the plan.
 
 **3. It knows what’s around your home, kept by your family and Claude together.**
-Claude searches the web for sick-child care, temporary childcare and family support in your area and offers candidates, citing the pages it read. The family decides which to add, whether advance registration is needed, and which store is the usual one; Maniau remembers this and uses it in its calculations. It never changes the family’s choices on its own.
+Claude searches the web for sick-child care, temporary childcare and family support in your area and offers candidates, citing the pages it read. The family decides which to add, whether advance registration is needed, and which store is the usual one; Maniau remembers these choices and never changes them on its own. The usual store is used when planning where errands fit. Places found this way don’t yet become child-care options (asking someone, after-school care, taking the day off).
 
 **4. A separately written verifier checks before anything is sent.**
 A verifier written separately from the planning engine checks the plan and the notifications; when it finds a violation, it holds back the affected notifications, or all of them when it can’t narrow the scope. Where it can’t check something, it reports it as undetermined, never as “no problems”.
@@ -141,8 +155,8 @@ The model reads, looks around, infers unstated preparations, and explains. Date 
 ## Where it’s headed
 
 - **This version:** in a fictional trial, you can follow a one-child family’s decision deadlines, requests, replies and cleanup after a change, and compare the two adults’ screens.
-- **Next:** families with two or more children (the family confirms which child each notice is for, and care, drop-offs and pick-ups, and things to bring are worked out for each child), and letting a family create its own household with both adults joining from their own phones. The maker will first use family mode at home, and other families will be asked to try it after those results.
-- **Beyond:** the core — the event log, decision deadlines, taking on, and verification — is written so that it does not depend on one area. We also tried a fictional example of choosing a child’s club practice day from the answers of the people involved. Whether it works beyond childcare will be decided after studying that area’s people, resources, deadlines and exceptions, and trying it. People make the decisions.
+- **Next:** families with two or more children (the family confirms which child each notice is for, and care, drop-offs and pick-ups, and things to bring are worked out for each child), and letting a family create its own household with both adults joining from their own phones. The maker will first use family mode (the version for a real family, with sign-in, saved data and notifications) at home, and other families will be asked to try it after those results.
+- **Beyond:** the core — the event log, decision deadlines, taking on, and verification — is written so that it does not depend on one area. We also tried a fictional example of choosing a child’s club practice day from the answers of the people involved. Whether it works beyond childcare will be decided after studying that area’s people, resources, deadlines and exceptions, and trying it.
 
 <br>
 
@@ -177,11 +191,11 @@ Other ways to try it (your own family, the sample family, choosing a day) are in
 **In development:** we built Maniau mainly with Claude Code.
 
 - **A run with real notices:** Claude Code drove a phone-width browser through four real notices from the maker’s family, from import to Today, and measured how long the screens were; we then shortened the long-notice screens (their content is not in this repository).
-- **The demo video** was also recorded by Claude Code from the app, assembled in code, and checked by measuring frame changes and audio gaps (some screen details changed after recording; no image-generating AI was used).
-- **Hard-to-reverse choices** were made by having two agents think independently before comparing answers, which settled storage, sign-in, and minute-level task placement.
+- **The demo video** was also recorded by Claude Code from the app, assembled in code, and checked by measuring frame changes and audio gaps (the app changed slightly after recording, so a few screens differ from the current version; no image-generating AI was used).
+- **Hard-to-reverse choices** were made by having Claude Code and a second agent think independently before comparing answers, which settled storage, sign-in, and minute-level task placement.
 - **Subagents** researched six fields in parallel before building, and reviewed the verifier without being given the author’s own conclusions, finding 7 misses and 3 false alarms, each reproduced by a test.
 - **Hooks** stop tool use on out-of-scope paths, such as those under the home directory, when they can detect them (some forms can’t be detected, so we don’t rely on them alone), and check for key-like strings and copies of private material before each commit.
-- **The claude-api Skill’s documentation** was used to check Opus 5.5’s thinking, effort and structured-output limits, and we found we had capped the comparison model’s (a strong Claude on its own) output unfairly low.
+- **The claude-api Skill’s documentation** was used to check Opus 5.5’s thinking, effort and structured-output limits, and we found we had capped the comparison model’s (a strong Claude’s) output unfairly low.
 - **Evaluation was kept apart from prompt tuning**; the person tuning prompts never saw the held-out cases.
 
 Why we chose each, and what worked and what didn’t, are in the [record of how Claude is used](docs/dev/claude-usage.md) (Japanese).
@@ -214,7 +228,7 @@ Why we chose each, and what worked and what didn’t, are in the [record of how 
 
 - **Subagents to research in parallel and review independently:** Before building, we researched six fields in parallel ([docs/research](docs/research)). The review before publishing, and the review of the verifier, went to subagents that weren't given the author's own conclusions; the verifier review found 7 misses and 3 false alarms, each reproduced by a test.
 - **Hooks to enforce the rules mechanically:** A Claude Code PreToolUse hook stops tool use on paths outside the repository when it can detect them (a few set locations are allowed, and some forms, such as paths built from variables, can't be detected, so we don't rely on it alone). Git hooks check author emails, key-like strings, file locations and copies of private material before each commit (tests in [tests/hooks](tests/hooks)).
-- **Hard-to-reverse choices: think separately, then compare:** Two agents answered the same question without seeing each other's conclusion, then compared. This moved storage from SQLite to Postgres and sign-in to Cloudflare Access, and caught that placing tasks on a 15-minute grid would drop a real 10-minute window (17:20–17:30), so placement now works to the minute.
+- **Hard-to-reverse choices: think separately, then compare:** Claude Code and a second agent answered the same question without seeing each other's conclusion, then compared. This moved storage from SQLite to Postgres and sign-in to Cloudflare Access, and caught that placing tasks on a 15-minute grid would drop a real 10-minute window (17:20–17:30), so placement now works to the minute.
 - **Evaluation kept apart from prompt tuning:** One role fixes the cases, expected results and scoring; another tunes the product prompts and never sees the held-out cases. For Claude API calls in development and evaluation, we record the counts we could log and the costs we could determine, and say so where a cost is unknown.
 - **API details from the documentation, not memory:** Using the claude-api Skill's documentation, we checked Opus 5.5's thinking, effort and structured-output limits, and found we had capped the comparison model's (a strong Claude's) output unfairly low. After a subagent read the Managed Agents documentation against the product's needs, we decided not to use it this week.
 - **Screens decided with the maker on an Artifact canvas:** We laid out phone-width screens and reworked them from the maker's feedback (it looked like a professional tool; useful advice needs a location) before writing the code.
@@ -227,7 +241,7 @@ Why we chose each, and what worked and what didn’t, are in the [record of how 
 
 These are checks on a small number of fictional cases. We don't claim a general accuracy rate, or that Maniau is better or worse than a model. Counts, costs and conditions are in the [record of how Claude is used](docs/dev/claude-usage.md) (Japanese), and comparison summaries are in [eval/results](eval/results).
 
-- **Comparison with a strong Claude:** the strong Claude solved many of the cases. The checks it missed clustered around “saying so when it can't decide” and “not treating something unconfirmed as confirmed”. We place the difference not in “the model can't solve it” but in state that can be checked and in how later changes are handled.
+- **Comparison with a strong Claude** (Opus 5.5 at high effort, given the notice text or the organized facts directly, without Maniau’s pipeline): the strong Claude solved many of the cases. The checks it missed clustered around “saying so when it can't decide” and “not treating something unconfirmed as confirmed”. We place the difference not in “the model can't solve it” but in state that can be checked and in how later changes are handled.
 - **Tests:** run without an API key. On 2026-11-08, on `5d1e9db`, the 2,672 tests in `pnpm check` and the 51 browser end-to-end tests (`pnpm e2e`) passed.
 - **Screens:** the main flows have been walked through at phone width (390px) in Japanese and English. A real iPhone and whether notifications actually arrive have not been checked yet.
 
@@ -366,7 +380,7 @@ Next:
 - Regular re-checks of what's around us (for now, Maniau looks again only when the family taps).
 - Using the family's usual places for recommending ways too (such as a usual sick-child care room).
 - More kinds of places to look for (now sick-child care, temporary childcare and family support), and looking around for family households.
-- You can try arranging a fictional club practice for the child with the same “thing to do”, candidate days and answers. Whether it works for real gatherings or beyond childcare needs checking with that area's people, resources, deadlines and exceptions. People make the decisions.
+- You can try arranging a fictional club practice for the child with the same “thing to do”, candidate days and answers. Whether it works for real gatherings or beyond childcare needs checking with that area's people, resources, deadlines and exceptions.
   - Choosing different ways for each candidate, changing the day after asking someone or a task is taken on, and answer links in family mode are not available yet. Arranging a club's whole season is also future work.
 
 </details>
