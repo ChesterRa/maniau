@@ -144,6 +144,19 @@ export function MonthView({ ctx, schedule }: { ctx: Ctx; schedule: ScheduleLines
             ›
           </button>
         </div>
+        {/* 印の見方は格子の上に置く（携帯の初めの画面で、格子の下まで送らなくても読めるように）。 */}
+        <ul className="flex flex-wrap gap-x-3 gap-y-1 px-1 text-xs text-sub">
+          {TONES.map((tone) => (
+            <li key={tone} className="flex items-center gap-1">
+              <span className={`size-2.5 flex-none rounded-full ${DOT[tone]}`} />
+              {ctx.t(`calendar.tone.${tone}`)}
+            </li>
+          ))}
+          <li className="flex items-center gap-1">
+            <span className="size-3 flex-none rounded-full border-[1.5px] border-dashed border-ink" />
+            {ctx.t('calendar.conditional')}
+          </li>
+        </ul>
         <div className="grid grid-cols-7 text-center text-xs text-sub">
           {weekdays.map((w) => (
             <span key={w} className="py-1">
@@ -194,18 +207,6 @@ export function MonthView({ ctx, schedule }: { ctx: Ctx; schedule: ScheduleLines
             );
           })}
         </div>
-        <ul className="flex flex-wrap gap-x-3 gap-y-1 px-1 pt-1 text-xs text-sub">
-          {TONES.map((tone) => (
-            <li key={tone} className="flex items-center gap-1">
-              <span className={`size-2.5 flex-none rounded-full ${DOT[tone]}`} />
-              {ctx.t(`calendar.tone.${tone}`)}
-            </li>
-          ))}
-          <li className="flex items-center gap-1">
-            <span className="size-3 flex-none rounded-full border-[1.5px] border-dashed border-ink" />
-            {ctx.t('calendar.conditional')}
-          </li>
-        </ul>
       </Card>
       <Card className="gap-0.5">
         <Label tone="sub">{formatLongDay(selected, ctx.lang, ctx.tz)}</Label>

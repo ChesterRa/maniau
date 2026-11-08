@@ -19,6 +19,9 @@ it('雨なら延期の発表会が決まるまでは、その日の行事も持�
   const html = renderToStaticMarkup(<IcsExportCard ctx={arrived} />);
   expect(html).toContain('スマホの暦に書き出す');
   expect(html).toContain('いま書き出せる確かな事はありません。');
+  // 書き出せる物が無い時は、入れる物の長い説明を出さない。前に取り込んだ暦が自動では変わらない事は残す。
+  expect(html).not.toContain('確かな事だけを、暦のファイル');
+  expect(html).toContain('一度きりの写しです。');
   expect(html).not.toContain('<button');
 });
 

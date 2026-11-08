@@ -195,14 +195,21 @@ export function IcsExportCard({ ctx }: { ctx: Ctx }) {
   return (
     <Card>
       <Label tone="sub">{ctx.t('ics.label')}</Label>
-      <Text quiet>{ctx.t('ics.body')}</Text>
-      <Text quiet>{ctx.t('ics.snapshot')}</Text>
+      {/* 書き出せる物が無い時は、入れる物の長い説明を出さず、無いとだけ言う。前に取り込んだ暦は端末に残るので、
+          写しが自動では変わらない事は、どちらの時も一行で示す。 */}
       {events.length === 0 ? (
-        <Text quiet>{ctx.t('ics.none')}</Text>
+        <>
+          <Text quiet>{ctx.t('ics.none')}</Text>
+          <Text quiet>{ctx.t('ics.snapshot')}</Text>
+        </>
       ) : (
-        <Button kind="secondary" onClick={save}>
-          {ctx.t('ics.button', { count: events.length })}
-        </Button>
+        <>
+          <Text quiet>{ctx.t('ics.body')}</Text>
+          <Text quiet>{ctx.t('ics.snapshot')}</Text>
+          <Button kind="secondary" onClick={save}>
+            {ctx.t('ics.button', { count: events.length })}
+          </Button>
+        </>
       )}
       {saved && <Text>{ctx.t('ics.saved')}</Text>}
     </Card>
